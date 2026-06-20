@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow, parseISO } from "date-fns";
 import {
+  Bookmark,
   Building2,
   CheckCircle2,
   ExternalLink,
@@ -10,7 +11,10 @@ import {
   MapPin,
   Radar,
   Search,
+  Sparkles,
+  X,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -18,13 +22,19 @@ import type {
   DiscoveryResult,
   DiscoverySearchRequest,
   DiscoverySource,
+  SavedSearch,
 } from "@/lib/types";
 
 export default function DiscoverPage() {
   const qc = useQueryClient();
+  const router = useRouter();
   const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => api.getSettings(),
+  });
+  const { data: saved = [] } = useQuery({
+    queryKey: ["saved-searches"],
+    queryFn: () => api.listSavedSearches(),
   });
 
   const [titles, setTitles] = useState("");
@@ -47,6 +57,61 @@ export default function DiscoverPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  function currentQuery(): DiscoverySearchRequest {
+    return {
+      sources,
+      title_keywords: splitCsv(titles),
+      technology_slugs: splitCsv(techs),
+      country_codes: country ? [country.toUpperCase()] : [],
+      max_age_days: maxAgeDays,
+      limit,
+      page: 0,
+    };
+  }
+
+  const saveSearch = useMutation({
+    mutationFn: (name: string) =>
+      api.createSavedSearch({ name, query: currentQuery() }),
+    onSuccess: () => {
+      toast.success("Search saved");
+      qc.invalidateQueries({ queryKey: ["saved-searches"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const runSaved = useMutation({
+    mutationFn: (id: string) => api.runSavedSearch(id),
+    onSuccess: (data) => {
+      setResults(data);
+      qc.invalidateQueries({ queryKey: ["saved-searches"] });
+      if (data.length === 0)
+        toast("No results", { description: "Saved query returned nothing today." });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const deleteSaved = useMutation({
+    mutationFn: (id: string) => api.deleteSavedSearch(id),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-searches"] }),
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function applySaved(s: SavedSearch) {
+    setTitles((s.query.title_keywords ?? []).join(", "));
+    setTechs((s.query.technology_slugs ?? []).join(", "));
+    setCountry((s.query.country_codes ?? [])[0] ?? "");
+    setMaxAgeDays(s.query.max_age_days ?? 30);
+    setLimit(s.query.limit ?? 20);
+    if (s.query.sources && s.query.sources.length > 0) setSources(s.query.sources);
+    runSaved.mutate(s.id);
+  }
+
+  function onSaveClick() {
+    const name = window.prompt("Name this search (e.g. 'SWE intern · Boston')");
+    if (!name) return;
+    saveSearch.mutate(name.trim());
+  }
+
   function toggleSource(s: DiscoverySource) {
     setSources((prev) => {
       if (prev.includes(s)) {
@@ -58,16 +123,7 @@ export default function DiscoverPage() {
   }
 
   function runSearch() {
-    const body: DiscoverySearchRequest = {
-      sources,
-      title_keywords: splitCsv(titles),
-      technology_slugs: splitCsv(techs),
-      country_codes: country ? [country.toUpperCase()] : [],
-      max_age_days: maxAgeDays,
-      limit,
-      page: 0,
-    };
-    search.mutate(body);
+    search.mutate(currentQuery());
   }
 
   return (
@@ -87,6 +143,38 @@ export default function DiscoverPage() {
         </div>
         <Radar className="size-5 text-[color:var(--color-violet)]" />
       </header>
+
+      {saved.length > 0 && (
+        <div className="mt-6">
+          <div className="text-xs font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+            Saved searches
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {saved.map((s) => (
+              <div
+                key={s.id}
+                className="group glass inline-flex items-center gap-1 rounded-full pl-3 pr-1 py-1 text-xs"
+              >
+                <button
+                  onClick={() => applySaved(s)}
+                  className="inline-flex items-center gap-1 hover:text-white"
+                  title={s.last_run_count !== null ? `${s.last_run_count} last run` : ""}
+                >
+                  <Bookmark className="size-3 text-[color:var(--color-violet)]" />
+                  {s.name}
+                </button>
+                <button
+                  onClick={() => deleteSaved.mutate(s.id)}
+                  className="ml-0.5 rounded-full p-1 text-[color:var(--color-text-dim)] opacity-0 transition group-hover:opacity-100 hover:bg-white/[0.06] hover:text-rose-300"
+                  aria-label={`Delete saved search ${s.name}`}
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="glass mt-6 grid grid-cols-1 gap-4 rounded-[var(--radius-card)] p-5 md:grid-cols-2">
         <div className="md:col-span-2">
@@ -160,7 +248,7 @@ export default function DiscoverPage() {
             />
           </Field>
         </div>
-        <div className="md:col-span-2">
+        <div className="md:col-span-2 flex items-center gap-2">
           <button
             onClick={runSearch}
             disabled={search.isPending}
@@ -175,6 +263,14 @@ export default function DiscoverPage() {
                 <Search className="size-3.5" /> Search
               </>
             )}
+          </button>
+          <button
+            onClick={onSaveClick}
+            disabled={saveSearch.isPending}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm hover:bg-white/[0.06] disabled:opacity-50"
+            title="Save current filters as a named search"
+          >
+            <Bookmark className="size-3.5" /> Save search
           </button>
         </div>
       </div>
@@ -198,6 +294,7 @@ export default function DiscoverPage() {
                   );
                   qc.invalidateQueries({ queryKey: ["jobs"] });
                 }}
+                onTailored={(jobId) => router.push(`/tailor?job_id=${jobId}`)}
               />
             ))
           )}
@@ -210,26 +307,50 @@ export default function DiscoverPage() {
 function ResultCard({
   result,
   onImported,
+  onTailored,
 }: {
   result: DiscoveryResult;
   onImported: () => void;
+  onTailored: (jobId: string) => void;
 }) {
+  const importPayload = () => ({
+    source: result.source,
+    source_id: result.source_id,
+    source_url: result.source_url,
+    title: result.title,
+    description: result.description,
+    company_name: result.company_name,
+    company_domain: result.company_domain,
+    location: result.location,
+    posted_at: result.posted_at,
+  });
+
   const importJob = useMutation({
-    mutationFn: () =>
-      api.discoveryImport({
-        source: result.source,
-        source_id: result.source_id,
-        source_url: result.source_url,
-        title: result.title,
-        description: result.description,
-        company_name: result.company_name,
-        company_domain: result.company_domain,
-        location: result.location,
-        posted_at: result.posted_at,
-      }),
+    mutationFn: () => api.discoveryImport(importPayload()),
     onSuccess: () => {
       toast.success("Imported to your jobs");
       onImported();
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const tailorJob = useMutation({
+    mutationFn: async () => {
+      // 1. Import (idempotent — backend dedupes on source+source_id).
+      const job = await api.discoveryImport(importPayload());
+      // 2. Create an application so the job lands in /applications too.
+      //    Swallow 409 (already exists) so re-clicks stay smooth.
+      try {
+        await api.createApplication({ job_id: job.id, status: "ready_to_apply" });
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (!msg.includes("409")) throw e;
+      }
+      return job;
+    },
+    onSuccess: (job) => {
+      onImported();
+      onTailored(job.id);
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -284,7 +405,7 @@ function ResultCard({
             </div>
           )}
         </div>
-        <div className="shrink-0">
+        <div className="flex shrink-0 flex-col items-end gap-2">
           {result.already_imported ? (
             <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1.5 text-xs text-[color:var(--color-mint)]">
               <CheckCircle2 className="size-3" /> Imported
@@ -292,7 +413,7 @@ function ResultCard({
           ) : (
             <button
               onClick={() => importJob.mutate()}
-              disabled={importJob.isPending}
+              disabled={importJob.isPending || tailorJob.isPending}
               className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06] disabled:opacity-50"
             >
               {importJob.isPending ? (
@@ -301,6 +422,19 @@ function ResultCard({
               Import
             </button>
           )}
+          <button
+            onClick={() => tailorJob.mutate()}
+            disabled={tailorJob.isPending || importJob.isPending}
+            className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFF] px-3 py-1.5 text-xs font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+            title="Import + create application + open the tailoring agent"
+          >
+            {tailorJob.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <Sparkles className="size-3" />
+            )}
+            Tailor →
+          </button>
         </div>
       </div>
       <p className="mt-3 line-clamp-3 text-xs text-[color:var(--color-text-muted)]">

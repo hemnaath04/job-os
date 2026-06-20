@@ -12,6 +12,7 @@ Sources today:
 """
 from datetime import datetime
 from typing import Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -71,3 +72,18 @@ class DiscoveryImportRequest(ORMModel):
     company_domain: str | None = None
     location: str | None = None
     posted_at: datetime | None = None
+
+
+class SavedSearchCreate(ORMModel):
+    name: str = Field(min_length=1, max_length=100)
+    query: DiscoverySearchRequest
+
+
+class SavedSearchRead(ORMModel):
+    id: UUID
+    name: str
+    query: DiscoverySearchRequest
+    last_run_at: datetime | None = None
+    last_run_count: int | None = None
+    created_at: datetime
+    updated_at: datetime

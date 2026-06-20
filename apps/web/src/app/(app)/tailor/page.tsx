@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   Download,
   Loader2,
+  Plus,
   RefreshCw,
   Sparkles,
 } from "lucide-react";
@@ -428,38 +429,175 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
       </div>
       <ul className="mt-3 space-y-3">
         {gaps.map((g, i) => (
-          <li key={i} className="rounded-[var(--radius-card)] bg-white/[0.02] p-3">
-            <div className="text-sm font-medium">{g.requirement}</div>
-            <div className="mt-1 text-xs text-[color:var(--color-text-muted)]">
-              {g.why_no_match}
-            </div>
-            {g.suggested_fact_ids.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {g.suggested_fact_ids.map((fid) => {
-                  const f = factById[fid];
-                  if (!f) return null;
-                  return (
-                    <span
-                      key={fid}
-                      className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[11px] text-[color:var(--color-text-muted)]"
-                    >
-                      nearest: {f.title}
-                    </span>
-                  );
-                })}
-              </div>
-            )}
-          </li>
+          <GapRow key={i} gap={g} factById={factById} />
         ))}
       </ul>
       <p className="mt-3 text-xs text-[color:var(--color-text-dim)]">
-        Add a verified fact on the{" "}
+        Adding a fact here marks it verified immediately and re-tailoring will
+        include it. Larger entries (a project or experience) are better edited
+        on the{" "}
         <Link href="/profile" className="text-[color:var(--color-violet)] underline">
           Profile
         </Link>{" "}
-        page, then re-tailor.
+        page.
       </p>
     </div>
+  );
+}
+
+const GAP_KINDS = [
+  "skill",
+  "project",
+  "experience",
+  "certification",
+  "publication",
+  "award",
+] as const;
+
+type GapKind = (typeof GAP_KINDS)[number];
+
+function _suggestKind(requirement: string): GapKind {
+  // Very lightweight heuristic: a single-token requirement smells like a skill
+  // ("Rust", "GraphQL"); anything multi-word probably needs a richer entry.
+  return requirement.trim().split(/\s+/).length === 1 ? "skill" : "project";
+}
+
+function GapRow({
+  gap,
+  factById,
+}: {
+  gap: GapQuestion;
+  factById: Record<string, ProfileFact>;
+}) {
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [kind, setKind] = useState<GapKind>(_suggestKind(gap.requirement));
+  const [title, setTitle] = useState(gap.requirement);
+  const [org, setOrg] = useState("");
+  const [bullet, setBullet] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createFact({
+        kind,
+        title: title.trim(),
+        org: org.trim() || null,
+        verified: true,
+        bullets: bullet.trim()
+          ? [{ text: bullet.trim(), metric_verified: true }]
+          : [],
+      }),
+    onSuccess: () => {
+      toast.success("Added — re-tailor to pick it up");
+      qc.invalidateQueries({ queryKey: ["facts"] });
+      setOpen(false);
+      setOrg("");
+      setBullet("");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  const supportsBullets = kind === "project" || kind === "experience";
+
+  return (
+    <li className="rounded-[var(--radius-card)] bg-white/[0.02] p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-sm font-medium">{gap.requirement}</div>
+          <div className="mt-1 text-xs text-[color:var(--color-text-muted)]">
+            {gap.why_no_match}
+          </div>
+          {gap.suggested_fact_ids.length > 0 && (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {gap.suggested_fact_ids.map((fid) => {
+                const f = factById[fid];
+                if (!f) return null;
+                return (
+                  <span
+                    key={fid}
+                    className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[11px] text-[color:var(--color-text-muted)]"
+                  >
+                    nearest: {f.title}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
+        {!open && (
+          <button
+            onClick={() => setOpen(true)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] hover:bg-white/[0.06]"
+          >
+            <Plus className="size-3" /> Add fact
+          </button>
+        )}
+      </div>
+
+      {open && (
+        <div className="mt-3 space-y-2 rounded-[var(--radius-card)] border border-white/[0.06] bg-white/[0.02] p-3">
+          <div className="flex flex-wrap gap-1.5">
+            {GAP_KINDS.map((k) => (
+              <button
+                key={k}
+                onClick={() => setKind(k)}
+                className={`rounded-full border px-2 py-0.5 text-[11px] ${
+                  kind === k
+                    ? "border-[#7C5CFF]/50 bg-[#7C5CFF]/15 text-white"
+                    : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)]"
+                }`}
+              >
+                {k}
+              </button>
+            ))}
+          </div>
+          <input
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+          />
+          {kind !== "skill" && (
+            <input
+              value={org}
+              onChange={(e) => setOrg(e.target.value)}
+              placeholder={
+                kind === "experience" ? "Company name" :
+                kind === "certification" ? "Issuer" :
+                kind === "publication" ? "Publisher" :
+                kind === "award" ? "Awarder" :
+                "Organization (optional)"
+              }
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+            />
+          )}
+          {supportsBullets && (
+            <textarea
+              value={bullet}
+              onChange={(e) => setBullet(e.target.value)}
+              placeholder="One verified bullet (optional) — keep metrics real."
+              rows={2}
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+            />
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !title.trim()}
+              className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFF] px-3 py-1 text-[11px] font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+            >
+              {create.isPending ? "Saving…" : "Save fact"}
+            </button>
+            <button
+              onClick={() => setOpen(false)}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </li>
   );
 }
 

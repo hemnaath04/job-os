@@ -9,6 +9,8 @@ goes straight to `services.jd_parse`. For sources that only ship a link
 (GitHub), we run Firecrawl on the source_url first to grab the JD text.
 """
 import asyncio
+from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, tuple_
@@ -16,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from job_os.auth import get_current_user
-from job_os.db.models import Job, User
+from job_os.db.models import Job, SavedSearch, User
 from job_os.db.session import get_session
 from job_os.integrations import github_jobs
 from job_os.integrations.firecrawl import fetch_url_markdown
@@ -30,6 +32,8 @@ from job_os.schemas.discovery import (
     DiscoveryImportRequest,
     DiscoveryResult,
     DiscoverySearchRequest,
+    SavedSearchCreate,
+    SavedSearchRead,
 )
 from job_os.schemas.jobs import JobRead
 from job_os.services.companies import upsert_company
@@ -45,6 +49,12 @@ async def search(
     payload: DiscoverySearchRequest,
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
+) -> list[DiscoveryResult]:
+    return await _run_search(payload, session)
+
+
+async def _run_search(
+    payload: DiscoverySearchRequest, session: AsyncSession
 ) -> list[DiscoveryResult]:
     if not payload.sources:
         raise HTTPException(400, "sources list cannot be empty")
@@ -222,3 +232,73 @@ async def import_result(
     await session.flush()
     await session.refresh(job, attribute_names=["company"])
     return job
+
+
+# ---- Saved searches ---------------------------------------------------------
+
+
+@router.get("/saved", response_model=list[SavedSearchRead])
+async def list_saved(
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[SavedSearch]:
+    rows = await session.execute(
+        select(SavedSearch)
+        .where(SavedSearch.user_id == user.id)
+        .order_by(SavedSearch.updated_at.desc())
+    )
+    return list(rows.scalars().all())
+
+
+@router.post("/saved", response_model=SavedSearchRead, status_code=201)
+async def create_saved(
+    payload: SavedSearchCreate,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> SavedSearch:
+    existing = await session.execute(
+        select(SavedSearch).where(
+            SavedSearch.user_id == user.id, SavedSearch.name == payload.name
+        )
+    )
+    if existing.scalar_one_or_none():
+        raise HTTPException(409, f"saved search named {payload.name!r} already exists")
+    saved = SavedSearch(
+        user_id=user.id,
+        name=payload.name,
+        query=payload.query.model_dump(mode="json"),
+    )
+    session.add(saved)
+    await session.flush()
+    return saved
+
+
+@router.delete("/saved/{saved_id}", status_code=204)
+async def delete_saved(
+    saved_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    saved = await session.get(SavedSearch, saved_id)
+    if saved is None or saved.user_id != user.id:
+        raise HTTPException(404, "saved search not found")
+    await session.delete(saved)
+
+
+@router.post("/saved/{saved_id}/run", response_model=list[DiscoveryResult])
+async def run_saved(
+    saved_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[DiscoveryResult]:
+    saved = await session.get(SavedSearch, saved_id)
+    if saved is None or saved.user_id != user.id:
+        raise HTTPException(404, "saved search not found")
+
+    query = DiscoverySearchRequest.model_validate(saved.query or {})
+    results = await _run_search(query, session)
+
+    saved.last_run_at = datetime.now(UTC)
+    saved.last_run_count = len(results)
+    await session.flush()
+    return results

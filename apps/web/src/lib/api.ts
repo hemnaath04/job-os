@@ -10,10 +10,24 @@ import type {
   Resume,
   ResumeVersion,
   ResumeVersionSummary,
+  SavedSearch,
   TailorResponse,
   UserSettings,
   UserSettingsPatch,
 } from "./types";
+
+export type ProfileFactCreate = {
+  kind: string;
+  title: string;
+  org?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  location?: string | null;
+  payload?: Record<string, unknown>;
+  verified?: boolean;
+  source_url?: string | null;
+  bullets?: { text: string; target_role?: string | null; metric_verified?: boolean }[];
+};
 
 const BASE = "/api/backend";
 
@@ -142,6 +156,23 @@ export const api = {
     posted_at?: string | null;
   }) =>
     request<Job>("/discovery/import", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  listSavedSearches: () => request<SavedSearch[]>("/discovery/saved"),
+  createSavedSearch: (body: { name: string; query: DiscoverySearchRequest }) =>
+    request<SavedSearch>("/discovery/saved", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteSavedSearch: (id: string) =>
+    request<void>(`/discovery/saved/${id}`, { method: "DELETE" }),
+  runSavedSearch: (id: string) =>
+    request<DiscoveryResult[]>(`/discovery/saved/${id}/run`, { method: "POST" }),
+
+  createFact: (body: ProfileFactCreate) =>
+    request<ProfileFact>("/profile/facts", {
       method: "POST",
       body: JSON.stringify(body),
     }),

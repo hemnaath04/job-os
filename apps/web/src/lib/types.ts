@@ -267,6 +267,16 @@ export interface DiscoverySearchRequest {
   page?: number;
 }
 
+export interface SavedSearch {
+  id: string;
+  name: string;
+  query: DiscoverySearchRequest;
+  last_run_at: string | null;
+  last_run_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Application {
   id: string;
   job: Job;
