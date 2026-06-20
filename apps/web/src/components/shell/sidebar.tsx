@@ -175,27 +175,22 @@ function NavLink({
       className={
         "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition " +
         (active
-          ? "text-white"
+          ? "font-semibold text-black"
           : "text-[color:var(--color-text-muted)] hover:bg-white/[0.04] hover:text-white") +
         (collapsed ? " justify-center" : "")
       }
       title={collapsed ? item.label : undefined}
     >
-      {/* Active background — gradient with soft glow */}
+      {/* Active background — full neon chip so the dark text reads clearly */}
       {active && (
         <motion.span
           layoutId="nav-active"
-          className="absolute inset-0 rounded-lg bg-gradient-brand opacity-[0.18]"
-          style={{ boxShadow: "inset 0 0 0 1px rgba(168,85,247,0.35), 0 0 24px -8px var(--color-purple)" }}
+          className="absolute inset-0 rounded-lg bg-gradient-brand"
+          style={{ boxShadow: "0 0 28px -6px rgba(204,255,0,0.55)" }}
           transition={{ type: "spring", stiffness: 380, damping: 30 }}
         />
       )}
-      <Icon
-        className={
-          "relative size-4 shrink-0 " +
-          (active ? "text-[color:var(--color-violet)]" : "")
-        }
-      />
+      <Icon className="relative size-4 shrink-0" />
       {!collapsed && (
         <span className="relative truncate text-sm">{item.label}</span>
       )}
