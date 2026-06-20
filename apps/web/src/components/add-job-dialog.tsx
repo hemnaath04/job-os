@@ -71,7 +71,7 @@ export function AddJobDialog({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-4 py-1.5 text-sm font-medium text-white hover:bg-[#8C6CFF] disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
                 >
                   {loading && <Loader2 className="size-3.5 animate-spin" />}
                   {loading ? "Fetching…" : "Add to wishlist"}

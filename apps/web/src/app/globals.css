@@ -1,35 +1,60 @@
 @import "tailwindcss";
 
 @theme {
-  /* Brand: dark glassmorphism · violet · CRED/Linear feel */
-  --color-bg: oklch(0.13 0.015 280);          /* #0A0A0F base */
-  --color-surface-1: oklch(0.17 0.018 280);   /* #13131B */
-  --color-surface-2: oklch(0.20 0.020 280);   /* #1A1A24 */
-  --color-surface-3: oklch(0.24 0.022 280);   /* #21212D */
+  /* === Surfaces === */
+  --color-bg: oklch(0.13 0.015 280);          /* base */
+  --color-surface-1: oklch(0.17 0.018 280);
+  --color-surface-2: oklch(0.20 0.020 280);
+  --color-surface-3: oklch(0.24 0.022 280);
 
   --color-border: oklch(0.30 0.020 280 / 0.4);
   --color-border-strong: oklch(0.40 0.025 280 / 0.6);
 
+  /* === Type === */
   --color-text: oklch(0.96 0.005 280);
   --color-text-muted: oklch(0.70 0.012 280);
   --color-text-dim: oklch(0.55 0.012 280);
 
-  --color-violet: #7C5CFF;
-  --color-violet-dim: oklch(0.55 0.22 290);
+  /* === Brand gradient: indigo → purple → violet ===
+     Picked to read as one continuous shift rather than three steps. */
+  --color-indigo: #6366F1;
+  --color-purple: #8B5CF6;
+  --color-violet: #A855F7;
+
+  /* Backward-compat alias — keep #7C5CFF for any inline references */
+  --color-brand: var(--color-purple);
+
+  /* === Accent: cyan → blue === */
+  --color-cyan: #06B6D4;
+  --color-blue: #3B82F6;
+
+  /* === Status accents === */
   --color-mint: #5EEAD4;
   --color-amber: #F5B544;
   --color-rose: #FF6B8A;
+  --color-emerald: #34D399;
+  --color-sky: #38BDF8;
 
-  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  /* === Fonts === */
+  --font-sans: var(--font-inter), "Inter", "Geist", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
-  --radius-card: 0.875rem;
+  --radius-card: 1rem;
+  --radius-card-lg: 1.25rem;
   --radius-pill: 999px;
 
   --shadow-glass:
     0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
-    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 0 0 1px rgba(255, 255, 255, 0.05),
     0 20px 60px -20px rgba(0, 0, 0, 0.5);
+
+  --shadow-glass-hover:
+    0 1px 0 0 rgba(255, 255, 255, 0.06) inset,
+    0 0 0 1px rgba(255, 255, 255, 0.08),
+    0 30px 80px -20px rgba(0, 0, 0, 0.6);
+
+  --shadow-brand-glow:
+    0 0 40px -8px var(--color-purple);
 }
 
 @layer base {
@@ -39,33 +64,147 @@
     font-family: var(--font-sans);
     font-feature-settings: "cv11", "ss03", "ss01";
     -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
   }
 
-  /* Subtle ambient violet glow on the page */
+  /* Ambient brand gradient bloom behind everything. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(60rem 40rem at 80% -20%, oklch(0.4 0.2 290 / 0.18), transparent 60%),
-      radial-gradient(50rem 30rem at -10% 110%, oklch(0.4 0.18 250 / 0.12), transparent 60%);
+      radial-gradient(70rem 50rem at 80% -20%, color-mix(in oklch, var(--color-purple) 22%, transparent), transparent 60%),
+      radial-gradient(60rem 40rem at -10% 110%, color-mix(in oklch, var(--color-blue) 18%, transparent), transparent 60%),
+      radial-gradient(40rem 30rem at 50% 50%, color-mix(in oklch, var(--color-indigo) 8%, transparent), transparent 70%);
     z-index: -1;
   }
 
   ::selection {
-    background: color-mix(in oklch, var(--color-violet) 50%, transparent);
+    background: color-mix(in oklch, var(--color-purple) 50%, transparent);
     color: white;
+  }
+
+  /* Subtler scrollbar that doesn't fight the dark UI. */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in oklch, var(--color-purple) 25%, transparent);
+    border-radius: 999px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in oklch, var(--color-purple) 45%, transparent);
+    background-clip: padding-box;
   }
 }
 
+/* ──── Utilities ─────────────────────────────────────────── */
+
 @utility glass {
-  background: color-mix(in oklch, var(--color-surface-1) 60%, transparent);
+  background: color-mix(in oklch, var(--color-surface-1) 65%, transparent);
   backdrop-filter: blur(20px) saturate(140%);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-glass);
 }
 
+@utility glass-strong {
+  background: color-mix(in oklch, var(--color-surface-2) 80%, transparent);
+  backdrop-filter: blur(24px) saturate(160%);
+  border: 1px solid var(--color-border-strong);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility glass-hover {
+  transition: box-shadow 200ms ease, background 200ms ease, transform 200ms ease;
+  &:hover {
+    box-shadow: var(--shadow-glass-hover);
+    background: color-mix(in oklch, var(--color-surface-2) 65%, transparent);
+  }
+}
+
 @utility violet-ring {
-  box-shadow: 0 0 0 1px var(--color-violet), 0 0 30px -5px var(--color-violet);
+  box-shadow: 0 0 0 1px var(--color-purple), 0 0 30px -5px var(--color-purple);
+}
+
+/* Brand gradient text (use for hero titles, big numbers). */
+@utility text-gradient-brand {
+  background: linear-gradient(120deg, var(--color-indigo) 0%, var(--color-purple) 50%, var(--color-violet) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Brand gradient surface (use for primary CTAs, active states, accent strokes). */
+@utility bg-gradient-brand {
+  background-image: linear-gradient(120deg, var(--color-indigo) 0%, var(--color-purple) 55%, var(--color-violet) 100%);
+}
+
+@utility bg-gradient-accent {
+  background-image: linear-gradient(120deg, var(--color-cyan) 0%, var(--color-blue) 100%);
+}
+
+/* Soft border-gradient stroke — sits on top of glass cards for premium feel. */
+@utility border-gradient-brand {
+  position: relative;
+  &::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    padding: 1px;
+    background: linear-gradient(135deg, var(--color-indigo), var(--color-purple), var(--color-violet));
+    -webkit-mask:
+      linear-gradient(#000 0 0) content-box,
+      linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+            mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+/* Subtle glow under an element — use on stat widgets. */
+@utility glow-brand {
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--color-purple) 40%, transparent),
+    0 0 50px -10px var(--color-purple);
+}
+
+@utility hover-lift {
+  transition: transform 200ms ease, box-shadow 200ms ease;
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-glass-hover);
+  }
+}
+
+/* ── Status gradient pills ── */
+@utility pill-status {
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+@utility shimmer {
+  position: relative;
+  overflow: hidden;
+  &::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(110deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
+    transform: translateX(-100%);
+    animation: shimmer 2.2s infinite;
+  }
+}
+
+@keyframes shimmer {
+  to { transform: translateX(100%); }
 }

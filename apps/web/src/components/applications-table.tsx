@@ -3,8 +3,9 @@
 import { formatDistanceToNow } from "date-fns";
 import { Sparkles } from "lucide-react";
 import Link from "next/link";
+import { CompanyAvatar } from "@/components/company-avatar";
+import { StatusPill } from "@/components/status-pill";
 import type { Application } from "@/lib/types";
-import { STATUS_LABELS } from "@/lib/types";
 
 export function ApplicationsTable({
   applications,
@@ -14,9 +15,9 @@ export function ApplicationsTable({
   onChange: () => void;
 }) {
   return (
-    <div className="glass overflow-hidden rounded-[var(--radius-card)]">
+    <div className="glass overflow-hidden rounded-[var(--radius-card-lg)]">
       <table className="w-full text-sm">
-        <thead className="bg-white/[0.02] text-left text-xs uppercase tracking-wide text-[color:var(--color-text-dim)]">
+        <thead className="sticky top-0 z-10 bg-[color:var(--color-surface-1)]/80 text-left text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)] backdrop-blur-lg">
           <tr>
             <Th>Company</Th>
             <Th>Title</Th>
@@ -31,16 +32,21 @@ export function ApplicationsTable({
           {applications.map((a) => (
             <tr
               key={a.id}
-              className="border-t border-white/5 hover:bg-white/[0.02]"
+              className="border-t border-[color:var(--color-border)] transition hover:bg-white/[0.025]"
             >
-              <Td>{a.job.company?.name ?? "—"}</Td>
+              <Td>
+                <div className="flex items-center gap-2">
+                  <CompanyAvatar name={a.job.company?.name ?? "Unknown"} size={24} />
+                  <span className="truncate">{a.job.company?.name ?? "—"}</span>
+                </div>
+              </Td>
               <Td className="font-medium">{a.job.title}</Td>
               <Td>
-                <span className="rounded-full bg-white/[0.04] px-2 py-0.5 text-xs">
-                  {STATUS_LABELS[a.status]}
-                </span>
+                <StatusPill status={a.status} />
               </Td>
-              <Td className="text-[color:var(--color-text-muted)]">{a.job.location ?? "—"}</Td>
+              <Td className="text-[color:var(--color-text-muted)]">
+                {a.job.location ?? "—"}
+              </Td>
               <Td className="text-[color:var(--color-text-dim)]">
                 {formatDistanceToNow(new Date(a.updated_at), { addSuffix: true })}
               </Td>
@@ -50,7 +56,7 @@ export function ApplicationsTable({
               <Td>
                 <Link
                   href={{ pathname: "/tailor", query: { job_id: a.job.id } }}
-                  className="inline-flex items-center gap-1 rounded-full bg-white/[0.03] px-2 py-1 text-xs text-[color:var(--color-violet)] hover:bg-[color:var(--color-violet)]/15"
+                  className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-medium text-white shadow-[0_0_20px_-8px_var(--color-purple)] transition hover:scale-[1.05]"
                 >
                   <Sparkles className="size-3" /> Tailor
                 </Link>

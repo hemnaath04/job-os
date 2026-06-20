@@ -10,10 +10,13 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { Building2, Calendar, MapPin, Sparkles } from "lucide-react";
+import { AnimatePresence, motion } from "framer-motion";
+import { Calendar, MapPin, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
+import { CompanyAvatar } from "@/components/company-avatar";
+import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
 import type { Application, AppStatus } from "@/lib/types";
 import { KANBAN_STATUSES, STATUS_LABELS } from "@/lib/types";
@@ -55,9 +58,18 @@ export function KanbanBoard({
       onDragEnd={onDragEnd}
     >
       <div className="flex gap-3 overflow-x-auto pb-4">
-        {KANBAN_STATUSES.map((status) => {
+        {KANBAN_STATUSES.map((status, idx) => {
           const items = applications.filter((a) => a.status === status);
-          return <Column key={status} status={status} items={items} />;
+          return (
+            <motion.div
+              key={status}
+              initial={{ opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: idx * 0.03, duration: 0.25 }}
+            >
+              <Column status={status} items={items} />
+            </motion.div>
+          );
         })}
       </div>
       <DragOverlay>{dragged ? <Card app={dragged} dragging /> : null}</DragOverlay>
@@ -70,25 +82,34 @@ function Column({ status, items }: { status: AppStatus; items: Application[] }) 
   return (
     <div
       ref={setNodeRef}
-      className={`flex w-72 shrink-0 flex-col rounded-[var(--radius-card)] border p-3 transition ${
-        isOver
-          ? "border-[#7C5CFF]/50 bg-[#7C5CFF]/[0.04]"
-          : "border-white/5 bg-white/[0.015]"
-      }`}
+      className={
+        "flex w-72 shrink-0 flex-col rounded-[var(--radius-card-lg)] border p-3 transition " +
+        (isOver
+          ? "border-[#A855F7]/50 bg-[#A855F7]/[0.05] shadow-[0_0_40px_-12px_#A855F7]"
+          : "border-[color:var(--color-border)] bg-white/[0.015]")
+      }
     >
       <div className="mb-3 flex items-center justify-between px-1">
-        <div className="flex items-center gap-2">
-          <StatusDot status={status} />
-          <span className="text-sm font-medium">{STATUS_LABELS[status]}</span>
-        </div>
+        <StatusPill status={status} />
         <span className="font-mono text-xs text-[color:var(--color-text-dim)]">
           {items.length}
         </span>
       </div>
       <div className="flex flex-col gap-2">
-        {items.map((a) => (
-          <DraggableCard key={a.id} app={a} />
-        ))}
+        <AnimatePresence>
+          {items.map((a) => (
+            <motion.div
+              key={a.id}
+              layout
+              initial={{ opacity: 0, scale: 0.97 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              transition={{ duration: 0.18 }}
+            >
+              <DraggableCard app={a} />
+            </motion.div>
+          ))}
+        </AnimatePresence>
       </div>
     </div>
   );
@@ -110,36 +131,42 @@ function DraggableCard({ app }: { app: Application }) {
 
 function Card({ app, dragging = false }: { app: Application; dragging?: boolean }) {
   const company = app.job.company?.name ?? "Unknown";
-  // The tailor link must NOT trigger drag — stop pointer events at the link
-  // so dnd-kit's PointerSensor doesn't claim them.
   const stopDrag = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <div
-      className={`glass cursor-grab rounded-[0.75rem] p-3 ${
-        dragging ? "rotate-2 shadow-2xl" : "hover:bg-white/[0.04]"
-      }`}
+      className={
+        "group glass cursor-grab rounded-[0.875rem] p-3 transition-all " +
+        (dragging
+          ? "rotate-2 shadow-2xl"
+          : "hover:bg-white/[0.04] hover:shadow-[0_0_30px_-12px_#A855F7]")
+      }
     >
-      <div className="font-medium text-sm">{app.job.title}</div>
-      <div className="mt-1 flex items-center gap-1 text-xs text-[color:var(--color-text-muted)]">
-        <Building2 className="size-3" /> {company}
+      <div className="flex items-start gap-2.5">
+        <CompanyAvatar name={company} size={28} />
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-medium">{app.job.title}</div>
+          <div className="truncate text-xs text-[color:var(--color-text-muted)]">
+            {company}
+          </div>
+        </div>
       </div>
       {app.job.location && (
-        <div className="mt-0.5 flex items-center gap-1 text-xs text-[color:var(--color-text-dim)]">
+        <div className="mt-2 flex items-center gap-1 text-xs text-[color:var(--color-text-dim)]">
           <MapPin className="size-3" /> {app.job.location}
         </div>
       )}
       {app.next_action_at && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-[color:var(--color-amber)]">
+        <div className="mt-1.5 flex items-center gap-1 text-xs text-[color:var(--color-amber)]">
           <Calendar className="size-3" /> {app.next_action_label || "next action"}
         </div>
       )}
       {!dragging && (
-        <div className="mt-2 flex justify-end">
+        <div className="mt-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
           <Link
             href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
             onPointerDown={stopDrag}
             onClick={stopDrag}
-            className="inline-flex items-center gap-1 rounded-full bg-white/[0.03] px-2 py-0.5 text-[10px] text-[color:var(--color-violet)] hover:bg-[color:var(--color-violet)]/15"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-medium text-white shadow-[0_0_20px_-8px_var(--color-purple)]"
           >
             <Sparkles className="size-2.5" /> Tailor
           </Link>
@@ -147,20 +174,4 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
       )}
     </div>
   );
-}
-
-function StatusDot({ status }: { status: AppStatus }) {
-  const colors: Record<AppStatus, string> = {
-    wishlist: "bg-white/30",
-    ready_to_apply: "bg-sky-400",
-    applied: "bg-[#7C5CFF]",
-    oa_received: "bg-amber-400",
-    interview_scheduled: "bg-emerald-400",
-    offer: "bg-[#5EEAD4]",
-    accepted: "bg-[#5EEAD4]",
-    rejected: "bg-rose-400",
-    withdrawn: "bg-zinc-500",
-    ghosted: "bg-zinc-500",
-  };
-  return <span className={`size-1.5 rounded-full ${colors[status]}`} />;
 }

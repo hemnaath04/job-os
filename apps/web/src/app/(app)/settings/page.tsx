@@ -70,7 +70,7 @@ export default function SettingsPage() {
         <button
           onClick={() => save.mutate(form)}
           disabled={save.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-4 py-1.5 text-sm font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
         >
           <Save className="size-3.5" /> {save.isPending ? "Saving…" : "Save"}
         </button>
@@ -86,7 +86,7 @@ export default function SettingsPage() {
                 onClick={() => update("theme", t.value)}
                 className={`rounded-full border px-3 py-1 text-xs ${
                   form.theme === t.value
-                    ? "border-[#7C5CFF]/50 bg-[#7C5CFF]/15 text-white"
+                    ? "border-[color:var(--color-purple)]/50 bg-[color:var(--color-purple)]/15 text-white shadow-[0_0_20px_-8px_var(--color-purple)]"
                     : "border-white/10 bg-white/[0.03] text-[color:var(--color-text-muted)] hover:text-white"
                 }`}
               >

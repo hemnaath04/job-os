@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { format, isPast, isThisWeek, isToday, parseISO } from "date-fns";
 import { Building2, Calendar as CalendarIcon } from "lucide-react";
 import Link from "next/link";
+import { EmptyState } from "@/components/empty-state";
 import { api } from "@/lib/api";
 import type { CalendarEntry } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
@@ -56,21 +57,12 @@ export default function CalendarPage() {
       )}
 
       {!isLoading && entries.length === 0 && (
-        <div className="glass mt-8 rounded-[var(--radius-card)] p-8 text-center">
-          <CalendarIcon className="mx-auto size-6 text-[color:var(--color-violet)]" />
-          <h3 className="mt-3 text-base font-medium">No upcoming follow-ups</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-[color:var(--color-text-muted)]">
-            On the{" "}
-            <Link
-              href="/applications"
-              className="text-[color:var(--color-violet)] underline"
-            >
-              Applications
-            </Link>{" "}
-            page, click into an application and set a next-action date — it will
-            land here.
-          </p>
-        </div>
+        <EmptyState
+          icon={CalendarIcon}
+          title="No upcoming follow-ups"
+          description="Set a next-action date on any application and it will land here, bucketed by urgency."
+          cta={{ href: "/applications", label: "Open Applications" }}
+        />
       )}
 
       {!isLoading && entries.length > 0 && (

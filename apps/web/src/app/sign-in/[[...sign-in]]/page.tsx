@@ -11,7 +11,7 @@ export default function SignInPage() {
         <SignIn
           path="/sign-in"
           signUpUrl="/sign-up"
-          forceRedirectUrl="/applications"
+          forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
               colorPrimary: "#7C5CFF",

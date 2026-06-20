@@ -1,11 +1,13 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { LayoutGrid, Plus, Rows3 } from "lucide-react";
+import { motion } from "framer-motion";
+import { Inbox, LayoutGrid, Plus, Rows3 } from "lucide-react";
 import { useState } from "react";
 import { AddJobDialog } from "@/components/add-job-dialog";
-import { KanbanBoard } from "@/components/kanban-board";
 import { ApplicationsTable } from "@/components/applications-table";
+import { EmptyState } from "@/components/empty-state";
+import { KanbanBoard } from "@/components/kanban-board";
 import { api } from "@/lib/api";
 
 export default function ApplicationsPage() {
@@ -19,30 +21,52 @@ export default function ApplicationsPage() {
 
   return (
     <div className="mx-auto max-w-[1600px] px-8 py-6">
-      <header className="flex items-center justify-between">
+      <motion.header
+        initial={{ opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.25 }}
+        className="flex flex-wrap items-end justify-between gap-3"
+      >
         <div>
           <h1 className="text-2xl font-medium tracking-tight">Applications</h1>
           <p className="text-sm text-[color:var(--color-text-muted)]">
-            {applications.length} active · drag cards to update status
+            {applications.length} tracked · drag cards to update status
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex rounded-full border border-white/10 bg-white/[0.03] p-0.5">
-            <ViewToggle active={view === "kanban"} onClick={() => setView("kanban")} icon={<LayoutGrid className="size-3.5" />} label="Kanban" />
-            <ViewToggle active={view === "table"} onClick={() => setView("table")} icon={<Rows3 className="size-3.5" />} label="Table" />
+          <div className="flex rounded-full border border-[color:var(--color-border)] bg-white/[0.03] p-0.5">
+            <ViewToggle
+              active={view === "kanban"}
+              onClick={() => setView("kanban")}
+              icon={<LayoutGrid className="size-3.5" />}
+              label="Kanban"
+            />
+            <ViewToggle
+              active={view === "table"}
+              onClick={() => setView("table")}
+              icon={<Rows3 className="size-3.5" />}
+              label="Table"
+            />
           </div>
           <button
             onClick={() => setOpen(true)}
-            className="flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-4 py-1.5 text-sm font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] hover:bg-[#8C6CFF]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             <Plus className="size-3.5" /> Add job
           </button>
         </div>
-      </header>
+      </motion.header>
 
       <div className="mt-6">
         {isLoading ? (
           <div className="text-sm text-[color:var(--color-text-muted)]">loading…</div>
+        ) : applications.length === 0 ? (
+          <EmptyState
+            icon={Inbox}
+            title="No applications yet"
+            description="Add a job from a URL and it'll show up here as a card. Track status, set follow-ups, and tailor resumes per role."
+            cta={{ href: "/jobs", label: "Find internships" }}
+          />
         ) : view === "kanban" ? (
           <KanbanBoard applications={applications} onChange={() => refetch()} />
         ) : (
@@ -69,13 +93,23 @@ function ViewToggle({
   return (
     <button
       onClick={onClick}
-      className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition ${
-        active
-          ? "bg-white/10 text-white"
-          : "text-[color:var(--color-text-muted)] hover:text-white"
-      }`}
+      className={
+        "relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition " +
+        (active
+          ? "text-white"
+          : "text-[color:var(--color-text-muted)] hover:text-white")
+      }
     >
-      {icon} {label}
+      {active && (
+        <motion.span
+          layoutId="view-active"
+          className="absolute inset-0 rounded-full bg-gradient-brand opacity-30"
+          transition={{ type: "spring", stiffness: 400, damping: 28 }}
+        />
+      )}
+      <span className="relative inline-flex items-center gap-1.5">
+        {icon} {label}
+      </span>
     </button>
   );
 }

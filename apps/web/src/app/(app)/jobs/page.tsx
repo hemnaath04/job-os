@@ -2,9 +2,9 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { formatDistanceToNow, parseISO } from "date-fns";
+import { motion } from "framer-motion";
 import {
   Bookmark,
-  Building2,
   CheckCircle2,
   ExternalLink,
   Loader2,
@@ -17,6 +17,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { toast } from "sonner";
+import { CompanyAvatar } from "@/components/company-avatar";
 import { api } from "@/lib/api";
 import type {
   DiscoveryResult,
@@ -252,7 +253,7 @@ export default function DiscoverPage() {
           <button
             onClick={runSearch}
             disabled={search.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-4 py-1.5 text-sm font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             {search.isPending ? (
               <>
@@ -356,28 +357,35 @@ function ResultCard({
   });
 
   return (
-    <div className="glass rounded-[var(--radius-card)] p-4">
+    <motion.div
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.2 }}
+      className="glass hover-lift rounded-[var(--radius-card-lg)] p-4"
+    >
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <h3 className="truncate text-base font-medium">{result.title}</h3>
-            {result.source_url && (
-              <a
-                href={result.source_url}
-                target="_blank"
-                rel="noreferrer"
-                className="text-[color:var(--color-text-muted)] hover:text-white"
-              >
-                <ExternalLink className="size-3.5" />
-              </a>
-            )}
-          </div>
-          <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[color:var(--color-text-muted)]">
-            {result.company_name && (
-              <span className="inline-flex items-center gap-1">
-                <Building2 className="size-3" /> {result.company_name}
-              </span>
-            )}
+        <div className="flex min-w-0 items-start gap-3">
+          <CompanyAvatar name={result.company_name ?? "?"} size={36} />
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <h3 className="truncate text-base font-medium">{result.title}</h3>
+              {result.source_url && (
+                <a
+                  href={result.source_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[color:var(--color-text-muted)] hover:text-white"
+                >
+                  <ExternalLink className="size-3.5" />
+                </a>
+              )}
+            </div>
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[color:var(--color-text-muted)]">
+              {result.company_name && (
+                <span className="inline-flex items-center gap-1">
+                  {result.company_name}
+                </span>
+              )}
             {result.location && (
               <span className="inline-flex items-center gap-1">
                 <MapPin className="size-3" /> {result.location}
@@ -392,18 +400,19 @@ function ResultCard({
               {result.source_label || result.source}
             </span>
           </div>
-          {result.technologies.length > 0 && (
-            <div className="mt-2 flex flex-wrap gap-1">
-              {result.technologies.slice(0, 8).map((t) => (
-                <span
-                  key={t}
-                  className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
-                >
-                  {t}
-                </span>
-              ))}
-            </div>
-          )}
+            {result.technologies.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {result.technologies.slice(0, 8).map((t) => (
+                  <span
+                    key={t}
+                    className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
+                  >
+                    {t}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
           {result.already_imported ? (
@@ -425,7 +434,7 @@ function ResultCard({
           <button
             onClick={() => tailorJob.mutate()}
             disabled={tailorJob.isPending || importJob.isPending}
-            className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFF] px-3 py-1.5 text-xs font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
             title="Import + create application + open the tailoring agent"
           >
             {tailorJob.isPending ? (
@@ -441,7 +450,7 @@ function ResultCard({
         {result.description.slice(0, 400)}
         {result.description.length > 400 ? "…" : ""}
       </p>
-    </div>
+    </motion.div>
   );
 }
 
@@ -488,7 +497,7 @@ function SourceToggle({
       onClick={onClick}
       className={`flex flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
         active
-          ? "border-[#7C5CFF]/60 bg-[#7C5CFF]/[0.08] text-white"
+          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-white shadow-[0_0_24px_-8px_var(--color-purple)]"
           : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)] hover:bg-white/[0.04]"
       }`}
     >

@@ -11,6 +11,7 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { EmptyState } from "@/components/empty-state";
 import { api } from "@/lib/api";
 import type { Resume, ResumeVersionSummary } from "@/lib/types";
 
@@ -39,17 +40,12 @@ export default function ResumesPage() {
       )}
 
       {!isLoading && resumes.length === 0 && (
-        <div className="glass mt-8 rounded-[var(--radius-card)] p-8 text-center">
-          <FileText className="mx-auto size-6 text-[color:var(--color-violet)]" />
-          <h3 className="mt-3 text-base font-medium">No resumes yet</h3>
-          <p className="mx-auto mt-1 max-w-md text-sm text-[color:var(--color-text-muted)]">
-            Upload your master PDF on the{" "}
-            <Link href="/profile" className="text-[color:var(--color-violet)] underline">
-              Profile
-            </Link>{" "}
-            page first — your Master resume is auto-created on import.
-          </p>
-        </div>
+        <EmptyState
+          icon={FileText}
+          title="No resumes yet"
+          description="Upload your master PDF on Profile — the Master resume is auto-created on import, and tailored versions land here as they're generated."
+          cta={{ href: "/profile", label: "Open Profile" }}
+        />
       )}
 
       <div className="mt-8 space-y-4">
@@ -167,7 +163,7 @@ function VersionRow({
         <a
           href={downloadUrl}
           download={`resume_${version.id.slice(0, 8)}.pdf`}
-          className="inline-flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-3 py-1.5 text-xs font-medium text-white hover:bg-[#8C6CFF]"
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
         >
           <Download className="size-3" />
           Download PDF

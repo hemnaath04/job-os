@@ -165,7 +165,7 @@ function TailorInner() {
         <button
           onClick={() => tailor.mutate()}
           disabled={!canRun}
-          className="inline-flex items-center gap-2 rounded-full bg-[#7C5CFF] px-5 py-2 text-sm font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {tailor.isPending ? (
             <>
@@ -270,7 +270,7 @@ function ResultView({
           <button
             onClick={() => approve.mutate()}
             disabled={result.approved_by_user || approve.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-[#7C5CFF] px-4 py-1.5 text-xs font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             <CheckCircle2 className="size-3" />
             {result.approved_by_user ? "Approved" : approve.isPending ? "…" : "Approve"}
@@ -279,7 +279,7 @@ function ResultView({
       </header>
 
       {result.agent_note && (
-        <div className="glass mt-6 rounded-[var(--radius-card)] border border-[#7C5CFF]/20 p-4">
+        <div className="glass mt-6 rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/20 p-4">
           <div className="flex items-start gap-3">
             <Sparkles className="mt-0.5 size-4 text-[color:var(--color-violet)]" />
             <p className="text-sm leading-relaxed text-[color:var(--color-text-muted)]">
@@ -289,20 +289,22 @@ function ResultView({
         </div>
       )}
 
-      <AtsPanel
-        matched={result.ats_report?.matched ?? []}
-        missing={result.ats_report?.missing ?? []}
-      />
-
-      {result.gap_questions.length > 0 && (
-        <GapPanel gaps={result.gap_questions} facts={facts} />
-      )}
-
-      <ResumeRender
-        json={result.json_resume}
-        provenance={result.provenance}
-        originalBulletText={originalBulletText}
-      />
+      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
+        <ResumeRender
+          json={result.json_resume}
+          provenance={result.provenance}
+          originalBulletText={originalBulletText}
+        />
+        <div className="flex flex-col gap-4">
+          <AtsPanel
+            matched={result.ats_report?.matched ?? []}
+            missing={result.ats_report?.missing ?? []}
+          />
+          {result.gap_questions.length > 0 && (
+            <GapPanel gaps={result.gap_questions} facts={facts} />
+          )}
+        </div>
+      </div>
     </div>
   );
 }
@@ -345,25 +347,57 @@ function Field({
 function AtsBadge({ score }: { score: string | null }) {
   if (score === null || score === undefined) return null;
   const numeric = Number(score);
-  const color =
-    numeric >= 75
-      ? "text-[color:var(--color-mint)] bg-[color:var(--color-mint)]/10"
-      : numeric >= 50
-        ? "text-amber-300 bg-amber-400/10"
-        : "text-rose-300 bg-rose-400/10";
+  const ringFrom =
+    numeric >= 75 ? "#10B981" : numeric >= 50 ? "#F5B544" : "#FF6B8A";
+  const ringTo =
+    numeric >= 75 ? "#5EEAD4" : numeric >= 50 ? "#F59E0B" : "#F43F5E";
+  const pct = Math.max(0, Math.min(100, numeric));
+  const circ = 2 * Math.PI * 14;
+  const dash = (pct / 100) * circ;
   return (
-    <span
-      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${color}`}
-    >
-      ATS {numeric.toFixed(1)}
-    </span>
+    <div className="inline-flex items-center gap-2">
+      <div className="relative size-9">
+        <svg viewBox="0 0 36 36" className="size-9 -rotate-90">
+          <defs>
+            <linearGradient id={`ats-${pct}`} x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stopColor={ringFrom} />
+              <stop offset="100%" stopColor={ringTo} />
+            </linearGradient>
+          </defs>
+          <circle
+            cx="18"
+            cy="18"
+            r="14"
+            fill="none"
+            stroke="rgba(255,255,255,0.08)"
+            strokeWidth="3"
+          />
+          <circle
+            cx="18"
+            cy="18"
+            r="14"
+            fill="none"
+            stroke={`url(#ats-${pct})`}
+            strokeWidth="3"
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${circ}`}
+          />
+        </svg>
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold">
+          {Math.round(pct)}
+        </div>
+      </div>
+      <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
+        ATS score
+      </span>
+    </div>
   );
 }
 
 function AtsPanel({ matched, missing }: { matched: string[]; missing: string[] }) {
   if (matched.length === 0 && missing.length === 0) return null;
   return (
-    <div className="glass mt-4 rounded-[var(--radius-card)] p-4">
+    <div className="glass rounded-[var(--radius-card)] p-4">
       <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
         ATS keyword coverage
       </div>
@@ -418,7 +452,7 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
   }, [facts]);
 
   return (
-    <div className="glass mt-4 rounded-[var(--radius-card)] border border-amber-400/25 p-4">
+    <div className="glass rounded-[var(--radius-card)] border border-amber-400/25 p-4">
       <div className="flex items-center gap-2">
         <AlertCircle className="size-4 text-amber-400" />
         <div className="text-sm font-medium">
@@ -543,7 +577,7 @@ function GapRow({
                 onClick={() => setKind(k)}
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   kind === k
-                    ? "border-[#7C5CFF]/50 bg-[#7C5CFF]/15 text-white"
+                    ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-white opacity-90"
                     : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)]"
                 }`}
               >
@@ -584,7 +618,7 @@ function GapRow({
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !title.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-[#7C5CFF] px-3 py-1 text-[11px] font-medium text-white shadow-[0_0_30px_-8px_#7C5CFF] enabled:hover:bg-[#8C6CFF] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
             >
               {create.isPending ? "Saving…" : "Save fact"}
             </button>
@@ -621,7 +655,7 @@ function ResumeRender({
   }, [provenance]);
 
   return (
-    <article className="glass mt-6 rounded-[var(--radius-card)] p-8">
+    <article className="glass rounded-[var(--radius-card-lg)] p-8">
       {json.basics && (
         <header className="border-b border-white/[0.06] pb-4">
           {json.basics.name && (
