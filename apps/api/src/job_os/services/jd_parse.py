@@ -55,7 +55,7 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         return {"title": title_hint} if title_hint else {}
 
     client = anthropic.AsyncAnthropic(
-        api_key=settings.anthropic_api_key,
+        auth_token=settings.anthropic_api_key,
         base_url=settings.anthropic_base_url or None,
     )
 

@@ -70,7 +70,7 @@ async def extract_json_resume_from_pdf(pdf_bytes: bytes) -> dict[str, Any]:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot extract from PDF.")
 
     client = anthropic.AsyncAnthropic(
-        api_key=s.anthropic_api_key,
+        auth_token=s.anthropic_api_key,
         base_url=s.anthropic_base_url or None,
     )
 
@@ -121,7 +121,7 @@ async def extract_json_resume_from_text(text: str) -> dict[str, Any]:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot extract from text.")
 
     client = anthropic.AsyncAnthropic(
-        api_key=s.anthropic_api_key,
+        auth_token=s.anthropic_api_key,
         base_url=s.anthropic_base_url or None,
     )
 
