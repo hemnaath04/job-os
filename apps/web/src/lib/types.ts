@@ -238,8 +238,11 @@ export interface MeRead {
   settings: UserSettings;
 }
 
+export type DiscoverySource = "theirstack" | "github";
+
 export interface DiscoveryResult {
-  source: string;
+  source: DiscoverySource | string;
+  source_label: string | null;
   source_id: string;
   source_url: string;
   title: string;
@@ -254,6 +257,7 @@ export interface DiscoveryResult {
 }
 
 export interface DiscoverySearchRequest {
+  sources?: DiscoverySource[];
   title_keywords?: string[];
   description_keywords?: string[];
   country_codes?: string[];

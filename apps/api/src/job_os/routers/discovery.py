@@ -1,21 +1,30 @@
-"""Discovery feed (M4) — TheirStack first, one-click import to `jobs`.
+"""Discovery feed (M4) — TheirStack + GitHub (SimplifyJobs) sources.
 
-The router only orchestrates: TheirStack lookup, dedupe annotation against
-the user's existing jobs, and a separate import call that does the same
-LLM-parse + Job-create dance as `POST /jobs/from-url`, but skips the
-external fetch because TheirStack already gave us the JD text.
+The router fans out to each requested source in parallel, merges the results,
+dedupes against the user's existing jobs by (source, source_id), and sorts by
+posted_at desc before applying the final limit.
+
+Import path: for sources that ship a real JD (TheirStack), the description
+goes straight to `services.jd_parse`. For sources that only ship a link
+(GitHub), we run Firecrawl on the source_url first to grab the JD text.
 """
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from job_os.auth import get_current_user
 from job_os.db.models import Job, User
 from job_os.db.session import get_session
+from job_os.integrations import github_jobs
+from job_os.integrations.firecrawl import fetch_url_markdown
 from job_os.integrations.theirstack import (
     TheirStackUnavailableError,
-    search_jobs,
+)
+from job_os.integrations.theirstack import (
+    search_jobs as theirstack_search,
 )
 from job_os.schemas.discovery import (
     DiscoveryImportRequest,
@@ -28,6 +37,8 @@ from job_os.services.jd_parse import parse_jd
 
 router = APIRouter(prefix="/discovery")
 
+_MIN_DESCRIPTION_CHARS = 200
+
 
 @router.post("/search", response_model=list[DiscoveryResult])
 async def search(
@@ -35,8 +46,44 @@ async def search(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[DiscoveryResult]:
+    if not payload.sources:
+        raise HTTPException(400, "sources list cannot be empty")
+
+    tasks = []
+    if "theirstack" in payload.sources:
+        tasks.append(_search_theirstack(payload))
+    if "github" in payload.sources:
+        tasks.append(_search_github(payload))
+
+    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+
+    combined: list[DiscoveryResult] = []
+    errors: list[str] = []
+    for res in gathered:
+        if isinstance(res, BaseException):
+            errors.append(str(res))
+            continue
+        combined.extend(res)
+
+    if combined:
+        await _annotate_already_imported(session, combined)
+
+    # Sort by posted_at desc, nulls last — then cap to `limit` across sources.
+    combined.sort(
+        key=lambda r: (r.posted_at is None, -(r.posted_at.timestamp() if r.posted_at else 0))
+    )
+    capped = combined[: payload.limit]
+
+    # If every source we asked for blew up and we have nothing, surface a
+    # sensible error so the FE doesn't show a blank "no results" screen.
+    if not capped and errors:
+        raise HTTPException(503, "; ".join(errors))
+    return capped
+
+
+async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
     try:
-        results = await search_jobs(
+        hits = await theirstack_search(
             title_keywords=payload.title_keywords or None,
             description_keywords=payload.description_keywords or None,
             country_codes=payload.country_codes or None,
@@ -46,37 +93,68 @@ async def search(
             page=payload.page,
         )
     except TheirStackUnavailableError as e:
-        raise HTTPException(503, str(e)) from e
-
-    # Annotate which results we already have (so the FE can hide the Import
-    # button or show a "Go to job" link instead).
-    source_ids = [r.source_id for r in results if r.source_id]
-    existing: set[str] = set()
-    if source_ids:
-        rows = await session.execute(
-            select(Job.source_id).where(
-                Job.source == "theirstack", Job.source_id.in_(source_ids)
-            )
-        )
-        existing = {row[0] for row in rows.all() if row[0]}
-
+        raise RuntimeError(f"theirstack unavailable: {e}") from e
     return [
         DiscoveryResult(
             source="theirstack",
-            source_id=r.source_id,
-            source_url=r.source_url,
-            title=r.title,
-            company_name=r.company_name,
-            company_domain=r.company_domain,
-            location=r.location,
-            country_code=r.country_code,
-            posted_at=r.posted_at,
-            description=r.description,
-            technologies=r.technologies,
-            already_imported=r.source_id in existing,
+            source_label="TheirStack",
+            source_id=h.source_id,
+            source_url=h.source_url,
+            title=h.title,
+            company_name=h.company_name,
+            company_domain=h.company_domain,
+            location=h.location,
+            country_code=h.country_code,
+            posted_at=h.posted_at,
+            description=h.description,
+            technologies=h.technologies,
         )
-        for r in results
+        for h in hits
     ]
+
+
+async def _search_github(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
+    # GitHub source honors title_keywords + max_age_days only; the others
+    # don't have analogues in the SimplifyJobs tables.
+    hits = await github_jobs.search_jobs(
+        title_keywords=payload.title_keywords or None,
+        max_age_days=payload.max_age_days,
+        limit=payload.limit,
+    )
+    return [
+        DiscoveryResult(
+            source="github",
+            source_label=h.repo_label,
+            source_id=h.source_id,
+            source_url=h.apply_url,
+            title=h.role,
+            company_name=h.company,
+            location=h.location,
+            posted_at=h.posted_at,
+            description="",
+        )
+        for h in hits
+    ]
+
+
+async def _annotate_already_imported(
+    session: AsyncSession, results: list[DiscoveryResult]
+) -> None:
+    pairs = {(r.source, r.source_id) for r in results if r.source_id}
+    if not pairs:
+        return
+    # Single SELECT against (source, source_id) for all results. Postgres's
+    # row-IN tuple syntax keeps this one round trip.
+    rows = await session.execute(
+        select(Job.source, Job.source_id).where(
+            tuple_(Job.source, Job.source_id).in_(pairs),
+            or_(Job.source_id.is_not(None)),
+        )
+    )
+    existing = {(s, sid) for s, sid in rows.all()}
+    for r in results:
+        if (r.source, r.source_id) in existing:
+            r.already_imported = True
 
 
 @router.post("/import", response_model=JobRead, status_code=201)
@@ -96,7 +174,26 @@ async def import_result(
         if existing:
             return existing
 
-    parsed = await parse_jd(payload.description, title_hint=payload.title)
+    # If the description is missing/short (typical for github-sourced rows),
+    # fetch the JD via Firecrawl before parsing. This keeps the import flow
+    # uniform across sources without forcing the FE to know per-source rules.
+    description = payload.description
+    raw = payload.description
+    if (len(description) < _MIN_DESCRIPTION_CHARS) and payload.source_url:
+        try:
+            fetched = await fetch_url_markdown(payload.source_url)
+            description = fetched.markdown or description
+            raw = fetched.raw or raw or description
+        except Exception as e:  # noqa: BLE001 — fallback is acceptable
+            # If the fetch fails we still create the Job with whatever we had,
+            # so the user can manually paste the JD later via /jobs/from-text.
+            from structlog import get_logger
+
+            get_logger(__name__).warning(
+                "discovery.import.fetch_failed", url=payload.source_url, error=str(e)
+            )
+
+    parsed = await parse_jd(description, title_hint=payload.title)
     company = await upsert_company(
         session,
         name=payload.company_name or parsed.get("company") or "Unknown",
@@ -113,8 +210,8 @@ async def import_result(
         salary_min=parsed.get("salary_min"),
         salary_max=parsed.get("salary_max"),
         salary_currency=parsed.get("salary_currency") or "USD",
-        jd_raw=payload.description,
-        jd_clean=payload.description,
+        jd_raw=raw or description,
+        jd_clean=description,
         jd_parsed=parsed,
         source=payload.source,
         source_id=payload.source_id or None,

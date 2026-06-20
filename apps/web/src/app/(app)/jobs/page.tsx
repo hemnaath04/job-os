@@ -14,7 +14,11 @@ import {
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import type { DiscoveryResult, DiscoverySearchRequest } from "@/lib/types";
+import type {
+  DiscoveryResult,
+  DiscoverySearchRequest,
+  DiscoverySource,
+} from "@/lib/types";
 
 export default function DiscoverPage() {
   const qc = useQueryClient();
@@ -28,6 +32,10 @@ export default function DiscoverPage() {
   const [country, setCountry] = useState("US");
   const [maxAgeDays, setMaxAgeDays] = useState(30);
   const [limit, setLimit] = useState(20);
+  const [sources, setSources] = useState<DiscoverySource[]>([
+    "theirstack",
+    "github",
+  ]);
   const [results, setResults] = useState<DiscoveryResult[] | null>(null);
 
   const search = useMutation({
@@ -39,8 +47,19 @@ export default function DiscoverPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  function toggleSource(s: DiscoverySource) {
+    setSources((prev) => {
+      if (prev.includes(s)) {
+        if (prev.length === 1) return prev; // keep at least one source on
+        return prev.filter((x) => x !== s);
+      }
+      return [...prev, s];
+    });
+  }
+
   function runSearch() {
     const body: DiscoverySearchRequest = {
+      sources,
       title_keywords: splitCsv(titles),
       technology_slugs: splitCsv(techs),
       country_codes: country ? [country.toUpperCase()] : [],
@@ -70,6 +89,28 @@ export default function DiscoverPage() {
       </header>
 
       <div className="glass mt-6 grid grid-cols-1 gap-4 rounded-[var(--radius-card)] p-5 md:grid-cols-2">
+        <div className="md:col-span-2">
+          <label className="text-sm font-medium">Sources</label>
+          <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
+            TheirStack costs 1 credit per imported job; GitHub is free and
+            re-fetched live from the SimplifyJobs READMEs on every search (they
+            update daily).
+          </p>
+          <div className="mt-2 flex gap-2">
+            <SourceToggle
+              active={sources.includes("theirstack")}
+              onClick={() => toggleSource("theirstack")}
+              label="TheirStack"
+              hint="LinkedIn / Lever / Greenhouse / Ashby"
+            />
+            <SourceToggle
+              active={sources.includes("github")}
+              onClick={() => toggleSource("github")}
+              label="GitHub"
+              hint="SimplifyJobs internships + new-grad"
+            />
+          </div>
+        </div>
         <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
           <input
             type="text"
@@ -226,6 +267,9 @@ function ResultCard({
                 posted {formatDistanceToNow(parseISO(result.posted_at), { addSuffix: true })}
               </span>
             )}
+            <span className="rounded-full bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-text-dim)]">
+              {result.source_label || result.source}
+            </span>
           </div>
           {result.technologies.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1">
@@ -292,4 +336,30 @@ function splitCsv(s: string): string[] {
     .split(",")
     .map((t) => t.trim())
     .filter(Boolean);
+}
+
+function SourceToggle({
+  active,
+  onClick,
+  label,
+  hint,
+}: {
+  active: boolean;
+  onClick: () => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
+        active
+          ? "border-[#7C5CFF]/60 bg-[#7C5CFF]/[0.08] text-white"
+          : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)] hover:bg-white/[0.04]"
+      }`}
+    >
+      <span className="text-sm font-medium">{label}</span>
+      <span className="text-[10px] text-[color:var(--color-text-dim)]">{hint}</span>
+    </button>
+  );
 }
