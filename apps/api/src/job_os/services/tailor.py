@@ -1,0 +1,419 @@
+"""Resume tailoring agent.
+
+Loads the user's master ResumeVersion + a target Job + every verified
+ProfileFact and FactBullet, then asks Claude (via the configured Manifest
+gateway) which facts/bullets to include and how to lightly edit them. Python
+assembles the final JSON Resume deterministically from the agent's decisions
+so the no-hallucination contract is enforced server-side, not in the prompt.
+
+Hard rules baked into the prompt:
+  - Every bullet in the output must reference a `fact_bullet_id` that exists
+    in the provided bullets list. The agent NEVER invents new bullets.
+  - Unmet JD requirements become `gap_questions` — surface the gap, do not
+    paper over it. JS/TS specifically must always be a gap (the user does not
+    write JavaScript/TypeScript).
+  - Light rewrites are allowed (rewording, reordering keywords) as long as
+    no metric or fact in the bullet changes.
+"""
+from __future__ import annotations
+
+import json
+from datetime import date
+from decimal import Decimal
+from typing import Any
+from uuid import UUID
+
+import anthropic
+import structlog
+from pydantic import ValidationError
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from job_os.db.models import FactBullet, Job, ProfileFact, Resume, ResumeVersion, User
+from job_os.schemas.resumes import (
+    GapQuestion,
+    ProvenanceEntry,
+    SelectedBullet,
+    TailorAgentOutput,
+)
+from job_os.services.jd_parse import _strip_json_fence
+from job_os.settings import get_settings
+
+log = structlog.get_logger(__name__)
+
+
+SYSTEM_PROMPT = """\
+You are a resume tailoring assistant. You receive (a) a parsed job description,
+(b) the candidate's master JSON Resume, (c) the candidate's full profile of
+verified facts and bullets. Your job is to choose which facts and bullets best
+match the JD and how (if at all) to lightly rephrase the chosen bullets.
+
+HARD CONSTRAINTS — these are non-negotiable:
+1. Every bullet in `selected_bullets` MUST reference a `fact_bullet_id` that
+   appears in the candidate's bullets list. Never invent a new fact_bullet_id.
+2. A bullet's `rewritten_text` may rephrase wording, change verb tense, or
+   reorder content, but MUST NOT introduce metrics, technologies, or claims
+   that are not present in the original bullet text or the parent fact's
+   payload. If a JD keyword is missing from the candidate's profile, it goes
+   in `gap_questions`, not into a bullet.
+3. If the JD requires JavaScript, TypeScript, React, or any frontend
+   framework, surface that as a gap_question — the candidate explicitly does
+   NOT write JS/TS, so never include it in selected facts/bullets even if a
+   "skill" fact for it appears.
+4. `selected_fact_ids` includes the facts to render in the resume. Order
+   doesn't matter (Python sorts by date / section).
+5. `summary_objective` is a 1-2 sentence tailored summary line for the
+   resume's basics.summary, or null to keep the master's summary.
+
+ATS:
+- `ats_keywords_matched`: JD keywords that appear in your selected bullets or facts.
+- `ats_keywords_missing`: JD keywords that do not appear and have no matching
+  fact — these usually become gap_questions too.
+
+Output: a single JSON object matching the provided schema. No prose, no fences.
+"""
+
+
+async def tailor_resume(
+    session: AsyncSession,
+    *,
+    user: User,
+    resume: Resume,
+    master_version: ResumeVersion,
+    job: Job,
+) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
+    """Run the tailoring agent. Returns the tuple to persist on a new ResumeVersion."""
+    settings = get_settings()
+    if not settings.anthropic_api_key:
+        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot run the tailoring agent.")
+
+    facts = await _load_verified_facts(session, user.id)
+    bullets_by_fact = await _load_bullets(session, [f.id for f in facts])
+    facts_payload = _build_facts_payload(facts, bullets_by_fact)
+
+    user_prompt = _build_user_prompt(
+        job=job, master_json_resume=master_version.json_resume, facts_payload=facts_payload
+    )
+
+    client = anthropic.AsyncAnthropic(
+        auth_token=settings.anthropic_api_key,
+        base_url=settings.anthropic_base_url or None,
+    )
+    msg = await client.messages.create(
+        model=settings.anthropic_model_tailor,
+        max_tokens=4096,
+        system=SYSTEM_PROMPT,
+        messages=[{"role": "user", "content": user_prompt}],
+    )
+
+    text = "".join(b.text for b in msg.content if b.type == "text")
+    raw = _strip_json_fence(text)
+    try:
+        agent = TailorAgentOutput.model_validate_json(raw)
+    except ValidationError as e:
+        log.warning("tailor.invalid_json", error=str(e), preview=raw[:400])
+        raise RuntimeError("Tailoring agent returned an invalid response.") from e
+
+    valid_fact_ids = {f.id for f in facts}
+    valid_bullet_ids: dict[UUID, UUID] = {
+        b.id: b.fact_id for bs in bullets_by_fact.values() for b in bs
+    }
+
+    # Enforce the no-hallucination contract: drop any selected_bullet whose
+    # fact_bullet_id isn't in our verified bullet set. (The prompt forbids
+    # this; defense in depth in case the model slips.)
+    safe_bullets = [
+        sb for sb in agent.selected_bullets if sb.fact_bullet_id in valid_bullet_ids
+    ]
+    dropped = len(agent.selected_bullets) - len(safe_bullets)
+    if dropped:
+        log.warning("tailor.dropped_unknown_bullets", count=dropped)
+
+    safe_fact_ids = {fid for fid in agent.selected_fact_ids if fid in valid_fact_ids}
+    # Also include facts that own any selected bullet (so the parent
+    # work/project entry renders).
+    safe_fact_ids.update(valid_bullet_ids[sb.fact_bullet_id] for sb in safe_bullets)
+
+    selected_facts = [f for f in facts if f.id in safe_fact_ids]
+
+    json_resume, provenance = _assemble_json_resume(
+        master_json_resume=master_version.json_resume,
+        selected_facts=selected_facts,
+        selected_bullets=safe_bullets,
+        bullets_by_fact=bullets_by_fact,
+        summary_objective=agent.summary_objective,
+    )
+
+    ats_score, ats_report = _compute_ats(
+        matched=agent.ats_keywords_matched, missing=agent.ats_keywords_missing
+    )
+    return (
+        json_resume,
+        provenance,
+        list(agent.gap_questions),
+        ats_score,
+        ats_report,
+        agent.agent_note,
+    )
+
+
+# ---- Loaders -----------------------------------------------------------------
+
+
+async def _load_verified_facts(session: AsyncSession, user_id: UUID) -> list[ProfileFact]:
+    result = await session.execute(
+        select(ProfileFact)
+        .where(ProfileFact.user_id == user_id, ProfileFact.verified.is_(True))
+        .order_by(
+            ProfileFact.end_date.desc().nulls_first(),
+            ProfileFact.start_date.desc().nulls_last(),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def _load_bullets(
+    session: AsyncSession, fact_ids: list[UUID]
+) -> dict[UUID, list[FactBullet]]:
+    if not fact_ids:
+        return {}
+    result = await session.execute(
+        select(FactBullet).where(FactBullet.fact_id.in_(fact_ids))
+    )
+    out: dict[UUID, list[FactBullet]] = {}
+    for b in result.scalars().all():
+        out.setdefault(b.fact_id, []).append(b)
+    return out
+
+
+# ---- Prompt assembly ---------------------------------------------------------
+
+
+def _build_facts_payload(
+    facts: list[ProfileFact], bullets_by_fact: dict[UUID, list[FactBullet]]
+) -> list[dict[str, Any]]:
+    """Compact JSON the LLM sees — only verified facts + their bullets, no PII beyond resume."""
+    out: list[dict[str, Any]] = []
+    for f in facts:
+        out.append(
+            {
+                "id": str(f.id),
+                "kind": f.kind,
+                "title": f.title,
+                "org": f.org,
+                "start_date": f.start_date.isoformat() if f.start_date else None,
+                "end_date": f.end_date.isoformat() if f.end_date else None,
+                "location": f.location,
+                "source_url": f.source_url,
+                "payload": f.payload or {},
+                "bullets": [
+                    {"id": str(b.id), "text": b.text, "target_role": b.target_role}
+                    for b in bullets_by_fact.get(f.id, [])
+                ],
+            }
+        )
+    return out
+
+
+def _build_user_prompt(
+    *, job: Job, master_json_resume: dict[str, Any], facts_payload: list[dict[str, Any]]
+) -> str:
+    return (
+        "JOB DESCRIPTION (parsed):\n"
+        f"{json.dumps(job.jd_parsed or {}, indent=2)}\n\n"
+        "JOB DESCRIPTION (clean text, truncated):\n"
+        f"<jd>\n{(job.jd_clean or '')[:8000]}\n</jd>\n\n"
+        "CANDIDATE MASTER RESUME (JSON Resume):\n"
+        f"{json.dumps(master_json_resume, indent=2)[:6000]}\n\n"
+        "CANDIDATE VERIFIED FACTS + BULLETS:\n"
+        f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        "Respond with a single JSON object matching this schema (no prose, no fences):\n"
+        f"{json.dumps(TailorAgentOutput.model_json_schema())}"
+    )
+
+
+# ---- Assembly ----------------------------------------------------------------
+
+_KIND_TO_SECTION = {
+    "experience": "work",
+    "project": "projects",
+    "volunteering": "volunteer",
+    "education": "education",
+    "skill": "skills",
+    "certification": "certificates",
+    "publication": "publications",
+    "award": "awards",
+}
+
+
+def _assemble_json_resume(
+    *,
+    master_json_resume: dict[str, Any],
+    selected_facts: list[ProfileFact],
+    selected_bullets: list[SelectedBullet],
+    bullets_by_fact: dict[UUID, list[FactBullet]],
+    summary_objective: str | None,
+) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
+    """Build the tailored JSON Resume + provenance from the agent's selections."""
+    basics = dict(master_json_resume.get("basics") or {})
+    if summary_objective:
+        basics["summary"] = summary_objective
+
+    by_fact: dict[UUID, list[SelectedBullet]] = {}
+    bullet_map: dict[UUID, FactBullet] = {
+        b.id: b for bs in bullets_by_fact.values() for b in bs
+    }
+    for sb in selected_bullets:
+        parent_fact = bullet_map[sb.fact_bullet_id].fact_id
+        by_fact.setdefault(parent_fact, []).append(sb)
+
+    work: list[dict[str, Any]] = []
+    projects: list[dict[str, Any]] = []
+    volunteer: list[dict[str, Any]] = []
+    education: list[dict[str, Any]] = []
+    skills_by_category: dict[str, list[str]] = {}
+    certificates: list[dict[str, Any]] = []
+    publications: list[dict[str, Any]] = []
+    awards: list[dict[str, Any]] = []
+
+    sorted_facts = sorted(
+        selected_facts,
+        key=lambda f: (f.end_date or date.min, f.start_date or date.min),
+        reverse=True,
+    )
+
+    for f in sorted_facts:
+        section = _KIND_TO_SECTION.get(f.kind)
+        if section is None:
+            continue
+        bullets = [sb.rewritten_text for sb in by_fact.get(f.id, [])]
+        payload = f.payload or {}
+        if section == "work":
+            work.append(
+                {
+                    "name": f.org or "",
+                    "position": f.title,
+                    "startDate": f.start_date.isoformat() if f.start_date else None,
+                    "endDate": f.end_date.isoformat() if f.end_date else None,
+                    "location": f.location,
+                    "summary": payload.get("summary"),
+                    "url": f.source_url,
+                    "highlights": bullets,
+                    "keywords": payload.get("keywords", []),
+                }
+            )
+        elif section == "projects":
+            projects.append(
+                {
+                    "name": f.title,
+                    "description": payload.get("description"),
+                    "startDate": f.start_date.isoformat() if f.start_date else None,
+                    "endDate": f.end_date.isoformat() if f.end_date else None,
+                    "url": f.source_url,
+                    "highlights": bullets,
+                    "keywords": payload.get("keywords", []),
+                    "roles": payload.get("roles", []),
+                    "entity": payload.get("entity"),
+                    "type": payload.get("type"),
+                }
+            )
+        elif section == "volunteer":
+            volunteer.append(
+                {
+                    "organization": f.org or "",
+                    "position": f.title,
+                    "startDate": f.start_date.isoformat() if f.start_date else None,
+                    "endDate": f.end_date.isoformat() if f.end_date else None,
+                    "url": f.source_url,
+                    "summary": payload.get("summary"),
+                    "highlights": bullets,
+                }
+            )
+        elif section == "education":
+            education.append(
+                {
+                    "institution": f.org or "",
+                    "area": payload.get("area"),
+                    "studyType": payload.get("studyType"),
+                    "startDate": f.start_date.isoformat() if f.start_date else None,
+                    "endDate": f.end_date.isoformat() if f.end_date else None,
+                    "score": payload.get("score"),
+                    "courses": payload.get("courses", []),
+                    "location": f.location,
+                    "url": f.source_url,
+                }
+            )
+        elif section == "skills":
+            category = (payload.get("category") or f.org or "Skills").strip()
+            skills_by_category.setdefault(category, []).append(f.title)
+        elif section == "certificates":
+            certificates.append(
+                {
+                    "name": f.title,
+                    "issuer": f.org,
+                    "date": f.start_date.isoformat() if f.start_date else None,
+                    "url": f.source_url,
+                }
+            )
+        elif section == "publications":
+            publications.append(
+                {
+                    "name": f.title,
+                    "publisher": f.org,
+                    "releaseDate": f.start_date.isoformat() if f.start_date else None,
+                    "url": f.source_url,
+                    "summary": payload.get("summary"),
+                }
+            )
+        elif section == "awards":
+            awards.append(
+                {
+                    "title": f.title,
+                    "awarder": f.org,
+                    "date": f.start_date.isoformat() if f.start_date else None,
+                    "summary": payload.get("summary"),
+                }
+            )
+
+    json_resume: dict[str, Any] = {
+        "basics": basics,
+        "work": work,
+        "projects": projects,
+        "volunteer": volunteer,
+        "education": education,
+        "skills": [
+            {"name": cat, "keywords": kws} for cat, kws in skills_by_category.items()
+        ],
+        "certificates": certificates,
+        "publications": publications,
+        "awards": awards,
+    }
+
+    provenance: list[ProvenanceEntry] = []
+    for sb in selected_bullets:
+        fb = bullet_map[sb.fact_bullet_id]
+        provenance.append(
+            ProvenanceEntry(
+                section=sb.target_section,
+                text=sb.rewritten_text,
+                fact_bullet_id=fb.id,
+                fact_id=fb.fact_id,
+            )
+        )
+
+    return json_resume, provenance
+
+
+def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, dict[str, Any]]:
+    total = len(matched) + len(missing)
+    if total == 0:
+        score = Decimal("0.0")
+    else:
+        score = (Decimal(len(matched)) / Decimal(total) * Decimal("100")).quantize(Decimal("0.1"))
+    report = {
+        "matched": matched,
+        "missing": missing,
+        "matched_count": len(matched),
+        "missing_count": len(missing),
+    }
+    return score, report

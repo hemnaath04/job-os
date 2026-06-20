@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.auth import get_current_user
-from job_os.db.models import Resume, ResumeVersion, User
+from job_os.db.models import Job, Resume, ResumeVersion, User
 from job_os.db.session import get_session
 from job_os.integrations import r2
 from job_os.schemas.resumes import (
@@ -16,8 +16,11 @@ from job_os.schemas.resumes import (
     ResumeVersionCreate,
     ResumeVersionRead,
     ResumeVersionSummary,
+    TailorRequest,
+    TailorResponse,
 )
 from job_os.services.pdf_render import render_resume_pdf
+from job_os.services.tailor import tailor_resume
 
 router = APIRouter(prefix="/resumes")
 
@@ -240,3 +243,90 @@ async def _load_resume(session: AsyncSession, resume_id: UUID, user: User) -> Re
     if resume is None or resume.user_id != user.id:
         raise HTTPException(404, "resume not found")
     return resume
+
+
+@router.post("/{resume_id}/versions/tailor", response_model=TailorResponse, status_code=201)
+async def tailor_version(
+    resume_id: UUID,
+    payload: TailorRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> TailorResponse:
+    """Run the tailoring agent against `payload.job_id` and persist the result
+    as a new ResumeVersion under the requested role-specific Resume (SWE, ML,
+    etc.). The baseline is always the master Resume's latest version — never
+    a previously tailored variant — so each tailor run starts from a clean
+    no-hallucination baseline. The new version is unapproved; the user
+    reviews via `/versions/{id}` and either approves or re-tailors.
+    """
+    resume = await _load_resume(session, resume_id, user)
+
+    job = await session.get(Job, payload.job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+
+    master = (
+        await session.execute(
+            select(Resume).where(Resume.user_id == user.id, Resume.is_master.is_(True))
+        )
+    ).scalar_one_or_none()
+    if master is None:
+        raise HTTPException(
+            409, "No master resume found — create one (is_master=true) and import a JSON Resume."
+        )
+
+    baseline = (
+        await session.execute(
+            select(ResumeVersion)
+            .where(ResumeVersion.resume_id == master.id)
+            .order_by(ResumeVersion.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if baseline is None:
+        raise HTTPException(
+            409,
+            "Master resume has no baseline version yet — import a JSON Resume into the master "
+            "resume first (POST /profile/import).",
+        )
+
+    (
+        json_resume,
+        provenance,
+        gap_questions,
+        ats_score,
+        ats_report,
+        agent_note,
+    ) = await tailor_resume(
+        session, user=user, resume=resume, master_version=baseline, job=job
+    )
+
+    version = ResumeVersion(
+        resume_id=resume_id,
+        json_resume=json_resume,
+        spawned_from_job_id=job.id,
+        provenance=[p.model_dump(mode="json") for p in provenance],
+        ats_score=ats_score,
+        ats_report=ats_report,
+        approved_by_user=False,
+    )
+    session.add(version)
+    await session.flush()
+
+    return TailorResponse(
+        id=version.id,
+        created_at=version.created_at,
+        updated_at=version.updated_at,
+        resume_id=version.resume_id,
+        spawned_from_job_id=version.spawned_from_job_id,
+        spawned_from_application_id=version.spawned_from_application_id,
+        ats_score=version.ats_score,
+        ats_report=version.ats_report,
+        approved_by_user=version.approved_by_user,
+        pdf_r2_key=version.pdf_r2_key,
+        docx_r2_key=version.docx_r2_key,
+        json_resume=version.json_resume,
+        provenance=version.provenance,
+        gap_questions=gap_questions,
+        agent_note=agent_note,
+    )
