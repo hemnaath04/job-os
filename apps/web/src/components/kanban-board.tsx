@@ -10,7 +10,8 @@ import {
   useSensors,
   type DragEndEvent,
 } from "@dnd-kit/core";
-import { Building2, Calendar, MapPin } from "lucide-react";
+import { Building2, Calendar, MapPin, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
@@ -109,6 +110,9 @@ function DraggableCard({ app }: { app: Application }) {
 
 function Card({ app, dragging = false }: { app: Application; dragging?: boolean }) {
   const company = app.job.company?.name ?? "Unknown";
+  // The tailor link must NOT trigger drag — stop pointer events at the link
+  // so dnd-kit's PointerSensor doesn't claim them.
+  const stopDrag = (e: React.SyntheticEvent) => e.stopPropagation();
   return (
     <div
       className={`glass cursor-grab rounded-[0.75rem] p-3 ${
@@ -127,6 +131,18 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
       {app.next_action_at && (
         <div className="mt-2 flex items-center gap-1 text-xs text-[color:var(--color-amber)]">
           <Calendar className="size-3" /> {app.next_action_label || "next action"}
+        </div>
+      )}
+      {!dragging && (
+        <div className="mt-2 flex justify-end">
+          <Link
+            href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
+            onPointerDown={stopDrag}
+            onClick={stopDrag}
+            className="inline-flex items-center gap-1 rounded-full bg-white/[0.03] px-2 py-0.5 text-[10px] text-[color:var(--color-violet)] hover:bg-[color:var(--color-violet)]/15"
+          >
+            <Sparkles className="size-2.5" /> Tailor
+          </Link>
         </div>
       )}
     </div>

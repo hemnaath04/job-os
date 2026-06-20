@@ -4,7 +4,9 @@ import type {
   Job,
   ProfileFact,
   Resume,
+  ResumeVersion,
   ResumeVersionSummary,
+  TailorResponse,
 } from "./types";
 
 const BASE = "/api/backend";
@@ -84,6 +86,18 @@ export const api = {
   listResumes: () => request<Resume[]>("/resumes"),
   listVersions: (resumeId: string) =>
     request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`),
+  getVersion: (resumeId: string, versionId: string) =>
+    request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}`),
+  approveVersion: (resumeId: string, versionId: string) =>
+    request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}/approve`, {
+      method: "POST",
+    }),
   downloadVersionUrl: (resumeId: string, versionId: string) =>
     `/api/backend/resumes/${resumeId}/versions/${versionId}/download`,
+
+  tailorResume: (resumeId: string, jobId: string) =>
+    request<TailorResponse>(`/resumes/${resumeId}/versions/tailor`, {
+      method: "POST",
+      body: JSON.stringify({ job_id: jobId }),
+    }),
 };

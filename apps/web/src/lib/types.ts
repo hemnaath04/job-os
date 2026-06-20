@@ -109,6 +109,106 @@ export interface ResumeVersionSummary {
   updated_at: string;
 }
 
+export interface ProvenanceEntry {
+  section: "work" | "projects" | "volunteer";
+  text: string;
+  fact_bullet_id: string;
+  fact_id: string;
+}
+
+export interface GapQuestion {
+  requirement: string;
+  why_no_match: string;
+  suggested_fact_ids: string[];
+}
+
+export interface JsonResume {
+  basics?: {
+    name?: string;
+    label?: string;
+    email?: string;
+    phone?: string;
+    url?: string;
+    summary?: string;
+    location?: { address?: string; city?: string; region?: string; countryCode?: string };
+    profiles?: { network: string; username: string; url: string }[];
+  };
+  work?: {
+    name?: string;
+    position?: string;
+    startDate?: string | null;
+    endDate?: string | null;
+    location?: string | null;
+    summary?: string | null;
+    url?: string | null;
+    highlights?: string[];
+    keywords?: string[];
+  }[];
+  projects?: {
+    name?: string;
+    description?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    url?: string | null;
+    highlights?: string[];
+    keywords?: string[];
+    roles?: string[];
+    entity?: string | null;
+    type?: string | null;
+  }[];
+  volunteer?: {
+    organization?: string;
+    position?: string;
+    startDate?: string | null;
+    endDate?: string | null;
+    url?: string | null;
+    summary?: string | null;
+    highlights?: string[];
+  }[];
+  education?: {
+    institution?: string;
+    area?: string | null;
+    studyType?: string | null;
+    startDate?: string | null;
+    endDate?: string | null;
+    score?: string | null;
+    courses?: string[];
+    location?: string | null;
+    url?: string | null;
+  }[];
+  skills?: { name: string; keywords: string[] }[];
+  certificates?: { name: string; issuer?: string | null; date?: string | null; url?: string | null }[];
+  publications?: {
+    name: string;
+    publisher?: string | null;
+    releaseDate?: string | null;
+    url?: string | null;
+    summary?: string | null;
+  }[];
+  awards?: {
+    title: string;
+    awarder?: string | null;
+    date?: string | null;
+    summary?: string | null;
+  }[];
+}
+
+export interface ResumeVersion extends ResumeVersionSummary {
+  json_resume: JsonResume;
+  provenance: ProvenanceEntry[];
+  ats_report: {
+    matched: string[];
+    missing: string[];
+    matched_count: number;
+    missing_count: number;
+  } | null;
+}
+
+export interface TailorResponse extends ResumeVersion {
+  gap_questions: GapQuestion[];
+  agent_note: string;
+}
+
 export interface Application {
   id: string;
   job: Job;

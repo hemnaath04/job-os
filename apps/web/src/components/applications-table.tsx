@@ -1,6 +1,8 @@
 "use client";
 
 import { formatDistanceToNow } from "date-fns";
+import { Sparkles } from "lucide-react";
+import Link from "next/link";
 import type { Application } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
@@ -22,6 +24,7 @@ export function ApplicationsTable({
             <Th>Location</Th>
             <Th>Updated</Th>
             <Th>Next action</Th>
+            <Th>Tailor</Th>
           </tr>
         </thead>
         <tbody>
@@ -43,6 +46,14 @@ export function ApplicationsTable({
               </Td>
               <Td className="text-[color:var(--color-amber)]">
                 {a.next_action_label ?? "—"}
+              </Td>
+              <Td>
+                <Link
+                  href={{ pathname: "/tailor", query: { job_id: a.job.id } }}
+                  className="inline-flex items-center gap-1 rounded-full bg-white/[0.03] px-2 py-1 text-xs text-[color:var(--color-violet)] hover:bg-[color:var(--color-violet)]/15"
+                >
+                  <Sparkles className="size-3" /> Tailor
+                </Link>
               </Td>
             </tr>
           ))}
