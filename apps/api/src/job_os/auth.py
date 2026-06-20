@@ -73,11 +73,17 @@ async def _verify_clerk_jwt(token: str, jwks_url: str) -> dict:
 
     public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
     try:
+        # Clerk's session tokens default to a 60-second lifetime; on a
+        # cold-started Render container a few seconds of clock drift is
+        # enough to make a fresh-from-the-browser token read as already
+        # expired. A 60-second leeway swallows that drift while still
+        # rejecting anything actually stale by more than a minute.
         return jwt.decode(
             token,
             public_key,
             algorithms=[key.get("alg", "RS256")],
             options={"verify_aud": False},
+            leeway=60,
         )
     except jwt.PyJWTError as e:
         log.warning("jwt.verify_failed", error=str(e))
