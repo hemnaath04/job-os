@@ -11,6 +11,7 @@ import type {
   ResumeVersion,
   ResumeVersionSummary,
   SavedSearch,
+  SmartSearchResponse,
   TailorResponse,
   UserSettings,
   UserSettingsPatch,
@@ -170,6 +171,11 @@ export const api = {
     request<void>(`/discovery/saved/${id}`, { method: "DELETE" }),
   runSavedSearch: (id: string) =>
     request<DiscoveryResult[]>(`/discovery/saved/${id}/run`, { method: "POST" }),
+  smartSearch: (query: string) =>
+    request<SmartSearchResponse>("/discovery/smart-search", {
+      method: "POST",
+      body: JSON.stringify({ query }),
+    }),
 
   createFact: (body: ProfileFactCreate) =>
     request<ProfileFact>("/profile/facts", {

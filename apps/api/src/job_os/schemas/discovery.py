@@ -74,6 +74,20 @@ class DiscoveryImportRequest(ORMModel):
     posted_at: datetime | None = None
 
 
+class SmartSearchRequest(ORMModel):
+    """Natural-language search: a free-form sentence Claude parses into filters."""
+
+    query: str = Field(min_length=1, max_length=500)
+
+
+class SmartSearchResponse(ORMModel):
+    """The structured filters Claude pulled out of the user's sentence."""
+
+    filters: DiscoverySearchRequest
+    explanation: str = ""
+    """One-line plain-English summary of what got extracted, for the FE to show."""
+
+
 class SavedSearchCreate(ORMModel):
     name: str = Field(min_length=1, max_length=100)
     query: DiscoverySearchRequest

@@ -277,6 +277,11 @@ export interface SavedSearch {
   updated_at: string;
 }
 
+export interface SmartSearchResponse {
+  filters: DiscoverySearchRequest;
+  explanation: string;
+}
+
 export interface Application {
   id: string;
   job: Job;

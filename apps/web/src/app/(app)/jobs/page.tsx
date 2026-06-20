@@ -12,10 +12,11 @@ import {
   Radar,
   Search,
   Sparkles,
+  Wand2,
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { api } from "@/lib/api";
@@ -25,6 +26,45 @@ import type {
   DiscoverySource,
   SavedSearch,
 } from "@/lib/types";
+
+type SortMode = "recency" | "relevance" | "location";
+const SORT_LABEL: Record<SortMode, string> = {
+  recency: "Recency",
+  relevance: "Relevance",
+  location: "My location",
+};
+
+const STORAGE_KEY = "discover:state:v1";
+
+type PersistedState = {
+  titles: string;
+  techs: string;
+  country: string;
+  maxAgeDays: number;
+  limit: number;
+  sources: DiscoverySource[];
+  results: DiscoveryResult[] | null;
+  sort: SortMode;
+};
+
+function loadState(): Partial<PersistedState> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as PersistedState) : {};
+  } catch {
+    return {};
+  }
+}
+
+function saveState(s: PersistedState) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch {
+    /* quota — fine, treat as ephemeral */
+  }
+}
 
 export default function DiscoverPage() {
   const qc = useQueryClient();
@@ -38,16 +78,25 @@ export default function DiscoverPage() {
     queryFn: () => api.listSavedSearches(),
   });
 
-  const [titles, setTitles] = useState("");
-  const [techs, setTechs] = useState("");
-  const [country, setCountry] = useState("US");
-  const [maxAgeDays, setMaxAgeDays] = useState(30);
-  const [limit, setLimit] = useState(20);
-  const [sources, setSources] = useState<DiscoverySource[]>([
-    "theirstack",
-    "github",
-  ]);
-  const [results, setResults] = useState<DiscoveryResult[] | null>(null);
+  // Hydrate from sessionStorage so the result list survives nav + reload.
+  const initial = useMemo(loadState, []);
+  const [titles, setTitles] = useState<string>(initial.titles ?? "");
+  const [techs, setTechs] = useState<string>(initial.techs ?? "");
+  const [country, setCountry] = useState<string>(initial.country ?? "US");
+  const [maxAgeDays, setMaxAgeDays] = useState<number>(initial.maxAgeDays ?? 30);
+  const [limit, setLimit] = useState<number>(initial.limit ?? 20);
+  const [sources, setSources] = useState<DiscoverySource[]>(
+    initial.sources ?? ["theirstack", "github"],
+  );
+  const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
+  const [sort, setSort] = useState<SortMode>(initial.sort ?? "recency");
+
+  const [smartQuery, setSmartQuery] = useState<string>("");
+
+  // Persist on any change so reload restores state.
+  useEffect(() => {
+    saveState({ titles, techs, country, maxAgeDays, limit, sources, results, sort });
+  }, [titles, techs, country, maxAgeDays, limit, sources, results, sort]);
 
   const search = useMutation({
     mutationFn: (body: DiscoverySearchRequest) => api.discoverySearch(body),
@@ -69,6 +118,31 @@ export default function DiscoverPage() {
       page: 0,
     };
   }
+
+  const smart = useMutation({
+    mutationFn: (q: string) => api.smartSearch(q),
+    onSuccess: ({ filters, explanation }) => {
+      // Hydrate the form fields so the user can see what was extracted.
+      setTitles((filters.title_keywords ?? []).join(", "));
+      setTechs((filters.technology_slugs ?? []).join(", "));
+      setCountry((filters.country_codes ?? [])[0] ?? "");
+      if (filters.max_age_days) setMaxAgeDays(filters.max_age_days);
+      if (filters.limit) setLimit(filters.limit);
+      if (filters.sources && filters.sources.length > 0) setSources(filters.sources);
+      if (explanation) toast.success(explanation);
+      // Auto-run the search with the extracted filters.
+      search.mutate({
+        sources: filters.sources ?? sources,
+        title_keywords: filters.title_keywords ?? [],
+        technology_slugs: filters.technology_slugs ?? [],
+        country_codes: filters.country_codes ?? [],
+        max_age_days: filters.max_age_days ?? 30,
+        limit: filters.limit ?? 20,
+        page: 0,
+      });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
 
   const saveSearch = useMutation({
     mutationFn: (name: string) =>
@@ -116,7 +190,7 @@ export default function DiscoverPage() {
   function toggleSource(s: DiscoverySource) {
     setSources((prev) => {
       if (prev.includes(s)) {
-        if (prev.length === 1) return prev; // keep at least one source on
+        if (prev.length === 1) return prev;
         return prev.filter((x) => x !== s);
       }
       return [...prev, s];
@@ -127,8 +201,43 @@ export default function DiscoverPage() {
     search.mutate(currentQuery());
   }
 
+  function clearResults() {
+    setResults(null);
+  }
+
+  function onSmartSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!smartQuery.trim()) return;
+    smart.mutate(smartQuery.trim());
+  }
+
+  // Sort cached results client-side. Recompute on sort change.
+  const titleKeywords = splitCsv(titles);
+  const userLocation = (settings?.default_location ?? "").toLowerCase().trim();
+  const sortedResults = useMemo(() => {
+    if (!results) return null;
+    const copy = [...results];
+    if (sort === "recency") {
+      copy.sort((a, b) => tsOrZero(b.posted_at) - tsOrZero(a.posted_at));
+    } else if (sort === "relevance") {
+      copy.sort(
+        (a, b) => relevanceScore(b, titleKeywords) - relevanceScore(a, titleKeywords),
+      );
+    } else if (sort === "location") {
+      copy.sort((a, b) => {
+        const aHit = userLocation && (a.location ?? "").toLowerCase().includes(userLocation);
+        const bHit = userLocation && (b.location ?? "").toLowerCase().includes(userLocation);
+        if (aHit && !bHit) return -1;
+        if (!aHit && bHit) return 1;
+        return tsOrZero(b.posted_at) - tsOrZero(a.posted_at);
+      });
+    }
+    return copy;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [results, sort, titles, userLocation]);
+
   return (
-    <div className="mx-auto max-w-5xl px-8 py-6">
+    <div className="mx-auto max-w-6xl px-8 py-6">
       <header className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-medium tracking-tight">Discover</h1>
@@ -145,6 +254,38 @@ export default function DiscoverPage() {
         <Radar className="size-5 text-[color:var(--color-violet)]" />
       </header>
 
+      {/* Smart search */}
+      <form onSubmit={onSmartSubmit} className="mt-6">
+        <label className="flex items-center gap-1.5 text-sm font-medium">
+          <Wand2 className="size-3.5 text-[color:var(--color-violet)]" /> Smart search
+        </label>
+        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
+          Type a sentence — Claude extracts the filters and runs the search.
+        </p>
+        <div className="mt-2 flex gap-2">
+          <input
+            type="text"
+            value={smartQuery}
+            onChange={(e) => setSmartQuery(e.target.value)}
+            placeholder="e.g. 'fullstack intern in Boston with Python and React from the last 2 weeks'"
+            className="glass flex-1 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+          />
+          <button
+            type="submit"
+            disabled={smart.isPending || !smartQuery.trim()}
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-2 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+          >
+            {smart.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Sparkles className="size-3.5" />
+            )}
+            Ask
+          </button>
+        </div>
+      </form>
+
+      {/* Saved searches */}
       {saved.length > 0 && (
         <div className="mt-6">
           <div className="text-xs font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
@@ -177,13 +318,13 @@ export default function DiscoverPage() {
         </div>
       )}
 
+      {/* Manual filters form */}
       <div className="glass mt-6 grid grid-cols-1 gap-4 rounded-[var(--radius-card)] p-5 md:grid-cols-2">
         <div className="md:col-span-2">
           <label className="text-sm font-medium">Sources</label>
           <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
             TheirStack costs 1 credit per imported job; GitHub is free and
-            re-fetched live from the SimplifyJobs READMEs on every search (they
-            update daily).
+            re-fetched live from the SimplifyJobs READMEs on every search.
           </p>
           <div className="mt-2 flex gap-2">
             <SourceToggle
@@ -249,11 +390,11 @@ export default function DiscoverPage() {
             />
           </Field>
         </div>
-        <div className="md:col-span-2 flex items-center gap-2">
+        <div className="md:col-span-2 flex flex-wrap items-center gap-2">
           <button
             onClick={runSearch}
             disabled={search.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             {search.isPending ? (
               <>
@@ -269,35 +410,81 @@ export default function DiscoverPage() {
             onClick={onSaveClick}
             disabled={saveSearch.isPending}
             className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm hover:bg-white/[0.06] disabled:opacity-50"
-            title="Save current filters as a named search"
           >
             <Bookmark className="size-3.5" /> Save search
           </button>
+          {results !== null && (
+            <button
+              onClick={clearResults}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-white/[0.06] hover:text-white"
+            >
+              <X className="size-3.5" /> Clear results
+            </button>
+          )}
         </div>
       </div>
 
-      {results !== null && (
-        <div className="mt-6 space-y-3">
-          {results.length === 0 ? (
-            <div className="text-sm text-[color:var(--color-text-muted)]">No results.</div>
-          ) : (
-            results.map((r) => (
-              <ResultCard
-                key={r.source_id || r.source_url}
-                result={r}
-                onImported={() => {
-                  // Mark this card as imported so the button flips, without
-                  // forcing a full search refetch (which would burn credits).
-                  setResults((prev) =>
-                    prev?.map((x) =>
-                      x.source_id === r.source_id ? { ...x, already_imported: true } : x,
-                    ) ?? null,
+      {/* Results */}
+      {sortedResults !== null && (
+        <div className="mt-6">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-sm text-[color:var(--color-text-muted)]">
+              {sortedResults.length} result{sortedResults.length === 1 ? "" : "s"}
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-[color:var(--color-text-dim)]">Sort by</span>
+              <div className="flex rounded-full border border-white/10 bg-white/[0.03] p-0.5">
+                {(Object.keys(SORT_LABEL) as SortMode[]).map((m) => {
+                  const disabled = m === "location" && !userLocation;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => !disabled && setSort(m)}
+                      className={
+                        "rounded-full px-3 py-1 text-xs transition " +
+                        (sort === m
+                          ? "bg-gradient-brand font-semibold text-black"
+                          : "text-[color:var(--color-text-muted)] hover:text-white") +
+                        (disabled ? " cursor-not-allowed opacity-40" : "")
+                      }
+                      title={
+                        disabled
+                          ? "Set 'default location' in Settings to use this sort"
+                          : undefined
+                      }
+                    >
+                      {SORT_LABEL[m]}
+                    </button>
                   );
-                  qc.invalidateQueries({ queryKey: ["jobs"] });
-                }}
-                onTailored={(jobId) => router.push(`/tailor?job_id=${jobId}`)}
-              />
-            ))
+                })}
+              </div>
+            </div>
+          </div>
+
+          {sortedResults.length === 0 ? (
+            <div className="mt-4 text-sm text-[color:var(--color-text-muted)]">
+              No results.
+            </div>
+          ) : (
+            <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+              {sortedResults.map((r) => (
+                <ResultCard
+                  key={r.source_id || r.source_url}
+                  result={r}
+                  onImported={() => {
+                    setResults((prev) =>
+                      prev?.map((x) =>
+                        x.source_id === r.source_id ? { ...x, already_imported: true } : x,
+                      ) ?? null,
+                    );
+                    qc.invalidateQueries({ queryKey: ["jobs"] });
+                    qc.invalidateQueries({ queryKey: ["applications"] });
+                  }}
+                  onTailored={(jobId) => router.push(`/tailor?job_id=${jobId}`)}
+                  onGoToApplications={() => router.push("/applications")}
+                />
+              ))}
+            </div>
           )}
         </div>
       )}
@@ -309,10 +496,12 @@ function ResultCard({
   result,
   onImported,
   onTailored,
+  onGoToApplications,
 }: {
   result: DiscoveryResult;
   onImported: () => void;
   onTailored: (jobId: string) => void;
+  onGoToApplications: () => void;
 }) {
   const importPayload = () => ({
     source: result.source,
@@ -327,9 +516,26 @@ function ResultCard({
   });
 
   const importJob = useMutation({
-    mutationFn: () => api.discoveryImport(importPayload()),
+    mutationFn: async () => {
+      const job = await api.discoveryImport(importPayload());
+      // Also create an Application as wishlist so the user sees it in
+      // /applications. Swallow 409s for repeat clicks.
+      try {
+        await api.createApplication({ job_id: job.id, status: "wishlist" });
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (!msg.includes("409")) throw e;
+      }
+      return job;
+    },
     onSuccess: () => {
-      toast.success("Imported to your jobs");
+      toast.success("Added to Applications", {
+        description: "Wishlist column · /applications",
+        action: {
+          label: "View",
+          onClick: () => onGoToApplications(),
+        },
+      });
       onImported();
     },
     onError: (err: Error) => toast.error(err.message),
@@ -337,10 +543,7 @@ function ResultCard({
 
   const tailorJob = useMutation({
     mutationFn: async () => {
-      // 1. Import (idempotent — backend dedupes on source+source_id).
       const job = await api.discoveryImport(importPayload());
-      // 2. Create an application so the job lands in /applications too.
-      //    Swallow 409 (already exists) so re-clicks stay smooth.
       try {
         await api.createApplication({ job_id: job.id, status: "ready_to_apply" });
       } catch (e) {
@@ -361,95 +564,99 @@ function ResultCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className="glass hover-lift rounded-[var(--radius-card-lg)] p-4"
+      className="glass hover-lift flex h-full flex-col rounded-[var(--radius-card-lg)] p-4"
     >
-      <div className="flex items-start justify-between gap-4">
-        <div className="flex min-w-0 items-start gap-3">
-          <CompanyAvatar name={result.company_name ?? "?"} size={36} />
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <h3 className="truncate text-base font-medium">{result.title}</h3>
-              {result.source_url && (
-                <a
-                  href={result.source_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-[color:var(--color-text-muted)] hover:text-white"
-                >
-                  <ExternalLink className="size-3.5" />
-                </a>
-              )}
+      <div className="flex items-start gap-3">
+        <CompanyAvatar name={result.company_name ?? "?"} size={36} />
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start gap-2">
+            <h3 className="line-clamp-2 text-sm font-medium leading-snug">
+              {result.title}
+            </h3>
+            {result.source_url && (
+              <a
+                href={result.source_url}
+                target="_blank"
+                rel="noreferrer"
+                className="shrink-0 text-[color:var(--color-text-muted)] hover:text-white"
+              >
+                <ExternalLink className="size-3.5" />
+              </a>
+            )}
+          </div>
+          {result.company_name && (
+            <div className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
+              {result.company_name}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[color:var(--color-text-muted)]">
-              {result.company_name && (
-                <span className="inline-flex items-center gap-1">
-                  {result.company_name}
-                </span>
-              )}
-            {result.location && (
-              <span className="inline-flex items-center gap-1">
-                <MapPin className="size-3" /> {result.location}
-              </span>
-            )}
-            {result.posted_at && (
-              <span>
-                posted {formatDistanceToNow(parseISO(result.posted_at), { addSuffix: true })}
-              </span>
-            )}
-            <span className="rounded-full bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-text-dim)]">
-              {result.source_label || result.source}
-            </span>
-          </div>
-            {result.technologies.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1">
-                {result.technologies.slice(0, 8).map((t) => (
-                  <span
-                    key={t}
-                    className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
-                  >
-                    {t}
-                  </span>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          {result.already_imported ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1.5 text-xs text-[color:var(--color-mint)]">
-              <CheckCircle2 className="size-3" /> Imported
-            </span>
-          ) : (
-            <button
-              onClick={() => importJob.mutate()}
-              disabled={importJob.isPending || tailorJob.isPending}
-              className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06] disabled:opacity-50"
-            >
-              {importJob.isPending ? (
-                <Loader2 className="size-3 animate-spin" />
-              ) : null}
-              Import
-            </button>
           )}
-          <button
-            onClick={() => tailorJob.mutate()}
-            disabled={tailorJob.isPending || importJob.isPending}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
-            title="Import + create application + open the tailoring agent"
-          >
-            {tailorJob.isPending ? (
-              <Loader2 className="size-3 animate-spin" />
-            ) : (
-              <Sparkles className="size-3" />
-            )}
-            Tailor →
-          </button>
         </div>
       </div>
-      <p className="mt-3 line-clamp-3 text-xs text-[color:var(--color-text-muted)]">
-        {result.description.slice(0, 400)}
-        {result.description.length > 400 ? "…" : ""}
-      </p>
+
+      <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-dim)]">
+        {result.location && (
+          <span className="inline-flex items-center gap-1">
+            <MapPin className="size-3" /> {result.location}
+          </span>
+        )}
+        {result.posted_at && (
+          <span>
+            {formatDistanceToNow(parseISO(result.posted_at), { addSuffix: true })}
+          </span>
+        )}
+        <span className="rounded-full bg-white/[0.04] px-1.5 py-0.5 uppercase tracking-wide">
+          {result.source_label || result.source}
+        </span>
+      </div>
+
+      {result.description && (
+        <p className="mt-2 line-clamp-3 text-xs text-[color:var(--color-text-muted)]">
+          {result.description.slice(0, 240)}
+          {result.description.length > 240 ? "…" : ""}
+        </p>
+      )}
+
+      {result.technologies.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {result.technologies.slice(0, 6).map((t) => (
+            <span
+              key={t}
+              className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
+            >
+              {t}
+            </span>
+          ))}
+        </div>
+      )}
+
+      <div className="mt-auto flex items-center justify-between gap-2 pt-3">
+        {result.already_imported ? (
+          <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1 text-[11px] text-[color:var(--color-mint)]">
+            <CheckCircle2 className="size-3" /> In Applications
+          </span>
+        ) : (
+          <button
+            onClick={() => importJob.mutate()}
+            disabled={importJob.isPending || tailorJob.isPending}
+            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] hover:bg-white/[0.06] disabled:opacity-50"
+          >
+            {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
+            Import
+          </button>
+        )}
+        <button
+          onClick={() => tailorJob.mutate()}
+          disabled={tailorJob.isPending || importJob.isPending}
+          className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+          title="Import + create application + open the tailoring agent"
+        >
+          {tailorJob.isPending ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <Sparkles className="size-3" />
+          )}
+          Tailor →
+        </button>
+      </div>
     </motion.div>
   );
 }
@@ -472,13 +679,6 @@ function Field({
       <div className="mt-2">{children}</div>
     </div>
   );
-}
-
-function splitCsv(s: string): string[] {
-  return s
-    .split(",")
-    .map((t) => t.trim())
-    .filter(Boolean);
 }
 
 function SourceToggle({
@@ -505,4 +705,28 @@ function SourceToggle({
       <span className="text-[10px] text-[color:var(--color-text-dim)]">{hint}</span>
     </button>
   );
+}
+
+function splitCsv(s: string): string[] {
+  return s
+    .split(",")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+function tsOrZero(s: string | null | undefined): number {
+  return s ? new Date(s).getTime() : 0;
+}
+
+function relevanceScore(r: DiscoveryResult, keywords: string[]): number {
+  if (keywords.length === 0) return tsOrZero(r.posted_at);
+  const haystack = `${r.title} ${r.description}`.toLowerCase();
+  let score = 0;
+  for (const k of keywords) {
+    const needle = k.toLowerCase();
+    if (!needle) continue;
+    if (r.title.toLowerCase().includes(needle)) score += 3;
+    if (haystack.includes(needle)) score += 1;
+  }
+  return score * 1e12 + tsOrZero(r.posted_at);
 }

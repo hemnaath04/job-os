@@ -34,9 +34,12 @@ from job_os.schemas.discovery import (
     DiscoverySearchRequest,
     SavedSearchCreate,
     SavedSearchRead,
+    SmartSearchRequest,
+    SmartSearchResponse,
 )
 from job_os.schemas.jobs import JobRead
 from job_os.services.companies import upsert_company
+from job_os.services.discovery_smart_search import parse_smart_query
 from job_os.services.jd_parse import parse_jd
 
 router = APIRouter(prefix="/discovery")
@@ -302,3 +305,17 @@ async def run_saved(
     saved.last_run_count = len(results)
     await session.flush()
     return results
+
+
+@router.post("/smart-search", response_model=SmartSearchResponse)
+async def smart_search(
+    payload: SmartSearchRequest,
+    _user: User = Depends(get_current_user),
+) -> SmartSearchResponse:
+    """Translate a natural-language sentence into a DiscoverySearchRequest.
+
+    The FE hydrates the form fields from the returned filters and then runs
+    a regular `/discovery/search`. Keeps the round-trip cheap (one Claude
+    call) and lets the user tweak filters before spending TheirStack credits.
+    """
+    return await parse_smart_query(payload.query)
