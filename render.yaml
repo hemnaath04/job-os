@@ -1,0 +1,46 @@
+# Render Blueprint — provisions the FastAPI backend.
+# https://render.com/docs/blueprint-spec
+#
+# Sign in to https://render.com, click "New +" → "Blueprint", point at this
+# repo, and Render parses this file to create the service. Secrets marked
+# `sync: false` must be set manually in the dashboard (Settings → Environment).
+
+services:
+  - type: web
+    name: job-os-api
+    runtime: docker
+    region: oregon              # us-west-2 — closest free-tier region
+    plan: free                  # 512MB RAM, sleeps after 15 min idle
+    dockerfilePath: infra/fly/Dockerfile.api
+    dockerContext: .
+    healthCheckPath: /health
+    autoDeploy: true            # redeploy on git push to main
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: LOG_LEVEL
+        value: info
+      - key: ANTHROPIC_MODEL_EXTRACT
+        value: claude-opus-4-8
+      - key: ANTHROPIC_MODEL_TAILOR
+        value: claude-opus-4-8
+      - key: ANTHROPIC_MODEL_VERIFY
+        value: claude-opus-4-8
+      # Secrets — set manually in dashboard, do not commit:
+      - key: DATABASE_URL
+        sync: false
+      - key: CLERK_SECRET_KEY
+        sync: false
+      - key: CLERK_PUBLISHABLE_KEY
+        sync: false
+      - key: CLERK_JWKS_URL
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: ANTHROPIC_BASE_URL
+        sync: false
+      - key: FIRECRAWL_API_KEY
+        sync: false
+      # Will be filled after Vercel deploy with the prod web origin
+      - key: WEB_ORIGINS
+        sync: false
