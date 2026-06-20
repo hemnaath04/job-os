@@ -4,7 +4,29 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+
+def _find_repo_root() -> Path:
+    """Find the project root by walking up from this file looking for a
+    marker file. Works in both layouts:
+      - Local monorepo:  job-app-manager/   (pnpm-workspace.yaml at root)
+      - Docker image:    /app/              (pyproject.toml + alembic.ini)
+
+    Looks for the monorepo marker first (since apps/api also has
+    pyproject.toml + alembic.ini and we want the higher-level dir in dev).
+    Falls back to the filesystem root if no marker is found — pydantic-
+    settings tolerates env_file paths that don't exist."""
+    here = Path(__file__).resolve()
+    parents = list(here.parents)
+    for parent in parents:
+        if (parent / "pnpm-workspace.yaml").is_file():
+            return parent
+    for parent in parents:
+        if (parent / "pyproject.toml").is_file() and (parent / "alembic.ini").is_file():
+            return parent
+    return parents[-1]
+
+
+REPO_ROOT = _find_repo_root()
 
 
 class Settings(BaseSettings):
