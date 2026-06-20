@@ -1,0 +1,108 @@
+[project]
+name = "job-os-api"
+version = "0.0.1"
+description = "FastAPI backend for job.os — application tracker, resume tailoring, job discovery"
+requires-python = ">=3.12,<3.14"
+readme = "README.md"
+
+dependencies = [
+    # web
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "sse-starlette>=2.1.0",
+    "httpx>=0.28.0",
+    "python-multipart>=0.0.18",
+
+    # config + validation
+    "pydantic[email]>=2.9",
+    "pydantic-settings>=2.6",
+
+    # db
+    "sqlalchemy[asyncio]>=2.0.35",
+    "asyncpg>=0.29",
+    "alembic>=1.14",
+    "pgvector>=0.3.6",
+    "psycopg[binary]>=3.2",  # for alembic sync ops
+
+    # llm + agents (Claude only — Anthropic is the single LLM provider)
+    "anthropic>=0.40.0",
+    "pydantic-ai-slim[anthropic]>=0.0.40",
+    "langgraph>=0.2.50",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "langchain-core>=0.3.0",
+
+    # pdf rendering (resume export)
+    "weasyprint>=63.0",
+    "jinja2>=3.1",
+    "pypdf>=5.1",                # for inspecting uploaded PDFs (page count, text fallback)
+    "python-docx>=1.1",          # for uploaded .docx → text extraction
+
+    # scraping
+    "firecrawl-py>=1.5.0",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+
+    # auth
+    "pyjwt[crypto]>=2.10.0",
+    "cryptography>=44.0",
+
+    # storage
+    "boto3>=1.35",
+
+    # workers
+    "celery[redis]>=5.4",
+    "redis>=5.2",
+
+    # observability
+    "structlog>=24.4",
+    "logfire>=2.6",
+
+    # utility
+    "tenacity>=9.0",
+    "python-slugify>=8.0",
+    "orjson>=3.10",
+    "rich>=13.9",
+]
+
+[dependency-groups]
+dev = [
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "httpx>=0.28",
+    "respx>=0.21",
+    "freezegun>=1.5",
+]
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/job_os"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "N", "ASYNC", "S", "C4", "RET", "SIM"]
+ignore = ["S101", "B008"]  # allow assert in tests, allow fastapi Depends() defaults
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

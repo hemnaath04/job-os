@@ -1,0 +1,51 @@
+# --- Node / Next.js ---
+node_modules/
+.next/
+out/
+dist/
+build/
+.turbo/
+*.tsbuildinfo
+next-env.d.ts
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.uv-cache/
+
+# --- env / secrets ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# --- editor / OS ---
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*.log
+
+# --- artifacts / local data ---
+/data/
+/tmp/
+/_artifacts/
+*.sqlite
+*.db
+
+# --- Vercel / Fly ---
+.vercel/
+.fly/
+
+# --- coverage ---
+coverage/
+.coverage
+htmlcov/

@@ -1,0 +1,172 @@
+/* ------------------------------------------------------------------
+   Master resume template — mirrors the user's existing rendered PDF.
+   WeasyPrint-friendly: uses CSS grid (not flex) for entry rows, since
+   flex inside <section> containers can break <ul> flow in v69.
+   ------------------------------------------------------------------ */
+
+@import url("https://fonts.googleapis.com/css2?family=EB+Garamond:wght@500;600;700&family=Inter:wght@400;500;600;700&display=swap");
+
+@page {
+  size: Letter;
+  margin: 0.38in 0.6in 0.3in 0.6in;
+}
+
+:root {
+  --navy: #1e3a5f;
+  --rule: #1e3a5f;
+  --ink: #1d1d1d;
+  --muted: #4a4a4a;
+  --dim:   #6c6c6c;
+  --link:  #1e3a5f;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  font-family: "Inter", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+  font-size: 8.6pt;
+  line-height: 1.26;
+  color: var(--ink);
+  font-variant-ligatures: common-ligatures;
+}
+
+a { color: var(--link); text-decoration: none; }
+
+/* ---------- Masthead ---------- */
+.masthead {
+  text-align: center;
+  margin-bottom: 2pt;
+}
+.name {
+  font-family: "EB Garamond", "Garamond", "Times New Roman", serif;
+  font-weight: 700;
+  font-size: 22pt;
+  letter-spacing: 0.01em;
+  margin: 0 0 1pt 0;
+  color: var(--ink);
+}
+.label {
+  font-family: "Inter", sans-serif;
+  font-weight: 700;
+  font-size: 7.5pt;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin: 0 0 2pt 0;
+}
+.contact {
+  font-size: 8.2pt;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.contact a { color: var(--link); }
+
+/* ---------- Section headings ---------- */
+section { margin-top: 3pt; }
+section h2 {
+  font-family: "EB Garamond", "Garamond", serif;
+  font-weight: 700;
+  font-size: 10.5pt;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--navy);
+  margin: 0 0 2pt 0;
+  padding-bottom: 0.5pt;
+  border-bottom: 0.6pt solid var(--rule);
+}
+
+/* ---------- Entries ----------
+   Use CSS grid for the title/meta row instead of flex — WeasyPrint v69
+   has a known issue where flex containers inside <section> can cause
+   sibling lists to render in a separate block at the bottom of the page. */
+.entry {
+  margin: 1.5pt 0 2pt 0;
+  display: block;
+}
+.entry:last-child { margin-bottom: 0; }
+
+.entry-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 14pt;
+  align-items: baseline;
+}
+.entry-row .primary {
+  font-weight: 700;
+  font-size: 9pt;
+}
+.entry-row .secondary {
+  font-size: 8.5pt;
+  color: var(--muted);
+}
+.entry-row .secondary em {
+  font-style: italic;
+}
+.entry-row .meta {
+  font-size: 8pt;
+  color: var(--muted);
+  white-space: nowrap;
+  text-align: right;
+}
+
+.coursework {
+  font-size: 8.2pt;
+  color: var(--muted);
+  margin: 0;
+}
+.coursework .label-inline {
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.project-meta {
+  margin: 0;
+  font-size: 8.2pt;
+  color: var(--muted);
+}
+
+/* ---------- Bullet lists ---------- */
+ul.bullets {
+  list-style: none;
+  margin: 1pt 0 0 0;
+  padding: 0;
+  display: block;
+}
+ul.bullets li {
+  position: relative;
+  padding-left: 9pt;
+  margin: 0.25pt 0;
+  font-size: 8.5pt;
+  line-height: 1.25;
+  color: var(--ink);
+  display: block;
+}
+ul.bullets li::before {
+  content: "›";
+  position: absolute;
+  left: 0;
+  top: 0;
+  color: var(--navy);
+  font-weight: 700;
+}
+
+/* ---------- Skills grid ---------- */
+dl.skills-grid {
+  display: grid;
+  grid-template-columns: 8.5em 1fr;
+  column-gap: 10pt;
+  row-gap: 0.5pt;
+  margin: 1pt 0 0 0;
+}
+dl.skills-grid dt {
+  font-weight: 700;
+  font-size: 8.5pt;
+  color: var(--ink);
+}
+dl.skills-grid dd {
+  margin: 0;
+  font-size: 8.5pt;
+  color: var(--muted);
+}

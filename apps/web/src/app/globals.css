@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  /* Brand: dark glassmorphism · violet · CRED/Linear feel */
+  --color-bg: oklch(0.13 0.015 280);          /* #0A0A0F base */
+  --color-surface-1: oklch(0.17 0.018 280);   /* #13131B */
+  --color-surface-2: oklch(0.20 0.020 280);   /* #1A1A24 */
+  --color-surface-3: oklch(0.24 0.022 280);   /* #21212D */
+
+  --color-border: oklch(0.30 0.020 280 / 0.4);
+  --color-border-strong: oklch(0.40 0.025 280 / 0.6);
+
+  --color-text: oklch(0.96 0.005 280);
+  --color-text-muted: oklch(0.70 0.012 280);
+  --color-text-dim: oklch(0.55 0.012 280);
+
+  --color-violet: #7C5CFF;
+  --color-violet-dim: oklch(0.55 0.22 290);
+  --color-mint: #5EEAD4;
+  --color-amber: #F5B544;
+  --color-rose: #FF6B8A;
+
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, monospace;
+
+  --radius-card: 0.875rem;
+  --radius-pill: 999px;
+
+  --shadow-glass:
+    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
+    0 0 0 1px rgba(255, 255, 255, 0.04),
+    0 20px 60px -20px rgba(0, 0, 0, 0.5);
+}
+
+@layer base {
+  html, body {
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: var(--font-sans);
+    font-feature-settings: "cv11", "ss03", "ss01";
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Subtle ambient violet glow on the page */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background:
+      radial-gradient(60rem 40rem at 80% -20%, oklch(0.4 0.2 290 / 0.18), transparent 60%),
+      radial-gradient(50rem 30rem at -10% 110%, oklch(0.4 0.18 250 / 0.12), transparent 60%);
+    z-index: -1;
+  }
+
+  ::selection {
+    background: color-mix(in oklch, var(--color-violet) 50%, transparent);
+    color: white;
+  }
+}
+
+@utility glass {
+  background: color-mix(in oklch, var(--color-surface-1) 60%, transparent);
+  backdrop-filter: blur(20px) saturate(140%);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--shadow-glass);
+}
+
+@utility violet-ring {
+  box-shadow: 0 0 0 1px var(--color-violet), 0 0 30px -5px var(--color-violet);
+}

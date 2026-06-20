@@ -1,0 +1,23 @@
+app = "job-os-api"
+primary_region = "iad"
+
+[build]
+  dockerfile = "../../infra/fly/Dockerfile.api"
+  ignorefile = "../../.dockerignore"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+[env]
+  APP_ENV = "production"
+  LOG_LEVEL = "info"
+# All secrets (DATABASE_URL, ANTHROPIC_API_KEY, CLERK_*, etc.) set via:
+#   flyctl secrets set DATABASE_URL=... -a job-os-api
