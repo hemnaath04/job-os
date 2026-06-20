@@ -52,3 +52,19 @@ class ApplicationEventRead(ORMModel):
 class ApplicationEventCreate(ORMModel):
     kind: str
     payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class CalendarEntry(ORMModel):
+    """One upcoming-action row for the calendar feed.
+
+    Sources today: Application.next_action_at (the user-set follow-up). Future
+    sources (interview times etc.) live on ApplicationEvent.payload — when we
+    standardise that shape we'll fold them in here without breaking callers."""
+
+    application_id: UUID
+    when: datetime
+    label: str
+    status: AppStatus
+    job_id: UUID
+    job_title: str
+    company_name: str | None = None

@@ -1,13 +1,20 @@
-from contextlib import asynccontextmanager
-
 import os
+from contextlib import asynccontextmanager
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from job_os import __version__
-from job_os.routers import applications, jobs, profile, resumes
+from job_os.routers import (
+    applications,
+    calendar,
+    discovery,
+    jobs,
+    me,
+    profile,
+    resumes,
+)
 from job_os.settings import get_settings
 
 log = structlog.get_logger()
@@ -49,6 +56,9 @@ async def health() -> dict[str, str]:
 
 
 app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
+app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
+app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
 app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"])
+app.include_router(me.router, prefix="/api/v1", tags=["me"])
 app.include_router(profile.router, prefix="/api/v1", tags=["profile"])
 app.include_router(resumes.router, prefix="/api/v1", tags=["resumes"])
