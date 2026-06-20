@@ -11,6 +11,16 @@ import { NextRequest, NextResponse } from "next/server";
 
 const API = process.env.API_BASE_URL ?? "http://localhost:8000";
 
+// Resume upload calls Claude through the Zavora gateway and can take 30–60s.
+// Default Hobby/Fluid maxDuration is conservative; pin it long so PDF
+// extraction doesn't get killed mid-flight.
+export const maxDuration = 300;
+// Force Node runtime — Edge doesn't support arbitrary outbound HTTP to
+// non-HTTPS hosts and our upstream is over a public IP at :8000 via Render.
+export const runtime = "nodejs";
+// We're a proxy; no caching, ever.
+export const dynamic = "force-dynamic";
+
 const FORWARD_HEADERS = [
   "content-type",
   "accept",
@@ -22,25 +32,23 @@ async function proxy(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
+  const t0 = Date.now();
   const { path } = await ctx.params;
-  const { userId, sessionId, getToken } = await auth();
-  const token = await getToken();
-
   const upstream =
     `${API}/api/v1/${(path ?? []).join("/")}${req.nextUrl.search}`;
+
+  const { userId, sessionId, getToken } = await auth();
+  const token = await getToken();
+  if (!userId || !token) {
+    return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
+  }
 
   const headers = new Headers();
   for (const name of FORWARD_HEADERS) {
     const v = req.headers.get(name);
     if (v) headers.set(name, v);
   }
-  if (token) headers.set("authorization", `Bearer ${token}`);
-
-  if (!userId || !token) {
-    // No session — let upstream return its standard 401 instead of forwarding
-    // an empty Authorization header that would mask the cause.
-    return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
-  }
+  headers.set("authorization", `Bearer ${token}`);
 
   const init: RequestInit = {
     method: req.method,
@@ -56,17 +64,71 @@ async function proxy(
   try {
     resp = await fetch(upstream, init);
   } catch (e) {
+    const ms = Date.now() - t0;
+    console.error("[proxy] fetch threw", {
+      upstream,
+      ms,
+      method: req.method,
+      error: (e as Error).message,
+    });
     return NextResponse.json(
       { detail: `upstream unreachable: ${(e as Error).message}` },
       { status: 502 },
     );
   }
 
-  const outHeaders = new Headers(resp.headers);
-  ["transfer-encoding", "connection", "keep-alive"].forEach((h) =>
-    outHeaders.delete(h),
-  );
-  return new Response(resp.body, { status: resp.status, headers: outHeaders });
+  // Buffer the response body before sending it on. Streaming resp.body
+  // directly into a new Response is unreliable on Vercel's serverless
+  // runtime — when the function tears down (or the upstream sends
+  // chunked encoding the platform doesn't like), the client sees a 500
+  // even though the upstream returned a clean 200.
+  let body: ArrayBuffer;
+  try {
+    body = await resp.arrayBuffer();
+  } catch (e) {
+    const ms = Date.now() - t0;
+    console.error("[proxy] body read threw", {
+      upstream,
+      ms,
+      upstreamStatus: resp.status,
+      error: (e as Error).message,
+    });
+    return NextResponse.json(
+      { detail: `upstream body read failed: ${(e as Error).message}` },
+      { status: 502 },
+    );
+  }
+
+  const ms = Date.now() - t0;
+  if (!resp.ok) {
+    console.warn("[proxy] upstream non-2xx", {
+      upstream,
+      method: req.method,
+      status: resp.status,
+      ms,
+      bodyPreview: new TextDecoder().decode(body.slice(0, 300)),
+    });
+  } else {
+    console.log("[proxy]", {
+      upstream,
+      method: req.method,
+      status: resp.status,
+      ms,
+      bodyBytes: body.byteLength,
+    });
+  }
+
+  const outHeaders = new Headers();
+  // Only forward headers the browser actually needs. Strips
+  // transfer-encoding / connection / etc which can confuse fetch.
+  const ct = resp.headers.get("content-type");
+  if (ct) outHeaders.set("content-type", ct);
+  const cd = resp.headers.get("content-disposition");
+  if (cd) outHeaders.set("content-disposition", cd);
+  // Help Vercel/Next not cache this.
+  outHeaders.set("cache-control", "no-store");
+
+  return new Response(body, { status: resp.status, headers: outHeaders });
 }
 
 export const GET = proxy;
