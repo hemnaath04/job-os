@@ -41,6 +41,8 @@ services:
         sync: false
       - key: FIRECRAWL_API_KEY
         sync: false
+      - key: THEIRSTACK_API_KEY
+        sync: false
       # Will be filled after Vercel deploy with the prod web origin
       - key: WEB_ORIGINS
         sync: false
