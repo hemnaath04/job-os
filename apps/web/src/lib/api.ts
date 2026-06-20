@@ -1,12 +1,18 @@
 import type {
   Application,
   AppStatus,
+  CalendarEntry,
+  DiscoveryResult,
+  DiscoverySearchRequest,
   Job,
+  MeRead,
   ProfileFact,
   Resume,
   ResumeVersion,
   ResumeVersionSummary,
   TailorResponse,
+  UserSettings,
+  UserSettingsPatch,
 } from "./types";
 
 const BASE = "/api/backend";
@@ -99,5 +105,44 @@ export const api = {
     request<TailorResponse>(`/resumes/${resumeId}/versions/tailor`, {
       method: "POST",
       body: JSON.stringify({ job_id: jobId }),
+    }),
+
+  listCalendar: (params?: { days?: number; include_past?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.days !== undefined) qs.set("days", String(params.days));
+    if (params?.include_past !== undefined)
+      qs.set("include_past", String(params.include_past));
+    return request<CalendarEntry[]>(
+      `/calendar/upcoming${qs.toString() ? "?" + qs : ""}`,
+    );
+  },
+
+  getMe: () => request<MeRead>("/me"),
+  getSettings: () => request<UserSettings>("/me/settings"),
+  patchSettings: (body: UserSettingsPatch) =>
+    request<UserSettings>("/me/settings", {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+
+  discoverySearch: (body: DiscoverySearchRequest) =>
+    request<DiscoveryResult[]>("/discovery/search", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  discoveryImport: (body: {
+    source: string;
+    source_id: string;
+    source_url: string;
+    title: string;
+    description: string;
+    company_name?: string | null;
+    company_domain?: string | null;
+    location?: string | null;
+    posted_at?: string | null;
+  }) =>
+    request<Job>("/discovery/import", {
+      method: "POST",
+      body: JSON.stringify(body),
     }),
 };

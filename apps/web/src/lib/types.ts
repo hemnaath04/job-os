@@ -209,6 +209,60 @@ export interface TailorResponse extends ResumeVersion {
   agent_note: string;
 }
 
+export interface CalendarEntry {
+  application_id: string;
+  when: string; // ISO datetime
+  label: string;
+  status: AppStatus;
+  job_id: string;
+  job_title: string;
+  company_name: string | null;
+}
+
+export interface UserSettings {
+  theme: "system" | "dark" | "light";
+  default_resume_id: string | null;
+  default_function: string | null;
+  default_level: string | null;
+  default_location: string | null;
+  timezone: string | null;
+  weekly_summary_email: boolean;
+}
+
+export type UserSettingsPatch = Partial<UserSettings>;
+
+export interface MeRead {
+  id: string;
+  email: string;
+  display_name: string | null;
+  settings: UserSettings;
+}
+
+export interface DiscoveryResult {
+  source: string;
+  source_id: string;
+  source_url: string;
+  title: string;
+  company_name: string | null;
+  company_domain: string | null;
+  location: string | null;
+  country_code: string | null;
+  posted_at: string | null;
+  description: string;
+  technologies: string[];
+  already_imported: boolean;
+}
+
+export interface DiscoverySearchRequest {
+  title_keywords?: string[];
+  description_keywords?: string[];
+  country_codes?: string[];
+  technology_slugs?: string[];
+  max_age_days?: number;
+  limit?: number;
+  page?: number;
+}
+
 export interface Application {
   id: string;
   job: Job;
