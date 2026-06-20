@@ -1,8 +1,8 @@
 """Structured JD extraction via the configured Anthropic-compatible endpoint.
 
 Model is whatever `settings.anthropic_model_extract` points to — defaults to
-`claude-opus-4-8` through your personal gateway. Returns a Pydantic-validated
-dict; never invents the company name (callers fall back to URL hint).
+`manifest/auto` so the Manifest gateway picks the real model. Returns a
+Pydantic-validated dict; never invents the company name (callers fall back to URL hint).
 """
 from __future__ import annotations
 

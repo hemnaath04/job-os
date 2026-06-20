@@ -21,11 +21,11 @@ services:
       - key: LOG_LEVEL
         value: info
       - key: ANTHROPIC_MODEL_EXTRACT
-        value: claude-opus-4-8
+        value: manifest/auto
       - key: ANTHROPIC_MODEL_TAILOR
-        value: claude-opus-4-8
+        value: manifest/auto
       - key: ANTHROPIC_MODEL_VERIFY
-        value: claude-opus-4-8
+        value: manifest/auto
       # Secrets — set manually in dashboard, do not commit:
       - key: DATABASE_URL
         sync: false

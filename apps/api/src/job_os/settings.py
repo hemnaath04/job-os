@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     anthropic_base_url: str | None = None
     # Claude is the only LLM provider — retrieval, extraction, tailoring, verification.
     # We don't use embeddings; retrieval uses Claude directly over the (small) profile.
-    anthropic_model_extract: str = "claude-opus-4-8"
-    anthropic_model_tailor: str = "claude-opus-4-8"
-    anthropic_model_verify: str = "claude-opus-4-8"
+    anthropic_model_extract: str = "manifest/auto"
+    anthropic_model_tailor: str = "manifest/auto"
+    anthropic_model_verify: str = "manifest/auto"
 
     firecrawl_api_key: str | None = None
     apify_api_token: str | None = None
