@@ -32,10 +32,33 @@ async function proxy(
   req: NextRequest,
   ctx: { params: Promise<{ path: string[] }> },
 ): Promise<Response> {
+  try {
+    return await proxyInner(req, ctx);
+  } catch (e) {
+    // Any uncaught throw lands here — log it loudly so it shows in Vercel
+    // runtime logs instead of bubbling to a bare 500.
+    const err = e as Error;
+    console.error("[proxy] UNCAUGHT", {
+      name: err.name,
+      message: err.message,
+      stack: err.stack?.split("\n").slice(0, 5).join(" | "),
+    });
+    return NextResponse.json(
+      { detail: `proxy crashed: ${err.name}: ${err.message}` },
+      { status: 500 },
+    );
+  }
+}
+
+async function proxyInner(
+  req: NextRequest,
+  ctx: { params: Promise<{ path: string[] }> },
+): Promise<Response> {
   const t0 = Date.now();
   const { path } = await ctx.params;
-  const upstream =
-    `${API}/api/v1/${(path ?? []).join("/")}${req.nextUrl.search}`;
+  const pathStr = (path ?? []).join("/");
+  const upstream = `${API}/api/v1/${pathStr}${req.nextUrl.search}`;
+  console.log("[proxy] start", { method: req.method, path: pathStr });
 
   const { userId, sessionId, getToken } = await auth();
   const token = await getToken();
