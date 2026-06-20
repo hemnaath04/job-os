@@ -4,7 +4,7 @@ import { STATUS_LABELS } from "@/lib/types";
 const STATUS_STYLE: Record<AppStatus, { from: string; to: string; text: string; ring: string }> = {
   wishlist: { from: "#A1A1AE", to: "#52525B", text: "#E4E4E7", ring: "#A1A1AE" },
   ready_to_apply: { from: "#06B6D4", to: "#3B82F6", text: "#E0F2FE", ring: "#38BDF8" },
-  applied: { from: "#6366F1", to: "#8B5CF6", text: "#EDE9FE", ring: "#A855F7" },
+  applied: { from: "#CCFF00", to: "#FFFF00", text: "#DFFF00", ring: "#CCFF00" },
   oa_received: { from: "#F59E0B", to: "#F5B544", text: "#FFF7ED", ring: "#F5B544" },
   interview_scheduled: { from: "#10B981", to: "#34D399", text: "#ECFDF5", ring: "#34D399" },
   offer: { from: "#06B6D4", to: "#5EEAD4", text: "#ECFEFF", ring: "#5EEAD4" },

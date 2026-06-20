@@ -56,7 +56,7 @@ export function ApplicationsTable({
               <Td>
                 <Link
                   href={{ pathname: "/tailor", query: { job_id: a.job.id } }}
-                  className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-medium text-white shadow-[0_0_20px_-8px_var(--color-purple)] transition hover:scale-[1.05]"
+                  className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-medium text-black shadow-[0_0_20px_-8px_var(--color-purple)] transition hover:scale-[1.05]"
                 >
                   <Sparkles className="size-3" /> Tailor
                 </Link>

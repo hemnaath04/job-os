@@ -120,7 +120,7 @@ function TailorInner() {
             value={jobId}
             onChange={(e) => setJobId(e.target.value)}
             disabled={jobsLoading}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           >
             <option value="">— pick a job —</option>
             {jobs.map((j) => (
@@ -140,7 +140,7 @@ function TailorInner() {
             value={resumeId}
             onChange={(e) => setResumeId(e.target.value)}
             disabled={resumesLoading}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           >
             <option value="">— pick a template —</option>
             {candidateResumes.map((r) => (
@@ -165,7 +165,7 @@ function TailorInner() {
         <button
           onClick={() => tailor.mutate()}
           disabled={!canRun}
-          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {tailor.isPending ? (
             <>
@@ -270,7 +270,7 @@ function ResultView({
           <button
             onClick={() => approve.mutate()}
             disabled={result.approved_by_user || approve.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             <CheckCircle2 className="size-3" />
             {result.approved_by_user ? "Approved" : approve.isPending ? "…" : "Approve"}
@@ -577,7 +577,7 @@ function GapRow({
                 onClick={() => setKind(k)}
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   kind === k
-                    ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-white opacity-90"
+                    ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-black opacity-90"
                     : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)]"
                 }`}
               >
@@ -589,7 +589,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
           />
           {kind !== "skill" && (
             <input
@@ -602,7 +602,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
             />
           )}
           {supportsBullets && (
@@ -611,14 +611,14 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional) — keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#7C5CFF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
             />
           )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !title.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
             >
               {create.isPending ? "Saving…" : "Save fact"}
             </button>

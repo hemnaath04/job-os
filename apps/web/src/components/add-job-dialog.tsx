@@ -62,7 +62,7 @@ export function AddJobDialog({
                 onChange={(e) => setUrl(e.target.value)}
                 required
                 autoFocus
-                className="w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none placeholder:text-[color:var(--color-text-dim)] focus:border-[#7C5CFF]/50 focus:bg-white/[0.05]"
+                className="w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none placeholder:text-[color:var(--color-text-dim)] focus:border-[#CCFF00]/50 focus:bg-white/[0.05]"
               />
               <div className="mt-2 flex justify-end gap-2">
                 <Dialog.Close className="rounded-full border border-white/10 px-4 py-1.5 text-sm hover:bg-white/[0.04]">
@@ -71,7 +71,7 @@ export function AddJobDialog({
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+                  className="flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
                 >
                   {loading && <Loader2 className="size-3.5 animate-spin" />}
                   {loading ? "Fetching…" : "Add to wishlist"}

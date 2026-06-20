@@ -166,7 +166,7 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
             href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
             onPointerDown={stopDrag}
             onClick={stopDrag}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-medium text-white shadow-[0_0_20px_-8px_var(--color-purple)]"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-medium text-black shadow-[0_0_20px_-8px_var(--color-purple)]"
           >
             <Sparkles className="size-2.5" /> Tailor
           </Link>

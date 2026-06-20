@@ -50,7 +50,7 @@ export default function ApplicationsPage() {
           </div>
           <button
             onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             <Plus className="size-3.5" /> Add job
           </button>

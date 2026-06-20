@@ -5,7 +5,7 @@ export default function SignInPage() {
     <main className="flex min-h-screen items-center justify-center px-6 py-10">
       <div className="flex flex-col items-center">
         <div className="mb-6 flex items-center gap-2">
-          <div className="size-7 rounded-md bg-gradient-to-br from-[#7C5CFF] to-[#5EEAD4] shadow-[0_0_30px_-5px_#7C5CFF]" />
+          <div className="size-7 rounded-md bg-gradient-to-br from-[#CCFF00] to-[#FFFF00] shadow-[0_0_30px_-5px_#CCFF00]" />
           <span className="font-mono text-sm tracking-tight">job.os</span>
         </div>
         <SignIn
@@ -14,7 +14,7 @@ export default function SignInPage() {
           forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
-              colorPrimary: "#7C5CFF",
+              colorPrimary: "#CCFF00",
               colorBackground: "#13131B",
               colorInputBackground: "#1A1A24",
               colorInputText: "#F5F5FA",

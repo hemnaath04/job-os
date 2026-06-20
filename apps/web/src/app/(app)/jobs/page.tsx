@@ -206,7 +206,7 @@ export default function DiscoverPage() {
             value={titles}
             onChange={(e) => setTitles(e.target.value)}
             placeholder="software engineer intern"
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <Field label="Technologies" help="Comma-separated slugs. e.g. 'python, pytorch'">
@@ -215,7 +215,7 @@ export default function DiscoverPage() {
             value={techs}
             onChange={(e) => setTechs(e.target.value)}
             placeholder="python, fastapi"
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <Field label="Country code" help="ISO-3166 alpha-2. e.g. US, CA, GB. Blank = global.">
@@ -224,7 +224,7 @@ export default function DiscoverPage() {
             value={country}
             maxLength={2}
             onChange={(e) => setCountry(e.target.value.toUpperCase())}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm uppercase outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm uppercase outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -235,7 +235,7 @@ export default function DiscoverPage() {
               max={180}
               value={maxAgeDays}
               onChange={(e) => setMaxAgeDays(Number(e.target.value) || 30)}
-              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
             />
           </Field>
           <Field label="Limit">
@@ -245,7 +245,7 @@ export default function DiscoverPage() {
               max={50}
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value) || 20)}
-              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
             />
           </Field>
         </div>
@@ -253,7 +253,7 @@ export default function DiscoverPage() {
           <button
             onClick={runSearch}
             disabled={search.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             {search.isPending ? (
               <>
@@ -434,7 +434,7 @@ function ResultCard({
           <button
             onClick={() => tailorJob.mutate()}
             disabled={tailorJob.isPending || importJob.isPending}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
             title="Import + create application + open the tailoring agent"
           >
             {tailorJob.isPending ? (

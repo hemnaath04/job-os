@@ -23,7 +23,7 @@ export function EmptyState({
       transition={{ duration: 0.25 }}
       className="glass mt-8 rounded-[var(--radius-card-lg)] p-10 text-center"
     >
-      <div className="relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-gradient-brand text-white shadow-[var(--shadow-brand-glow)]">
+      <div className="relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-gradient-brand text-black shadow-[var(--shadow-brand-glow)]">
         <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
         <Icon className="relative size-6" />
       </div>
@@ -34,7 +34,7 @@ export function EmptyState({
       {cta && (
         <Link
           href={cta.href}
-          className="mt-6 inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-2 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+          className="mt-6 inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-2 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
         >
           {cta.label}
         </Link>

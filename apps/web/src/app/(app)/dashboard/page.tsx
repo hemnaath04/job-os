@@ -33,7 +33,7 @@ import { STATUS_LABELS } from "@/lib/types";
 const STATUS_COLORS: Record<AppStatus, string> = {
   wishlist: "#A1A1AE",
   ready_to_apply: "#38BDF8",
-  applied: "#8B5CF6",
+  applied: "#CCFF00",
   oa_received: "#F5B544",
   interview_scheduled: "#34D399",
   offer: "#5EEAD4",
@@ -77,7 +77,7 @@ export default function DashboardPage() {
           </Link>
           <Link
             href="/tailor"
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3.5 py-1.5 text-xs font-medium text-white shadow-[var(--shadow-brand-glow)] hover:scale-[1.02]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3.5 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] hover:scale-[1.02]"
           >
             <Sparkles className="size-3.5" /> Tailor a resume
           </Link>
@@ -103,7 +103,7 @@ export default function DashboardPage() {
               value={stats.total}
               delta={stats.totalDelta}
               trend={stats.totalSpark}
-              accent="from-[#6366F1] to-[#A855F7]"
+              accent="from-[#CCFF00] to-[#FFFF00]"
             />
             <StatWidget
               icon={Clock}
@@ -111,7 +111,7 @@ export default function DashboardPage() {
               value={stats.interviews}
               delta={stats.interviewDelta}
               trend={stats.interviewSpark}
-              accent="from-[#06B6D4] to-[#3B82F6]"
+              accent="from-[#DFFF00] to-[#FFFF00]"
             />
             <StatWidget
               icon={CheckCircle2}
@@ -119,7 +119,7 @@ export default function DashboardPage() {
               value={stats.offers}
               delta={stats.offerDelta}
               trend={stats.offerSpark}
-              accent="from-[#5EEAD4] to-[#34D399]"
+              accent="from-[#CCFF00] to-[#DFFF00]"
             />
             <StatWidget
               icon={TrendingUp}
@@ -127,7 +127,7 @@ export default function DashboardPage() {
               value={`${stats.responseRate}%`}
               delta={null}
               trend={stats.responseSpark}
-              accent="from-[#F5B544] to-[#FF6B8A]"
+              accent="from-[#FFFF00] to-[#FFE600]"
             />
           </div>
 
@@ -143,8 +143,8 @@ export default function DashboardPage() {
                 <AreaChart data={weeklySeries} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
                   <defs>
                     <linearGradient id="appsArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#8B5CF6" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="#8B5CF6" stopOpacity={0} />
+                      <stop offset="0%" stopColor="#CCFF00" stopOpacity={0.55} />
+                      <stop offset="100%" stopColor="#CCFF00" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis
@@ -156,7 +156,7 @@ export default function DashboardPage() {
                     interval={4}
                   />
                   <Tooltip
-                    cursor={{ stroke: "#8B5CF6", strokeWidth: 1, strokeOpacity: 0.3 }}
+                    cursor={{ stroke: "#CCFF00", strokeWidth: 1, strokeOpacity: 0.3 }}
                     contentStyle={{
                       background: "rgba(26,26,36,0.9)",
                       border: "1px solid rgba(255,255,255,0.08)",
@@ -168,7 +168,7 @@ export default function DashboardPage() {
                   <Area
                     type="monotone"
                     dataKey="count"
-                    stroke="#A855F7"
+                    stroke="#CCFF00"
                     strokeWidth={2}
                     fill="url(#appsArea)"
                   />
@@ -271,7 +271,7 @@ function StatWidget({
       />
       <div className="relative flex items-center justify-between">
         <div
-          className={`flex size-9 items-center justify-center rounded-xl bg-gradient-to-br ${accent} text-white shadow-[0_0_30px_-8px_rgba(139,92,246,0.6)]`}
+          className={`flex size-9 items-center justify-center rounded-xl bg-gradient-to-br ${accent} text-black shadow-[0_0_30px_-8px_rgba(204,255,0,0.7)]`}
         >
           <Icon className="size-4" />
         </div>
@@ -299,14 +299,14 @@ function StatWidget({
             <AreaChart data={trend} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id={`spark-${label}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#A855F7" stopOpacity={0.6} />
-                  <stop offset="100%" stopColor="#A855F7" stopOpacity={0} />
+                  <stop offset="0%" stopColor="#FFFF00" stopOpacity={0.6} />
+                  <stop offset="100%" stopColor="#FFFF00" stopOpacity={0} />
                 </linearGradient>
               </defs>
               <Area
                 type="monotone"
                 dataKey="v"
-                stroke="#A855F7"
+                stroke="#CCFF00"
                 strokeWidth={1.5}
                 fill={`url(#spark-${label})`}
               />
@@ -388,10 +388,10 @@ function ChartCard({
 
 function Funnel({ applications }: { applications: Application[] }) {
   const tiers: { label: string; statuses: AppStatus[]; color: string }[] = [
-    { label: "Applied", statuses: ["applied", "oa_received", "interview_scheduled", "offer", "accepted", "rejected"], color: "#8B5CF6" },
-    { label: "OA / Screen", statuses: ["oa_received", "interview_scheduled", "offer", "accepted"], color: "#3B82F6" },
-    { label: "Interview", statuses: ["interview_scheduled", "offer", "accepted"], color: "#06B6D4" },
-    { label: "Offer", statuses: ["offer", "accepted"], color: "#34D399" },
+    { label: "Applied", statuses: ["applied", "oa_received", "interview_scheduled", "offer", "accepted", "rejected"], color: "#CCFF00" },
+    { label: "OA / Screen", statuses: ["oa_received", "interview_scheduled", "offer", "accepted"], color: "#DFFF00" },
+    { label: "Interview", statuses: ["interview_scheduled", "offer", "accepted"], color: "#FFFF00" },
+    { label: "Offer", statuses: ["offer", "accepted"], color: "#5EEAD4" },
   ];
   const total = applications.length || 1;
   const rows = tiers.map((t) => ({

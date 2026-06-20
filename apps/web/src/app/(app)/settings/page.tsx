@@ -70,7 +70,7 @@ export default function SettingsPage() {
         <button
           onClick={() => save.mutate(form)}
           disabled={save.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-white shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
         >
           <Save className="size-3.5" /> {save.isPending ? "Saving…" : "Save"}
         </button>
@@ -146,7 +146,7 @@ export default function SettingsPage() {
             type="text"
             value={form.default_location ?? ""}
             onChange={(e) => update("default_location", e.target.value || null)}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
 
@@ -157,7 +157,7 @@ export default function SettingsPage() {
             placeholder="America/New_York"
             value={form.timezone ?? ""}
             onChange={(e) => update("timezone", e.target.value || null)}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <Field label="Weekly summary email" help="Stub — no email is sent yet.">
@@ -166,7 +166,7 @@ export default function SettingsPage() {
               type="checkbox"
               checked={form.weekly_summary_email}
               onChange={(e) => update("weekly_summary_email", e.target.checked)}
-              className="size-4 accent-[#7C5CFF]"
+              className="size-4 accent-[#CCFF00]"
             />
             <span className="text-[color:var(--color-text-muted)]">
               Send me a weekly digest of applications + upcoming follow-ups.
@@ -219,7 +219,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#7C5CFF]/60"
+      className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
