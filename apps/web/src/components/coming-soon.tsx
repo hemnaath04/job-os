@@ -1,5 +1,6 @@
 import { type LucideIcon } from "lucide-react";
 import Link from "next/link";
+import type { Route } from "next";
 
 export function ComingSoon({
   title,
@@ -12,7 +13,7 @@ export function ComingSoon({
   milestone: string;
   description: string;
   icon: LucideIcon;
-  cta?: { href: string; label: string };
+  cta?: { href: Route; label: string };
 }) {
   return (
     <div className="mx-auto max-w-3xl px-8 py-16">

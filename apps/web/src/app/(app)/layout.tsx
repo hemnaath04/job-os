@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { SignOutButton, UserButton } from "@clerk/nextjs";
+import type { LucideIcon } from "lucide-react";
 import {
   CalendarDays,
   FileText,
@@ -16,7 +18,9 @@ import {
 import { QueryProvider } from "@/lib/query";
 import { Toaster } from "sonner";
 
-const NAV = [
+type NavItem = { href: Route; label: string; icon: LucideIcon };
+
+const NAV: NavItem[] = [
   { href: "/applications", label: "Applications", icon: LayoutGrid },
   { href: "/jobs", label: "Discover", icon: Radar },
   { href: "/tailor", label: "Tailor", icon: Sparkles },
