@@ -12,6 +12,7 @@ import asyncio
 from datetime import UTC, datetime
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,6 +33,8 @@ from job_os.schemas.discovery import (
     DiscoveryImportRequest,
     DiscoveryResult,
     DiscoverySearchRequest,
+    DiscoverySearchResponse,
+    DiscoverySourceError,
     SavedSearchCreate,
     SavedSearchRead,
     SmartSearchRequest,
@@ -42,40 +45,46 @@ from job_os.services.companies import upsert_company
 from job_os.services.discovery_smart_search import parse_smart_query
 from job_os.services.jd_parse import parse_jd
 
+log = structlog.get_logger(__name__)
+
 router = APIRouter(prefix="/discovery")
 
 _MIN_DESCRIPTION_CHARS = 200
 
 
-@router.post("/search", response_model=list[DiscoveryResult])
+@router.post("/search", response_model=DiscoverySearchResponse)
 async def search(
     payload: DiscoverySearchRequest,
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> list[DiscoveryResult]:
+) -> DiscoverySearchResponse:
     return await _run_search(payload, session)
 
 
 async def _run_search(
     payload: DiscoverySearchRequest, session: AsyncSession
-) -> list[DiscoveryResult]:
+) -> DiscoverySearchResponse:
     if not payload.sources:
         raise HTTPException(400, "sources list cannot be empty")
 
-    tasks = []
-    if "theirstack" in payload.sources:
-        tasks.append(_search_theirstack(payload))
-    if "github" in payload.sources:
-        tasks.append(_search_github(payload))
-
+    requested = list(payload.sources)
+    runners = {
+        "theirstack": _search_theirstack,
+        "github": _search_github,
+    }
+    tasks = [runners[s](payload) for s in requested if s in runners]
     gathered = await asyncio.gather(*tasks, return_exceptions=True)
 
     combined: list[DiscoveryResult] = []
-    errors: list[str] = []
-    for res in gathered:
+    errors: list[DiscoverySourceError] = []
+    source_counts: dict[str, int] = {}
+    for src, res in zip(requested, gathered, strict=True):
         if isinstance(res, BaseException):
-            errors.append(str(res))
+            errors.append(DiscoverySourceError(source=src, message=str(res)))
+            source_counts[src] = 0
+            log.warning("discovery.source_failed", source=src, error=str(res))
             continue
+        source_counts[src] = len(res)
         combined.extend(res)
 
     if combined:
@@ -87,11 +96,11 @@ async def _run_search(
     )
     capped = combined[: payload.limit]
 
-    # If every source we asked for blew up and we have nothing, surface a
-    # sensible error so the FE doesn't show a blank "no results" screen.
-    if not capped and errors:
-        raise HTTPException(503, "; ".join(errors))
-    return capped
+    return DiscoverySearchResponse(
+        results=capped,
+        source_counts=source_counts,
+        errors=errors,
+    )
 
 
 async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
@@ -288,23 +297,23 @@ async def delete_saved(
     await session.delete(saved)
 
 
-@router.post("/saved/{saved_id}/run", response_model=list[DiscoveryResult])
+@router.post("/saved/{saved_id}/run", response_model=DiscoverySearchResponse)
 async def run_saved(
     saved_id: UUID,
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
-) -> list[DiscoveryResult]:
+) -> DiscoverySearchResponse:
     saved = await session.get(SavedSearch, saved_id)
     if saved is None or saved.user_id != user.id:
         raise HTTPException(404, "saved search not found")
 
     query = DiscoverySearchRequest.model_validate(saved.query or {})
-    results = await _run_search(query, session)
+    response = await _run_search(query, session)
 
     saved.last_run_at = datetime.now(UTC)
-    saved.last_run_count = len(results)
+    saved.last_run_count = len(response.results)
     await session.flush()
-    return results
+    return response
 
 
 @router.post("/smart-search", response_model=SmartSearchResponse)

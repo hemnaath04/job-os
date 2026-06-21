@@ -24,6 +24,7 @@ import type {
   DiscoveryResult,
   DiscoverySearchRequest,
   DiscoverySource,
+  DiscoverySourceError,
   SavedSearch,
 } from "@/lib/types";
 
@@ -89,6 +90,8 @@ export default function DiscoverPage() {
     initial.sources ?? ["theirstack", "github"],
   );
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
+  const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
+  const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
   const [sort, setSort] = useState<SortMode>(initial.sort ?? "recency");
 
   const [smartQuery, setSmartQuery] = useState<string>("");
@@ -101,8 +104,11 @@ export default function DiscoverPage() {
   const search = useMutation({
     mutationFn: (body: DiscoverySearchRequest) => api.discoverySearch(body),
     onSuccess: (data) => {
-      setResults(data);
-      if (data.length === 0) toast("No results", { description: "Try widening the filters." });
+      setResults(data.results);
+      setSourceCounts(data.source_counts ?? {});
+      setSourceErrors(data.errors ?? []);
+      if (data.results.length === 0)
+        toast("No results", { description: "Try widening the filters." });
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -157,9 +163,11 @@ export default function DiscoverPage() {
   const runSaved = useMutation({
     mutationFn: (id: string) => api.runSavedSearch(id),
     onSuccess: (data) => {
-      setResults(data);
+      setResults(data.results);
+      setSourceCounts(data.source_counts ?? {});
+      setSourceErrors(data.errors ?? []);
       qc.invalidateQueries({ queryKey: ["saved-searches"] });
-      if (data.length === 0)
+      if (data.results.length === 0)
         toast("No results", { description: "Saved query returned nothing today." });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -203,6 +211,8 @@ export default function DiscoverPage() {
 
   function clearResults() {
     setResults(null);
+    setSourceCounts({});
+    setSourceErrors([]);
   }
 
   function onSmartSubmit(e: React.FormEvent) {
@@ -424,12 +434,57 @@ export default function DiscoverPage() {
         </div>
       </div>
 
+      {/* Per-source warnings — surfaced any time a source returned 0 hits or
+          threw (e.g. THEIRSTACK_API_KEY missing in Render). Prevents the
+          "only SimplifyJobs is showing" mystery state where one source silently
+          fails. */}
+      {sortedResults !== null && (sourceErrors.length > 0 || hasEmptySource(sources, sourceCounts)) && (
+        <div className="glass mt-4 rounded-[var(--radius-card)] border border-amber-400/30 p-3 text-xs">
+          {sourceErrors.map((e) => (
+            <div key={e.source} className="flex items-start gap-2">
+              <span className="text-amber-300">⚠</span>
+              <div>
+                <span className="font-semibold uppercase tracking-wider text-amber-300">
+                  {e.source}
+                </span>{" "}
+                <span className="text-[color:var(--color-text-muted)]">
+                  {prettyError(e.source, e.message)}
+                </span>
+              </div>
+            </div>
+          ))}
+          {hasEmptySource(sources, sourceCounts) &&
+            sources
+              .filter((s) => (sourceCounts[s] ?? 0) === 0 && !sourceErrors.find((e) => e.source === s))
+              .map((s) => (
+                <div key={s} className="flex items-start gap-2">
+                  <span className="text-amber-300">·</span>
+                  <div>
+                    <span className="font-semibold uppercase tracking-wider text-amber-300">
+                      {s}
+                    </span>{" "}
+                    <span className="text-[color:var(--color-text-muted)]">
+                      returned 0 hits with these filters.
+                    </span>
+                  </div>
+                </div>
+              ))}
+        </div>
+      )}
+
       {/* Results */}
       {sortedResults !== null && (
         <div className="mt-6">
-          <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="text-sm text-[color:var(--color-text-muted)]">
               {sortedResults.length} result{sortedResults.length === 1 ? "" : "s"}
+              {Object.keys(sourceCounts).length > 0 && (
+                <span className="ml-2 text-xs text-[color:var(--color-text-dim)]">
+                  ({Object.entries(sourceCounts)
+                    .map(([k, v]) => `${k}: ${v}`)
+                    .join(" · ")})
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-[color:var(--color-text-dim)]">Sort by</span>
@@ -729,4 +784,30 @@ function relevanceScore(r: DiscoveryResult, keywords: string[]): number {
     if (haystack.includes(needle)) score += 1;
   }
   return score * 1e12 + tsOrZero(r.posted_at);
+}
+
+function hasEmptySource(
+  sources: DiscoverySource[],
+  counts: Record<string, number>,
+): boolean {
+  return sources.some((s) => (counts[s] ?? 0) === 0);
+}
+
+function prettyError(source: DiscoverySource, msg: string): string {
+  const lower = msg.toLowerCase();
+  if (source === "theirstack") {
+    if (lower.includes("not configured") || lower.includes("api_key")) {
+      return (
+        "API key is not configured on the server. Add THEIRSTACK_API_KEY in " +
+        "the Render dashboard for the job-os-api service."
+      );
+    }
+    if (lower.includes("401") || lower.includes("unauthorized")) {
+      return "Server rejected the TheirStack key (401). Rotate it in TheirStack and update Render.";
+    }
+    if (lower.includes("402") || lower.includes("credit")) {
+      return "Out of TheirStack credits. Top up the account or fall back to GitHub.";
+    }
+  }
+  return msg.length > 200 ? msg.slice(0, 200) + "…" : msg;
 }

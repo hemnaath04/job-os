@@ -2,8 +2,8 @@ import type {
   Application,
   AppStatus,
   CalendarEntry,
-  DiscoveryResult,
   DiscoverySearchRequest,
+  DiscoverySearchResponse,
   Job,
   MeRead,
   ProfileFact,
@@ -105,6 +105,11 @@ export const api = {
   },
 
   listResumes: () => request<Resume[]>("/resumes"),
+  createResume: (body: { name: string; base_role?: string | null; is_master?: boolean }) =>
+    request<Resume>("/resumes", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   listVersions: (resumeId: string) =>
     request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`),
   getVersion: (resumeId: string, versionId: string) =>
@@ -141,7 +146,7 @@ export const api = {
     }),
 
   discoverySearch: (body: DiscoverySearchRequest) =>
-    request<DiscoveryResult[]>("/discovery/search", {
+    request<DiscoverySearchResponse>("/discovery/search", {
       method: "POST",
       body: JSON.stringify(body),
     }),
@@ -170,7 +175,7 @@ export const api = {
   deleteSavedSearch: (id: string) =>
     request<void>(`/discovery/saved/${id}`, { method: "DELETE" }),
   runSavedSearch: (id: string) =>
-    request<DiscoveryResult[]>(`/discovery/saved/${id}/run`, { method: "POST" }),
+    request<DiscoverySearchResponse>(`/discovery/saved/${id}/run`, { method: "POST" }),
   smartSearch: (query: string) =>
     request<SmartSearchResponse>("/discovery/smart-search", {
       method: "POST",

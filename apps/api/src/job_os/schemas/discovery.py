@@ -62,6 +62,23 @@ class DiscoveryResult(ORMModel):
     """True if this user already has a Job row matching (source, source_id)."""
 
 
+class DiscoverySourceError(ORMModel):
+    """One source failed to return results (e.g. TheirStack key missing).
+
+    Surfaced to the FE so the user sees WHY a source went dark instead of
+    just silently getting an unbalanced result mix."""
+
+    source: DiscoverySource
+    message: str
+
+
+class DiscoverySearchResponse(ORMModel):
+    results: list[DiscoveryResult] = Field(default_factory=list)
+    source_counts: dict[str, int] = Field(default_factory=dict)
+    """Per-source result counts BEFORE the cross-source limit cap."""
+    errors: list[DiscoverySourceError] = Field(default_factory=list)
+
+
 class DiscoveryImportRequest(ORMModel):
     source: str = "theirstack"
     source_id: str

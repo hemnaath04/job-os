@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   CheckCircle2,
@@ -8,22 +8,46 @@ import {
   Download,
   ExternalLink,
   FileText,
+  Plus,
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { api } from "@/lib/api";
 import type { Resume, ResumeVersionSummary } from "@/lib/types";
 
 export default function ResumesPage() {
+  const qc = useQueryClient();
   const { data: resumes = [], isLoading } = useQuery({
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
   });
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [baseRole, setBaseRole] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createResume({
+        name: name.trim(),
+        base_role: baseRole.trim() || null,
+        is_master: false,
+      }),
+    onSuccess: () => {
+      toast.success("Template created");
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      setCreating(false);
+      setName("");
+      setBaseRole("");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
 
   return (
     <div className="mx-auto max-w-5xl px-8 py-6">
-      <header className="flex items-center justify-between">
+      <header className="flex items-center justify-between gap-3">
         <div>
           <h1 className="text-2xl font-medium tracking-tight">Resumes</h1>
           <p className="text-sm text-[color:var(--color-text-muted)]">
@@ -31,7 +55,48 @@ export default function ResumesPage() {
             bullet is traceable.
           </p>
         </div>
+        <button
+          onClick={() => setCreating((c) => !c)}
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+        >
+          <Plus className="size-3.5" /> New template
+        </button>
       </header>
+
+      {creating && (
+        <div className="glass mt-4 rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/30 p-4">
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Template name (e.g. SWE, ML, AI)"
+              autoFocus
+              className="glass flex-1 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            />
+            <input
+              type="text"
+              value={baseRole}
+              onChange={(e) => setBaseRole(e.target.value)}
+              placeholder="Base role (optional)"
+              className="glass rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60 sm:w-48"
+            />
+            <button
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !name.trim()}
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            >
+              {create.isPending ? "Creating…" : "Create"}
+            </button>
+            <button
+              onClick={() => setCreating(false)}
+              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {isLoading && (
         <div className="mt-8 text-sm text-[color:var(--color-text-muted)]">

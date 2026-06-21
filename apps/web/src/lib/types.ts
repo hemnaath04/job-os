@@ -282,6 +282,17 @@ export interface SmartSearchResponse {
   explanation: string;
 }
 
+export interface DiscoverySourceError {
+  source: DiscoverySource;
+  message: string;
+}
+
+export interface DiscoverySearchResponse {
+  results: DiscoveryResult[];
+  source_counts: Record<string, number>;
+  errors: DiscoverySourceError[];
+}
+
 export interface Application {
   id: string;
   job: Job;

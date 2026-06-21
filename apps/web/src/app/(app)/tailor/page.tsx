@@ -136,30 +136,12 @@ function TailorInner() {
           label="Target resume template"
           help="Where the new tailored version gets saved. Pick a role-specific resume — not Master."
         >
-          <select
+          <TemplatePicker
             value={resumeId}
-            onChange={(e) => setResumeId(e.target.value)}
-            disabled={resumesLoading}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
-          >
-            <option value="">— pick a template —</option>
-            {candidateResumes.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-                {r.base_role ? ` · ${r.base_role}` : ""}
-              </option>
-            ))}
-          </select>
-          {candidateResumes.length === 0 && !resumesLoading && (
-            <p className="mt-1.5 text-xs text-[color:var(--color-text-dim)]">
-              You only have a Master resume. Create a role-specific resume (e.g.
-              &ldquo;SWE&rdquo;, &ldquo;ML&rdquo;) from{" "}
-              <Link href="/resumes" className="text-[color:var(--color-violet)] underline">
-                Resumes
-              </Link>
-              .
-            </p>
-          )}
+            onChange={setResumeId}
+            candidates={candidateResumes}
+            loading={resumesLoading}
+          />
         </Field>
 
         <button
@@ -310,6 +292,118 @@ function ResultView({
 }
 
 // ---- Helper components ------------------------------------------------------
+
+function TemplatePicker({
+  value,
+  onChange,
+  candidates,
+  loading,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  candidates: Resume[];
+  loading: boolean;
+}) {
+  const qc = useQueryClient();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [baseRole, setBaseRole] = useState("");
+
+  const create = useMutation({
+    mutationFn: () =>
+      api.createResume({
+        name: name.trim(),
+        base_role: baseRole.trim() || null,
+        is_master: false,
+      }),
+    onSuccess: (resume) => {
+      toast.success(`Template "${resume.name}" created`);
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      onChange(resume.id);
+      setCreating(false);
+      setName("");
+      setBaseRole("");
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  // If no candidates, prefer to show the create form prominently.
+  const showCreateForm = creating || (candidates.length === 0 && !loading);
+
+  return (
+    <div className="space-y-2">
+      {candidates.length > 0 && (
+        <div className="flex gap-2">
+          <select
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            disabled={loading}
+            className="glass flex-1 rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+          >
+            <option value="">— pick a template —</option>
+            {candidates.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+                {r.base_role ? ` · ${r.base_role}` : ""}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => setCreating((c) => !c)}
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+          >
+            <Plus className="size-3" /> New
+          </button>
+        </div>
+      )}
+
+      {showCreateForm && (
+        <div className="glass rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/30 p-3">
+          {candidates.length === 0 && (
+            <p className="mb-2 text-xs text-[color:var(--color-text-muted)]">
+              You only have a Master resume. Create a role-specific template
+              here — tailored versions will save under it.
+            </p>
+          )}
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <input
+              type="text"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="Template name (e.g. SWE, ML, AI)"
+              className="glass flex-1 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            />
+            <input
+              type="text"
+              value={baseRole}
+              onChange={(e) => setBaseRole(e.target.value)}
+              placeholder="Base role (optional)"
+              className="glass sm:w-48 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            />
+            <button
+              type="button"
+              onClick={() => create.mutate()}
+              disabled={create.isPending || !name.trim()}
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            >
+              {create.isPending ? "Creating…" : "Create"}
+            </button>
+            {candidates.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setCreating(false)}
+                className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+              >
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function PageShell({ loading = false }: { loading?: boolean }) {
   return (
