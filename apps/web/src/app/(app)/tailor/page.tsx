@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import type {
@@ -51,11 +51,15 @@ function TailorInner() {
     queryFn: () => api.listJobs(),
   });
 
-  // Auto-pick first non-master resume when none chosen.
+  // Auto-pick first non-master resume when none chosen. Lives in an effect
+  // (not render-phase setState) so React doesn't schedule extra renders that
+  // would clobber focus / click handling on the surrounding form controls.
   const candidateResumes = useMemo(() => resumes.filter((r) => !r.is_master), [resumes]);
-  if (!resumeId && candidateResumes.length > 0) {
-    setResumeId(candidateResumes[0].id);
-  }
+  useEffect(() => {
+    if (!resumeId && candidateResumes.length > 0) {
+      setResumeId(candidateResumes[0].id);
+    }
+  }, [resumeId, candidateResumes]);
 
   const tailor = useMutation({
     mutationFn: () => api.tailorResume(resumeId, jobId),
@@ -120,7 +124,7 @@ function TailorInner() {
             value={jobId}
             onChange={(e) => setJobId(e.target.value)}
             disabled={jobsLoading}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           >
             <option value="">— pick a job —</option>
             {jobs.map((j) => (
@@ -338,7 +342,7 @@ function TemplatePicker({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             disabled={loading}
-            className="glass flex-1 rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="flex-1 rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           >
             <option value="">— pick a template —</option>
             {candidates.map((r) => (

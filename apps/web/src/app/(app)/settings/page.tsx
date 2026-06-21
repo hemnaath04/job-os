@@ -146,7 +146,7 @@ export default function SettingsPage() {
             type="text"
             value={form.default_location ?? ""}
             onChange={(e) => update("default_location", e.target.value || null)}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
 
@@ -157,7 +157,7 @@ export default function SettingsPage() {
             placeholder="America/New_York"
             value={form.timezone ?? ""}
             onChange={(e) => update("timezone", e.target.value || null)}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <Field label="Weekly summary email" help="Stub — no email is sent yet.">
@@ -219,7 +219,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+      className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
