@@ -1,0 +1,63 @@
+name: keep-warm
+
+# Keep the Render free-tier API container from sleeping by hitting /health
+# every 10 minutes. Render sleeps after 15 minutes of idle traffic, so a
+# 10-minute ping with a few-minute safety buffer is the right cadence.
+#
+# Setup once: in this repo's GitHub UI →
+#   Settings → Secrets and variables → Actions → Variables → New variable
+#     Name:  RENDER_API_URL
+#     Value: https://<your-service>.onrender.com
+#       (or your custom domain — must point at the FastAPI service)
+#
+# The workflow only fails on local errors (curl can't run). A non-2xx
+# upstream response is logged but treated as success, because even a 502
+# proves the request reached Render's edge and started waking the
+# container — which is the whole point.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"   # every 10 minutes (UTC)
+  workflow_dispatch:          # manual trigger from the Actions UI
+
+# Cancel any in-flight run if a new schedule fires — we don't want
+# overlapping pings piling up if a previous run got stuck.
+concurrency:
+  group: keep-warm
+  cancel-in-progress: true
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Validate config
+        run: |
+          if [ -z "${{ vars.RENDER_API_URL }}" ]; then
+            echo "::error::Repo variable RENDER_API_URL is not set."
+            echo "Go to Settings → Secrets and variables → Actions → Variables and add it."
+            exit 1
+          fi
+
+      - name: Ping /health
+        env:
+          URL: ${{ vars.RENDER_API_URL }}
+        run: |
+          # 90s connect timeout covers Render cold-start wake (~30-60s).
+          # We DON'T fail on a non-2xx — the goal is to land a request on
+          # the container, not validate the response. Print the status so
+          # the run history is useful if something is misconfigured.
+          http_status=$(curl -sS -o /tmp/body -w '%{http_code}' \
+            --max-time 90 \
+            --retry 2 --retry-delay 5 \
+            "$URL/health" || echo "curl-failed")
+          echo "status=$http_status"
+          head -c 500 /tmp/body || true
+          echo
+          if [ "$http_status" = "curl-failed" ]; then
+            echo "::warning::curl failed entirely — Render may be down, not just cold."
+          elif [ "$http_status" = "200" ]; then
+            echo "ok"
+          else
+            echo "::warning::Non-200 status ($http_status) — Render saw the ping but the upstream isn't 2xx."
+          fi
