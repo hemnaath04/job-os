@@ -17,6 +17,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { downloadPdf } from "@/lib/download";
 import type {
   GapQuestion,
   JsonResume,
@@ -246,13 +247,14 @@ function ResultView({
           >
             <RefreshCw className="size-3" /> Re-tailor
           </button>
-          <a
-            href={downloadUrl}
-            download={`resume_${result.id.slice(0, 8)}.pdf`}
+          <button
+            onClick={() =>
+              downloadPdf(downloadUrl, `resume_${result.id.slice(0, 8)}.pdf`)
+            }
             className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
           >
             <Download className="size-3" /> Download PDF
-          </a>
+          </button>
           <button
             onClick={() => approve.mutate()}
             disabled={result.approved_by_user || approve.isPending}

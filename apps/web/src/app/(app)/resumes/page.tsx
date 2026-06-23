@@ -16,6 +16,7 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { api } from "@/lib/api";
+import { downloadPdf } from "@/lib/download";
 import type { Resume, ResumeVersionSummary } from "@/lib/types";
 
 export default function ResumesPage() {
@@ -225,14 +226,15 @@ function VersionRow({
           <ExternalLink className="size-3" />
           Preview
         </a>
-        <a
-          href={downloadUrl}
-          download={`resume_${version.id.slice(0, 8)}.pdf`}
+        <button
+          onClick={() =>
+            downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
+          }
           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
         >
           <Download className="size-3" />
           Download PDF
-        </a>
+        </button>
       </div>
     </div>
   );

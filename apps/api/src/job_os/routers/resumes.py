@@ -156,14 +156,31 @@ async def download_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    """Stream the rendered PDF directly — useful for previewing without R2."""
+    """Stream the rendered PDF.
+
+    Serves the cached `pdf_bytes` if present (the tailor flow pre-renders
+    via a BackgroundTask). On cache miss, render on demand and persist so
+    the next click is instant. The cached path matters because the Vercel
+    proxy that fronts this is on a tight serverless-function time budget
+    and Render's free tier has a cold-start that already eats most of it.
+    """
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)
     if version is None or version.resume_id != resume_id:
         raise HTTPException(404, "version not found")
-    rendered = render_resume_pdf(version.json_resume)
+
+    if version.pdf_bytes:
+        pdf_bytes = bytes(version.pdf_bytes)
+    else:
+        rendered = render_resume_pdf(version.json_resume)
+        pdf_bytes = rendered.bytes_
+        # Persist for subsequent clicks. flush() not commit — the session
+        # middleware commits at request end.
+        version.pdf_bytes = pdf_bytes
+        await session.flush()
+
     return Response(
-        content=rendered.bytes_,
+        content=pdf_bytes,
         media_type="application/pdf",
         headers={
             "Content-Disposition": f'inline; filename="resume_{version_id}.pdf"',
@@ -312,6 +329,24 @@ async def tailor_version(
     )
     session.add(version)
     await session.flush()
+
+    # Pre-render the PDF inline (adds ~1-2s to the tailor response) so the
+    # subsequent /download click hits the cache and returns in <100ms.
+    # Without this, a cold-started Render container has to wake AND render
+    # for the first download, blowing past the Vercel proxy's serverless
+    # timeout and producing a junk "404.html" download.
+    try:
+        rendered = render_resume_pdf(version.json_resume)
+        version.pdf_bytes = rendered.bytes_
+        await session.flush()
+    except Exception as e:  # noqa: BLE001 — render failure is non-fatal
+        from structlog import get_logger
+
+        get_logger(__name__).warning(
+            "tailor.prerender_failed",
+            version_id=str(version.id),
+            error=str(e),
+        )
 
     return TailorResponse(
         id=version.id,

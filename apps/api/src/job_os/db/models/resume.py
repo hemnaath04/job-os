@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Numeric, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, LargeBinary, Numeric, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -52,3 +52,7 @@ class ResumeVersion(UUIDPK, Timestamped, Base):
     approved_by_user: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     pdf_r2_key: Mapped[str | None] = mapped_column(String, nullable=True)
     docx_r2_key: Mapped[str | None] = mapped_column(String, nullable=True)
+    # WeasyPrint render of `json_resume`, cached at tailor-completion time
+    # so the per-click download path doesn't re-render every time (and
+    # doesn't compound the Vercel proxy timeout on cold starts).
+    pdf_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
