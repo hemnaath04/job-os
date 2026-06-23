@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { Calendar, MapPin, Sparkles } from "lucide-react";
+import { Calendar, ExternalLink, MapPin, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -131,9 +131,15 @@ function DraggableCard({ app }: { app: Application }) {
 
 function Card({ app, dragging = false }: { app: Application; dragging?: boolean }) {
   const company = app.job.company?.name ?? "Unknown";
+  const sourceUrl = app.job.source_url ?? null;
   const stopDrag = (e: React.SyntheticEvent) => e.stopPropagation();
+  function openJD() {
+    if (sourceUrl) window.open(sourceUrl, "_blank", "noopener,noreferrer");
+  }
   return (
     <div
+      onDoubleClick={openJD}
+      title={sourceUrl ? "Double-click to open the original JD" : undefined}
       className={
         "group glass cursor-grab rounded-[0.875rem] p-3 transition-all " +
         (dragging
@@ -144,7 +150,24 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
       <div className="flex items-start gap-2.5">
         <CompanyAvatar name={company} size={28} />
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">{app.job.title}</div>
+          <div className="flex items-center gap-1 truncate text-sm font-medium">
+            <span className="truncate">{app.job.title}</span>
+            {sourceUrl && (
+              <a
+                href={sourceUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                onPointerDown={stopDrag}
+                onClick={stopDrag}
+                onDoubleClick={stopDrag}
+                title="Open original JD"
+                aria-label="Open original job description"
+                className="shrink-0 text-[color:var(--color-text-dim)] transition hover:text-[color:var(--color-violet)]"
+              >
+                <ExternalLink className="size-3" />
+              </a>
+            )}
+          </div>
           <div className="truncate text-xs text-[color:var(--color-text-muted)]">
             {company}
           </div>
@@ -166,6 +189,7 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
             href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
             onPointerDown={stopDrag}
             onClick={stopDrag}
+            onDoubleClick={stopDrag}
             className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-medium text-black shadow-[0_0_20px_-8px_var(--color-purple)]"
           >
             <Sparkles className="size-2.5" /> Tailor

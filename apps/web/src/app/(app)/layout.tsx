@@ -3,6 +3,7 @@
 import { motion } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { Toaster } from "sonner";
+import { BackendWarmup } from "@/components/shell/backend-warmup";
 import { CommandPalette } from "@/components/shell/command-palette";
 import { TopProgressBar } from "@/components/shell/progress-bar";
 import { Sidebar } from "@/components/shell/sidebar";
@@ -13,6 +14,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   return (
     <QueryProvider>
+      <BackendWarmup />
       <TopProgressBar />
       <div className="flex min-h-screen">
         <Sidebar />
