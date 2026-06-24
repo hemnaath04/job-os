@@ -152,7 +152,7 @@ function TailorInner() {
         <button
           onClick={() => tailor.mutate()}
           disabled={!canRun}
-          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
+          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
         >
           {tailor.isPending ? (
             <>
@@ -258,7 +258,7 @@ function ResultView({
           <button
             onClick={() => approve.mutate()}
             disabled={result.approved_by_user || approve.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             <CheckCircle2 className="size-3" />
             {result.approved_by_user ? "Approved" : approve.isPending ? "…" : "Approve"}
@@ -718,7 +718,7 @@ function GapRow({
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !title.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
             >
               {create.isPending ? "Saving…" : "Save fact"}
             </button>

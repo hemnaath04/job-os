@@ -50,7 +50,7 @@ export default function ApplicationsPage() {
           </div>
           <button
             onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-bold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             <Plus className="size-3.5" /> Add job
           </button>
@@ -94,16 +94,16 @@ function ViewToggle({
     <button
       onClick={onClick}
       className={
-        "relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition " +
+        "relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition " +
         (active
-          ? "text-white"
-          : "text-[color:var(--color-text-muted)] hover:text-white")
+          ? "font-bold text-black"
+          : "font-medium text-[color:var(--color-text-muted)] hover:text-white")
       }
     >
       {active && (
         <motion.span
           layoutId="view-active"
-          className="absolute inset-0 rounded-full bg-gradient-brand opacity-30"
+          className="absolute inset-0 rounded-full bg-gradient-brand"
           transition={{ type: "spring", stiffness: 400, damping: 28 }}
         />
       )}

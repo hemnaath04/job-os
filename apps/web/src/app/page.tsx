@@ -25,7 +25,7 @@ export default async function Landing() {
           </Link>
           <Link
             href="/sign-up"
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             Get started <ArrowRight className="size-3.5" />
           </Link>
@@ -50,7 +50,7 @@ export default async function Landing() {
         <div className="mt-8 flex items-center gap-3">
           <Link
             href="/sign-in"
-            className="rounded-full bg-gradient-brand px-5 py-2.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="rounded-full bg-gradient-brand px-5 py-2.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             Sign in to dashboard
           </Link>

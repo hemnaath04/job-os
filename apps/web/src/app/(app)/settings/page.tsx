@@ -70,7 +70,7 @@ export default function SettingsPage() {
         <button
           onClick={() => save.mutate(form)}
           disabled={save.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-medium text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
         >
           <Save className="size-3.5" /> {save.isPending ? "Saving…" : "Save"}
         </button>

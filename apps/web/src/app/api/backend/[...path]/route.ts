@@ -151,7 +151,15 @@ async function proxyInner(
   // Help Vercel/Next not cache this.
   outHeaders.set("cache-control", "no-store");
 
-  return new Response(body, { status: resp.status, headers: outHeaders });
+  // WHATWG fetch forbids a body on null-body statuses (204 / 205 / 304).
+  // Our backend's DELETE handlers return 204 No Content; even an empty
+  // ArrayBuffer trips the Response constructor's spec check ("Invalid
+  // response status code 204"). Pass null in those cases.
+  const nullBodyStatus = resp.status === 204 || resp.status === 205 || resp.status === 304;
+  return new Response(nullBodyStatus ? null : body, {
+    status: resp.status,
+    headers: outHeaders,
+  });
 }
 
 export const GET = proxy;

@@ -77,7 +77,7 @@ export default function DashboardPage() {
           </Link>
           <Link
             href="/tailor"
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3.5 py-1.5 text-xs font-medium text-black shadow-[var(--shadow-brand-glow)] hover:scale-[1.02]"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3.5 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] hover:scale-[1.02]"
           >
             <Sparkles className="size-3.5" /> Tailor a resume
           </Link>
