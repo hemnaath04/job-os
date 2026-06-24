@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { Calendar, ExternalLink, MapPin, Sparkles } from "lucide-react";
+import { Calendar, ExternalLink, MapPin, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -49,6 +49,29 @@ export function KanbanBoard({
     }
   }
 
+  async function onDelete(app: Application) {
+    try {
+      await api.archiveApplication(app.id);
+      onChange();
+      toast.success(`Archived "${app.job.title}"`, {
+        description: app.job.company?.name ?? undefined,
+        action: {
+          label: "Undo",
+          onClick: async () => {
+            try {
+              await api.patchApplication(app.id, { archived: false });
+              onChange();
+            } catch (err) {
+              toast.error(`Couldn't restore: ${(err as Error).message}`);
+            }
+          },
+        },
+      });
+    } catch (err) {
+      toast.error(`Couldn't archive: ${(err as Error).message}`);
+    }
+  }
+
   return (
     <DndContext
       sensors={sensors}
@@ -67,7 +90,7 @@ export function KanbanBoard({
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.03, duration: 0.25 }}
             >
-              <Column status={status} items={items} />
+              <Column status={status} items={items} onDelete={onDelete} />
             </motion.div>
           );
         })}
@@ -77,7 +100,15 @@ export function KanbanBoard({
   );
 }
 
-function Column({ status, items }: { status: AppStatus; items: Application[] }) {
+function Column({
+  status,
+  items,
+  onDelete,
+}: {
+  status: AppStatus;
+  items: Application[];
+  onDelete: (app: Application) => void;
+}) {
   const { setNodeRef, isOver } = useDroppable({ id: status });
   return (
     <div
@@ -91,9 +122,7 @@ function Column({ status, items }: { status: AppStatus; items: Application[] }) 
     >
       <div className="mb-3 flex items-center justify-between px-1">
         <StatusPill status={status} />
-        <span className="font-mono text-xs text-[color:var(--color-text-dim)]">
-          {items.length}
-        </span>
+        <span className="font-mono text-xs text-white/60">{items.length}</span>
       </div>
       <div className="flex flex-col gap-2">
         <AnimatePresence>
@@ -106,7 +135,7 @@ function Column({ status, items }: { status: AppStatus; items: Application[] }) 
               exit={{ opacity: 0, scale: 0.95 }}
               transition={{ duration: 0.18 }}
             >
-              <DraggableCard app={a} />
+              <DraggableCard app={a} onDelete={onDelete} />
             </motion.div>
           ))}
         </AnimatePresence>
@@ -115,7 +144,13 @@ function Column({ status, items }: { status: AppStatus; items: Application[] }) 
   );
 }
 
-function DraggableCard({ app }: { app: Application }) {
+function DraggableCard({
+  app,
+  onDelete,
+}: {
+  app: Application;
+  onDelete: (app: Application) => void;
+}) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: app.id });
   return (
     <div
@@ -124,12 +159,20 @@ function DraggableCard({ app }: { app: Application }) {
       {...listeners}
       className={isDragging ? "opacity-30" : ""}
     >
-      <Card app={app} />
+      <Card app={app} onDelete={onDelete} />
     </div>
   );
 }
 
-function Card({ app, dragging = false }: { app: Application; dragging?: boolean }) {
+function Card({
+  app,
+  dragging = false,
+  onDelete,
+}: {
+  app: Application;
+  dragging?: boolean;
+  onDelete?: (app: Application) => void;
+}) {
   const company = app.job.company?.name ?? "Unknown";
   const sourceUrl = app.job.source_url ?? null;
   const stopDrag = (e: React.SyntheticEvent) => e.stopPropagation();
@@ -150,7 +193,7 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
       <div className="flex items-start gap-2.5">
         <CompanyAvatar name={company} size={28} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 truncate text-sm font-medium">
+          <div className="flex items-center gap-1 truncate text-sm font-medium text-white">
             <span className="truncate">{app.job.title}</span>
             {sourceUrl && (
               <a
@@ -162,19 +205,17 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
                 onDoubleClick={stopDrag}
                 title="Open original JD"
                 aria-label="Open original job description"
-                className="shrink-0 text-[color:var(--color-text-dim)] transition hover:text-[color:var(--color-violet)]"
+                className="shrink-0 text-white/40 transition hover:text-[color:var(--color-violet)]"
               >
                 <ExternalLink className="size-3" />
               </a>
             )}
           </div>
-          <div className="truncate text-xs text-[color:var(--color-text-muted)]">
-            {company}
-          </div>
+          <div className="truncate text-xs text-white/70">{company}</div>
         </div>
       </div>
       {app.job.location && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-[color:var(--color-text-dim)]">
+        <div className="mt-2 flex items-center gap-1 text-xs text-white/50">
           <MapPin className="size-3" /> {app.job.location}
         </div>
       )}
@@ -184,7 +225,22 @@ function Card({ app, dragging = false }: { app: Application; dragging?: boolean 
         </div>
       )}
       {!dragging && (
-        <div className="mt-2 flex justify-end opacity-0 transition-opacity group-hover:opacity-100">
+        <div className="mt-2 flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+          {onDelete && (
+            <button
+              onPointerDown={stopDrag}
+              onClick={(e) => {
+                stopDrag(e);
+                onDelete(app);
+              }}
+              onDoubleClick={stopDrag}
+              title="Archive (move out of pipeline)"
+              aria-label="Archive application"
+              className="inline-flex items-center justify-center rounded-full border border-white/10 bg-white/[0.03] p-1 text-white/60 transition hover:bg-rose-400/15 hover:text-rose-300"
+            >
+              <Trash2 className="size-3" />
+            </button>
+          )}
           <Link
             href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
             onPointerDown={stopDrag}
