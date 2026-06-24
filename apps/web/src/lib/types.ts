@@ -33,6 +33,7 @@ export const KANBAN_STATUSES: AppStatus[] = [
   "oa_received",
   "interview_scheduled",
   "offer",
+  "rejected",
 ];
 
 export interface Company {
