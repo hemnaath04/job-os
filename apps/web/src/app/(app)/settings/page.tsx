@@ -1,9 +1,10 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save } from "lucide-react";
+import { Save, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import type { Resume, UserSettings } from "@/lib/types";
 
@@ -45,8 +46,8 @@ export default function SettingsPage() {
 
   if (isLoading || !form) {
     return (
-      <div className="mx-auto max-w-2xl px-8 py-6 text-sm text-[color:var(--color-text-muted)]">
-        loading…
+      <div className="workspace-page max-w-6xl">
+        <div className="loading-surface" />
       </div>
     );
   }
@@ -58,27 +59,26 @@ export default function SettingsPage() {
   const candidateResumes = resumes.filter((r: Resume) => !r.is_master);
 
   return (
-    <div className="mx-auto max-w-2xl px-8 py-6">
-      <header className="flex items-start justify-between">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Settings</h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            Preferences and defaults. Stored on your user record — no shared
-            state.
-          </p>
-        </div>
-        <button
-          onClick={() => save.mutate(form)}
-          disabled={save.isPending}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
-        >
-          <Save className="size-3.5" /> {save.isPending ? "Saving…" : "Save"}
-        </button>
-      </header>
+    <div className="workspace-page max-w-6xl">
+      <PageIntro
+        eyebrow="Personal operating system"
+        title="Preferences"
+        description="Set the defaults that shape discovery and tailoring. Everything here stays attached to your private user record."
+        icon={SlidersHorizontal}
+        action={
+          <button onClick={() => save.mutate(form)} disabled={save.isPending} className="kinetic-button kinetic-button-primary disabled:opacity-50">
+            <Save className="size-3.5" /> {save.isPending ? "Saving…" : "Save changes"}
+          </button>
+        }
+      >
+        <InfoChip tone="sage">Private to your account</InfoChip>
+        <InfoChip>Autosynced across devices</InfoChip>
+      </PageIntro>
 
-      <div className="mt-8 space-y-6">
-        <SectionHeader title="Appearance" />
-        <Field label="Theme" help="Affects the app shell. Light mode is a stub today.">
+      <div className="mt-6 grid gap-5 lg:grid-cols-2">
+        <section className="workspace-panel p-6">
+          <SectionHeader title="Appearance" />
+          <Field label="Theme" help="Affects the app shell. Light mode is a stub today.">
           <div className="flex gap-2">
             {THEMES.map((t) => (
               <button
@@ -86,7 +86,7 @@ export default function SettingsPage() {
                 onClick={() => update("theme", t.value)}
                 className={`rounded-full border px-3 py-1 text-xs ${
                   form.theme === t.value
-                    ? "border-[color:var(--color-purple)]/50 bg-[color:var(--color-purple)]/15 text-white shadow-[0_0_20px_-8px_var(--color-purple)]"
+                    ? "border-[color:var(--color-purple)]/50 bg-[color:var(--color-purple)]/15 text-white shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
                     : "border-white/10 bg-white/[0.03] text-[color:var(--color-text-muted)] hover:text-white"
                 }`}
               >
@@ -94,85 +94,43 @@ export default function SettingsPage() {
               </button>
             ))}
           </div>
-        </Field>
+          </Field>
+        </section>
 
-        <SectionHeader title="Tailoring defaults" />
-        <Field
-          label="Default target resume"
-          help="The Tailor page auto-selects this resume when you arrive without one chosen."
-        >
-          <Select
-            value={form.default_resume_id ?? ""}
-            onChange={(v) => update("default_resume_id", v || null)}
-            options={[
-              { value: "", label: "— none —" },
-              ...candidateResumes.map((r: Resume) => ({
-                value: r.id,
-                label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}`,
-              })),
-            ]}
-          />
-        </Field>
+        <section className="workspace-panel p-6">
+          <SectionHeader title="Tailoring defaults" />
+          <Field label="Default target resume" help="Auto-select this role-specific resume when tailoring.">
+            <Select value={form.default_resume_id ?? ""} onChange={(v) => update("default_resume_id", v || null)} options={[{ value: "", label: "— none —" }, ...candidateResumes.map((r: Resume) => ({ value: r.id, label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}` }))]} />
+          </Field>
+        </section>
 
-        <SectionHeader title="Discovery defaults" />
-        <Field
-          label="Function"
-          help="Pre-fills Discover-search function filter (swe, ml, etc.)."
-        >
-          <Select
-            value={form.default_function ?? ""}
-            onChange={(v) => update("default_function", v || null)}
-            options={[
-              { value: "", label: "— any —" },
-              ...FUNCTIONS.map((f) => ({ value: f, label: f })),
-            ]}
-          />
-        </Field>
-        <Field label="Level">
-          <Select
-            value={form.default_level ?? ""}
-            onChange={(v) => update("default_level", v || null)}
-            options={[
-              { value: "", label: "— any —" },
-              ...LEVELS.map((l) => ({ value: l, label: l })),
-            ]}
-          />
-        </Field>
-        <Field
-          label="Location"
-          help="Free-text city or region — e.g. 'Boston' or 'Remote'."
-        >
-          <input
-            type="text"
-            value={form.default_location ?? ""}
-            onChange={(e) => update("default_location", e.target.value || null)}
-            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
-          />
-        </Field>
+        <section className="workspace-panel p-6">
+          <SectionHeader title="Discovery defaults" />
+          <div className="grid gap-5 sm:grid-cols-2">
+            <Field label="Function" help="Pre-fills the role filter.">
+              <Select value={form.default_function ?? ""} onChange={(v) => update("default_function", v || null)} options={[{ value: "", label: "— any —" }, ...FUNCTIONS.map((f) => ({ value: f, label: f }))]} />
+            </Field>
+            <Field label="Level">
+              <Select value={form.default_level ?? ""} onChange={(v) => update("default_level", v || null)} options={[{ value: "", label: "— any —" }, ...LEVELS.map((l) => ({ value: l, label: l }))]} />
+            </Field>
+          </div>
+          <Field label="Location" help="City, region, or Remote.">
+            <input type="text" value={form.default_location ?? ""} onChange={(e) => update("default_location", e.target.value || null)} className="field-control" />
+          </Field>
+        </section>
 
-        <SectionHeader title="Other" />
-        <Field label="Timezone" help="IANA name — e.g. 'America/New_York'.">
-          <input
-            type="text"
-            placeholder="America/New_York"
-            value={form.timezone ?? ""}
-            onChange={(e) => update("timezone", e.target.value || null)}
-            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
-          />
-        </Field>
-        <Field label="Weekly summary email" help="Stub — no email is sent yet.">
-          <label className="inline-flex cursor-pointer items-center gap-2 text-sm">
-            <input
-              type="checkbox"
-              checked={form.weekly_summary_email}
-              onChange={(e) => update("weekly_summary_email", e.target.checked)}
-              className="size-4 accent-[#CCFF00]"
-            />
-            <span className="text-[color:var(--color-text-muted)]">
-              Send me a weekly digest of applications + upcoming follow-ups.
-            </span>
-          </label>
-        </Field>
+        <section className="workspace-panel p-6">
+          <SectionHeader title="Schedule & updates" />
+          <Field label="Timezone" help="IANA name — e.g. America/New_York.">
+            <input type="text" placeholder="America/New_York" value={form.timezone ?? ""} onChange={(e) => update("timezone", e.target.value || null)} className="field-control" />
+          </Field>
+          <Field label="Weekly summary email" help="Stub — no email is sent yet.">
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm">
+              <input type="checkbox" checked={form.weekly_summary_email} onChange={(e) => update("weekly_summary_email", e.target.checked)} className="mt-0.5 size-4 accent-[#9AA7FF]" />
+              <span className="text-[color:var(--color-text-muted)]">Send a weekly digest of applications and upcoming follow-ups.</span>
+            </label>
+          </Field>
+        </section>
       </div>
     </div>
   );
@@ -180,7 +138,7 @@ export default function SettingsPage() {
 
 function SectionHeader({ title }: { title: string }) {
   return (
-    <h2 className="border-b border-white/[0.06] pb-1 text-xs font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+    <h2 className="section-kicker mb-5 border-b border-white/[0.06] pb-3">
       {title}
     </h2>
   );
@@ -196,7 +154,7 @@ function Field({
   children: React.ReactNode;
 }) {
   return (
-    <div>
+    <div className="mt-5 first:mt-0">
       <label className="text-sm font-medium">{label}</label>
       {help && (
         <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">{help}</p>
@@ -219,7 +177,7 @@ function Select({
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+      className="field-control"
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>

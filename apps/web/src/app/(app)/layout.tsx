@@ -16,9 +16,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     <QueryProvider>
       <BackendWarmup />
       <TopProgressBar />
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen pb-16 lg:pb-0">
         <Sidebar />
-        <main className="flex min-h-screen flex-1 flex-col">
+        <main className="flex min-h-screen min-w-0 flex-1 flex-col">
           <TopBar />
           {/* Mount-only fade. We avoid AnimatePresence/mode="wait" here because
               under Next 15 + React 19 client nav it sometimes blocks the new

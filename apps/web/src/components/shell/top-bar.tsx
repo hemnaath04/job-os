@@ -28,7 +28,7 @@ export function TopBar() {
       initial={{ opacity: 0, y: -6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="sticky top-0 z-20 flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-bg)]/70 px-6 py-3 backdrop-blur-xl"
+      className="sticky top-0 z-20 flex items-center justify-between border-b border-[color:var(--color-border)] bg-[color:var(--color-bg)]/70 px-4 py-3 backdrop-blur-xl sm:px-6"
     >
       <div className="flex items-center gap-2 text-sm">
         <span className="text-[color:var(--color-text-dim)]">job.os</span>

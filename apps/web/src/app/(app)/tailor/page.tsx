@@ -18,6 +18,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import type {
   GapQuestion,
   JsonResume,
@@ -90,18 +91,20 @@ function TailorInner() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-8 py-6">
-      <header>
-        <h1 className="text-2xl font-medium tracking-tight">Tailor a resume</h1>
-        <p className="text-sm text-[color:var(--color-text-muted)]">
-          Pick a job and a target template. The agent loads your master, your
-          verified facts, and the JD — then rewrites bullets without inventing
-          anything. Anything missing comes back as a gap question.
-        </p>
-      </header>
+    <div className="workspace-page max-w-6xl">
+      <PageIntro
+        eyebrow="Evidence-guided writing studio"
+        title="Tailor a resume"
+        description="Match a verified career story to a specific role. The agent can reshape and prioritize evidence, but it cannot invent what is not in your profile."
+        icon={Sparkles}
+      >
+        <InfoChip tone="sage">No hallucinated claims</InfoChip>
+        <InfoChip>{jobs.length} saved roles</InfoChip>
+        <InfoChip tone="clay">{candidateResumes.length} templates ready</InfoChip>
+      </PageIntro>
 
       {!hasMaster && !resumesLoading && (
-        <div className="glass mt-6 flex items-start gap-3 rounded-[var(--radius-card)] border border-amber-400/30 p-4">
+        <div className="workspace-panel mt-5 flex items-start gap-3 border-amber-400/25 p-5">
           <AlertCircle className="mt-0.5 size-4 text-amber-400" />
           <div className="text-sm">
             <div className="font-medium">No master resume yet</div>
@@ -116,7 +119,8 @@ function TailorInner() {
         </div>
       )}
 
-      <div className="mt-8 space-y-6">
+      <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
+        <section className="workspace-panel space-y-6 p-6 sm:p-7">
         <Field
           label="Job"
           help="The JD to tailor against. Add jobs from Applications."
@@ -125,7 +129,7 @@ function TailorInner() {
             value={jobId}
             onChange={(e) => setJobId(e.target.value)}
             disabled={jobsLoading}
-            className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="field-control"
           >
             <option value="">— pick a job —</option>
             {jobs.map((j) => (
@@ -152,7 +156,7 @@ function TailorInner() {
         <button
           onClick={() => tailor.mutate()}
           disabled={!canRun}
-          className="inline-flex items-center gap-2 rounded-full bg-gradient-brand px-5 py-2 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-40"
+          className="kinetic-button kinetic-button-primary disabled:cursor-not-allowed disabled:opacity-40"
         >
           {tailor.isPending ? (
             <>
@@ -170,6 +174,22 @@ function TailorInner() {
             One Opus pass through Manifest — usually 20–60s.
           </p>
         )}
+        </section>
+        <aside className="workspace-panel h-fit overflow-hidden p-6">
+          <div className="section-kicker">How the pass works</div>
+          <ol className="mt-5 space-y-5">
+            {[
+              ["01", "Read", "Job requirements and role language"],
+              ["02", "Ground", "Your master resume and verified facts"],
+              ["03", "Compose", "A traceable draft plus gap questions"],
+            ].map(([number, title, copy]) => (
+              <li key={number} className="flex gap-3">
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[#9AA7FF]/15 bg-[#9AA7FF]/[.06] font-mono text-[10px] text-[#c9cef4]">{number}</span>
+                <div><div className="text-sm font-semibold">{title}</div><p className="mt-0.5 text-xs leading-5 text-[color:var(--color-text-dim)]">{copy}</p></div>
+              </li>
+            ))}
+          </ol>
+        </aside>
       </div>
     </div>
   );
@@ -216,7 +236,7 @@ function ResultView({
   });
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-6">
+    <div className="workspace-page max-w-7xl">
       <button
         onClick={onReset}
         className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-white"
@@ -267,7 +287,7 @@ function ResultView({
       </header>
 
       {result.agent_note && (
-        <div className="glass mt-6 rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/20 p-4">
+        <div className="workspace-panel mt-6 border-[#9AA7FF]/20 p-5">
           <div className="flex items-start gap-3">
             <Sparkles className="mt-0.5 size-4 text-[color:var(--color-violet)]" />
             <p className="text-sm leading-relaxed text-[color:var(--color-text-muted)]">
@@ -344,7 +364,7 @@ function TemplatePicker({
             value={value}
             onChange={(e) => onChange(e.target.value)}
             disabled={loading}
-            className="flex-1 rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="field-control flex-1"
           >
             <option value="">— pick a template —</option>
             {candidates.map((r) => (
@@ -365,7 +385,7 @@ function TemplatePicker({
       )}
 
       {showCreateForm && (
-        <div className="glass rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/30 p-3">
+        <div className="workspace-panel p-4">
           {candidates.length === 0 && (
             <p className="mb-2 text-xs text-[color:var(--color-text-muted)]">
               You only have a Master resume. Create a role-specific template
@@ -378,14 +398,14 @@ function TemplatePicker({
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="Template name (e.g. SWE, ML, AI)"
-              className="glass flex-1 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+              className="field-control flex-1"
             />
             <input
               type="text"
               value={baseRole}
               onChange={(e) => setBaseRole(e.target.value)}
               placeholder="Base role (optional)"
-              className="glass sm:w-48 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+              className="field-control sm:w-48"
             />
             <button
               type="button"
@@ -413,13 +433,8 @@ function TemplatePicker({
 
 function PageShell({ loading = false }: { loading?: boolean }) {
   return (
-    <div className="mx-auto max-w-3xl px-8 py-6">
-      <header>
-        <h1 className="text-2xl font-medium tracking-tight">Tailor a resume</h1>
-        {loading && (
-          <p className="text-sm text-[color:var(--color-text-muted)]">loading…</p>
-        )}
-      </header>
+    <div className="workspace-page max-w-6xl">
+      {loading && <div className="loading-surface" />}
     </div>
   );
 }
@@ -497,7 +512,7 @@ function AtsBadge({ score }: { score: string | null }) {
 function AtsPanel({ matched, missing }: { matched: string[]; missing: string[] }) {
   if (matched.length === 0 && missing.length === 0) return null;
   return (
-    <div className="glass rounded-[var(--radius-card)] p-4">
+    <div className="workspace-panel p-5">
       <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
         ATS keyword coverage
       </div>
@@ -552,7 +567,7 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
   }, [facts]);
 
   return (
-    <div className="glass rounded-[var(--radius-card)] border border-amber-400/25 p-4">
+    <div className="workspace-panel border-amber-400/25 p-5">
       <div className="flex items-center gap-2">
         <AlertCircle className="size-4 text-amber-400" />
         <div className="text-sm font-medium">
@@ -689,7 +704,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
           />
           {kind !== "skill" && (
             <input
@@ -702,7 +717,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
             />
           )}
           {supportsBullets && (
@@ -711,7 +726,7 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional) — keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#CCFF00]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
             />
           )}
           <div className="flex items-center gap-2">
@@ -755,7 +770,7 @@ function ResumeRender({
   }, [provenance]);
 
   return (
-    <article className="glass rounded-[var(--radius-card-lg)] p-8">
+    <article className="workspace-panel p-8">
       {json.basics && (
         <header className="border-b border-white/[0.06] pb-4">
           {json.basics.name && (

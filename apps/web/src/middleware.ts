@@ -1,7 +1,13 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Public routes: marketing page + auth handlers
-const isPublic = createRouteMatcher(["/", "/sign-in(.*)", "/sign-up(.*)"]);
+const isPublic = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  // Status-only endpoint used to wake the API before authenticated data calls.
+  "/api/backend/health",
+]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (!isPublic(req)) {

@@ -47,17 +47,18 @@ export function Sidebar() {
   const width = collapsed ? 72 : 232;
 
   return (
+    <>
     <motion.aside
       animate={{ width }}
       transition={{ type: "spring", stiffness: 220, damping: 28 }}
-      className="sticky top-0 z-30 flex h-screen shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/40 backdrop-blur-xl"
+      className="sticky top-0 z-30 hidden h-screen shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/40 backdrop-blur-xl lg:flex"
     >
       {/* Brand */}
       <Link
         href="/dashboard"
         className="flex items-center gap-2.5 px-4 pt-5 pb-6"
       >
-        <div className="relative size-7 shrink-0 overflow-hidden rounded-lg bg-gradient-brand shadow-[0_0_24px_-4px_var(--color-purple)]">
+        <div className="relative size-7 shrink-0 overflow-hidden rounded-lg bg-gradient-brand shadow-[0_12px_28px_-18px_rgba(107,120,210,.5)]">
           <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent" />
         </div>
         <AnimatePresence initial={false}>
@@ -156,6 +157,24 @@ export function Sidebar() {
         </button>
       </div>
     </motion.aside>
+    <nav className="fixed inset-x-3 bottom-3 z-50 flex h-14 items-center justify-around rounded-2xl border border-white/[0.09] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
+      {NAV.slice(0, 5).map((item) => {
+        const Icon = item.icon;
+        const active = pathname === item.href || pathname.startsWith(item.href + "/");
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            className={`relative flex size-10 items-center justify-center rounded-xl transition ${active ? "text-black" : "text-white/42 hover:text-white"}`}
+            aria-label={item.label}
+          >
+            {active && <motion.span layoutId="mobile-nav-active" className="absolute inset-0 rounded-xl bg-gradient-brand" transition={{ type: "spring", stiffness: 380, damping: 30 }} />}
+            <Icon className="relative size-[18px]" />
+          </Link>
+        );
+      })}
+    </nav>
+    </>
   );
 }
 
@@ -181,12 +200,12 @@ function NavLink({
       }
       title={collapsed ? item.label : undefined}
     >
-      {/* Active background — full neon chip so the dark text reads clearly */}
+      {/* Active background — muted periwinkle with clear dark text */}
       {active && (
         <motion.span
           layoutId="nav-active"
           className="absolute inset-0 rounded-lg bg-gradient-brand"
-          style={{ boxShadow: "0 0 28px -6px rgba(204,255,0,0.55)" }}
+          style={{ boxShadow: "0 12px 28px -18px rgba(107,120,210,0.52)" }}
           transition={{ type: "spring", stiffness: 380, damping: 30 }}
         />
       )}

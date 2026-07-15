@@ -21,7 +21,7 @@ export function EmptyState({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.25 }}
-      className="glass mt-8 rounded-[var(--radius-card-lg)] p-10 text-center"
+      className="workspace-panel mt-8 p-12 text-center"
     >
       <div className="relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-gradient-brand text-black shadow-[var(--shadow-brand-glow)]">
         <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
@@ -34,7 +34,7 @@ export function EmptyState({
       {cta && (
         <Link
           href={cta.href}
-          className="mt-6 inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-2 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+          className="kinetic-button kinetic-button-primary mt-6"
         >
           {cta.label}
         </Link>

@@ -5,7 +5,7 @@ export default function SignUpPage() {
     <main className="flex min-h-screen items-center justify-center px-6 py-10">
       <div className="flex flex-col items-center">
         <div className="mb-6 flex items-center gap-2">
-          <div className="size-7 rounded-md bg-gradient-to-br from-[#CCFF00] to-[#FFFF00] shadow-[0_0_30px_-5px_#CCFF00]" />
+          <div className="size-7 rounded-md bg-gradient-to-br from-[#9AA7FF] to-[#C7CDF0] shadow-[0_12px_28px_-18px_rgba(107,120,210,.5)]" />
           <span className="font-mono text-sm tracking-tight">job.os</span>
         </div>
         <SignUp
@@ -14,7 +14,7 @@ export default function SignUpPage() {
           forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
-              colorPrimary: "#CCFF00",
+              colorPrimary: "#9AA7FF",
               colorBackground: "#13131B",
               colorInputBackground: "#1A1A24",
               colorInputText: "#F5F5FA",
