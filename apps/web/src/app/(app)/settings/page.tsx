@@ -1,11 +1,11 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save } from "lucide-react";
+import { Loader2, Plug, Save, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
-import type { Resume, UserSettings } from "@/lib/types";
+import type { ApifyUsage, Resume, UserSettings, UserSettingsPatch } from "@/lib/types";
 
 const THEMES: { value: UserSettings["theme"]; label: string }[] = [
   { value: "dark", label: "Dark" },
@@ -28,6 +28,16 @@ export default function SettingsPage() {
   });
 
   const [form, setForm] = useState<UserSettings | null>(null);
+  // Apify token is entered here but never returned by the API, so it lives in
+  // its own transient field (blank unless the user is typing a new key).
+  const [apifyToken, setApifyToken] = useState<string>("");
+
+  const { data: apifyUsage } = useQuery({
+    queryKey: ["apify-usage"],
+    queryFn: () => api.apifyUsage(),
+    // Only meaningful once a key exists; refetch is cheap enough to always run.
+    staleTime: 60_000,
+  });
 
   // Hydrate form when settings load.
   useEffect(() => {
@@ -35,13 +45,38 @@ export default function SettingsPage() {
   }, [settings, form]);
 
   const save = useMutation({
-    mutationFn: (body: Partial<UserSettings>) => api.patchSettings(body),
+    mutationFn: (body: UserSettingsPatch) => api.patchSettings(body),
     onSuccess: (data) => {
       toast.success("Saved");
       qc.setQueryData(["settings"], data);
+      setForm(data); // keep local form (incl. apify_configured) in sync
+      setApifyToken("");
+      qc.invalidateQueries({ queryKey: ["apify-usage"] });
     },
     onError: (err: Error) => toast.error(err.message),
   });
+
+  const removeApifyKey = useMutation({
+    mutationFn: () => api.patchSettings({ apify_api_token: "" }),
+    onSuccess: (data) => {
+      toast.success("Apify key removed");
+      qc.setQueryData(["settings"], data);
+      setForm(data);
+      setApifyToken("");
+      qc.invalidateQueries({ queryKey: ["apify-usage"] });
+    },
+    onError: (err: Error) => toast.error(err.message),
+  });
+
+  function handleSave() {
+    if (!form) return;
+    // `apify_configured` is read-only (derived server-side) — don't echo it back.
+    const { apify_configured: _configured, ...rest } = form;
+    const body: UserSettingsPatch = { ...rest };
+    // Only send the token when the user actually typed one this session.
+    if (apifyToken.trim()) body.apify_api_token = apifyToken.trim();
+    save.mutate(body);
+  }
 
   if (isLoading || !form) {
     return (
@@ -68,7 +103,7 @@ export default function SettingsPage() {
           </p>
         </div>
         <button
-          onClick={() => save.mutate(form)}
+          onClick={handleSave}
           disabled={save.isPending}
           className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
         >
@@ -150,6 +185,38 @@ export default function SettingsPage() {
           />
         </Field>
 
+        <SectionHeader title="Integrations" />
+        <Field
+          label="Apify API token"
+          help="Optional. Unlocks per-board scraping (LinkedIn, Indeed, Glassdoor, Google Jobs, ZipRecruiter, Naukri) on the Discover page. Grab it from apify.com › Settings › Integrations. Stored on your user record; never shown again."
+        >
+          <div className="flex gap-2">
+            <input
+              type="password"
+              autoComplete="off"
+              value={apifyToken}
+              onChange={(e) => setApifyToken(e.target.value)}
+              placeholder={
+                form.apify_configured
+                  ? "•••••••••• saved — paste a new token to replace"
+                  : "apify_api_xxxxxxxxxxxxxxxxxxxx"
+              }
+              className="w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-[#0A0A0A] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            />
+            {form.apify_configured && (
+              <button
+                onClick={() => removeApifyKey.mutate()}
+                disabled={removeApifyKey.isPending}
+                title="Remove the stored Apify token"
+                className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-white/[0.06] hover:text-rose-300 disabled:opacity-50"
+              >
+                <Trash2 className="size-3.5" /> Remove
+              </button>
+            )}
+          </div>
+          <ApifyStatus configured={form.apify_configured} usage={apifyUsage} />
+        </Field>
+
         <SectionHeader title="Other" />
         <Field label="Timezone" help="IANA name — e.g. 'America/New_York'.">
           <input
@@ -202,6 +269,81 @@ function Field({
         <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">{help}</p>
       )}
       <div className="mt-2">{children}</div>
+    </div>
+  );
+}
+
+function ApifyStatus({
+  configured,
+  usage,
+}: {
+  configured: boolean;
+  usage: ApifyUsage | undefined;
+}) {
+  if (!configured) {
+    return (
+      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
+        <Plug className="size-3.5" /> No token yet — the Apify job boards stay off
+        until you add one.
+      </p>
+    );
+  }
+  if (!usage) {
+    return (
+      <p className="mt-2 inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
+        <Loader2 className="size-3.5 animate-spin" /> Checking Apify balance…
+      </p>
+    );
+  }
+  if (!usage.valid) {
+    return (
+      <p className="mt-2 text-xs text-rose-300">
+        {usage.error ?? "Apify rejected this token. Rotate it and re-save."}
+      </p>
+    );
+  }
+  const max = usage.max_monthly_usd ?? 0;
+  const used = usage.used_usd ?? 0;
+  const remaining = usage.remaining_usd ?? 0;
+  const pct = max > 0 ? Math.min(100, Math.max(0, (used / max) * 100)) : 0;
+  const resets = usage.cycle_end
+    ? new Date(usage.cycle_end).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      })
+    : null;
+  return (
+    <div className="glass mt-3 rounded-[var(--radius-card)] p-3 text-xs">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[color:var(--color-text-muted)]">
+          Credits remaining this cycle
+        </span>
+        <span className="text-sm font-semibold text-[#CCFF00]">
+          ${remaining.toFixed(2)}
+        </span>
+      </div>
+      <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-white/[0.06]">
+        <div
+          className="h-full rounded-full bg-gradient-brand"
+          style={{ width: `${100 - pct}%` }}
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 text-[color:var(--color-text-dim)]">
+        <span>
+          ≈{" "}
+          <span className="font-medium text-[color:var(--color-text-muted)]">
+            {usage.est_searches_left ?? 0}
+          </span>{" "}
+          searches left
+          {usage.est_results_per_search
+            ? ` (~${usage.est_results_per_search} results each)`
+            : ""}
+        </span>
+        <span>
+          ${used.toFixed(2)} of ${max.toFixed(2)} used
+          {resets ? ` · resets ${resets}` : ""}
+        </span>
+      </div>
     </div>
   );
 }

@@ -228,9 +228,29 @@ export interface UserSettings {
   default_location: string | null;
   timezone: string | null;
   weekly_summary_email: boolean;
+  /** Whether an Apify API token is stored (the token itself is never returned). */
+  apify_configured: boolean;
 }
 
-export type UserSettingsPatch = Partial<UserSettings>;
+/** `apify_api_token` is write-only — send a value to set it, "" to clear it. */
+export type UserSettingsPatch = Partial<UserSettings> & {
+  apify_api_token?: string | null;
+};
+
+/** Apify account credit snapshot (GET /discovery/apify/usage). */
+export interface ApifyUsage {
+  configured: boolean;
+  valid: boolean;
+  error: string | null;
+  max_monthly_usd: number | null;
+  used_usd: number | null;
+  remaining_usd: number | null;
+  cycle_start: string | null;
+  cycle_end: string | null;
+  price_per_result_usd: number | null;
+  est_results_per_search: number | null;
+  est_searches_left: number | null;
+}
 
 export interface MeRead {
   id: string;
@@ -239,7 +259,22 @@ export interface MeRead {
   settings: UserSettings;
 }
 
-export type DiscoverySource = "theirstack" | "github";
+export type DiscoverySource =
+  | "theirstack"
+  | "github"
+  // Apify boards (opt-in; need an Apify token in Settings):
+  | "linkedin"
+  | "indeed"
+  | "glassdoor"
+  | "google"
+  | "ziprecruiter"
+  | "naukri"
+  // Free, keyless boards (no Apify, no key):
+  | "remotive"
+  | "remoteok"
+  | "themuse"
+  | "arbeitnow"
+  | "jobicy";
 
 export interface DiscoveryResult {
   source: DiscoverySource | string;
@@ -261,6 +296,7 @@ export interface DiscoverySearchRequest {
   sources?: DiscoverySource[];
   title_keywords?: string[];
   description_keywords?: string[];
+  location?: string | null;
   country_codes?: string[];
   technology_slugs?: string[];
   max_age_days?: number;

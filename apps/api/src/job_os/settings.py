@@ -57,6 +57,10 @@ class Settings(BaseSettings):
 
     firecrawl_api_key: str | None = None
     apify_api_token: str | None = None
+    # Apify job-board scraper actor + its per-result price (used only to estimate
+    # "searches left" from the remaining balance). Both overridable via env.
+    apify_jobs_actor: str = "openclawai~job-board-scraper"
+    apify_price_per_result_usd: float = 0.003
     browserbase_api_key: str | None = None
     browserbase_project_id: str | None = None
     theirstack_api_key: str | None = None

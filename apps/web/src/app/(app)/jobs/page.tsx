@@ -41,12 +41,36 @@ type PersistedState = {
   titles: string;
   techs: string;
   country: string;
+  location: string;
   maxAgeDays: number;
   limit: number;
   sources: DiscoverySource[];
   results: DiscoveryResult[] | null;
   sort: SortMode;
 };
+
+// Apify boards — each is its own DiscoverySource toggle but they all run in a
+// single actor call server-side. Need an Apify token (Settings › Integrations).
+const APIFY_BOARDS: { key: DiscoverySource; label: string; hint: string }[] = [
+  { key: "linkedin", label: "LinkedIn", hint: "Apify · public search" },
+  { key: "indeed", label: "Indeed", hint: "Apify · most reliable" },
+  { key: "glassdoor", label: "Glassdoor", hint: "Apify · salary + reviews" },
+  { key: "google", label: "Google Jobs", hint: "Apify · aggregator" },
+  { key: "ziprecruiter", label: "ZipRecruiter", hint: "Apify · US & Canada" },
+  { key: "naukri", label: "Naukri", hint: "Apify · India" },
+];
+const APIFY_BOARD_KEYS = APIFY_BOARDS.map((b) => b.key);
+
+// Free, keyless boards — native sources hitting each site's public API. No key,
+// no Apify. Remote-heavy except The Muse, which also lists onsite roles.
+const FREE_BOARDS: { key: DiscoverySource; label: string; hint: string }[] = [
+  { key: "themuse", label: "The Muse", hint: "remote + onsite" },
+  { key: "remotive", label: "Remotive", hint: "remote tech" },
+  { key: "remoteok", label: "RemoteOK", hint: "remote, tag-based" },
+  { key: "arbeitnow", label: "Arbeitnow", hint: "remote + Europe" },
+  { key: "jobicy", label: "Jobicy", hint: "remote" },
+];
+const FREE_BOARD_KEYS = FREE_BOARDS.map((b) => b.key);
 
 function loadState(): Partial<PersistedState> {
   if (typeof window === "undefined") return {};
@@ -84,6 +108,7 @@ export default function DiscoverPage() {
   const [titles, setTitles] = useState<string>(initial.titles ?? "");
   const [techs, setTechs] = useState<string>(initial.techs ?? "");
   const [country, setCountry] = useState<string>(initial.country ?? "US");
+  const [location, setLocation] = useState<string>(initial.location ?? "");
   const [maxAgeDays, setMaxAgeDays] = useState<number>(initial.maxAgeDays ?? 30);
   const [limit, setLimit] = useState<number>(initial.limit ?? 20);
   const [sources, setSources] = useState<DiscoverySource[]>(
@@ -98,8 +123,8 @@ export default function DiscoverPage() {
 
   // Persist on any change so reload restores state.
   useEffect(() => {
-    saveState({ titles, techs, country, maxAgeDays, limit, sources, results, sort });
-  }, [titles, techs, country, maxAgeDays, limit, sources, results, sort]);
+    saveState({ titles, techs, country, location, maxAgeDays, limit, sources, results, sort });
+  }, [titles, techs, country, location, maxAgeDays, limit, sources, results, sort]);
 
   const search = useMutation({
     mutationFn: (body: DiscoverySearchRequest) => api.discoverySearch(body),
@@ -118,6 +143,7 @@ export default function DiscoverPage() {
       sources,
       title_keywords: splitCsv(titles),
       technology_slugs: splitCsv(techs),
+      location: location.trim() || null,
       country_codes: country ? [country.toUpperCase()] : [],
       max_age_days: maxAgeDays,
       limit,
@@ -132,6 +158,7 @@ export default function DiscoverPage() {
       setTitles((filters.title_keywords ?? []).join(", "));
       setTechs((filters.technology_slugs ?? []).join(", "));
       setCountry((filters.country_codes ?? [])[0] ?? "");
+      setLocation(filters.location ?? "");
       if (filters.max_age_days) setMaxAgeDays(filters.max_age_days);
       if (filters.limit) setLimit(filters.limit);
       if (filters.sources && filters.sources.length > 0) setSources(filters.sources);
@@ -141,6 +168,7 @@ export default function DiscoverPage() {
         sources: filters.sources ?? sources,
         title_keywords: filters.title_keywords ?? [],
         technology_slugs: filters.technology_slugs ?? [],
+        location: filters.location ?? null,
         country_codes: filters.country_codes ?? [],
         max_age_days: filters.max_age_days ?? 30,
         limit: filters.limit ?? 20,
@@ -183,6 +211,7 @@ export default function DiscoverPage() {
     setTitles((s.query.title_keywords ?? []).join(", "));
     setTechs((s.query.technology_slugs ?? []).join(", "));
     setCountry((s.query.country_codes ?? [])[0] ?? "");
+    setLocation(s.query.location ?? "");
     setMaxAgeDays(s.query.max_age_days ?? 30);
     setLimit(s.query.limit ?? 20);
     if (s.query.sources && s.query.sources.length > 0) setSources(s.query.sources);
@@ -333,10 +362,11 @@ export default function DiscoverPage() {
         <div className="md:col-span-2">
           <label className="text-sm font-medium">Sources</label>
           <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-            TheirStack costs 1 credit per imported job; GitHub is free and
-            re-fetched live from the SimplifyJobs READMEs on every search.
+            TheirStack costs 1 credit per imported job; GitHub is free (SimplifyJobs
+            READMEs). Apify boards scrape live job sites and bill per result to your
+            own Apify account.
           </p>
-          <div className="mt-2 flex gap-2">
+          <div className="mt-2 flex flex-wrap gap-2">
             <SourceToggle
               active={sources.includes("theirstack")}
               onClick={() => toggleSource("theirstack")}
@@ -349,6 +379,51 @@ export default function DiscoverPage() {
               label="GitHub"
               hint="SimplifyJobs internships + new-grad"
             />
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+              Apify job boards
+            </span>
+            {settings && !settings.apify_configured && (
+              <span className="text-[10px] text-amber-300/80">
+                needs an Apify token —{" "}
+                <a href="/settings" className="underline hover:text-amber-200">
+                  add it in Settings
+                </a>
+              </span>
+            )}
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {APIFY_BOARDS.map((b) => (
+              <SourceToggle
+                key={b.key}
+                active={sources.includes(b.key)}
+                onClick={() => toggleSource(b.key)}
+                label={b.label}
+                hint={b.hint}
+              />
+            ))}
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+              Free boards
+            </span>
+            <span className="text-[10px] text-[color:var(--color-text-dim)]">
+              no key, no Apify — scraped live from each site&apos;s public API
+            </span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {FREE_BOARDS.map((b) => (
+              <SourceToggle
+                key={b.key}
+                active={sources.includes(b.key)}
+                onClick={() => toggleSource(b.key)}
+                label={b.label}
+                hint={b.hint}
+              />
+            ))}
           </div>
         </div>
         <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
@@ -376,6 +451,15 @@ export default function DiscoverPage() {
             maxLength={2}
             onChange={(e) => setCountry(e.target.value.toUpperCase())}
             className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm uppercase outline-none focus:border-[#CCFF00]/60"
+          />
+        </Field>
+        <Field label="Location" help="Apify boards only — city or 'Remote'. e.g. 'Boston, MA'.">
+          <input
+            type="text"
+            value={location}
+            onChange={(e) => setLocation(e.target.value)}
+            placeholder="Boston, MA"
+            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -808,6 +892,32 @@ function prettyError(source: DiscoverySource, msg: string): string {
     if (lower.includes("402") || lower.includes("credit")) {
       return "Out of TheirStack credits. Top up the account or fall back to GitHub.";
     }
+  }
+  if ((APIFY_BOARD_KEYS as string[]).includes(source)) {
+    if (lower.includes("token not set") || lower.includes("not configured")) {
+      return "No Apify token. Add your Apify API key in Settings › Integrations to use this board.";
+    }
+    if (lower.includes("title keyword")) {
+      return "Apify needs at least one title keyword to search.";
+    }
+    if (lower.includes("401") || lower.includes("403") || lower.includes("unauthorized")) {
+      return "Apify rejected the token. Rotate it in Settings › Integrations.";
+    }
+    if (
+      lower.includes("402") ||
+      lower.includes("payment") ||
+      lower.includes("credit") ||
+      lower.includes("limit")
+    ) {
+      return "Out of Apify credits / monthly limit reached. Top up or raise the limit in your Apify account.";
+    }
+    if (lower.includes("429") || lower.includes("rate")) {
+      return "Apify is rate-limiting this run. Try again shortly or trim the boards/limit.";
+    }
+    return "Apify run failed. " + (msg.length > 160 ? msg.slice(0, 160) + "…" : msg);
+  }
+  if ((FREE_BOARD_KEYS as string[]).includes(source)) {
+    return "This free board's public API didn't respond. It costs nothing — just retry, or rely on the other sources.";
   }
   return msg.length > 200 ? msg.slice(0, 200) + "…" : msg;
 }

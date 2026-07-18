@@ -9,6 +9,10 @@ Sources today:
   Greenhouse / Ashby / Workday; charges 1 credit per result).
 - `github` — SimplifyJobs intern + new-grad README tables (free, cached 5min).
   Honors title_keywords + max_age_days; ignores country/tech filters.
+- Apify boards (`linkedin`, `indeed`, `glassdoor`, `google`, `ziprecruiter`,
+  `naukri`) — opt-in per-board scraping via the Apify actor (see
+  `integrations/apify.py`); needs a per-user Apify token. All selected boards
+  run in a single actor call to keep credit spend predictable.
 """
 from datetime import datetime
 from typing import Literal
@@ -18,7 +22,23 @@ from pydantic import Field
 
 from job_os.schemas.common import ORMModel
 
-DiscoverySource = Literal["theirstack", "github"]
+DiscoverySource = Literal[
+    "theirstack",
+    "github",
+    # Apify boards (opt-in; served by a single actor run):
+    "linkedin",
+    "indeed",
+    "glassdoor",
+    "google",
+    "ziprecruiter",
+    "naukri",
+    # Free, keyless boards (no Apify, no key — see integrations/free_boards.py):
+    "remotive",
+    "remoteok",
+    "themuse",
+    "arbeitnow",
+    "jobicy",
+]
 
 
 def _default_sources() -> list[DiscoverySource]:
@@ -32,8 +52,12 @@ class DiscoverySearchRequest(ORMModel):
     )
     title_keywords: list[str] = Field(default_factory=list)
     description_keywords: list[str] = Field(default_factory=list)
+    location: str | None = Field(
+        default=None,
+        description="Free-text city/region for Apify boards (e.g. 'Boston', 'Remote').",
+    )
     country_codes: list[str] = Field(
-        default_factory=list, description="ISO-3166 alpha-2 codes (TheirStack only)."
+        default_factory=list, description="ISO-3166 alpha-2 codes (TheirStack + Apify)."
     )
     technology_slugs: list[str] = Field(
         default_factory=list, description="Tech slugs (TheirStack only)."
@@ -77,6 +101,27 @@ class DiscoverySearchResponse(ORMModel):
     source_counts: dict[str, int] = Field(default_factory=dict)
     """Per-source result counts BEFORE the cross-source limit cap."""
     errors: list[DiscoverySourceError] = Field(default_factory=list)
+
+
+class ApifyUsageResponse(ORMModel):
+    """Apify account credit snapshot for the Settings integration panel.
+
+    `configured=False` means no token is set (env or per-user) — the FE shows a
+    'paste your key' prompt instead of an error. `valid=False` means the token
+    was present but Apify rejected it.
+    """
+
+    configured: bool
+    valid: bool = False
+    error: str | None = None
+    max_monthly_usd: float | None = None
+    used_usd: float | None = None
+    remaining_usd: float | None = None
+    cycle_start: datetime | None = None
+    cycle_end: datetime | None = None
+    price_per_result_usd: float | None = None
+    est_results_per_search: int | None = None
+    est_searches_left: int | None = None
 
 
 class DiscoveryImportRequest(ORMModel):

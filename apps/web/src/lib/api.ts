@@ -1,4 +1,5 @@
 import type {
+  ApifyUsage,
   Application,
   AppStatus,
   CalendarEntry,
@@ -144,6 +145,7 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify(body),
     }),
+  apifyUsage: () => request<ApifyUsage>("/discovery/apify/usage"),
 
   discoverySearch: (body: DiscoverySearchRequest) =>
     request<DiscoverySearchResponse>("/discovery/search", {
