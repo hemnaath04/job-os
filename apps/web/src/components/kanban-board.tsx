@@ -11,7 +11,7 @@ import {
   type DragEndEvent,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
-import { Calendar, ExternalLink, MapPin, Sparkles, Trash2 } from "lucide-react";
+import { ArrowDownRight, Calendar, ExternalLink, MapPin, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
@@ -19,7 +19,17 @@ import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
 import type { Application, AppStatus } from "@/lib/types";
-import { KANBAN_STATUSES, STATUS_LABELS } from "@/lib/types";
+import { STATUS_LABELS } from "@/lib/types";
+
+const BOARD_STATUSES: AppStatus[] = ["applied", "interview_scheduled", "rejected", "offer"];
+
+function belongsToVisibleStage(status: AppStatus, visibleStage: "wishlist" | AppStatus) {
+  if (visibleStage === "wishlist") return status === "wishlist" || status === "ready_to_apply";
+  if (visibleStage === "applied") return status === "applied" || status === "oa_received";
+  if (visibleStage === "offer") return status === "offer" || status === "accepted";
+  if (visibleStage === "rejected") return status === "rejected" || status === "withdrawn" || status === "ghosted";
+  return status === visibleStage;
+}
 
 export function KanbanBoard({
   applications,
@@ -30,6 +40,7 @@ export function KanbanBoard({
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const [dragged, setDragged] = useState<Application | null>(null);
+  const wishlist = applications.filter((app) => belongsToVisibleStage(app.status, "wishlist"));
 
   async function onDragEnd(e: DragEndEvent) {
     setDragged(null);
@@ -80,9 +91,51 @@ export function KanbanBoard({
       }
       onDragEnd={onDragEnd}
     >
-      <div className="flex gap-3 overflow-x-auto pb-4">
-        {KANBAN_STATUSES.map((status, idx) => {
-          const items = applications.filter((a) => a.status === status);
+      <motion.section
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="workspace-panel mb-5 p-4 sm:p-5"
+      >
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <h2 className="text-sm font-semibold tracking-tight">Wishlist</h2>
+              <span className="info-chip min-h-0 px-2 py-0.5">{wishlist.length}</span>
+            </div>
+            <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">
+              Roles you are considering. Drag a card into Applied when you submit.
+            </p>
+          </div>
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#b8c0ef]">
+            Drag to Applied <ArrowDownRight className="size-3.5" />
+          </div>
+        </div>
+        {wishlist.length > 0 ? (
+          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            <AnimatePresence>
+              {wishlist.map((app) => (
+                <motion.div
+                  key={app.id}
+                  layout
+                  initial={{ opacity: 0, scale: 0.98 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0.96 }}
+                >
+                  <DraggableCard app={app} onDelete={onDelete} compact />
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          </div>
+        ) : (
+          <div className="rounded-xl border border-dashed border-white/[0.08] px-4 py-5 text-center text-xs text-[color:var(--color-text-dim)]">
+            Your wishlist is clear. Add a role whenever something catches your eye.
+          </div>
+        )}
+      </motion.section>
+
+      <div className="grid gap-4 pb-5 lg:grid-cols-2 2xl:grid-cols-4">
+        {BOARD_STATUSES.map((status, idx) => {
+          const items = applications.filter((a) => belongsToVisibleStage(a.status, status));
           return (
             <motion.div
               key={status}
@@ -114,10 +167,10 @@ function Column({
     <div
       ref={setNodeRef}
       className={
-        "flex w-72 shrink-0 flex-col rounded-[var(--radius-card-lg)] border p-3 transition " +
+        "workspace-panel flex min-h-[18rem] min-w-0 flex-col p-3.5 transition " +
         (isOver
-          ? "border-[#A855F7]/50 bg-[#A855F7]/[0.05] shadow-[0_0_40px_-12px_#A855F7]"
-          : "border-[color:var(--color-border)] bg-white/[0.015]")
+          ? "border-[#9AA7FF]/40 bg-[#9AA7FF]/[0.045] shadow-[0_18px_50px_-32px_rgba(107,120,210,.7)]"
+          : "border-[color:var(--color-border)]")
       }
     >
       <div className="mb-3 flex items-center justify-between px-1">
@@ -147,9 +200,11 @@ function Column({
 function DraggableCard({
   app,
   onDelete,
+  compact = false,
 }: {
   app: Application;
   onDelete: (app: Application) => void;
+  compact?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({ id: app.id });
   return (
@@ -159,7 +214,7 @@ function DraggableCard({
       {...listeners}
       className={isDragging ? "opacity-30" : ""}
     >
-      <Card app={app} onDelete={onDelete} />
+      <Card app={app} onDelete={onDelete} compact={compact} />
     </div>
   );
 }
@@ -168,10 +223,12 @@ function Card({
   app,
   dragging = false,
   onDelete,
+  compact = false,
 }: {
   app: Application;
   dragging?: boolean;
   onDelete?: (app: Application) => void;
+  compact?: boolean;
 }) {
   const company = app.job.company?.name ?? "Unknown";
   const sourceUrl = app.job.source_url ?? null;
@@ -184,10 +241,11 @@ function Card({
       onDoubleClick={openJD}
       title={sourceUrl ? "Double-click to open the original JD" : undefined}
       className={
-        "group glass cursor-grab rounded-[0.875rem] p-3 transition-all " +
+        "group cursor-grab rounded-[0.95rem] border border-white/[0.075] bg-[#111419]/90 transition-all " +
+        (compact ? "p-4 " : "p-3.5 ") +
         (dragging
           ? "rotate-2 shadow-2xl"
-          : "hover:bg-white/[0.04] hover:shadow-[0_0_30px_-12px_#A855F7]")
+          : "hover:-translate-y-0.5 hover:border-[#9AA7FF]/20 hover:bg-[#181c22]")
       }
     >
       <div className="flex items-start gap-2.5">
@@ -225,7 +283,7 @@ function Card({
         </div>
       )}
       {!dragging && (
-        <div className="mt-2 flex items-center justify-end gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+        <div className={`mt-2 flex items-center justify-end gap-2 transition-opacity ${compact ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
           {onDelete && (
             <button
               onPointerDown={stopDrag}
@@ -246,7 +304,7 @@ function Card({
             onPointerDown={stopDrag}
             onClick={stopDrag}
             onDoubleClick={stopDrag}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-black shadow-[0_0_20px_-8px_var(--color-purple)]"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-black shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
           >
             <Sparkles className="size-2.5" /> Tailor
           </Link>

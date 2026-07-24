@@ -9,11 +9,13 @@ import {
   FolderGit2,
   GraduationCap,
   Library,
+  ShieldCheck,
   Sparkles,
   Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import type { ProfileFact } from "@/lib/types";
 
@@ -54,29 +56,29 @@ export default function ProfilePage() {
     (acc[f.kind] ??= []).push(f);
     return acc;
   }, {});
+  const verifiedCount = facts.filter((fact) => fact.verified).length;
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Profile</h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            {facts.length} fact{facts.length === 1 ? "" : "s"} · the source of
-            truth your resume agent will cite
-          </p>
-        </div>
-        <UploadResumeButton onDone={() => refetch()} />
-      </header>
+    <div className="workspace-page max-w-6xl">
+      <PageIntro
+        eyebrow="Verified evidence vault"
+        title="Career profile"
+        description="The source of truth behind every generated resume. Experience, projects, education, and skills remain traceable to evidence you control."
+        icon={ShieldCheck}
+        action={<UploadResumeButton onDone={() => refetch()} />}
+      >
+        <InfoChip tone="sage">{verifiedCount} verified facts</InfoChip>
+        <InfoChip>{Object.keys(grouped).length} evidence groups</InfoChip>
+        <InfoChip tone="clay">{facts.reduce((sum, fact) => sum + fact.bullets.length, 0)} bullets</InfoChip>
+      </PageIntro>
 
       {isLoading && (
-        <div className="mt-8 text-sm text-[color:var(--color-text-muted)]">
-          loading profile…
-        </div>
+        <div className="loading-surface mt-6" />
       )}
 
       {!isLoading && facts.length === 0 && <EmptyState />}
 
-      <div className="mt-8 space-y-7">
+      <div className="mt-7 space-y-10">
         {KIND_ORDER.filter((k) => grouped[k]?.length).map((kind) => (
           <Section key={kind} kind={kind} items={grouped[kind] ?? []} />
         ))}
@@ -134,7 +136,7 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
           {items.length}
         </span>
       </div>
-      <div className="glass rounded-[var(--radius-card)] p-4">
+      <div className="workspace-panel p-5">
         {Object.entries(byCat).map(([cat, skills]) => (
           <div
             key={cat}
@@ -163,7 +165,7 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
 function FactCard({ fact }: { fact: ProfileFact }) {
   const subtitle = formatRange(fact.start_date, fact.end_date);
   return (
-    <div className="glass rounded-[var(--radius-card)] p-4">
+    <div className="workspace-panel workspace-panel-interactive p-5">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -271,7 +273,7 @@ function UploadResumeButton({ onDone }: { onDone: () => void }) {
       <button
         onClick={() => ref.current?.click()}
         disabled={busy}
-        className="flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-4 py-1.5 text-sm hover:bg-white/[0.06] disabled:opacity-50"
+        className="kinetic-button kinetic-button-secondary disabled:opacity-50"
       >
         <Upload className="size-3.5" />
         {busy ? "Importing…" : "Upload resume"}
@@ -282,7 +284,7 @@ function UploadResumeButton({ onDone }: { onDone: () => void }) {
 
 function EmptyState() {
   return (
-    <div className="glass mt-8 rounded-[var(--radius-card)] p-8 text-center">
+    <div className="workspace-panel mt-6 p-10 text-center">
       <Upload className="mx-auto size-6 text-[color:var(--color-violet)]" />
       <h3 className="mt-3 text-base font-medium">No profile data yet</h3>
       <p className="mx-auto mt-1 max-w-md text-sm text-[color:var(--color-text-muted)]">

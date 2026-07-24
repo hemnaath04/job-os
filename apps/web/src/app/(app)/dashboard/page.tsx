@@ -1,544 +1,577 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { eachDayOfInterval, format, isWithinInterval, subDays } from "date-fns";
-import { motion } from "framer-motion";
+import { motion, useReducedMotion } from "framer-motion";
 import {
-  Briefcase,
-  CheckCircle2,
-  Clock,
-  LineChart,
-  type LucideIcon,
-  PieChart as PieIcon,
+  ArrowUpRight,
+  BriefcaseBusiness,
+  CalendarClock,
+  Check,
+  ChevronRight,
+  CircleDot,
+  Crosshair,
+  Radar,
   Sparkles,
   TrendingUp,
+  Zap,
+  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import {
-  Area,
-  AreaChart,
-  Cell,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-} from "recharts";
-import { EmptyState } from "@/components/empty-state";
+import { useMemo } from "react";
 import { api } from "@/lib/api";
 import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
 const STATUS_COLORS: Record<AppStatus, string> = {
-  wishlist: "#A1A1AE",
-  ready_to_apply: "#38BDF8",
-  applied: "#CCFF00",
-  oa_received: "#F5B544",
-  interview_scheduled: "#34D399",
-  offer: "#5EEAD4",
-  accepted: "#5EEAD4",
-  rejected: "#FF6B8A",
-  withdrawn: "#71717A",
-  ghosted: "#52525B",
+  wishlist: "#898C91",
+  ready_to_apply: "#7F9CCB",
+  applied: "#9AA7FF",
+  oa_received: "#D0A15E",
+  interview_scheduled: "#7FA28E",
+  offer: "#91AA9A",
+  accepted: "#A7B99F",
+  rejected: "#CC7A82",
+  withdrawn: "#74777C",
+  ghosted: "#565A61",
 };
 
+const DAY = 86_400_000;
+
 export default function DashboardPage() {
+  const reduceMotion = useReducedMotion();
   const { data: applications = [], isLoading } = useQuery({
     queryKey: ["applications"],
     queryFn: () => api.listApplications(),
   });
 
-  const stats = useMemo(() => computeStats(applications), [applications]);
-  const weeklySeries = useMemo(() => computeWeeklySeries(applications), [applications]);
-  const statusDistribution = useMemo(
-    () => computeStatusDistribution(applications),
-    [applications],
-  );
+  const intelligence = useMemo(() => buildIntelligence(applications), [applications]);
+
+  if (isLoading) return <DashboardSkeleton />;
 
   return (
-    <div className="mx-auto max-w-7xl px-8 py-6">
-      <header className="flex flex-wrap items-end justify-between gap-3">
-        <div>
-          <h1 className="text-3xl font-medium tracking-tight">
-            <span className="text-gradient-brand">Welcome back.</span>
+    <div className="dashboard-stage relative isolate mx-auto min-h-full w-full max-w-[1600px] overflow-hidden px-4 pb-24 pt-5 sm:px-6 lg:px-8 lg:pb-10">
+      <div className="dashboard-grid pointer-events-none absolute inset-0 -z-20" />
+      <div className="signal-orb signal-orb-a pointer-events-none absolute -z-10" />
+      <div className="signal-orb signal-orb-b pointer-events-none absolute -z-10" />
+
+      <motion.header
+        initial={reduceMotion ? false : { opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
+        className="flex flex-col gap-5 border-b border-white/[0.07] pb-6 md:flex-row md:items-end md:justify-between"
+      >
+        <div className="max-w-3xl">
+          <div className="mb-3 flex items-center gap-2 font-mono text-[10px] uppercase tracking-[0.24em] text-[color:var(--color-kiwi)]">
+            <span className="status-beacon" />
+            Search system online
+            <span className="text-white/25">//</span>
+            {formatShortDate(new Date())}
+          </div>
+          <h1 className="text-balance text-[clamp(2rem,5vw,4.6rem)] font-medium leading-[0.92] tracking-[-0.065em] text-white">
+            Your search is
+            <span className="ml-[0.18em] inline-block text-gradient-brand">in motion.</span>
           </h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            Today across {applications.length} tracked application
-            {applications.length === 1 ? "" : "s"}.
+          <p className="mt-4 max-w-xl text-sm leading-relaxed text-white/48 sm:text-base">
+            One flight deck for every application, signal, and next move. Keep the
+            pipeline warm and the momentum visible.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/jobs"
-            className="rounded-full border border-[color:var(--color-border)] bg-white/[0.03] px-3.5 py-1.5 text-xs hover:bg-white/[0.06]"
-          >
-            Find jobs
+
+        <div className="flex flex-wrap gap-2">
+          <Link href="/jobs" className="kinetic-button kinetic-button-secondary group">
+            <Radar className="size-4" />
+            Scan roles
+            <ChevronRight className="size-3.5 transition-transform group-hover:translate-x-0.5" />
           </Link>
-          <Link
-            href="/tailor"
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3.5 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] hover:scale-[1.02]"
-          >
-            <Sparkles className="size-3.5" /> Tailor a resume
+          <Link href="/tailor" className="kinetic-button kinetic-button-primary group">
+            <Sparkles className="size-4" />
+            Tailor resume
+            <ArrowUpRight className="size-3.5 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
           </Link>
         </div>
-      </header>
+      </motion.header>
 
-      {!isLoading && applications.length === 0 && (
-        <EmptyState
-          icon={Briefcase}
-          title="Your dashboard lights up once you add a job"
-          description="Add your first job from a URL on Applications, or surf the discovery feed to land one in two clicks."
-          cta={{ href: "/jobs", label: "Open Internship Finder" }}
-        />
-      )}
+      {applications.length === 0 ? (
+        <FirstLaunch />
+      ) : (
+        <motion.div
+          initial="hidden"
+          animate="visible"
+          variants={{
+            hidden: {},
+            visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.055 } },
+          }}
+          className="mt-5 grid grid-cols-1 gap-3 xl:grid-cols-12"
+        >
+          <Panel className="min-h-[360px] xl:col-span-8 xl:row-span-2" label="Momentum map" code="01">
+            <MomentumPanel intelligence={intelligence} />
+          </Panel>
 
-      {applications.length > 0 && (
-        <>
-          {/* Stat widget grid */}
-          <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            <StatWidget
-              icon={Briefcase}
-              label="Total applications"
-              value={stats.total}
-              delta={stats.totalDelta}
-              trend={stats.totalSpark}
-              accent="from-[#CCFF00] to-[#FFFF00]"
+          <div className="grid grid-cols-2 gap-3 xl:col-span-4">
+            <Metric
+              icon={BriefcaseBusiness}
+              label="In orbit"
+              value={intelligence.total}
+              detail={`${signed(intelligence.weekDelta)} this week`}
+              hot
             />
-            <StatWidget
-              icon={Clock}
+            <Metric
+              icon={Crosshair}
               label="Interviews"
-              value={stats.interviews}
-              delta={stats.interviewDelta}
-              trend={stats.interviewSpark}
-              accent="from-[#DFFF00] to-[#FFFF00]"
+              value={intelligence.interviews}
+              detail={`${intelligence.interviewRate}% conversion`}
             />
-            <StatWidget
-              icon={CheckCircle2}
+            <Metric
+              icon={Zap}
+              label="Responses"
+              value={`${intelligence.responseRate}%`}
+              detail={`${intelligence.responses} signals`}
+            />
+            <Metric
+              icon={Check}
               label="Offers"
-              value={stats.offers}
-              delta={stats.offerDelta}
-              trend={stats.offerSpark}
-              accent="from-[#CCFF00] to-[#DFFF00]"
-            />
-            <StatWidget
-              icon={TrendingUp}
-              label="Response rate"
-              value={`${stats.responseRate}%`}
-              delta={null}
-              trend={stats.responseSpark}
-              accent="from-[#FFFF00] to-[#FFE600]"
+              value={intelligence.offers}
+              detail={intelligence.offers ? "Momentum found" : "Still building"}
             />
           </div>
 
-          {/* Charts */}
-          <div className="mt-6 grid grid-cols-1 gap-4 lg:grid-cols-3">
-            <ChartCard
-              title="Applications · last 30 days"
-              subtitle={`${weeklySeries.reduce((s, d) => s + d.count, 0)} this month`}
-              icon={LineChart}
-              className="lg:col-span-2"
-            >
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={weeklySeries} margin={{ top: 10, right: 0, left: 0, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="appsArea" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#CCFF00" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="#CCFF00" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <XAxis
-                    dataKey="label"
-                    stroke="#71717A"
-                    fontSize={10}
-                    tickLine={false}
-                    axisLine={false}
-                    interval={4}
-                  />
-                  <Tooltip
-                    cursor={{ stroke: "#CCFF00", strokeWidth: 1, strokeOpacity: 0.3 }}
-                    contentStyle={{
-                      background: "rgba(26,26,36,0.9)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: 12,
-                      fontSize: 12,
-                    }}
-                    labelStyle={{ color: "#F5F5FA" }}
-                  />
-                  <Area
-                    type="monotone"
-                    dataKey="count"
-                    stroke="#CCFF00"
-                    strokeWidth={2}
-                    fill="url(#appsArea)"
-                  />
-                </AreaChart>
-              </ResponsiveContainer>
-            </ChartCard>
+          <Panel className="xl:col-span-4" label="Next moves" code="02">
+            <NextMoves applications={intelligence.nextMoves} />
+          </Panel>
 
-            <ChartCard
-              title="Status distribution"
-              subtitle="Across all tracked apps"
-              icon={PieIcon}
-            >
-              <ResponsiveContainer width="100%" height={220}>
-                <PieChart>
-                  <Tooltip
-                    contentStyle={{
-                      background: "rgba(26,26,36,0.9)",
-                      border: "1px solid rgba(255,255,255,0.08)",
-                      borderRadius: 12,
-                      fontSize: 12,
-                    }}
-                  />
-                  <Pie
-                    data={statusDistribution}
-                    dataKey="value"
-                    nameKey="name"
-                    innerRadius={50}
-                    outerRadius={85}
-                    paddingAngle={2}
-                    stroke="rgba(255,255,255,0.05)"
-                    strokeWidth={1}
-                  >
-                    {statusDistribution.map((entry) => (
-                      <Cell key={entry.name} fill={entry.color} />
-                    ))}
-                  </Pie>
-                </PieChart>
-              </ResponsiveContainer>
-              <ul className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-[11px]">
-                {statusDistribution.map((d) => (
-                  <li key={d.name} className="flex items-center gap-1.5">
-                    <span
-                      className="size-2 shrink-0 rounded-full"
-                      style={{ background: d.color }}
-                    />
-                    <span className="truncate text-[color:var(--color-text-muted)]">
-                      {d.name}
-                    </span>
-                    <span className="ml-auto text-[color:var(--color-text-dim)]">
-                      {d.value}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </ChartCard>
-          </div>
+          <Panel className="xl:col-span-4" label="Pipeline orbit" code="03">
+            <Orbit distribution={intelligence.distribution} total={intelligence.total} />
+          </Panel>
 
-          {/* Funnel */}
-          <ChartCard
-            title="Conversion funnel"
-            subtitle="From applied to offer"
-            icon={TrendingUp}
-            className="mt-4"
-          >
-            <Funnel applications={applications} />
-          </ChartCard>
-        </>
+          <Panel className="xl:col-span-8" label="Signal feed" code="04">
+            <SignalFeed applications={intelligence.recent} />
+          </Panel>
+
+          <Panel className="xl:col-span-12" label="Conversion runway" code="05">
+            <ConversionRunway tiers={intelligence.funnel} />
+          </Panel>
+        </motion.div>
       )}
     </div>
   );
 }
 
-// ---- Stat widget -----------------------------------------------------------
+function Panel({
+  children,
+  className = "",
+  label,
+  code,
+}: {
+  children: React.ReactNode;
+  className?: string;
+  label: string;
+  code: string;
+}) {
+  return (
+    <motion.section
+      variants={{
+        hidden: { opacity: 0, y: 12, scale: 0.99 },
+        visible: { opacity: 1, y: 0, scale: 1 },
+      }}
+      transition={{ duration: 0.42, ease: [0.22, 1, 0.36, 1] }}
+      className={`flight-panel group relative overflow-hidden rounded-[22px] ${className}`}
+    >
+      <div className="pointer-events-none absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-[color:var(--color-kiwi)]/45 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+      <div className="flex items-center justify-between px-5 pt-4 font-mono text-[9px] uppercase tracking-[0.22em] text-white/32">
+        <span>{label}</span>
+        <span>{code} / job.os</span>
+      </div>
+      <div className="p-5 pt-4">{children}</div>
+    </motion.section>
+  );
+}
 
-function StatWidget({
+function Metric({
   icon: Icon,
   label,
   value,
-  delta,
-  trend,
-  accent,
+  detail,
+  hot = false,
 }: {
   icon: LucideIcon;
   label: string;
-  value: number | string;
-  delta: number | null;
-  trend: { i: number; v: number }[];
-  accent: string;
+  value: string | number;
+  detail: string;
+  hot?: boolean;
 }) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.25 }}
-      className="glass hover-lift relative overflow-hidden rounded-[var(--radius-card-lg)] p-5"
+      variants={{
+        hidden: { opacity: 0, y: 10 },
+        visible: { opacity: 1, y: 0 },
+      }}
+      className={`metric-tile relative min-h-36 overflow-hidden rounded-[20px] p-4 ${hot ? "metric-tile-hot" : ""}`}
     >
-      {/* Soft accent glow */}
-      <div
-        className={`pointer-events-none absolute -right-10 -top-10 size-32 rounded-full bg-gradient-to-br ${accent} opacity-20 blur-3xl`}
-      />
-      <div className="relative flex items-center justify-between">
-        <div
-          className={`flex size-9 items-center justify-center rounded-xl bg-gradient-to-br ${accent} text-black shadow-[0_0_30px_-8px_rgba(204,255,0,0.7)]`}
-        >
-          <Icon className="size-4" />
-        </div>
-        {delta !== null && delta !== 0 && (
-          <span
-            className={
-              "text-xs font-medium " +
-              (delta > 0 ? "text-[color:var(--color-mint)]" : "text-[color:var(--color-rose)]")
-            }
-          >
-            {delta > 0 ? "+" : ""}
-            {delta} this wk
-          </span>
-        )}
+      <div className="flex items-start justify-between">
+        <span className="flex size-8 items-center justify-center rounded-full border border-white/10 bg-white/[0.04] text-white/60">
+          <Icon className="size-3.5" />
+        </span>
+        <span className="font-mono text-[8px] uppercase tracking-[0.18em] text-white/25">live</span>
       </div>
-      <div className="relative mt-4">
-        <div className="text-xs uppercase tracking-wider text-[color:var(--color-text-dim)]">
-          {label}
-        </div>
-        <CountUp value={value} className="mt-1 block text-3xl font-semibold tracking-tight" />
+      <div className="mt-5 text-[clamp(1.8rem,3vw,2.7rem)] font-medium leading-none tracking-[-0.06em]">
+        {value}
       </div>
-      {trend.length > 1 && (
-        <div className="relative -mx-1 mt-3 h-10">
-          <ResponsiveContainer width="100%" height="100%">
-            <AreaChart data={trend} margin={{ top: 0, right: 0, left: 0, bottom: 0 }}>
-              <defs>
-                <linearGradient id={`spark-${label}`} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#FFFF00" stopOpacity={0.6} />
-                  <stop offset="100%" stopColor="#FFFF00" stopOpacity={0} />
-                </linearGradient>
-              </defs>
-              <Area
-                type="monotone"
-                dataKey="v"
-                stroke="#CCFF00"
-                strokeWidth={1.5}
-                fill={`url(#spark-${label})`}
-              />
-            </AreaChart>
-          </ResponsiveContainer>
-        </div>
-      )}
+      <div className="mt-2 text-[10px] uppercase tracking-[0.14em] text-white/40">{label}</div>
+      <div className="mt-1 truncate text-[10px] text-white/24">{detail}</div>
     </motion.div>
   );
 }
 
-function CountUp({ value, className = "" }: { value: number | string; className?: string }) {
-  const target = typeof value === "string" ? parseFloat(value) : value;
-  const isNumber = typeof value === "number" || (typeof value === "string" && !Number.isNaN(target));
-  const [displayed, setDisplayed] = useState(0);
+function MomentumPanel({ intelligence }: { intelligence: Intelligence }) {
+  const peak = Math.max(...intelligence.daily.map((d) => d.value), 1);
+  const points = intelligence.daily
+    .map((d, i) => {
+      const x = (i / Math.max(intelligence.daily.length - 1, 1)) * 100;
+      const y = 82 - (d.value / peak) * 62;
+      return `${x},${y}`;
+    })
+    .join(" ");
 
-  useEffect(() => {
-    if (!isNumber) return;
-    let frame = 0;
-    const start = performance.now();
-    const dur = 600;
-    const from = 0;
-    const to = target;
-    const tick = (now: number) => {
-      const t = Math.min(1, (now - start) / dur);
-      const eased = 1 - Math.pow(1 - t, 3);
-      setDisplayed(from + (to - from) * eased);
-      if (t < 1) frame = requestAnimationFrame(tick);
-    };
-    frame = requestAnimationFrame(tick);
-    return () => cancelAnimationFrame(frame);
-  }, [target, isNumber]);
-
-  if (!isNumber) return <span className={className}>{value}</span>;
-  const isPct = typeof value === "string" && value.includes("%");
   return (
-    <span className={className}>
-      {Math.round(displayed)}
-      {isPct ? "%" : ""}
+    <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <div className="text-3xl font-medium tracking-[-0.045em] sm:text-4xl">
+            {intelligence.last30} launches
+          </div>
+          <p className="mt-1 text-xs text-white/35">Applications sent over the last 30 days</p>
+        </div>
+        <div className="flex items-center gap-2 rounded-full border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/[0.06] px-3 py-1.5 font-mono text-[9px] uppercase tracking-[0.16em] text-[color:var(--color-kiwi)]">
+          <TrendingUp className="size-3" />
+          {intelligence.velocity} / week velocity
+        </div>
+      </div>
+
+      <div className="relative mt-7 h-48 overflow-hidden rounded-2xl border border-white/[0.05] bg-black/35 px-3 py-4">
+        <div className="chart-grid absolute inset-0" />
+        <svg
+          viewBox="0 0 100 100"
+          preserveAspectRatio="none"
+          className="relative h-full w-full overflow-visible"
+          role="img"
+          aria-label="Applications sent in the last 30 days"
+        >
+          <defs>
+            <linearGradient id="momentum-line" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0" stopColor="#68739F" />
+              <stop offset="0.55" stopColor="#9AA7FF" />
+              <stop offset="1" stopColor="#D7DAF5" />
+            </linearGradient>
+            <linearGradient id="momentum-fill" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stopColor="#9AA7FF" stopOpacity=".28" />
+              <stop offset="1" stopColor="#9AA7FF" stopOpacity="0" />
+            </linearGradient>
+          </defs>
+          <polygon points={`0,100 ${points} 100,100`} fill="url(#momentum-fill)" />
+          <polyline
+            points={points}
+            fill="none"
+            stroke="url(#momentum-line)"
+            strokeWidth="1.5"
+            vectorEffect="non-scaling-stroke"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="momentum-path"
+          />
+        </svg>
+        <div className="absolute bottom-3 left-4 font-mono text-[8px] uppercase tracking-[0.16em] text-white/20">T−30 days</div>
+        <div className="absolute bottom-3 right-4 font-mono text-[8px] uppercase tracking-[0.16em] text-white/20">Now</div>
+      </div>
+    </div>
+  );
+}
+
+function NextMoves({ applications }: { applications: Application[] }) {
+  if (!applications.length) {
+    return (
+      <div className="flex min-h-40 flex-col items-center justify-center text-center">
+        <CalendarClock className="size-6 text-white/20" />
+        <p className="mt-3 text-sm text-white/50">No deadlines on radar.</p>
+        <p className="mt-1 text-[11px] text-white/25">Add a next action to an application.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-1.5">
+      {applications.slice(0, 4).map((app, index) => (
+        <Link
+          href="/applications"
+          key={app.id}
+          className="group/move flex items-center gap-3 rounded-xl border border-transparent px-2 py-2.5 transition hover:border-white/[0.06] hover:bg-white/[0.025]"
+        >
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full border border-white/[0.08] font-mono text-[9px] text-white/35">
+            {String(index + 1).padStart(2, "0")}
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-xs text-white/75">{app.next_action_label || "Follow up"}</div>
+            <div className="mt-0.5 truncate text-[10px] text-white/28">
+              {app.job.company?.name || "Unknown company"} · {app.job.title}
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="font-mono text-[9px] text-[color:var(--color-kiwi)]">
+              {relativeDate(app.next_action_at)}
+            </div>
+            <ChevronRight className="ml-auto mt-1 size-3 text-white/15 transition-transform group-hover/move:translate-x-0.5" />
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function Orbit({ distribution, total }: { distribution: Distribution[]; total: number }) {
+  let cursor = 0;
+  const circumference = 2 * Math.PI * 42;
+  return (
+    <div className="flex flex-col items-center gap-5 sm:flex-row xl:flex-col 2xl:flex-row">
+      <div className="relative size-36 shrink-0">
+        <svg viewBox="0 0 100 100" className="size-full -rotate-90" aria-label="Application status distribution">
+          <circle cx="50" cy="50" r="42" fill="none" stroke="rgba(255,255,255,.045)" strokeWidth="8" />
+          {distribution.map((d) => {
+            const length = total ? (d.value / total) * circumference : 0;
+            const dashOffset = -cursor;
+            cursor += length;
+            return (
+              <circle
+                key={d.name}
+                cx="50"
+                cy="50"
+                r="42"
+                fill="none"
+                stroke={d.color}
+                strokeWidth="8"
+                strokeDasharray={`${Math.max(length - 2, 0)} ${circumference}`}
+                strokeDashoffset={dashOffset}
+                strokeLinecap="round"
+                className="orbit-segment"
+              />
+            );
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-3xl font-medium tracking-[-0.06em]">{total}</span>
+          <span className="font-mono text-[8px] uppercase tracking-[0.2em] text-white/25">tracked</span>
+        </div>
+      </div>
+      <div className="grid w-full grid-cols-2 gap-x-4 gap-y-2">
+        {distribution.slice(0, 6).map((d) => (
+          <div key={d.name} className="flex min-w-0 items-center gap-2 text-[10px]">
+            <span className="size-1.5 shrink-0 rounded-full" style={{ background: d.color, boxShadow: `0 0 9px ${d.color}` }} />
+            <span className="truncate text-white/38">{d.name}</span>
+            <span className="ml-auto font-mono text-white/65">{d.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function SignalFeed({ applications }: { applications: Application[] }) {
+  return (
+    <div className="divide-y divide-white/[0.045]">
+      {applications.slice(0, 5).map((app) => (
+        <Link
+          href="/applications"
+          key={app.id}
+          className="signal-row group/signal grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 py-3 sm:grid-cols-[minmax(0,1.3fr)_minmax(120px,.7fr)_auto]"
+        >
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="relative flex size-8 shrink-0 items-center justify-center rounded-lg border border-white/[0.07] bg-white/[0.025] font-mono text-[9px] uppercase text-white/40">
+              {(app.job.company?.name || "?").slice(0, 2)}
+              <span className="absolute -right-0.5 -top-0.5 size-1.5 rounded-full" style={{ background: STATUS_COLORS[app.status] }} />
+            </span>
+            <div className="min-w-0">
+              <div className="truncate text-xs text-white/78 transition-colors group-hover/signal:text-[color:var(--color-kiwi)]">
+                {app.job.title}
+              </div>
+              <div className="mt-0.5 truncate text-[10px] text-white/27">{app.job.company?.name || "Unknown company"}</div>
+            </div>
+          </div>
+          <div className="hidden min-w-0 sm:block">
+            <StatusSignal status={app.status} />
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="font-mono text-[9px] text-white/22">{relativeDate(app.updated_at)}</span>
+            <ArrowUpRight className="size-3.5 text-white/18 transition group-hover/signal:-translate-y-0.5 group-hover/signal:translate-x-0.5 group-hover/signal:text-white/55" />
+          </div>
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function StatusSignal({ status }: { status: AppStatus }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full border border-white/[0.06] bg-white/[0.025] px-2 py-1 font-mono text-[8px] uppercase tracking-[0.12em] text-white/38">
+      <span className="size-1.5 rounded-full" style={{ background: STATUS_COLORS[status] }} />
+      {STATUS_LABELS[status]}
     </span>
   );
 }
 
-// ---- Chart card ------------------------------------------------------------
-
-function ChartCard({
-  title,
-  subtitle,
-  icon: Icon,
-  className = "",
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  icon: LucideIcon;
-  className?: string;
-  children: React.ReactNode;
-}) {
+function ConversionRunway({ tiers }: { tiers: FunnelTier[] }) {
+  const peak = Math.max(tiers[0]?.count || 0, 1);
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 8 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.3 }}
-      className={`glass rounded-[var(--radius-card-lg)] p-5 ${className}`}
-    >
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-sm font-medium">{title}</h3>
-          <p className="text-xs text-[color:var(--color-text-dim)]">{subtitle}</p>
-        </div>
-        <Icon className="size-4 text-[color:var(--color-violet)]" />
-      </div>
-      <div className="mt-3">{children}</div>
-    </motion.div>
-  );
-}
-
-// ---- Conversion funnel -----------------------------------------------------
-
-function Funnel({ applications }: { applications: Application[] }) {
-  const tiers: { label: string; statuses: AppStatus[]; color: string }[] = [
-    { label: "Applied", statuses: ["applied", "oa_received", "interview_scheduled", "offer", "accepted", "rejected"], color: "#CCFF00" },
-    { label: "OA / Screen", statuses: ["oa_received", "interview_scheduled", "offer", "accepted"], color: "#DFFF00" },
-    { label: "Interview", statuses: ["interview_scheduled", "offer", "accepted"], color: "#FFFF00" },
-    { label: "Offer", statuses: ["offer", "accepted"], color: "#5EEAD4" },
-  ];
-  const total = applications.length || 1;
-  const rows = tiers.map((t) => ({
-    label: t.label,
-    color: t.color,
-    count: applications.filter((a) => t.statuses.includes(a.status)).length,
-  }));
-  const peak = rows[0]?.count || 1;
-  return (
-    <div className="space-y-2">
-      {rows.map((r, i) => {
-        const pct = (r.count / peak) * 100;
-        const ofTotal = ((r.count / total) * 100).toFixed(0);
+    <div className="grid gap-3 md:grid-cols-4">
+      {tiers.map((tier, index) => {
+        const pct = Math.round((tier.count / peak) * 100);
         return (
-          <motion.div
-            key={r.label}
-            initial={{ opacity: 0, width: 0 }}
-            animate={{ opacity: 1, width: "100%" }}
-            transition={{ delay: i * 0.08, duration: 0.4 }}
-            className="flex items-center gap-3"
-          >
-            <div className="w-24 shrink-0 text-xs text-[color:var(--color-text-muted)]">
-              {r.label}
+          <div key={tier.label} className="runway-step relative overflow-hidden rounded-2xl border border-white/[0.055] bg-black/25 p-4">
+            <div className="flex items-center justify-between">
+              <span className="font-mono text-[9px] uppercase tracking-[0.16em] text-white/35">
+                {String(index + 1).padStart(2, "0")} · {tier.label}
+              </span>
+              <span className="text-xs text-white/70">{tier.count}</span>
             </div>
-            <div className="relative h-7 flex-1 overflow-hidden rounded-full bg-white/[0.04]">
+            <div className="mt-6 h-1 overflow-hidden rounded-full bg-white/[0.05]">
               <motion.div
-                initial={{ width: 0 }}
-                animate={{ width: `${pct}%` }}
-                transition={{ delay: i * 0.08 + 0.1, duration: 0.5, ease: "easeOut" }}
-                className="h-full rounded-full"
-                style={{
-                  background: `linear-gradient(90deg, ${r.color}, ${r.color}80)`,
-                  boxShadow: `0 0 24px -4px ${r.color}80`,
-                }}
+                initial={{ scaleX: 0 }}
+                animate={{ scaleX: pct / 100 }}
+                transition={{ duration: 0.7, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
+                className="h-full origin-left rounded-full"
+                style={{ background: tier.color, boxShadow: `0 0 18px ${tier.color}` }}
               />
             </div>
-            <div className="w-20 shrink-0 text-right text-xs font-medium">
-              {r.count}{" "}
-              <span className="text-[color:var(--color-text-dim)]">· {ofTotal}%</span>
+            <div className="mt-2 flex items-center justify-between font-mono text-[8px] uppercase tracking-[0.13em] text-white/20">
+              <span>conversion</span>
+              <span>{pct}%</span>
             </div>
-          </motion.div>
+          </div>
         );
       })}
     </div>
   );
 }
 
-// ---- Stats math ------------------------------------------------------------
+function FirstLaunch() {
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.985 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="first-launch relative mt-5 min-h-[520px] overflow-hidden rounded-[28px] border border-white/[0.07]"
+    >
+      <div className="radar-field absolute left-1/2 top-1/2 size-[min(82vw,460px)] -translate-x-1/2 -translate-y-1/2 rounded-full" />
+      <div className="relative z-10 mx-auto flex min-h-[520px] max-w-xl flex-col items-center justify-center px-6 text-center">
+        <span className="mb-6 flex size-14 items-center justify-center rounded-full border border-[color:var(--color-kiwi)]/25 bg-[color:var(--color-kiwi)]/[0.07] text-[color:var(--color-kiwi)] shadow-[0_12px_28px_-18px_rgba(107,120,210,.48)]">
+          <CircleDot className="size-5" />
+        </span>
+        <div className="font-mono text-[9px] uppercase tracking-[0.25em] text-[color:var(--color-kiwi)]">Awaiting first signal</div>
+        <h2 className="mt-4 text-4xl font-medium leading-[0.95] tracking-[-0.055em] sm:text-5xl">Launch your first application.</h2>
+        <p className="mt-4 max-w-md text-sm leading-relaxed text-white/42">
+          Add a role and job.os will turn this empty radar into a living map of your search.
+        </p>
+        <Link href="/jobs" className="kinetic-button kinetic-button-primary mt-7">
+          <Radar className="size-4" /> Find the first signal
+        </Link>
+      </div>
+    </motion.div>
+  );
+}
 
-function computeStats(apps: Application[]) {
-  const now = new Date();
-  const weekAgo = subDays(now, 7);
-  const twoWeeksAgo = subDays(now, 14);
+function DashboardSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-[1600px] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="h-4 w-44 animate-pulse rounded-full bg-white/[0.05]" />
+      <div className="mt-5 h-16 max-w-2xl animate-pulse rounded-2xl bg-white/[0.05]" />
+      <div className="mt-8 grid grid-cols-1 gap-3 xl:grid-cols-12">
+        <div className="shimmer min-h-96 rounded-[22px] border border-white/[0.06] bg-white/[0.025] xl:col-span-8" />
+        <div className="grid grid-cols-2 gap-3 xl:col-span-4">
+          {[0, 1, 2, 3].map((n) => <div key={n} className="shimmer min-h-44 rounded-[20px] border border-white/[0.06] bg-white/[0.025]" />)}
+        </div>
+      </div>
+    </div>
+  );
+}
 
-  const inLastWeek = (d: string | null) =>
-    d ? isWithinInterval(new Date(d), { start: weekAgo, end: now }) : false;
-  const inPrevWeek = (d: string | null) =>
-    d
-      ? isWithinInterval(new Date(d), { start: twoWeeksAgo, end: weekAgo })
-      : false;
+type Distribution = { name: string; value: number; color: string };
+type FunnelTier = { label: string; count: number; color: string };
+type Intelligence = ReturnType<typeof buildIntelligence>;
 
-  const total = apps.length;
+function buildIntelligence(applications: Application[]) {
+  const now = Date.now();
+  const dayKey = (value: string | number | Date) => {
+    const date = new Date(value);
+    return `${date.getFullYear()}-${date.getMonth()}-${date.getDate()}`;
+  };
+  const createdWithin = (app: Application, days: number, offset = 0) => {
+    const created = new Date(app.created_at).getTime();
+    return created >= now - (days + offset) * DAY && created < now - offset * DAY;
+  };
+
+  const daily = Array.from({ length: 30 }, (_, index) => {
+    const date = new Date(now - (29 - index) * DAY);
+    return {
+      label: date.toLocaleDateString(undefined, { month: "short", day: "numeric" }),
+      value: applications.filter((app) => dayKey(app.created_at) === dayKey(date)).length,
+    };
+  });
+
+  const responseStatuses: AppStatus[] = ["oa_received", "interview_scheduled", "offer", "accepted", "rejected"];
   const interviewStatuses: AppStatus[] = ["interview_scheduled", "offer", "accepted"];
-  const interviews = apps.filter((a) => interviewStatuses.includes(a.status)).length;
   const offerStatuses: AppStatus[] = ["offer", "accepted"];
-  const offers = apps.filter((a) => offerStatuses.includes(a.status)).length;
-  const responded = apps.filter((a) =>
-    ["oa_received", "interview_scheduled", "offer", "accepted", "rejected"].includes(a.status),
-  ).length;
-  const responseRate = total === 0 ? 0 : Math.round((responded / total) * 100);
+  const responses = applications.filter((app) => responseStatuses.includes(app.status)).length;
+  const interviews = applications.filter((app) => interviewStatuses.includes(app.status)).length;
+  const offers = applications.filter((app) => offerStatuses.includes(app.status)).length;
+  const applied = applications.filter((app) => !["wishlist", "ready_to_apply", "withdrawn"].includes(app.status)).length;
 
-  const totalDelta =
-    apps.filter((a) => inLastWeek(a.created_at)).length -
-    apps.filter((a) => inPrevWeek(a.created_at)).length;
-  const interviewDelta =
-    apps.filter((a) => interviewStatuses.includes(a.status) && inLastWeek(a.updated_at)).length -
-    apps.filter((a) => interviewStatuses.includes(a.status) && inPrevWeek(a.updated_at)).length;
-  const offerDelta =
-    apps.filter((a) => offerStatuses.includes(a.status) && inLastWeek(a.updated_at)).length -
-    apps.filter((a) => offerStatuses.includes(a.status) && inPrevWeek(a.updated_at)).length;
+  const counts = new Map<AppStatus, number>();
+  applications.forEach((app) => counts.set(app.status, (counts.get(app.status) || 0) + 1));
+  const distribution = Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([status, value]) => ({ name: STATUS_LABELS[status], value, color: STATUS_COLORS[status] }));
+
+  const nextMoves = applications
+    .filter((app) => app.next_action_at)
+    .sort((a, b) => new Date(a.next_action_at!).getTime() - new Date(b.next_action_at!).getTime());
+
+  const funnel: FunnelTier[] = [
+    { label: "Applied", count: applied, color: "#9AA7FF" },
+    { label: "Response", count: responses, color: "#D0A15E" },
+    { label: "Interview", count: interviews, color: "#7FA28E" },
+    { label: "Offer", count: offers, color: "#91AA9A" },
+  ];
 
   return {
-    total,
+    total: applications.length,
+    responses,
     interviews,
     offers,
-    responseRate,
-    totalDelta,
-    interviewDelta,
-    offerDelta,
-    totalSpark: makeSparkline(apps, (a) => a.created_at, 14),
-    interviewSpark: makeSparkline(
-      apps.filter((a) => interviewStatuses.includes(a.status)),
-      (a) => a.updated_at,
-      14,
-    ),
-    offerSpark: makeSparkline(
-      apps.filter((a) => offerStatuses.includes(a.status)),
-      (a) => a.updated_at,
-      14,
-    ),
-    responseSpark: makeSparkline(
-      apps.filter((a) =>
-        ["oa_received", "interview_scheduled", "offer", "accepted", "rejected"].includes(a.status),
-      ),
-      (a) => a.updated_at,
-      14,
-    ),
+    responseRate: applied ? Math.round((responses / applied) * 100) : 0,
+    interviewRate: applied ? Math.round((interviews / applied) * 100) : 0,
+    weekDelta: applications.filter((app) => createdWithin(app, 7)).length - applications.filter((app) => createdWithin(app, 7, 7)).length,
+    last30: daily.reduce((sum, day) => sum + day.value, 0),
+    velocity: applications.filter((app) => createdWithin(app, 7)).length,
+    daily,
+    distribution,
+    nextMoves,
+    funnel,
+    recent: [...applications].sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime()),
   };
 }
 
-function makeSparkline(
-  apps: Application[],
-  pick: (a: Application) => string | null,
-  days: number,
-) {
-  const end = new Date();
-  const start = subDays(end, days - 1);
-  const dates = eachDayOfInterval({ start, end });
-  return dates.map((d, i) => {
-    const v = apps.filter((a) => {
-      const at = pick(a);
-      if (!at) return false;
-      const dt = new Date(at);
-      return format(dt, "yyyy-MM-dd") === format(d, "yyyy-MM-dd");
-    }).length;
-    return { i, v };
-  });
+function relativeDate(value: string | null) {
+  if (!value) return "—";
+  const delta = new Date(value).getTime() - Date.now();
+  const days = Math.round(delta / DAY);
+  if (days === 0) return "today";
+  if (days === 1) return "tomorrow";
+  if (days === -1) return "yesterday";
+  if (days > 0 && days < 14) return `in ${days}d`;
+  if (days < 0 && days > -14) return `${Math.abs(days)}d ago`;
+  return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function computeWeeklySeries(apps: Application[]) {
-  const end = new Date();
-  const start = subDays(end, 29);
-  const dates = eachDayOfInterval({ start, end });
-  return dates.map((d) => ({
-    label: format(d, "MMM d"),
-    count: apps.filter((a) => format(new Date(a.created_at), "yyyy-MM-dd") === format(d, "yyyy-MM-dd")).length,
-  }));
+function formatShortDate(date: Date) {
+  return date.toLocaleDateString(undefined, { month: "short", day: "2-digit" });
 }
 
-function computeStatusDistribution(apps: Application[]) {
-  const counts: Record<string, number> = {};
-  for (const a of apps) counts[a.status] = (counts[a.status] ?? 0) + 1;
-  return (Object.keys(counts) as AppStatus[])
-    .sort((a, b) => counts[b] - counts[a])
-    .map((s) => ({
-      name: STATUS_LABELS[s],
-      value: counts[s],
-      color: STATUS_COLORS[s] ?? "#71717A",
-    }));
+function signed(value: number) {
+  return value > 0 ? `+${value}` : String(value);
 }
