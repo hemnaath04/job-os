@@ -22,21 +22,32 @@ export function BackendWarmup() {
   const qc = useQueryClient();
 
   useEffect(() => {
-    // Cheapest possible wake-up: hits /health upstream (no auth, no DB).
-    // Even if this fails (Vercel proxy 502 during cold-start), Render still
-    // saw the request and started booting.
-    fetch("/api/backend/health", { cache: "no-store" }).catch(() => {});
+    let cancelled = false;
 
-    // Prefetch the queries most pages depend on. TanStack will dedupe with
-    // any subsequent useQuery on the same key.
-    const prefetches: Array<[string[], () => Promise<unknown>]> = [
-      [["applications"], () => api.listApplications()],
-      [["me", "settings"], () => api.getSettings()],
-      [["resumes"], () => api.listResumes()],
-    ];
-    for (const [key, fn] of prefetches) {
-      qc.prefetchQuery({ queryKey: key, queryFn: fn }).catch(() => {});
+    async function warmAndPrefetch() {
+      // Wake the cheap, unauthenticated /health route first. This avoids
+      // making three authenticated requests compete while Render is starting.
+      await fetch("/api/backend/health", { cache: "no-store" }).catch(() => {});
+      if (cancelled) return;
+
+      // Prefetch the queries most pages depend on. TanStack dedupes these
+      // against any matching query already mounted by the active page.
+      const prefetches: Array<[string[], () => Promise<unknown>]> = [
+        [["applications"], () => api.listApplications()],
+        [["me", "settings"], () => api.getSettings()],
+        [["resumes"], () => api.listResumes()],
+      ];
+      await Promise.allSettled(
+        prefetches.map(([queryKey, queryFn]) =>
+          qc.prefetchQuery({ queryKey, queryFn }),
+        ),
+      );
     }
+
+    void warmAndPrefetch();
+    return () => {
+      cancelled = true;
+    };
   }, [qc]);
 
   return null;

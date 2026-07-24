@@ -57,21 +57,27 @@ async function proxyInner(
   const t0 = Date.now();
   const { path } = await ctx.params;
   const pathStr = (path ?? []).join("/");
-  const upstream = `${API}/api/v1/${pathStr}${req.nextUrl.search}`;
+  const isHealthCheck = req.method === "GET" && pathStr === "health";
+  const upstreamPath = isHealthCheck ? "/health" : `/api/v1/${pathStr}`;
+  const upstream = `${API}${upstreamPath}${req.nextUrl.search}`;
   console.log("[proxy] start", { method: req.method, path: pathStr });
-
-  const { userId, sessionId, getToken } = await auth();
-  const token = await getToken();
-  if (!userId || !token) {
-    return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
-  }
 
   const headers = new Headers();
   for (const name of FORWARD_HEADERS) {
     const v = req.headers.get(name);
     if (v) headers.set(name, v);
   }
-  headers.set("authorization", `Bearer ${token}`);
+
+  // Health is intentionally public and bypasses Clerk so the landing page
+  // and scheduled checks can wake the API before a user signs in.
+  if (!isHealthCheck) {
+    const { userId, getToken } = await auth();
+    const token = await getToken();
+    if (!userId || !token) {
+      return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
+    }
+    headers.set("authorization", `Bearer ${token}`);
+  }
 
   const init: RequestInit = {
     method: req.method,

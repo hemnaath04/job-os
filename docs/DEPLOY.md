@@ -1,56 +1,51 @@
-# Deploy M1
+# Production deployment
 
-Two pieces: Vercel for the web app, Fly.io for the FastAPI backend.
+The current production setup has two independently deployed services:
 
-## 1. Backend → Fly.io
+- Vercel serves the Next.js web app at `jobs.hemnaath.tech`.
+- Render serves the FastAPI backend at `job-os-api.onrender.com`.
 
-```bash
-# one-time install
-brew install flyctl
-flyctl auth login
+## Backend → Render
 
-# from repo root
-flyctl launch --copy-config --config infra/fly/api.fly.toml --no-deploy
+`render.yaml` is the source of truth for the backend service. It builds the
+Docker image in `infra/fly/Dockerfile.api`, runs Alembic migrations at startup,
+and deploys pushes to the default branch automatically.
 
-# set secrets (these never go in the repo)
-flyctl secrets set \
-  DATABASE_URL='postgresql+asyncpg://...neon...?ssl=true' \
-  REDIS_URL='rediss://...' \
-  ANTHROPIC_API_KEY=sk-ant-... \
-  OPENAI_API_KEY=sk-... \
-  CLERK_SECRET_KEY=sk_live_... \
-  CLERK_JWKS_URL='https://...clerk.accounts.dev/.well-known/jwks.json' \
-  FIRECRAWL_API_KEY=fc-... \
-  R2_ACCOUNT_ID=... R2_ACCESS_KEY_ID=... R2_SECRET_ACCESS_KEY=... R2_BUCKET=job-os-artifacts \
-  -a job-os-api
+Configure these values in the Render service:
 
-flyctl deploy --config infra/fly/api.fly.toml
-flyctl status -a job-os-api    # confirm machine running
-flyctl logs -a job-os-api      # tail
-```
+- `DATABASE_URL`
+- `CLERK_SECRET_KEY`
+- `CLERK_PUBLISHABLE_KEY`
+- `CLERK_JWKS_URL`
+- `ANTHROPIC_API_KEY`
+- `ANTHROPIC_BASE_URL`
+- `WEB_ORIGINS=https://jobs.hemnaath.tech`
 
-The CMD runs `alembic upgrade head` on startup, so the first deploy migrates Neon.
+Optional features use `FIRECRAWL_API_KEY`, `THEIRSTACK_API_KEY`, and the `R2_*`
+values documented in `.env.example`.
 
-## 2. Web → Vercel
+Render's free web-service plan spins down after 15 minutes without inbound
+traffic. `.github/workflows/keep-warm.yml` calls `/health` every five minutes
+to reduce cold starts. For dependable production latency, change the Render
+service itself to a paid instance that does not spin down.
 
-```bash
-pnpm dlx vercel link             # link this directory to a new Vercel project
-pnpm dlx vercel env add NEXT_PUBLIC_API_BASE_URL production
-  # → https://job-os-api.fly.dev
-pnpm dlx vercel env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production
-pnpm dlx vercel env add CLERK_SECRET_KEY production
+## Web → Vercel
 
-pnpm dlx vercel --prod
-```
+The Vercel project uses `infra/vercel/vercel.json` and should have:
 
-Vercel auto-detects the Next.js app inside the monorepo via `vercel.json`.
+- `API_BASE_URL=https://job-os-api.onrender.com`
+- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
+- `CLERK_SECRET_KEY`
 
-## 3. Smoke test
+The browser calls `/api/backend/*` on the web origin. The Next.js route handler
+adds the signed-in Clerk token and forwards requests to FastAPI.
+
+## Smoke test
 
 ```bash
-curl https://job-os-api.fly.dev/health
+curl https://job-os-api.onrender.com/health
 # {"status":"ok","version":"0.0.1"}
-
-# Open the deployed web app, sign in via Clerk, paste a job URL into "Add job".
-# Card should land in the Wishlist column within ~10s.
 ```
+
+Then open `https://jobs.hemnaath.tech`, sign in, and confirm that Dashboard and
+Applications load without a cold-start wait.

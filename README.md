@@ -9,11 +9,8 @@ invariant on resume content (every bullet cites a verified profile fact).
 ```
 apps/
   web/        Next.js 15 (App Router, TypeScript, Tailwind, shadcn/ui)
-  api/        FastAPI + SQLAlchemy + LangGraph + pgvector
-packages/
-  types/      OpenAPI-generated TS types shared by the web app
-  ui-tokens/  Tailwind preset for the dark-glass / violet design system
-infra/        Fly.io + Vercel + Terraform stubs
+  api/        FastAPI + async SQLAlchemy + pgvector
+infra/        Render, Fly.io, and Vercel deployment configuration
 ```
 
 ## Stack
@@ -23,16 +20,14 @@ infra/        Fly.io + Vercel + Terraform stubs
 | Frontend         | Next.js 15, TypeScript, Tailwind, shadcn/ui     |
 | Backend          | FastAPI (Python 3.13), async SQLAlchemy 2.0     |
 | Database         | Postgres 16 + pgvector (Neon)                   |
-| Cache / broker   | Redis (Upstash)                                 |
-| Agents           | LangGraph + PydanticAI                          |
-| LLM (tailor)     | Anthropic Claude Opus 4.8                       |
-| LLM (extract)    | Anthropic Claude Haiku 4.5                      |
-| Embeddings       | OpenAI `text-embedding-3-large`                 |
-| Job discovery    | TheirStack → GitHub repos → Apify/Firecrawl     |
-| Resume render    | Reactive Resume (self-hosted)                   |
+| Data fetching    | TanStack Query through an authenticated proxy   |
+| LLM              | Anthropic-compatible gateway (model configurable) |
+| Job discovery    | TheirStack + SimplifyJobs GitHub data           |
+| Job-page import  | Firecrawl, with direct HTTP fallback             |
+| Resume render    | WeasyPrint + Jinja2                              |
 | Auth             | Clerk                                           |
-| Blob             | Cloudflare R2                                   |
-| Hosting          | Vercel (web) + Fly.io (api, workers, RR)        |
+| Blob             | Cloudflare R2 (optional)                        |
+| Hosting          | Vercel (web) + Render (FastAPI)                 |
 
 ## Milestones
 
@@ -56,5 +51,6 @@ pnpm install
 pnpm dev
 ```
 
-Cloud services (Neon, Upstash, R2, Clerk, Anthropic, OpenAI, Firecrawl) are
-required — see `.env.example`.
+Neon, Clerk, and the Anthropic-compatible endpoint are the core production
+services. TheirStack, Firecrawl, and R2 enable optional discovery, import, and
+artifact-storage capabilities. See `.env.example`.
