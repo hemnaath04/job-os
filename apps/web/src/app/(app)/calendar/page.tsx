@@ -5,6 +5,7 @@ import { format, isPast, isThisWeek, isToday, parseISO } from "date-fns";
 import { Building2, Calendar as CalendarIcon } from "lucide-react";
 import Link from "next/link";
 import { EmptyState } from "@/components/empty-state";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import type { CalendarEntry } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
@@ -41,19 +42,20 @@ export default function CalendarPage() {
   for (const e of entries) grouped[bucketOf(e)].push(e);
 
   return (
-    <div className="mx-auto max-w-4xl px-8 py-6">
-      <header>
-        <h1 className="text-2xl font-medium tracking-tight">Calendar</h1>
-        <p className="text-sm text-[color:var(--color-text-muted)]">
-          {entries.length} upcoming follow-up{entries.length === 1 ? "" : "s"}.
-          Set next-action dates from each application.
-        </p>
-      </header>
+    <div className="workspace-page max-w-6xl">
+      <PageIntro
+        eyebrow="Next-action timeline"
+        title="Calendar"
+        description="Deadlines and follow-ups arranged by urgency, not buried in a generic month grid. Every item links straight back to its application."
+        icon={CalendarIcon}
+      >
+        <InfoChip tone="sage">{entries.length} upcoming</InfoChip>
+        <InfoChip>{grouped.overdue.length} overdue</InfoChip>
+        <InfoChip tone="clay">120-day horizon</InfoChip>
+      </PageIntro>
 
       {isLoading && (
-        <div className="mt-8 text-sm text-[color:var(--color-text-muted)]">
-          loading…
-        </div>
+        <div className="loading-surface mt-6" />
       )}
 
       {!isLoading && entries.length === 0 && (
@@ -66,13 +68,14 @@ export default function CalendarPage() {
       )}
 
       {!isLoading && entries.length > 0 && (
-        <div className="mt-6 space-y-6">
+        <div className="relative mt-7 space-y-8 before:absolute before:bottom-2 before:left-[6px] before:top-3 before:w-px before:bg-gradient-to-b before:from-[#9AA7FF]/35 before:via-white/10 before:to-transparent">
           {BUCKETS.map(({ id, label }) => {
             const items = grouped[id];
             if (items.length === 0) return null;
             return (
-              <section key={id}>
-                <h2 className="text-xs font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+              <section key={id} className="relative pl-7">
+                <span className="absolute left-0 top-1 size-3 rounded-full border-2 border-[#15181D] bg-[#9AA7FF] shadow-[0_0_0_1px_rgba(154,167,255,.25)]" />
+                <h2 className="section-kicker">
                   {label}
                   <span className="ml-2 text-[color:var(--color-text-muted)]">
                     {items.length}
@@ -109,7 +112,7 @@ function EntryRow({
     <li>
       <Link
         href="/applications"
-        className="glass flex items-start justify-between rounded-[var(--radius-card)] px-4 py-3 hover:bg-white/[0.04]"
+        className="workspace-panel workspace-panel-interactive flex items-start justify-between px-5 py-4"
       >
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm">

@@ -6,13 +6,13 @@ import { STATUS_LABELS } from "@/lib/types";
 // per-status color identity anyway (Linear / Asana convention).
 const STATUS_STYLE: Record<AppStatus, { from: string; to: string; ring: string }> = {
   wishlist:            { from: "#A1A1AE", to: "#52525B", ring: "#A1A1AE" },
-  ready_to_apply:      { from: "#06B6D4", to: "#3B82F6", ring: "#38BDF8" },
-  applied:             { from: "#CCFF00", to: "#FFFF00", ring: "#CCFF00" },
-  oa_received:         { from: "#F59E0B", to: "#F5B544", ring: "#F5B544" },
-  interview_scheduled: { from: "#10B981", to: "#34D399", ring: "#34D399" },
-  offer:               { from: "#06B6D4", to: "#5EEAD4", ring: "#5EEAD4" },
-  accepted:            { from: "#10B981", to: "#5EEAD4", ring: "#34D399" },
-  rejected:            { from: "#F43F5E", to: "#FF6B8A", ring: "#FF6B8A" },
+  ready_to_apply:      { from: "#7F9CCB", to: "#91A8D8", ring: "#7F9CCB" },
+  applied:             { from: "#9AA7FF", to: "#C7CDF0", ring: "#9AA7FF" },
+  oa_received:         { from: "#C49252", to: "#D0A15E", ring: "#D0A15E" },
+  interview_scheduled: { from: "#718F7D", to: "#8BAE98", ring: "#7FA28E" },
+  offer:               { from: "#789789", to: "#A0B8A8", ring: "#91AA9A" },
+  accepted:            { from: "#829A7B", to: "#B0C2A8", ring: "#A7B99F" },
+  rejected:            { from: "#B96972", to: "#D58C93", ring: "#CC7A82" },
   withdrawn:           { from: "#71717A", to: "#52525B", ring: "#71717A" },
   ghosted:             { from: "#52525B", to: "#27272A", ring: "#71717A" },
 };

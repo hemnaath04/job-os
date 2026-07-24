@@ -45,7 +45,7 @@ export function ApplicationsTable({
   }
 
   return (
-    <div className="glass overflow-hidden rounded-[var(--radius-card-lg)]">
+    <div className="workspace-panel overflow-hidden">
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-[color:var(--color-surface-1)]/80 text-left text-[10px] uppercase tracking-wider text-white/60 backdrop-blur-lg">
           <tr>
@@ -107,7 +107,7 @@ export function ApplicationsTable({
                     href={{ pathname: "/tailor", query: { job_id: a.job.id } }}
                     onClick={(e) => e.stopPropagation()}
                     onDoubleClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-semibold text-black shadow-[0_0_20px_-8px_var(--color-purple)] transition hover:scale-[1.05]"
+                    className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-semibold text-black shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)] transition hover:scale-[1.05]"
                   >
                     <Sparkles className="size-3" /> Tailor
                   </Link>

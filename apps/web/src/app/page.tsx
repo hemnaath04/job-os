@@ -2,7 +2,6 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { BackendWakeup } from "@/components/backend-wakeup";
 import { BrandMark } from "@/components/brand-mark";
 
 export default async function Landing() {
@@ -11,10 +10,9 @@ export default async function Landing() {
 
   return (
     <main className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
-      <BackendWakeup />
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <BrandMark className="drop-shadow-[0_0_14px_rgba(204,255,0,0.28)]" />
+          <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />
           <span className="font-mono text-sm tracking-tight">job.os</span>
         </div>
         <div className="flex items-center gap-2">

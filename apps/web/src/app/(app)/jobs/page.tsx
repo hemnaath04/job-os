@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import type {
   DiscoveryResult,
@@ -247,25 +248,20 @@ export default function DiscoverPage() {
   }, [results, sort, titles, userLocation]);
 
   return (
-    <div className="mx-auto max-w-6xl px-8 py-6">
-      <header className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Discover</h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            TheirStack — searches across LinkedIn/Lever/Greenhouse/etc. Each
-            result burns 1 credit on import, so the page size is capped at 50.
-            {settings?.default_function && (
-              <>
-                {" "}Default function: <code>{settings.default_function}</code>.
-              </>
-            )}
-          </p>
-        </div>
-        <Radar className="size-5 text-[color:var(--color-violet)]" />
-      </header>
+    <div className="workspace-page max-w-7xl">
+      <PageIntro
+        eyebrow="Opportunity radar"
+        title="Internship finder"
+        description="Translate plain-English intent into focused job-board searches, then bring the strongest roles into your private pipeline."
+        icon={Radar}
+      >
+        <InfoChip tone="sage">TheirStack + GitHub</InfoChip>
+        <InfoChip>{saved.length} saved searches</InfoChip>
+        <InfoChip tone="clay">50-result guardrail</InfoChip>
+      </PageIntro>
 
       {/* Smart search */}
-      <form onSubmit={onSmartSubmit} className="mt-6">
+      <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
         <label className="flex items-center gap-1.5 text-sm font-medium">
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" /> Smart search
         </label>
@@ -278,12 +274,12 @@ export default function DiscoverPage() {
             value={smartQuery}
             onChange={(e) => setSmartQuery(e.target.value)}
             placeholder="e.g. 'fullstack intern in Boston with Python and React from the last 2 weeks'"
-            className="glass flex-1 rounded-full border border-white/10 bg-white/[0.03] px-4 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="field-control flex-1 rounded-full"
           />
           <button
             type="submit"
             disabled={smart.isPending || !smartQuery.trim()}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-2 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="kinetic-button kinetic-button-primary disabled:opacity-50"
           >
             {smart.isPending ? (
               <Loader2 className="size-3.5 animate-spin" />
@@ -329,7 +325,7 @@ export default function DiscoverPage() {
       )}
 
       {/* Manual filters form */}
-      <div className="glass mt-6 grid grid-cols-1 gap-4 rounded-[var(--radius-card)] p-5 md:grid-cols-2">
+      <div className="workspace-panel mt-5 grid grid-cols-1 gap-5 p-5 sm:p-6 md:grid-cols-2">
         <div className="md:col-span-2">
           <label className="text-sm font-medium">Sources</label>
           <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
@@ -357,7 +353,7 @@ export default function DiscoverPage() {
             value={titles}
             onChange={(e) => setTitles(e.target.value)}
             placeholder="software engineer intern"
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="field-control"
           />
         </Field>
         <Field label="Technologies" help="Comma-separated slugs. e.g. 'python, pytorch'">
@@ -366,7 +362,7 @@ export default function DiscoverPage() {
             value={techs}
             onChange={(e) => setTechs(e.target.value)}
             placeholder="python, fastapi"
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+            className="field-control"
           />
         </Field>
         <Field label="Country code" help="ISO-3166 alpha-2. e.g. US, CA, GB. Blank = global.">
@@ -375,7 +371,7 @@ export default function DiscoverPage() {
             value={country}
             maxLength={2}
             onChange={(e) => setCountry(e.target.value.toUpperCase())}
-            className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm uppercase outline-none focus:border-[#CCFF00]/60"
+            className="field-control uppercase"
           />
         </Field>
         <div className="grid grid-cols-2 gap-3">
@@ -386,7 +382,7 @@ export default function DiscoverPage() {
               max={180}
               value={maxAgeDays}
               onChange={(e) => setMaxAgeDays(Number(e.target.value) || 30)}
-              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+              className="field-control"
             />
           </Field>
           <Field label="Limit">
@@ -396,7 +392,7 @@ export default function DiscoverPage() {
               max={50}
               value={limit}
               onChange={(e) => setLimit(Number(e.target.value) || 20)}
-              className="glass w-full rounded-[var(--radius-input,12px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+              className="field-control"
             />
           </Field>
         </div>
@@ -404,7 +400,7 @@ export default function DiscoverPage() {
           <button
             onClick={runSearch}
             disabled={search.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="kinetic-button kinetic-button-primary disabled:opacity-50"
           >
             {search.isPending ? (
               <>
@@ -419,7 +415,7 @@ export default function DiscoverPage() {
           <button
             onClick={onSaveClick}
             disabled={saveSearch.isPending}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm hover:bg-white/[0.06] disabled:opacity-50"
+            className="kinetic-button kinetic-button-secondary disabled:opacity-50"
           >
             <Bookmark className="size-3.5" /> Save search
           </button>
@@ -619,7 +615,7 @@ function ResultCard({
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.2 }}
-      className="glass hover-lift flex h-full flex-col rounded-[var(--radius-card-lg)] p-4"
+      className="workspace-panel workspace-panel-interactive flex h-full flex-col p-5"
     >
       <div className="flex items-start gap-3">
         <CompanyAvatar name={result.company_name ?? "?"} size={36} />
@@ -752,7 +748,7 @@ function SourceToggle({
       onClick={onClick}
       className={`flex flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
         active
-          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-white shadow-[0_0_24px_-8px_var(--color-purple)]"
+          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-white shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
           : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)] hover:bg-white/[0.04]"
       }`}
     >

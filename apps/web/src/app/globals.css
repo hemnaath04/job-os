@@ -1,47 +1,43 @@
 @import "tailwindcss";
 
 @theme {
-  /* === Surfaces — pitch black base, near-black surfaces lift slightly === */
-  --color-bg: #000000;
-  --color-surface-1: #0A0A0A;
-  --color-surface-2: #111111;
-  --color-surface-3: #1A1A1A;
+  /* === Surfaces — editorial graphite, warm rather than pitch black === */
+  --color-bg: #101215;
+  --color-surface-1: #15181D;
+  --color-surface-2: #1B1F25;
+  --color-surface-3: #252A32;
 
-  --color-border: rgba(255, 255, 255, 0.08);
-  --color-border-strong: rgba(204, 255, 0, 0.30);
+  --color-border: rgba(241, 238, 232, 0.10);
+  --color-border-strong: rgba(154, 167, 255, 0.32);
 
   /* === Type === */
-  --color-text: #F5F5F5;
-  --color-text-muted: #A1A1A1;
-  --color-text-dim: #6B6B6B;
+  --color-text: #F1EEE8;
+  --color-text-muted: #A9AAA6;
+  --color-text-dim: #70736F;
 
-  /* === Brand: Electric Kiwi — lime → chartreuse → electric yellow ===
-     Bright, fluorescent, high-impact. Black is the partner. */
-  --color-kiwi: #CCFF00;
-  --color-chartreuse: #DFFF00;
-  --color-electric: #FFFF00;
+  /* === Brand: muted periwinkle — calm, precise, and non-neon === */
+  --color-kiwi: #9AA7FF;
+  --color-chartreuse: #AEB8EE;
+  --color-electric: #C7CDF0;
 
-  /* Compat aliases — earlier code references these names; they now point
-     to the kiwi palette so the existing utility classes keep working. */
+  /* Compatibility aliases used by existing components. */
   --color-indigo: var(--color-kiwi);
   --color-purple: var(--color-chartreuse);
   --color-violet: var(--color-electric);
   --color-brand: var(--color-kiwi);
 
-  /* === Accent — kept as muted blue for secondary highlights only.
-     Brand vibe is intentionally lime/yellow + black. === */
-  --color-cyan: #4DD0E1;
-  --color-blue: #80DEEA;
+  --color-cyan: #87A6B5;
+  --color-blue: #91A8D8;
 
   /* === Status accents (semantic, not brand) === */
-  --color-mint: #5EEAD4;
-  --color-amber: #F5B544;
-  --color-rose: #FF6B8A;
-  --color-emerald: #34D399;
-  --color-sky: #38BDF8;
+  --color-mint: #91AA9A;
+  --color-amber: #D0A15E;
+  --color-rose: #CC7A82;
+  --color-emerald: #7FA28E;
+  --color-sky: #7F9CCB;
 
   /* === Fonts === */
-  --font-sans: var(--font-inter), "Inter", "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: var(--font-manrope), "Manrope", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
   --radius-card: 1rem;
@@ -55,11 +51,11 @@
 
   --shadow-glass-hover:
     0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
-    0 0 0 1px rgba(204, 255, 0, 0.18),
+    0 0 0 1px rgba(154, 167, 255, 0.16),
     0 30px 80px -20px rgba(0, 0, 0, 0.95);
 
   --shadow-brand-glow:
-    0 0 32px -4px rgba(204, 255, 0, 0.55);
+    0 14px 34px -18px rgba(107, 120, 210, 0.48);
 }
 
 @layer base {
@@ -72,34 +68,33 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Ambient brand bloom — subtle kiwi + yellow halos so pure black doesn't
-     read as flat. Kept low-opacity so the neon CTAs stay the loudest thing. */
+  /* Soft atmospheric color keeps graphite from reading as flat. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(70rem 50rem at 80% -20%, rgba(204, 255, 0, 0.10), transparent 60%),
-      radial-gradient(60rem 40rem at -10% 110%, rgba(255, 255, 0, 0.06), transparent 60%);
+      radial-gradient(70rem 50rem at 80% -20%, rgba(130, 143, 215, 0.075), transparent 60%),
+      radial-gradient(60rem 40rem at -10% 110%, rgba(143, 166, 151, 0.045), transparent 60%);
     z-index: -1;
   }
 
   ::selection {
-    background: rgba(204, 255, 0, 0.65);
-    color: #000;
+    background: rgba(154, 167, 255, 0.55);
+    color: #101215;
   }
 
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: rgba(204, 255, 0, 0.20);
+    background: rgba(154, 167, 255, 0.18);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(204, 255, 0, 0.40);
+    background: rgba(154, 167, 255, 0.32);
     background-clip: padding-box;
   }
 }
@@ -134,16 +129,15 @@
 
 /* Brand gradient text (use for hero titles, big numbers). */
 @utility text-gradient-brand {
-  background: linear-gradient(120deg, #CCFF00 0%, #DFFF00 50%, #FFFF00 100%);
+  background: linear-gradient(120deg, #C9CEF4 0%, #AEB8EE 50%, #8F9EEB 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-/* Brand gradient surface — kiwi → chartreuse → electric yellow.
-   On this surface, text should be BLACK for contrast (text-black). */
+/* Brand gradient surface — muted periwinkle with dark text. */
 @utility bg-gradient-brand {
-  background-image: linear-gradient(120deg, #CCFF00 0%, #DFFF00 55%, #FFFF00 100%);
+  background-image: linear-gradient(120deg, #8F9EEB 0%, #AEB8EE 55%, #C9CEF4 100%);
 }
 
 @utility bg-gradient-accent {
@@ -159,7 +153,7 @@
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(135deg, #CCFF00, #DFFF00, #FFFF00);
+    background: linear-gradient(135deg, #8F9EEB, #AEB8EE, #C9CEF4);
     -webkit-mask:
       linear-gradient(#000 0 0) content-box,
       linear-gradient(#000 0 0);
@@ -169,11 +163,11 @@
   }
 }
 
-/* Subtle neon glow under an element. */
+/* Restrained accent depth — no bloom or neon halo. */
 @utility glow-brand {
   box-shadow:
-    0 0 0 1px rgba(204, 255, 0, 0.45),
-    0 0 40px -8px rgba(204, 255, 0, 0.70);
+    0 0 0 1px rgba(154, 167, 255, 0.34),
+    0 16px 36px -22px rgba(107, 120, 210, 0.62);
 }
 
 @utility hover-lift {
@@ -212,4 +206,408 @@
 
 @keyframes shimmer {
   to { transform: translateX(100%); }
+}
+
+/* ── Dashboard flight deck ────────────────────────────────────────────────
+   The motion is deliberately transform/opacity-only so the dashboard keeps
+   its energy without turning every frame into a paint benchmark. */
+
+.dashboard-stage {
+  --flight-line: rgba(255, 255, 255, 0.048);
+}
+
+.dashboard-grid {
+  opacity: 0.48;
+  background-image:
+    linear-gradient(var(--flight-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--flight-line) 1px, transparent 1px);
+  background-size: 64px 64px;
+  mask-image: linear-gradient(to bottom, black, transparent 82%);
+}
+
+.dashboard-grid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 0 43%, rgba(154, 167, 255, 0.045) 50%, transparent 57%);
+  background-size: 220% 100%;
+  animation: grid-scan 11s linear infinite;
+}
+
+.signal-orb {
+  width: 32rem;
+  height: 32rem;
+  border-radius: 999px;
+  filter: blur(90px);
+  opacity: 0.035;
+  transform: translateZ(0);
+}
+
+.signal-orb-a {
+  right: -12rem;
+  top: 5rem;
+  background: #9AA7FF;
+  animation: orbit-drift 12s ease-in-out infinite alternate;
+}
+
+.signal-orb-b {
+  bottom: 4rem;
+  left: 14%;
+  background: #7FA28E;
+  opacity: 0.028;
+  animation: orbit-drift 16s ease-in-out -5s infinite alternate-reverse;
+}
+
+.flight-panel,
+.metric-tile {
+  border: 1px solid rgba(255, 255, 255, 0.065);
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.037), transparent 42%),
+    rgba(21, 24, 29, 0.86);
+  box-shadow:
+    inset 0 1px rgba(255, 255, 255, 0.035),
+    0 24px 80px -48px rgba(0, 0, 0, 0.95);
+  backdrop-filter: blur(12px);
+}
+
+.flight-panel {
+  transition: border-color 300ms ease, background-color 300ms ease, transform 300ms ease;
+}
+
+.flight-panel:hover {
+  border-color: rgba(154, 167, 255, 0.13);
+  background-color: rgba(11, 11, 11, 0.87);
+}
+
+.metric-tile::after {
+  content: "";
+  position: absolute;
+  inset: auto -20% -60% 20%;
+  height: 80%;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(255, 255, 255, 0.07), transparent 66%);
+  transition: transform 500ms cubic-bezier(.22, 1, .36, 1), opacity 300ms ease;
+  opacity: 0.35;
+}
+
+.metric-tile:hover::after { transform: translate3d(-10%, -15%, 0) scale(1.2); }
+
+.metric-tile-hot {
+  background:
+    linear-gradient(145deg, rgba(154, 167, 255, 0.10), transparent 55%),
+    #171A21;
+  border-color: rgba(154, 167, 255, 0.18);
+}
+
+.status-beacon {
+  position: relative;
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: var(--color-kiwi);
+  box-shadow: 0 0 7px rgba(154, 167, 255, 0.45);
+}
+
+.status-beacon::after {
+  content: "";
+  position: absolute;
+  inset: -5px;
+  border: 1px solid rgba(154, 167, 255, 0.36);
+  border-radius: inherit;
+  animation: beacon 1.8s ease-out infinite;
+}
+
+.kinetic-button {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 40px;
+  overflow: hidden;
+  border-radius: 999px;
+  padding: 0.6rem 1rem;
+  font-size: 0.75rem;
+  font-weight: 650;
+  transition: transform 220ms cubic-bezier(.22, 1, .36, 1), border-color 220ms ease, box-shadow 220ms ease;
+}
+
+.kinetic-button::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: -150%;
+  left: -35%;
+  width: 42%;
+  height: 400%;
+  transform: rotate(22deg) translate3d(-150%, 0, 0);
+  background: rgba(255, 255, 255, 0.5);
+  filter: blur(8px);
+  transition: transform 650ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.kinetic-button:hover { transform: translateY(-2px); }
+.kinetic-button:hover::before { transform: rotate(22deg) translate3d(420%, 0, 0); }
+
+.kinetic-button-primary {
+  color: #111319;
+  background: linear-gradient(105deg, #8F9EEB, #AEB8EE 54%, #C9CEF4);
+  box-shadow: 0 12px 30px -18px rgba(107, 120, 210, 0.5);
+}
+
+.kinetic-button-primary:hover { box-shadow: 0 16px 34px -18px rgba(107, 120, 210, 0.58); }
+
+.kinetic-button-secondary {
+  color: rgba(255, 255, 255, 0.68);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.kinetic-button-secondary:hover { border-color: rgba(154, 167, 255, 0.22); color: white; }
+
+.chart-grid {
+  background-image:
+    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+  background-size: 100% 33.33%, 12.5% 100%;
+  mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
+}
+
+.momentum-path {
+  stroke-dasharray: 800;
+  stroke-dashoffset: 800;
+  animation: draw-path 1.4s cubic-bezier(.22, 1, .36, 1) forwards;
+  filter: drop-shadow(0 2px 3px rgba(107, 120, 210, 0.25));
+}
+
+.orbit-segment { transition: opacity 200ms ease, stroke-width 200ms ease; }
+.orbit-segment:hover { opacity: 0.72; stroke-width: 10; }
+
+.signal-row { position: relative; }
+.signal-row::before {
+  content: "";
+  position: absolute;
+  inset: 0 -0.6rem;
+  z-index: -1;
+  border-radius: 0.75rem;
+  background: linear-gradient(90deg, rgba(154, 167, 255, 0.065), transparent 68%);
+  opacity: 0;
+  transform: scaleX(0.96);
+  transform-origin: left;
+  transition: opacity 200ms ease, transform 300ms cubic-bezier(.22, 1, .36, 1);
+}
+.signal-row:hover::before { opacity: 1; transform: scaleX(1); }
+
+.runway-step::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -30%;
+  width: 22%;
+  transform: skewX(-20deg);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.055), transparent);
+  animation: runway-sweep 7s ease-in-out infinite;
+}
+
+.first-launch {
+  background:
+    radial-gradient(circle at center, rgba(154, 167, 255, 0.05), transparent 42%),
+    rgba(8, 8, 8, 0.7);
+}
+
+.radar-field {
+  border: 1px solid rgba(154, 167, 255, 0.12);
+  background:
+    repeating-radial-gradient(circle, transparent 0 59px, rgba(154, 167, 255, 0.09) 60px 61px),
+    conic-gradient(from 20deg, transparent 0 84%, rgba(154, 167, 255, 0.14) 96%, transparent 100%);
+  animation: radar-spin 8s linear infinite;
+}
+
+.radar-field::before,
+.radar-field::after {
+  content: "";
+  position: absolute;
+  background: rgba(154, 167, 255, 0.08);
+}
+.radar-field::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+.radar-field::after { top: 50%; left: 0; right: 0; height: 1px; }
+
+@keyframes grid-scan { to { background-position: -220% 0; } }
+@keyframes orbit-drift { to { transform: translate3d(1.5rem, 2.5rem, 0) scale(1.08); } }
+@keyframes beacon { from { opacity: 0.8; transform: scale(0.5); } to { opacity: 0; transform: scale(1.5); } }
+@keyframes draw-path { to { stroke-dashoffset: 0; } }
+@keyframes runway-sweep { 0%, 56% { transform: translate3d(0,0,0) skewX(-20deg); opacity: 0; } 70% { opacity: 1; } 88%, 100% { transform: translate3d(700%,0,0) skewX(-20deg); opacity: 0; } }
+@keyframes radar-spin { to { transform: rotate(360deg); } }
+
+/* ── Shared workspace language ──────────────────────────────────────────── */
+.workspace-page {
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  max-width: 1440px;
+  margin-inline: auto;
+  padding: 1.5rem clamp(1rem, 2.6vw, 2.25rem) 4rem;
+}
+
+.workspace-page::before {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  inset: 3.25rem 0 0 0;
+  pointer-events: none;
+  opacity: 0.28;
+  background-image:
+    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+  background-size: 72px 72px;
+  mask-image: linear-gradient(to bottom, black, transparent 75%);
+}
+
+.page-intro {
+  position: relative;
+  display: flex;
+  min-height: 170px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.5rem;
+  overflow: hidden;
+  border: 1px solid rgba(241, 238, 232, 0.08);
+  border-radius: 1.5rem;
+  padding: clamp(1.25rem, 2.4vw, 2rem);
+  background:
+    radial-gradient(38rem 16rem at 92% -22%, rgba(154, 167, 255, 0.14), transparent 66%),
+    linear-gradient(135deg, rgba(255,255,255,.048), transparent 48%),
+    rgba(21, 24, 29, 0.88);
+  box-shadow: inset 0 1px rgba(255,255,255,.035), 0 28px 90px -60px rgba(0,0,0,.95);
+  animation: intro-rise 420ms cubic-bezier(.22,1,.36,1) both;
+}
+
+.page-intro::after {
+  content: "";
+  position: absolute;
+  width: 17rem;
+  height: 17rem;
+  right: -5rem;
+  top: -9rem;
+  border: 1px solid rgba(154, 167, 255, .11);
+  border-radius: 999px;
+  box-shadow: 0 0 0 34px rgba(154,167,255,.022), 0 0 0 72px rgba(154,167,255,.014);
+}
+
+.page-intro-grid {
+  position: absolute;
+  inset: 0;
+  opacity: .2;
+  background-image: radial-gradient(rgba(255,255,255,.14) .65px, transparent .65px);
+  background-size: 13px 13px;
+  mask-image: linear-gradient(105deg, transparent 20%, black 110%);
+}
+
+.page-intro-icon {
+  display: grid;
+  width: 2.75rem;
+  height: 2.75rem;
+  flex: 0 0 auto;
+  place-items: center;
+  color: #c9cef4;
+  border: 1px solid rgba(154,167,255,.2);
+  border-radius: .9rem;
+  background: rgba(154,167,255,.08);
+  box-shadow: inset 0 1px rgba(255,255,255,.08);
+  animation: icon-settle 520ms 90ms cubic-bezier(.22,1,.36,1) both;
+}
+
+.section-kicker {
+  color: var(--color-text-dim);
+  font-size: .67rem;
+  font-weight: 700;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+}
+
+.info-chip {
+  display: inline-flex;
+  min-height: 27px;
+  align-items: center;
+  gap: .35rem;
+  padding: .28rem .7rem;
+  color: #bdc0c5;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 999px;
+  background: rgba(255,255,255,.035);
+  font-size: .7rem;
+  font-weight: 600;
+}
+.info-chip-sage { color: #b3c5b9; border-color: rgba(127,162,142,.18); background: rgba(127,162,142,.075); }
+.info-chip-clay { color: #d7b184; border-color: rgba(208,161,94,.18); background: rgba(208,161,94,.07); }
+
+.workspace-panel {
+  border: 1px solid rgba(241,238,232,.075);
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(145deg, rgba(255,255,255,.032), transparent 42%),
+    rgba(21,24,29,.82);
+  box-shadow: inset 0 1px rgba(255,255,255,.025), 0 24px 70px -52px rgba(0,0,0,.98);
+}
+
+.workspace-panel-interactive {
+  transition: transform 260ms cubic-bezier(.22,1,.36,1), border-color 260ms ease, background-color 260ms ease;
+}
+.workspace-panel-interactive:hover {
+  transform: translateY(-2px);
+  border-color: rgba(154,167,255,.16);
+  background-color: rgba(27,31,37,.92);
+}
+
+.field-control {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: .8rem;
+  background: rgba(10,12,15,.5);
+  padding: .65rem .8rem;
+  color: var(--color-text);
+  font-size: .875rem;
+  outline: none;
+  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+}
+.field-control:focus { border-color: rgba(154,167,255,.44); box-shadow: 0 0 0 3px rgba(154,167,255,.075); background: rgba(10,12,15,.75); }
+
+.loading-surface {
+  min-height: 120px;
+  border-radius: 1.25rem;
+  background: linear-gradient(100deg, rgba(255,255,255,.025), rgba(255,255,255,.06), rgba(255,255,255,.025));
+  background-size: 200% 100%;
+  animation: loading-drift 1.8s ease-in-out infinite;
+}
+@keyframes loading-drift { to { background-position: -200% 0; } }
+@keyframes intro-rise { from { opacity: 0; transform: translateY(10px); } }
+@keyframes icon-settle { from { opacity: 0; transform: scale(.86) rotate(-8deg); } }
+
+@media (max-width: 700px) {
+  .page-intro { min-height: 0; flex-direction: column; }
+  .page-intro::after { right: -9rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dashboard-grid::after,
+  .signal-orb,
+  .status-beacon::after,
+  .momentum-path,
+  .runway-step::after,
+  .radar-field {
+    animation: none !important;
+  }
+
+  .loading-surface,
+  .page-intro,
+  .page-intro-icon { animation: none !important; }
+
+  .momentum-path { stroke-dashoffset: 0; }
+  .kinetic-button,
+  .kinetic-button::before,
+  .flight-panel,
+  .signal-row::before { transition-duration: 0.01ms !important; }
 }

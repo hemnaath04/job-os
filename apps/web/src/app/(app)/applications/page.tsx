@@ -2,12 +2,13 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { Inbox, LayoutGrid, Plus, Rows3 } from "lucide-react";
+import { BriefcaseBusiness, Inbox, LayoutGrid, Plus, Rows3 } from "lucide-react";
 import { useState } from "react";
 import { AddJobDialog } from "@/components/add-job-dialog";
 import { ApplicationsTable } from "@/components/applications-table";
 import { EmptyState } from "@/components/empty-state";
 import { KanbanBoard } from "@/components/kanban-board";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 
 export default function ApplicationsPage() {
@@ -20,19 +21,32 @@ export default function ApplicationsPage() {
   });
 
   return (
-    <div className="mx-auto max-w-[1600px] px-8 py-6">
-      <motion.header
-        initial={{ opacity: 0, y: 6 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.25 }}
-        className="flex flex-wrap items-end justify-between gap-3"
+    <div className="workspace-page max-w-[1680px]">
+      <PageIntro
+        eyebrow="Pipeline control"
+        title="Applications"
+        description="A tactile command board for every role in motion. Drag cards between stages, switch to a dense table, and keep the next decision obvious."
+        icon={BriefcaseBusiness}
+        action={
+          <button
+            onClick={() => setOpen(true)}
+            className="kinetic-button kinetic-button-primary"
+          >
+            <Plus className="size-3.5" /> Add job
+          </button>
+        }
       >
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Applications</h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            {applications.length} tracked · drag cards to update status
-          </p>
-        </div>
+        <InfoChip tone="sage">{applications.length} roles tracked</InfoChip>
+        <InfoChip>Drag to update status</InfoChip>
+        <InfoChip tone="clay">{view === "kanban" ? "Spatial view" : "Dense view"}</InfoChip>
+      </PageIntro>
+
+      <motion.div
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.12, duration: 0.35 }}
+        className="mt-5 flex justify-end"
+      >
         <div className="flex items-center gap-2">
           <div className="flex rounded-full border border-[color:var(--color-border)] bg-white/[0.03] p-0.5">
             <ViewToggle
@@ -48,18 +62,12 @@ export default function ApplicationsPage() {
               label="Table"
             />
           </div>
-          <button
-            onClick={() => setOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-bold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
-          >
-            <Plus className="size-3.5" /> Add job
-          </button>
         </div>
-      </motion.header>
+      </motion.div>
 
-      <div className="mt-6">
+      <div className="mt-4">
         {isLoading ? (
-          <div className="text-sm text-[color:var(--color-text-muted)]">loading…</div>
+          <div className="loading-surface" />
         ) : applications.length === 0 ? (
           <EmptyState
             icon={Inbox}

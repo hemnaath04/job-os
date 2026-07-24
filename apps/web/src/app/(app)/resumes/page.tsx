@@ -8,6 +8,7 @@ import {
   Download,
   ExternalLink,
   FileText,
+  LibraryBig,
   Plus,
   Sparkles,
 } from "lucide-react";
@@ -15,6 +16,7 @@ import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
+import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
 import type { Resume, ResumeVersionSummary } from "@/lib/types";
@@ -47,25 +49,25 @@ export default function ResumesPage() {
   });
 
   return (
-    <div className="mx-auto max-w-5xl px-8 py-6">
-      <header className="flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-medium tracking-tight">Resumes</h1>
-          <p className="text-sm text-[color:var(--color-text-muted)]">
-            Versions are rendered from your verified profile facts — every
-            bullet is traceable.
-          </p>
-        </div>
-        <button
-          onClick={() => setCreating((c) => !c)}
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
-        >
-          <Plus className="size-3.5" /> New template
-        </button>
-      </header>
+    <div className="workspace-page max-w-6xl">
+      <PageIntro
+        eyebrow="Document library"
+        title="Resume studio"
+        description="One verified master, multiple role-specific templates, and a traceable history of every tailored version you generate."
+        icon={LibraryBig}
+        action={
+          <button onClick={() => setCreating((c) => !c)} className="kinetic-button kinetic-button-primary">
+            <Plus className="size-3.5" /> New template
+          </button>
+        }
+      >
+        <InfoChip tone="sage">{resumes.length} templates</InfoChip>
+        <InfoChip>Evidence-backed bullets</InfoChip>
+        <InfoChip tone="clay">PDF ready</InfoChip>
+      </PageIntro>
 
       {creating && (
-        <div className="glass mt-4 rounded-[var(--radius-card)] border border-[color:var(--color-purple)]/30 p-4">
+        <div className="workspace-panel mt-5 p-5">
           <div className="flex flex-col gap-2 sm:flex-row">
             <input
               type="text"
@@ -73,25 +75,25 @@ export default function ResumesPage() {
               onChange={(e) => setName(e.target.value)}
               placeholder="Template name (e.g. SWE, ML, AI)"
               autoFocus
-              className="glass flex-1 rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60"
+              className="field-control flex-1"
             />
             <input
               type="text"
               value={baseRole}
               onChange={(e) => setBaseRole(e.target.value)}
               placeholder="Base role (optional)"
-              className="glass rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none focus:border-[#CCFF00]/60 sm:w-48"
+              className="field-control sm:w-48"
             />
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !name.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+              className="kinetic-button kinetic-button-primary disabled:opacity-50"
             >
               {create.isPending ? "Creating…" : "Create"}
             </button>
             <button
               onClick={() => setCreating(false)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+              className="kinetic-button kinetic-button-secondary"
             >
               Cancel
             </button>
@@ -100,9 +102,7 @@ export default function ResumesPage() {
       )}
 
       {isLoading && (
-        <div className="mt-8 text-sm text-[color:var(--color-text-muted)]">
-          loading…
-        </div>
+        <div className="loading-surface mt-6" />
       )}
 
       {!isLoading && resumes.length === 0 && (
@@ -114,7 +114,7 @@ export default function ResumesPage() {
         />
       )}
 
-      <div className="mt-8 space-y-4">
+      <div className="mt-6 grid gap-4 xl:grid-cols-2">
         {resumes.map((r) => (
           <ResumeCard key={r.id} resume={r} />
         ))}
@@ -130,7 +130,7 @@ function ResumeCard({ resume }: { resume: Resume }) {
   });
 
   return (
-    <div className="glass overflow-hidden rounded-[var(--radius-card)]">
+    <div className="workspace-panel workspace-panel-interactive overflow-hidden">
       <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
           {resume.is_master ? (
@@ -221,7 +221,7 @@ function VersionRow({
           href={downloadUrl}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+          className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
         >
           <ExternalLink className="size-3" />
           Preview
@@ -230,7 +230,7 @@ function VersionRow({
           onClick={() =>
             downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
           }
-          className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+          className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
         >
           <Download className="size-3" />
           Download PDF

@@ -62,7 +62,7 @@ export function AddJobDialog({
                 onChange={(e) => setUrl(e.target.value)}
                 required
                 autoFocus
-                className="w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none placeholder:text-[color:var(--color-text-dim)] focus:border-[#CCFF00]/50 focus:bg-white/[0.05]"
+                className="w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none placeholder:text-[color:var(--color-text-dim)] focus:border-[#9AA7FF]/50 focus:bg-white/[0.05]"
               />
               <div className="mt-2 flex justify-end gap-2">
                 <Dialog.Close className="rounded-full border border-white/10 px-4 py-1.5 text-sm hover:bg-white/[0.04]">

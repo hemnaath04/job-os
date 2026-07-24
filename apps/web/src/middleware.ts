@@ -5,6 +5,7 @@ const isPublic = createRouteMatcher([
   "/",
   "/sign-in(.*)",
   "/sign-up(.*)",
+  // Status-only endpoint used to wake the API before authenticated data calls.
   "/api/backend/health",
 ]);
 

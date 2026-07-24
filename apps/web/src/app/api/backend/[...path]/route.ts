@@ -24,7 +24,6 @@ export const dynamic = "force-dynamic";
 const FORWARD_HEADERS = [
   "content-type",
   "accept",
-  "accept-encoding",
   "user-agent",
 ];
 
@@ -57,27 +56,27 @@ async function proxyInner(
   const t0 = Date.now();
   const { path } = await ctx.params;
   const pathStr = (path ?? []).join("/");
+  // FastAPI exposes health at the root, outside the authenticated /api/v1
+  // routers. Keeping this path token-free makes cold-start wakeups cheap.
   const isHealthCheck = req.method === "GET" && pathStr === "health";
   const upstreamPath = isHealthCheck ? "/health" : `/api/v1/${pathStr}`;
   const upstream = `${API}${upstreamPath}${req.nextUrl.search}`;
-  console.log("[proxy] start", { method: req.method, path: pathStr });
+
+  let token: string | null = null;
+  if (!isHealthCheck) {
+    const authState = await auth();
+    token = await authState.getToken();
+    if (!authState.userId || !token) {
+      return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
+    }
+  }
 
   const headers = new Headers();
   for (const name of FORWARD_HEADERS) {
     const v = req.headers.get(name);
     if (v) headers.set(name, v);
   }
-
-  // Health is intentionally public and bypasses Clerk so the landing page
-  // and scheduled checks can wake the API before a user signs in.
-  if (!isHealthCheck) {
-    const { userId, getToken } = await auth();
-    const token = await getToken();
-    if (!userId || !token) {
-      return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
-    }
-    headers.set("authorization", `Bearer ${token}`);
-  }
+  if (token) headers.set("authorization", `Bearer ${token}`);
 
   const init: RequestInit = {
     method: req.method,
@@ -137,7 +136,9 @@ async function proxyInner(
       ms,
       bodyPreview: new TextDecoder().decode(body.slice(0, 300)),
     });
-  } else {
+  } else if (ms > 1_000) {
+    // Successful fast requests do not need a serverless log entry. Keep only
+    // slow responses so production logs remain useful and inexpensive.
     console.log("[proxy]", {
       upstream,
       method: req.method,
