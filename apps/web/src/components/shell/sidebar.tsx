@@ -21,6 +21,7 @@ import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
+import { BrandMark } from "@/components/brand-mark";
 
 type NavItem = {
   href: Route;
@@ -57,9 +58,7 @@ export function Sidebar() {
         href="/dashboard"
         className="flex items-center gap-2.5 px-4 pt-5 pb-6"
       >
-        <div className="relative size-7 shrink-0 overflow-hidden rounded-lg bg-gradient-brand shadow-[0_0_24px_-4px_var(--color-purple)]">
-          <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent" />
-        </div>
+        <BrandMark className="drop-shadow-[0_0_14px_rgba(204,255,0,0.28)]" />
         <AnimatePresence initial={false}>
           {!collapsed && (
             <motion.span
