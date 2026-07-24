@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { BackendReadiness } from "@/components/backend-readiness";
 import { BrandMark } from "@/components/brand-mark";
 
 export default async function Landing() {
@@ -10,6 +11,7 @@ export default async function Landing() {
 
   return (
     <main className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
+      <BackendReadiness />
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
           <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />

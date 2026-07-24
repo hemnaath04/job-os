@@ -1,9 +1,11 @@
 import { SignUp } from "@clerk/nextjs";
+import { BackendReadiness } from "@/components/backend-readiness";
 import { BrandMark } from "@/components/brand-mark";
 
 export default function SignUpPage() {
   return (
     <main className="flex min-h-screen items-center justify-center px-6 py-10">
+      <BackendReadiness />
       <div className="flex flex-col items-center">
         <div className="mb-6 flex items-center gap-2">
           <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />

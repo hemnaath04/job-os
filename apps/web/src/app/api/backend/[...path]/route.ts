@@ -58,8 +58,9 @@ async function proxyInner(
   const pathStr = (path ?? []).join("/");
   // FastAPI exposes health at the root, outside the authenticated /api/v1
   // routers. Keeping this path token-free makes cold-start wakeups cheap.
-  const isHealthCheck = req.method === "GET" && pathStr === "health";
-  const upstreamPath = isHealthCheck ? "/health" : `/api/v1/${pathStr}`;
+  const isHealthCheck =
+    req.method === "GET" && (pathStr === "health" || pathStr === "health/ready");
+  const upstreamPath = isHealthCheck ? `/${pathStr}` : `/api/v1/${pathStr}`;
   const upstream = `${API}${upstreamPath}${req.nextUrl.search}`;
 
   let token: string | null = null;

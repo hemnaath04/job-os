@@ -1,11 +1,14 @@
 import os
 from contextlib import asynccontextmanager
+from time import perf_counter
 
 import structlog
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from job_os import __version__
+from job_os.db.session import engine
 from job_os.routers import (
     applications,
     calendar,
@@ -53,7 +56,17 @@ async def health() -> dict[str, str]:
     return {"status": "ok", "version": __version__}
 
 
-
+@app.get("/health/ready", tags=["meta"])
+async def readiness() -> dict[str, str | int]:
+    """Confirm the API and Postgres compute are both ready for user traffic."""
+    started = perf_counter()
+    async with engine.connect() as connection:
+        await connection.execute(text("SELECT 1"))
+    return {
+        "status": "ok",
+        "version": __version__,
+        "database_ms": round((perf_counter() - started) * 1_000),
+    }
 
 app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
 app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
