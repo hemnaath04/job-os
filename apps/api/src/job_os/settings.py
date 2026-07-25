@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     log_level: str = Field(default="info")
 
     database_url: str = Field(..., description="postgresql+asyncpg://...")
+    db_pool_size: int = Field(default=5, ge=1)
+    db_max_overflow: int = Field(default=10, ge=0)
     redis_url: str | None = None
 
     clerk_secret_key: str | None = None
@@ -77,4 +79,4 @@ class Settings(BaseSettings):
 
 @lru_cache
 def get_settings() -> Settings:
-    return Settings()  # type: ignore[call-arg]
+    return Settings()

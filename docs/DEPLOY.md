@@ -5,6 +5,10 @@ The current production setup has two independently deployed services:
 - Vercel serves the Next.js web app at `jobs.hemnaath.tech`.
 - Render serves the FastAPI backend at `job-os-api.onrender.com`.
 
+The backend can also run as a separate Vercel container project rooted at
+`apps/api`. Vercel detects `Dockerfile.vercel`, preserving WeasyPrint's native
+libraries while using Fluid compute.
+
 ## Backend → Render
 
 `render.yaml` is the source of truth for the backend service. It builds the
@@ -28,6 +32,25 @@ Render's free web-service plan spins down after 15 minutes without inbound
 traffic. `.github/workflows/keep-warm.yml` calls `/health` every five minutes
 to reduce cold starts. For dependable production latency, change the Render
 service itself to a paid instance that does not spin down.
+
+## Backend → Vercel container
+
+Create a second Vercel project from this repository with **Root Directory**
+set to `apps/api`. Do not change the existing web project's root directory.
+
+Copy the backend environment variables listed above and add:
+
+- `DB_POOL_SIZE=2`
+- `DB_MAX_OVERFLOW=3`
+- `WEB_ORIGINS=https://jobs.hemnaath.tech`
+
+The container command does not run Alembic automatically because multiple
+instances can start concurrently. Apply migrations once from a trusted release
+environment before pointing the frontend at the Vercel backend.
+
+After the new backend passes `/health`, `/health/ready`, authenticated API, and
+PDF smoke tests, update the web project's `API_BASE_URL` to the new backend URL
+and redeploy. Keep Render available until the production smoke test passes.
 
 ## Web → Vercel
 

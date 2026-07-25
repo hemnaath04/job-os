@@ -21,14 +21,6 @@ from sqlalchemy.orm import joinedload
 from job_os.auth import get_current_user
 from job_os.db.models import Job, SavedSearch, User
 from job_os.db.session import get_session
-from job_os.integrations import github_jobs
-from job_os.integrations.firecrawl import fetch_url_markdown
-from job_os.integrations.theirstack import (
-    TheirStackUnavailableError,
-)
-from job_os.integrations.theirstack import (
-    search_jobs as theirstack_search,
-)
 from job_os.schemas.discovery import (
     DiscoveryImportRequest,
     DiscoveryResult,
@@ -42,8 +34,6 @@ from job_os.schemas.discovery import (
 )
 from job_os.schemas.jobs import JobRead
 from job_os.services.companies import upsert_company
-from job_os.services.discovery_smart_search import parse_smart_query
-from job_os.services.jd_parse import parse_jd
 
 log = structlog.get_logger(__name__)
 
@@ -104,8 +94,13 @@ async def _run_search(
 
 
 async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
+    from job_os.integrations.theirstack import (
+        TheirStackUnavailableError,
+        search_jobs,
+    )
+
     try:
-        hits = await theirstack_search(
+        hits = await search_jobs(
             title_keywords=payload.title_keywords or None,
             description_keywords=payload.description_keywords or None,
             country_codes=payload.country_codes or None,
@@ -136,6 +131,8 @@ async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryR
 
 
 async def _search_github(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
+    from job_os.integrations import github_jobs
+
     # GitHub source honors title_keywords + max_age_days only; the others
     # don't have analogues in the SimplifyJobs tables.
     hits = await github_jobs.search_jobs(
@@ -185,6 +182,9 @@ async def import_result(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    from job_os.integrations.firecrawl import fetch_url_markdown
+    from job_os.services.jd_parse import parse_jd
+
     # Dedup: if a Job with this (source, source_id) already exists, return it.
     if payload.source_id:
         existing_q = await session.execute(
@@ -327,4 +327,6 @@ async def smart_search(
     a regular `/discovery/search`. Keeps the round-trip cheap (one Claude
     call) and lets the user tweak filters before spending TheirStack credits.
     """
+    from job_os.services.discovery_smart_search import parse_smart_query
+
     return await parse_smart_query(payload.query)
