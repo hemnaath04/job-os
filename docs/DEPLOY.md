@@ -1,13 +1,14 @@
 # Production deployment
 
-The current production setup has two independently deployed services:
+The current production setup has independently deployed web and API projects:
 
 - Vercel serves the Next.js web app at `jobs.hemnaath.tech`.
-- Render serves the FastAPI backend at `job-os-api.onrender.com`.
+- Vercel serves the primary FastAPI backend at `job-os-api.vercel.app`.
+- Render remains available at `job-os-api.onrender.com` as a rollback target.
 
-The backend can also run as a separate Vercel container project rooted at
-`apps/api`. Vercel detects `Dockerfile.vercel`, preserving WeasyPrint's native
-libraries while using Fluid compute.
+The Vercel backend is a separate container project rooted at `apps/api`.
+`Dockerfile.vercel` preserves WeasyPrint's native libraries while using Fluid
+compute.
 
 ## Backend → Render
 
@@ -51,6 +52,11 @@ environment before pointing the frontend at the Vercel backend.
 After the new backend passes `/health`, `/health/ready`, authenticated API, and
 PDF smoke tests, update the web project's `API_BASE_URL` to the new backend URL
 and redeploy. Keep Render available until the production smoke test passes.
+
+Vercel containers scale to zero. In the July 2026 cutover, the first request to
+a new instance took roughly 8 seconds; warm health requests were around 150 ms.
+Use an always-on Render or Fly instance if eliminating every cold start matters
+more than scale-to-zero cost savings.
 
 ## Web → Vercel
 
