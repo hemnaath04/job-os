@@ -14,10 +14,13 @@ editable JSON Resume + immutable version
           |
           +--> structured manual edit --> child version
           |
-          +--> conversational AI edit
+          +--> conversational AI proposal
                     |
                     v
         verified profile facts + current GitHub READMEs
+                    |
+                    v
+             user accepts proposal
                     |
                     v
           independent quality-model review
@@ -39,8 +42,9 @@ editable JSON Resume + immutable version
   `parent_version_id`.
 - Final PDF bytes, portable LaTeX, review results, source filename, and revision
   note are stored with the version.
-- Role-specific resumes and versions can be renamed or deleted.
-- The master resume itself cannot be deleted, and its last version is
+- Role-specific resumes and versions can be renamed or archived. Archive
+  removes them from the active library without erasing stored history.
+- The master resume itself cannot be archived, and its last version is
   protected. Importing a new master creates another version.
 
 ## Evidence rules
@@ -59,8 +63,9 @@ editable JSON Resume + immutable version
 
 ## Quality gate
 
-An AI-created revision is reviewed by a second model immediately after
-generation. The finalizer repeats the review and blocks completion unless:
+AI chat first stores a proposal. After the user accepts it, the resulting
+revision is reviewed by a second model. The finalizer repeats the review and
+blocks completion unless:
 
 - the combined score is at least 90;
 - no issue has `blocking` severity;
@@ -69,11 +74,13 @@ generation. The finalizer repeats the review and blocks completion unless:
 - required contact fields and professional experience are present.
 
 Review failures are retained on the version so the user can continue revising
-in chat, apply suggestions, and review again.
+in chat, accept another suggestion, and review again. Drafts remain previewable,
+but PDF download and export are available only for finalized versions.
 
 ## iCloud import
 
-A browser cannot silently enumerate iCloud Drive. Use **Import from iCloud** in
-Resume Studio, choose the master first, then select role-specific variants in
-batches of up to eight. The files remain in iCloud; job.os stores editable
-copies and version metadata in Postgres.
+A browser cannot silently enumerate iCloud Drive. Use **Set master** for the
+canonical file or **Import iCloud folder** to authorize the whole synced resume
+folder in Brave. Imports accept up to 30 resume files per batch. The files
+remain in iCloud; job.os stores editable copies and version metadata in
+Postgres.

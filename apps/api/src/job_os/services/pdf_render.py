@@ -10,8 +10,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from jinja2 import Environment, FileSystemLoader, select_autoescape
+from jinja2 import Environment, FileSystemLoader
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 DEFAULT_TEMPLATE = "master_resume"
@@ -42,10 +43,20 @@ class RenderedPdf:
 
 _env = Environment(
     loader=FileSystemLoader(str(TEMPLATES_DIR)),
-    autoescape=select_autoescape(["html", "xml"]),
+    autoescape=True,
     trim_blocks=True,
     lstrip_blocks=True,
 )
+
+
+def _safe_resume_url(value: Any) -> str:
+    """Allow only ordinary web links in rendered resume anchors."""
+    text = str(value or "").strip()
+    try:
+        parsed = urlparse(text)
+    except ValueError:
+        return ""
+    return text if parsed.scheme in {"http", "https"} and parsed.netloc else ""
 
 
 def _fmt_date(value: str | date | datetime | None) -> str | None:
@@ -104,6 +115,7 @@ def _is_future(value: str | date | datetime) -> bool:
 
 
 _env.filters["fmt_date"] = _fmt_date
+_env.filters["safe_resume_url"] = _safe_resume_url
 
 
 def render_resume_pdf(
@@ -122,6 +134,7 @@ def render_resume_pdf(
         "projects": json_resume.get("projects") or [],
         "skills": json_resume.get("skills") or [],
         "certificates": json_resume.get("certificates") or [],
+        "languages": json_resume.get("languages") or [],
         "interests": json_resume.get("interests") or [],
         "publications": json_resume.get("publications") or [],
         "awards": json_resume.get("awards") or [],
@@ -129,9 +142,9 @@ def render_resume_pdf(
     }
     html_str = tmpl.render(**context)
 
-    HTML, CSS = _weasyprint()
-    pdf_bytes = HTML(string=html_str, base_url=str(TEMPLATES_DIR)).write_pdf(
-        stylesheets=[CSS(filename=str(css_path))] if css_path.exists() else None,
+    html_renderer, css_renderer = _weasyprint()
+    pdf_bytes = html_renderer(string=html_str, base_url=str(TEMPLATES_DIR)).write_pdf(
+        stylesheets=[css_renderer(filename=str(css_path))] if css_path.exists() else None,
     )
     return RenderedPdf(bytes_=pdf_bytes)
 
@@ -152,6 +165,7 @@ def render_resume_html(
         projects=json_resume.get("projects") or [],
         skills=json_resume.get("skills") or [],
         certificates=json_resume.get("certificates") or [],
+        languages=json_resume.get("languages") or [],
         interests=json_resume.get("interests") or [],
         publications=json_resume.get("publications") or [],
         awards=json_resume.get("awards") or [],

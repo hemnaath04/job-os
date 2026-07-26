@@ -28,6 +28,7 @@ import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
 import type {
   JsonResume,
+  ResumeChatResponse,
   ResumeReviewIssue,
   ResumeReviewResult,
 } from "@/lib/types";
@@ -44,6 +45,8 @@ export default function ResumeEditorClient({
   const [draft, setDraft] = useState<JsonResume | null>(null);
   const [chat, setChat] = useState("");
   const [mode, setMode] = useState<"edit" | "preview">("edit");
+  const [pendingProposal, setPendingProposal] =
+    useState<ResumeChatResponse | null>(null);
 
   const versionQuery = useQuery({
     queryKey: ["resume-version", resumeId, versionId],
@@ -53,9 +56,17 @@ export default function ResumeEditorClient({
     queryKey: ["resume-messages", resumeId, versionId],
     queryFn: () => api.listRevisionMessages(resumeId, versionId),
   });
+  const previewQuery = useQuery({
+    queryKey: ["resume-draft-preview", draft],
+    queryFn: () => api.previewDraft(draft ?? {}),
+    enabled: mode === "preview" && draft !== null,
+  });
 
   useEffect(() => {
-    if (versionQuery.data) setDraft(structuredClone(versionQuery.data.json_resume));
+    if (versionQuery.data) {
+      setDraft(structuredClone(versionQuery.data.json_resume));
+      setPendingProposal(null);
+    }
   }, [versionQuery.data]);
 
   const save = useMutation({
@@ -88,13 +99,35 @@ export default function ResumeEditorClient({
       });
     },
     onError: (error: Error) => toast.error(parseFinalizeError(error.message)),
+    onSettled: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["resume-version", resumeId, versionId],
+      });
+    },
   });
   const chatEdit = useMutation({
     mutationFn: (message: string) =>
-      api.chatEditVersion(resumeId, versionId, message, true),
+      api.chatEditVersion(resumeId, versionId, message, false),
     onSuccess: (response) => {
-      toast.success("AI revision created and reviewed");
+      toast.success("Suggestions ready to review");
       setChat("");
+      setPendingProposal(response);
+      queryClient.invalidateQueries({
+        queryKey: ["resume-messages", resumeId, versionId],
+      });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const applyProposal = useMutation({
+    mutationFn: (proposalId: string) =>
+      api.applyRevisionProposal(resumeId, versionId, proposalId),
+    onSuccess: (response) => {
+      toast.success(
+        response.review?.passed
+          ? "Revision applied and quality gate passed"
+          : "Revision applied. Review found more changes.",
+      );
+      setPendingProposal(null);
       if (response.version) {
         router.replace(`/resumes/${resumeId}/${response.version.id}`);
       }
@@ -103,8 +136,15 @@ export default function ResumeEditorClient({
   });
 
   const reviewResult = useMemo(
-    () => versionQuery.data?.review_report ?? review.data ?? null,
+    () => review.data ?? versionQuery.data?.review_report ?? null,
     [review.data, versionQuery.data?.review_report],
+  );
+  const isDirty = useMemo(
+    () =>
+      draft !== null &&
+      versionQuery.data !== undefined &&
+      JSON.stringify(draft) !== JSON.stringify(versionQuery.data.json_resume),
+    [draft, versionQuery.data],
   );
   const improveMessage = reviewResult
     ? [
@@ -151,6 +191,11 @@ export default function ResumeEditorClient({
                 Resume editor
               </h1>
               <StatusBadge status={version.status} />
+              {isDirty && (
+                <span className="text-[11px] font-medium text-[color:var(--color-amber)]">
+                  Unsaved changes
+                </span>
+              )}
             </div>
             <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">
               Every save creates a recoverable revision. The master is never overwritten.
@@ -168,7 +213,7 @@ export default function ResumeEditorClient({
           </div>
           <button
             onClick={() => review.mutate()}
-            disabled={review.isPending}
+            disabled={review.isPending || isDirty}
             className="product-button product-button-secondary disabled:opacity-50"
           >
             {review.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
@@ -184,19 +229,23 @@ export default function ResumeEditorClient({
           </button>
           <button
             onClick={() => finalize.mutate()}
-            disabled={finalize.isPending}
+            disabled={finalize.isPending || isDirty}
             className="product-button product-button-primary disabled:opacity-50"
           >
             {finalize.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}
             Finalize
           </button>
-          <button
-            onClick={() => downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf")}
-            className="product-button product-button-secondary"
-          >
-            <Download className="size-4" />
-            PDF
-          </button>
+          {version.status === "final" && (
+            <button
+              onClick={() =>
+                downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf")
+              }
+              className="product-button product-button-secondary"
+            >
+              <Download className="size-4" />
+              PDF
+            </button>
+          )}
         </div>
       </header>
 
@@ -204,11 +253,20 @@ export default function ResumeEditorClient({
         <main className="min-w-0">
           {mode === "preview" ? (
             <div className="product-panel min-h-[78dvh] overflow-hidden bg-white">
-              <iframe
-                title="Resume preview"
-                src={api.previewVersionUrl(resumeId, versionId)}
-                className="h-[78dvh] w-full"
-              />
+              {previewQuery.isLoading ? (
+                <div className="loading-surface h-[78dvh]" />
+              ) : previewQuery.isError ? (
+                <div className="p-6 text-sm text-red-700">
+                  The draft preview could not be rendered.
+                </div>
+              ) : (
+                <iframe
+                  title="Unsaved resume draft preview"
+                  srcDoc={previewQuery.data}
+                  sandbox=""
+                  className="h-[78dvh] w-full"
+                />
+              )}
             </div>
           ) : (
             <StructuredEditor value={draft} onChange={setDraft} />
@@ -259,6 +317,17 @@ export default function ResumeEditorClient({
                   </p>
                 </div>
               )}
+              {pendingProposal?.proposal_id && (
+                <ProposalPanel
+                  current={version.json_resume}
+                  proposal={pendingProposal}
+                  applying={applyProposal.isPending}
+                  onApply={() =>
+                    applyProposal.mutate(pendingProposal.proposal_id as string)
+                  }
+                  onDiscard={() => setPendingProposal(null)}
+                />
+              )}
             </div>
             <div className="border-t border-white/[0.06] p-3">
               <textarea
@@ -274,11 +343,75 @@ export default function ResumeEditorClient({
                 className="product-button product-button-primary mt-2 w-full disabled:opacity-50"
               >
                 {chatEdit.isPending ? <Loader2 className="size-4 animate-spin" /> : <Send className="size-4" />}
-                Apply, verify, and review
+                Suggest verified edits
               </button>
             </div>
           </section>
         </aside>
+      </div>
+    </div>
+  );
+}
+
+function ProposalPanel({
+  current,
+  proposal,
+  applying,
+  onApply,
+  onDiscard,
+}: {
+  current: JsonResume;
+  proposal: ResumeChatResponse;
+  applying: boolean;
+  onApply: () => void;
+  onDiscard: () => void;
+}) {
+  const sections = Object.keys(proposal.proposed_json_resume ?? {}).filter(
+    (key) =>
+      JSON.stringify(current[key as keyof JsonResume]) !==
+      JSON.stringify(
+        proposal.proposed_json_resume?.[key as keyof JsonResume],
+      ),
+  );
+  return (
+    <div className="rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/[0.06] p-3">
+      <div className="flex items-center gap-2 text-xs font-semibold text-white/85">
+        <Sparkles className="size-3.5 text-[color:var(--color-kiwi)]" />
+        Review before applying
+      </div>
+      <p className="mt-2 text-xs leading-5 text-white/65">{proposal.message}</p>
+      {sections.length > 0 && (
+        <p className="mt-2 text-[11px] text-[color:var(--color-text-dim)]">
+          Changes: {sections.join(", ")}
+        </p>
+      )}
+      {proposal.suggestions.length > 0 && (
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-4 text-white/58">
+          {proposal.suggestions.slice(0, 4).map((suggestion) => (
+            <li key={suggestion}>{suggestion}</li>
+          ))}
+        </ul>
+      )}
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <button
+          onClick={onDiscard}
+          disabled={applying}
+          className="product-button product-button-secondary justify-center disabled:opacity-50"
+        >
+          Discard
+        </button>
+        <button
+          onClick={onApply}
+          disabled={applying}
+          className="product-button product-button-primary justify-center disabled:opacity-50"
+        >
+          {applying ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <CheckCircle2 className="size-4" />
+          )}
+          Apply and review
+        </button>
       </div>
     </div>
   );
@@ -292,8 +425,19 @@ function StructuredEditor({
   onChange: (value: JsonResume) => void;
 }) {
   const basics = value.basics ?? {};
+  const location = basics.location ?? {};
   const updateBasics = (key: string, next: string) =>
     onChange({ ...value, basics: { ...basics, [key]: next } });
+  const updateProfile = (network: string, url: string) => {
+    const profiles = [...(basics.profiles ?? [])];
+    const index = profiles.findIndex(
+      (profile) => profile.network.toLowerCase() === network.toLowerCase(),
+    );
+    const nextProfile = { network, username: "", url };
+    if (index >= 0) profiles[index] = { ...profiles[index], url };
+    else profiles.push(nextProfile);
+    onChange({ ...value, basics: { ...basics, profiles } });
+  };
 
   return (
     <div className="space-y-3">
@@ -303,16 +447,59 @@ function StructuredEditor({
           <Field label="Email" value={basics.email ?? ""} onChange={(next) => updateBasics("email", next)} />
           <Field label="Phone" value={basics.phone ?? ""} onChange={(next) => updateBasics("phone", next)} />
           <Field label="Portfolio" value={basics.url ?? ""} onChange={(next) => updateBasics("url", next)} />
+          <Field
+            label="City"
+            value={location.city ?? ""}
+            onChange={(next) =>
+              onChange({
+                ...value,
+                basics: { ...basics, location: { ...location, city: next } },
+              })
+            }
+          />
+          <Field
+            label="State"
+            value={location.region ?? ""}
+            onChange={(next) =>
+              onChange({
+                ...value,
+                basics: { ...basics, location: { ...location, region: next } },
+              })
+            }
+          />
+          <Field
+            label="GitHub"
+            value={
+              basics.profiles?.find(
+                (profile) => profile.network.toLowerCase() === "github",
+              )?.url ?? ""
+            }
+            onChange={(next) => updateProfile("GitHub", next)}
+          />
+          <Field
+            label="LinkedIn"
+            value={
+              basics.profiles?.find(
+                (profile) => profile.network.toLowerCase() === "linkedin",
+              )?.url ?? ""
+            }
+            onChange={(next) => updateProfile("LinkedIn", next)}
+          />
         </div>
         <TextArea label="Summary" value={basics.summary ?? ""} onChange={(next) => updateBasics("summary", next)} />
       </EditorSection>
 
+      <EducationEditor
+        items={value.education ?? []}
+        onChange={(education) => onChange({ ...value, education })}
+      />
       <EntryEditor
         title="Professional experience"
         items={value.work ?? []}
         onChange={(items) => onChange({ ...value, work: items })}
         nameKey="name"
         roleKey="position"
+        allowAdd
       />
       <EntryEditor
         title="Projects"
@@ -371,7 +558,144 @@ function StructuredEditor({
           </button>
         </div>
       </EditorSection>
+      <CertificateEditor
+        items={value.certificates ?? []}
+        onChange={(certificates) => onChange({ ...value, certificates })}
+      />
+      <LanguageEditor
+        items={value.languages ?? []}
+        onChange={(languages) => onChange({ ...value, languages })}
+      />
     </div>
+  );
+}
+
+function EducationEditor({
+  items,
+  onChange,
+}: {
+  items: NonNullable<JsonResume["education"]>;
+  onChange: (items: NonNullable<JsonResume["education"]>) => void;
+}) {
+  return (
+    <EditorSection title="Education" icon={FileCheck2}>
+      <div className="space-y-3">
+        {items.map((item, index) => {
+          const update = (key: string, next: unknown) => {
+            const copy = [...items];
+            copy[index] = { ...item, [key]: next };
+            onChange(copy);
+          };
+          return (
+            <div
+              key={`${item.institution}-${index}`}
+              className="rounded-xl border border-white/[0.07] bg-black/10 p-4"
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Institution" value={item.institution ?? ""} onChange={(next) => update("institution", next)} />
+                <Field label="Degree" value={item.studyType ?? ""} onChange={(next) => update("studyType", next)} />
+                <Field label="Area" value={item.area ?? ""} onChange={(next) => update("area", next)} />
+                <Field label="Location" value={item.location ?? ""} onChange={(next) => update("location", next)} />
+                <Field label="Start date" value={item.startDate ?? ""} onChange={(next) => update("startDate", next)} />
+                <Field label="End date" value={item.endDate ?? ""} onChange={(next) => update("endDate", next)} />
+              </div>
+              <TextArea
+                label="Relevant coursework, one per line"
+                value={(item.courses ?? []).join("\n")}
+                onChange={(next) =>
+                  update(
+                    "courses",
+                    next.split("\n").map((line) => line.trim()).filter(Boolean),
+                  )
+                }
+              />
+              <div className="mt-3 flex justify-end">
+                <RemoveButton
+                  label={`Remove ${item.institution ?? "education entry"}`}
+                  onClick={() => onChange(items.filter((_, i) => i !== index))}
+                />
+              </div>
+            </div>
+          );
+        })}
+        <button
+          onClick={() =>
+            onChange([
+              ...items,
+              { institution: "New institution", courses: [] },
+            ])
+          }
+          className="product-button product-button-secondary"
+        >
+          <Plus className="size-3.5" /> Add education
+        </button>
+      </div>
+    </EditorSection>
+  );
+}
+
+function CertificateEditor({
+  items,
+  onChange,
+}: {
+  items: NonNullable<JsonResume["certificates"]>;
+  onChange: (items: NonNullable<JsonResume["certificates"]>) => void;
+}) {
+  return (
+    <EditorSection title="Certifications" icon={ShieldCheck}>
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div key={`${item.name}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_150px_auto]">
+            <Field label="Name" value={item.name} onChange={(next) => {
+              const copy = [...items]; copy[index] = { ...item, name: next }; onChange(copy);
+            }} />
+            <Field label="Issuer" value={item.issuer ?? ""} onChange={(next) => {
+              const copy = [...items]; copy[index] = { ...item, issuer: next }; onChange(copy);
+            }} />
+            <Field label="Date" value={item.date ?? ""} onChange={(next) => {
+              const copy = [...items]; copy[index] = { ...item, date: next }; onChange(copy);
+            }} />
+            <div className="flex items-end pb-1">
+              <RemoveButton label={`Remove ${item.name}`} onClick={() => onChange(items.filter((_, i) => i !== index))} />
+            </div>
+          </div>
+        ))}
+        <button onClick={() => onChange([...items, { name: "New certification" }])} className="product-button product-button-secondary">
+          <Plus className="size-3.5" /> Add certification
+        </button>
+      </div>
+    </EditorSection>
+  );
+}
+
+function LanguageEditor({
+  items,
+  onChange,
+}: {
+  items: NonNullable<JsonResume["languages"]>;
+  onChange: (items: NonNullable<JsonResume["languages"]>) => void;
+}) {
+  return (
+    <EditorSection title="Languages" icon={MessageSquareText}>
+      <div className="space-y-2">
+        {items.map((item, index) => (
+          <div key={`${item.language}-${index}`} className="grid gap-2 sm:grid-cols-[1fr_1fr_auto]">
+            <Field label="Language" value={item.language} onChange={(next) => {
+              const copy = [...items]; copy[index] = { ...item, language: next }; onChange(copy);
+            }} />
+            <Field label="Fluency" value={item.fluency ?? ""} onChange={(next) => {
+              const copy = [...items]; copy[index] = { ...item, fluency: next }; onChange(copy);
+            }} />
+            <div className="flex items-end pb-1">
+              <RemoveButton label={`Remove ${item.language}`} onClick={() => onChange(items.filter((_, i) => i !== index))} />
+            </div>
+          </div>
+        ))}
+        <button onClick={() => onChange([...items, { language: "English", fluency: "" }])} className="product-button product-button-secondary">
+          <Plus className="size-3.5" /> Add language
+        </button>
+      </div>
+    </EditorSection>
   );
 }
 
@@ -409,6 +733,7 @@ function EntryEditor({
                 <Field label="Role or description" value={String(item[roleKey] ?? "")} onChange={(next) => update(roleKey, next)} />
                 <Field label="Start date" value={String(item.startDate ?? "")} onChange={(next) => update("startDate", next)} />
                 <Field label="End date" value={String(item.endDate ?? "")} onChange={(next) => update("endDate", next || null)} />
+                <Field label="Evidence URL" value={String(item.url ?? "")} onChange={(next) => update("url", next || null)} />
               </div>
               <TextArea
                 label="Bullets, one per line"
@@ -492,7 +817,7 @@ function QualityPanel({
           ) : (
             <Sparkles className="size-4" />
           )}
-          Apply review suggestions
+          Propose review fixes
         </button>
       )}
     </section>

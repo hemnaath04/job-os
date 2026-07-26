@@ -18,6 +18,7 @@ Hard rules baked into the prompt:
 from __future__ import annotations
 
 import json
+import re
 from datetime import date
 from decimal import Decimal
 from typing import Any, TypedDict
@@ -37,6 +38,7 @@ from job_os.schemas.resumes import (
     SelectedBullet,
     TailorAgentOutput,
 )
+from job_os.services.career_ops_rules import CAREER_OPS_RULES
 from job_os.services.jd_parse import _strip_json_fence
 from job_os.settings import get_settings
 
@@ -45,6 +47,18 @@ log = structlog.get_logger(__name__)
 
 MAX_ITERATIONS = 3
 TARGET_ATS_SCORE = Decimal("80")
+NUMBER_RE = re.compile(
+    r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
+    re.I,
+)
+TECHNOLOGY_RE = re.compile(
+    r"(?<!\w)(?:"
+    r"aws|azure|gcp|kubernetes|docker|terraform|react|next\.?js|fastapi|django|"
+    r"flask|postgres(?:ql)?|mongodb|redis|kafka|pytorch|tensorflow|scikit-learn|"
+    r"langchain|langgraph|openai|claude|c\+\+|c#|java|python|golang|go|typescript"
+    r")(?!\w)",
+    re.I,
+)
 
 SYSTEM_PROMPT = """\
 You are a resume tailoring assistant. You receive (a) a parsed job description,
@@ -172,7 +186,7 @@ async def tailor_resume(
         msg = await client.messages.create(
             model=settings.anthropic_model_tailor,
             max_tokens=4096,
-            system=SYSTEM_PROMPT,
+            system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
             messages=state["messages"],
             extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
         )
@@ -271,6 +285,22 @@ async def tailor_resume(
     safe_fact_ids.update(valid_bullet_ids[sb.fact_bullet_id] for sb in safe_bullets)
 
     selected_facts = [f for f in facts if f.id in safe_fact_ids]
+    facts_by_id = {fact.id: fact for fact in facts}
+    bullets_by_id = {
+        bullet.id: bullet
+        for fact_bullets in bullets_by_fact.values()
+        for bullet in fact_bullets
+    }
+    safe_bullets = _sanitize_selected_bullets(
+        safe_bullets,
+        bullets_by_id=bullets_by_id,
+        facts_by_id=facts_by_id,
+    )
+    summary_objective = _safe_summary(
+        agent.summary_objective,
+        master_json_resume=master_version.json_resume,
+        facts_payload=facts_payload,
+    )
 
     json_resume, provenance = _assemble_json_resume(
         master_json_resume=master_version.json_resume,
@@ -278,11 +308,14 @@ async def tailor_resume(
         selected_facts=selected_facts,
         selected_bullets=safe_bullets,
         bullets_by_fact=bullets_by_fact,
-        summary_objective=agent.summary_objective,
+        summary_objective=summary_objective,
     )
 
-    ats_score, ats_report = _compute_ats(
-        matched=agent.ats_keywords_matched, missing=agent.ats_keywords_missing
+    ats_score, ats_report = _compute_ats_from_document(
+        job=job,
+        json_resume=json_resume,
+        fallback_matched=agent.ats_keywords_matched,
+        fallback_missing=agent.ats_keywords_missing,
     )
 
     # Embed pass-by-pass scores into the report so the FE can show the trail
@@ -314,6 +347,81 @@ async def tailor_resume(
         ats_report,
         note,
     )
+
+
+def _technology_terms(text: str) -> set[str]:
+    return {match.group(0).lower() for match in TECHNOLOGY_RE.finditer(text)}
+
+
+def _sanitize_selected_bullets(
+    selected: list[SelectedBullet],
+    *,
+    bullets_by_id: dict[UUID, FactBullet],
+    facts_by_id: dict[UUID, ProfileFact],
+) -> list[SelectedBullet]:
+    """Fall back to verified source text when a rewrite adds risky claims."""
+    section_for_kind = {
+        "experience": "work",
+        "project": "projects",
+        "volunteering": "volunteer",
+    }
+    safe: list[SelectedBullet] = []
+    for selected_bullet in selected:
+        source = bullets_by_id[selected_bullet.fact_bullet_id]
+        fact = facts_by_id[source.fact_id]
+        expected_section = section_for_kind.get(fact.kind)
+        source_context = source.text + "\n" + json.dumps(fact.payload or {}, ensure_ascii=False)
+        added_numbers = set(NUMBER_RE.findall(selected_bullet.rewritten_text)) - set(
+            NUMBER_RE.findall(source_context)
+        )
+        added_technologies = _technology_terms(
+            selected_bullet.rewritten_text
+        ) - _technology_terms(source_context)
+        wrong_section = (
+            expected_section is None
+            or selected_bullet.target_section != expected_section
+        )
+        if added_numbers or added_technologies or wrong_section:
+            log.warning(
+                "tailor.unsafe_rewrite_reverted",
+                bullet_id=str(source.id),
+                added_numbers=sorted(added_numbers),
+                added_technologies=sorted(added_technologies),
+                wrong_section=wrong_section,
+            )
+            if expected_section is None:
+                continue
+            safe.append(
+                SelectedBullet(
+                    fact_bullet_id=source.id,
+                    rewritten_text=source.text,
+                    target_section=expected_section,
+                )
+            )
+            continue
+        safe.append(selected_bullet)
+    return safe
+
+
+def _safe_summary(
+    summary: str | None,
+    *,
+    master_json_resume: dict[str, Any],
+    facts_payload: list[dict[str, Any]],
+) -> str | None:
+    if not summary:
+        return None
+    source = json.dumps(
+        {"master": master_json_resume, "facts": facts_payload},
+        ensure_ascii=False,
+    )
+    if (
+        set(NUMBER_RE.findall(summary)) - set(NUMBER_RE.findall(source))
+        or _technology_terms(summary) - _technology_terms(source)
+    ):
+        log.warning("tailor.unsafe_summary_reverted")
+        return None
+    return summary
 
 
 # ---- Loaders -----------------------------------------------------------------
@@ -645,4 +753,47 @@ def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, di
         "matched_count": len(matched),
         "missing_count": len(missing),
     }
+    return score, report
+
+
+def _compute_ats_from_document(
+    *,
+    job: Job,
+    json_resume: dict[str, Any],
+    fallback_matched: list[str],
+    fallback_missing: list[str],
+) -> tuple[Decimal, dict[str, Any]]:
+    """Score only JD terms that actually appear in the assembled resume."""
+    parsed = job.jd_parsed or {}
+    candidates: list[str] = []
+    for key in (
+        "required_skills",
+        "preferred_skills",
+        "technologies",
+        "keywords",
+    ):
+        value = parsed.get(key, [])
+        if isinstance(value, list):
+            candidates.extend(str(item).strip() for item in value if str(item).strip())
+    if not candidates:
+        candidates = [*fallback_matched, *fallback_missing]
+
+    unique: dict[str, str] = {}
+    for keyword in candidates:
+        unique.setdefault(keyword.casefold(), keyword)
+    resume_text = json.dumps(json_resume, ensure_ascii=False).casefold()
+    matched = [
+        original
+        for normalized, original in unique.items()
+        if normalized in resume_text
+    ]
+    missing = [
+        original
+        for normalized, original in unique.items()
+        if normalized not in resume_text
+    ]
+    score, report = _compute_ats(matched=matched, missing=missing)
+    report["scoring"] = "deterministic_final_document"
+    report["model_reported_matched"] = fallback_matched
+    report["model_reported_missing"] = fallback_missing
     return score, report

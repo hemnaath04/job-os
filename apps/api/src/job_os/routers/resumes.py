@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
+import anthropic
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -21,6 +22,7 @@ from job_os.schemas.resumes import (
     ResumeImportItem,
     ResumeImportResult,
     ResumePatch,
+    ResumePreviewRequest,
     ResumeRead,
     ResumeReviewResult,
     ResumeVersionCreate,
@@ -41,7 +43,7 @@ async def list_resumes(
 ) -> list[Resume]:
     result = await session.execute(
         select(Resume)
-        .where(Resume.user_id == user.id)
+        .where(Resume.user_id == user.id, Resume.archived_at.is_(None))
         .order_by(Resume.is_master.desc(), Resume.name)
     )
     return list(result.scalars().all())
@@ -60,6 +62,18 @@ async def create_resume(
     ).scalar_one_or_none()
     if existing:
         raise HTTPException(409, f"resume named {payload.name!r} already exists")
+    if payload.is_master:
+        master = (
+            await session.execute(
+                select(Resume).where(
+                    Resume.user_id == user.id,
+                    Resume.is_master.is_(True),
+                    Resume.archived_at.is_(None),
+                )
+            )
+        ).scalar_one_or_none()
+        if master:
+            raise HTTPException(409, "A master resume already exists.")
     resume = Resume(
         user_id=user.id,
         name=payload.name,
@@ -77,6 +91,7 @@ async def create_resume(
 async def import_resume_files(
     files: list[UploadFile] = File(...),
     source_label: str = Form(default="iCloud Drive"),
+    master_filename: str | None = Form(default=None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeImportResult:
@@ -91,17 +106,53 @@ async def import_resume_files(
         extract_json_resume_from_pdf,
     )
     from job_os.services.profile_import import import_json_resume
+    from job_os.services.resume_engine import validate_json_resume_document
 
-    if len(files) > 8:
+    if len(files) > 30:
         raise HTTPException(
             400,
-            "Import at most 8 resumes per batch so every file can be extracted reliably.",
+            "Import at most 30 resumes per batch so every file can be extracted reliably.",
+        )
+
+    filenames = [Path(upload.filename or "resume").name for upload in files]
+    if master_filename and master_filename not in filenames:
+        raise HTTPException(400, "The selected master file is not in this import batch.")
+    existing_master = (
+        await session.execute(
+            select(Resume).where(Resume.user_id == user.id, Resume.is_master.is_(True))
+        )
+    ).scalar_one_or_none()
+    inferred_master = master_filename
+    if inferred_master is None:
+        inferred_master = next(
+            (name for name in filenames if "master" in Path(name).stem.lower()),
+            filenames[0] if existing_master is None and filenames else None,
         )
 
     result = ResumeImportResult()
+    total_bytes = 0
     for upload in files:
         filename = Path(upload.filename or "resume").name
         raw = await upload.read()
+        total_bytes += len(raw)
+        if len(raw) > 12 * 1024 * 1024:
+            result.items.append(
+                ResumeImportItem(
+                    filename=filename,
+                    imported=False,
+                    note="File exceeds the 12 MB resume limit.",
+                )
+            )
+            continue
+        if total_bytes > 30 * 1024 * 1024:
+            result.items.append(
+                ResumeImportItem(
+                    filename=filename,
+                    imported=False,
+                    note="Batch exceeds the 30 MB import limit.",
+                )
+            )
+            continue
         if not raw:
             result.items.append(
                 ResumeImportItem(filename=filename, imported=False, note="Empty file")
@@ -117,9 +168,10 @@ async def import_resume_files(
                 doc = json.loads(raw.decode("utf-8"))
             else:
                 raise ValueError("Only PDF, DOCX, and JSON Resume files are supported.")
+            validate_json_resume_document(doc)
 
             display_name = _resume_name_from_filename(filename)
-            is_master = "master" in display_name.lower()
+            is_master = filename == inferred_master
             resume = (
                 await session.execute(
                     select(Resume).where(
@@ -171,11 +223,37 @@ async def import_resume_files(
                     note="Imported as editable JSON Resume.",
                 )
             )
-        except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
+        except (
+            ValueError,
+            json.JSONDecodeError,
+            RuntimeError,
+            ValidationError,
+            anthropic.APIError,
+        ) as exc:
             result.items.append(
                 ResumeImportItem(filename=filename, imported=False, note=str(exc))
             )
     return result
+
+
+@router.post("/preview")
+async def preview_draft(
+    payload: ResumePreviewRequest,
+    _user: User = Depends(get_current_user),
+) -> Response:
+    """Render unsaved JSON Resume state without storing or mutating it."""
+    from job_os.services.pdf_render import render_resume_html
+
+    return Response(
+        render_resume_html(payload.json_resume),
+        media_type="text/html",
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data: https:; base-uri 'none'; form-action 'none'"
+            )
+        },
+    )
 
 
 @router.patch("/{resume_id}", response_model=ResumeRead)
@@ -217,9 +295,9 @@ async def delete_resume(
     if resume.is_master:
         raise HTTPException(
             409,
-            "The master resume cannot be deleted. Import a replacement instead.",
+            "The protected master cannot be archived. Import a replacement instead.",
         )
-    await session.delete(resume)
+    resume.archived_at = datetime.now(UTC)
     return Response(status_code=204)
 
 
@@ -232,7 +310,10 @@ async def list_versions(
     await _load_resume(session, resume_id, user)
     result = await session.execute(
         select(ResumeVersion)
-        .where(ResumeVersion.resume_id == resume_id)
+        .where(
+            ResumeVersion.resume_id == resume_id,
+            ResumeVersion.archived_at.is_(None),
+        )
         .order_by(ResumeVersion.created_at.desc())
     )
     return list(result.scalars().all())
@@ -245,7 +326,17 @@ async def create_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeVersion:
+    from job_os.services.resume_engine import validate_json_resume_document
+
     await _load_resume(session, resume_id, user)
+    validate_json_resume_document(payload.json_resume)
+    if payload.parent_version_id is not None:
+        await _load_version(
+            session,
+            resume_id,
+            payload.parent_version_id,
+            user,
+        )
     version = ResumeVersion(
         resume_id=resume_id,
         json_resume=payload.json_resume,
@@ -275,9 +366,13 @@ async def edit_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeVersion:
-    from job_os.services.resume_engine import generate_latex_source
+    from job_os.services.resume_engine import (
+        generate_latex_source,
+        validate_json_resume_document,
+    )
 
     await _load_version(session, resume_id, version_id, user)
+    validate_json_resume_document(payload.json_resume)
     edited = ResumeVersion(
         resume_id=resume_id,
         json_resume=payload.json_resume,
@@ -304,12 +399,13 @@ async def delete_version(
     if resume.is_master:
         count = await session.scalar(
             select(func.count()).select_from(ResumeVersion).where(
-                ResumeVersion.resume_id == resume_id
+                ResumeVersion.resume_id == resume_id,
+                ResumeVersion.archived_at.is_(None),
             )
         )
         if int(count or 0) <= 1:
-            raise HTTPException(409, "The only master version cannot be deleted.")
-    await session.delete(version)
+            raise HTTPException(409, "The only master version cannot be archived.")
+    version.archived_at = datetime.now(UTC)
     return Response(status_code=204)
 
 
@@ -405,13 +501,70 @@ async def chat_edit_version(
         role="assistant",
         content=revision.assistant_message,
         suggestions=revision.suggestions,
+        proposed_json_resume=None if payload.apply else revision.json_resume,
         applied=payload.apply,
     )
     session.add(assistant_message)
+    await session.flush()
     return ResumeChatResponse(
         message=revision.assistant_message,
         suggestions=revision.suggestions,
+        proposal_id=None if payload.apply else assistant_message.id,
+        proposed_json_resume=None if payload.apply else revision.json_resume,
         version=new_version,
+        review=review,
+    )
+
+
+@router.post(
+    "/{resume_id}/versions/{version_id}/messages/{message_id}/apply",
+    response_model=ResumeChatResponse,
+    status_code=201,
+)
+async def apply_revision_proposal(
+    resume_id: UUID,
+    version_id: UUID,
+    message_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeChatResponse:
+    """Apply a persisted AI proposal only after the user explicitly accepts it."""
+    from job_os.services.resume_engine import generate_latex_source, review_resume
+
+    await _load_version(session, resume_id, version_id, user)
+    proposal = await session.get(ResumeRevisionMessage, message_id)
+    if (
+        proposal is None
+        or proposal.resume_version_id != version_id
+        or proposal.role != "assistant"
+        or proposal.proposed_json_resume is None
+    ):
+        raise HTTPException(404, "revision proposal not found")
+    if proposal.applied:
+        raise HTTPException(409, "This revision proposal has already been applied.")
+
+    review, pdf_bytes = await review_resume(proposal.proposed_json_resume)
+    version = ResumeVersion(
+        resume_id=resume_id,
+        json_resume=proposal.proposed_json_resume,
+        parent_version_id=version_id,
+        revision_note=f"Accepted AI proposal: {proposal.content[:240]}",
+        latex_source=generate_latex_source(proposal.proposed_json_resume),
+        status="reviewed" if review.passed else "needs_changes",
+        review_score=review.score,
+        review_report=review.model_dump(mode="json"),
+        pdf_bytes=pdf_bytes,
+        approved_by_user=False,
+    )
+    session.add(version)
+    proposal.applied = True
+    await session.flush()
+    return ResumeChatResponse(
+        message="Proposal applied as a new recoverable revision.",
+        suggestions=proposal.suggestions,
+        proposal_id=proposal.id,
+        proposed_json_resume=proposal.proposed_json_resume,
+        version=version,
         review=review,
     )
 
@@ -426,10 +579,21 @@ async def list_revision_messages(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> list[ResumeRevisionMessage]:
-    await _load_version(session, resume_id, version_id, user)
+    current = await _load_version(session, resume_id, version_id, user)
+    lineage_ids: list[UUID] = []
+    seen: set[UUID] = set()
+    while current.id not in seen and len(lineage_ids) < 50:
+        seen.add(current.id)
+        lineage_ids.append(current.id)
+        if current.parent_version_id is None:
+            break
+        parent = await session.get(ResumeVersion, current.parent_version_id)
+        if parent is None or parent.resume_id != resume_id:
+            break
+        current = parent
     result = await session.execute(
         select(ResumeRevisionMessage)
-        .where(ResumeRevisionMessage.resume_version_id == version_id)
+        .where(ResumeRevisionMessage.resume_version_id.in_(lineage_ids))
         .order_by(ResumeRevisionMessage.created_at)
     )
     return list(result.scalars().all())
@@ -482,7 +646,16 @@ async def preview_version(
     from job_os.services.pdf_render import render_resume_html
 
     version = await _load_version(session, resume_id, version_id, user)
-    return Response(render_resume_html(version.json_resume), media_type="text/html")
+    return Response(
+        render_resume_html(version.json_resume),
+        media_type="text/html",
+        headers={
+            "Content-Security-Policy": (
+                "default-src 'none'; style-src 'unsafe-inline'; "
+                "img-src data: https:; base-uri 'none'; form-action 'none'"
+            )
+        },
+    )
 
 
 @router.get("/{resume_id}/versions/{version_id}", response_model=ResumeVersionRead)
@@ -492,11 +665,7 @@ async def get_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeVersion:
-    await _load_resume(session, resume_id, user)
-    version = await session.get(ResumeVersion, version_id)
-    if version is None or version.resume_id != resume_id:
-        raise HTTPException(404, "version not found")
-    return version
+    return await _load_version(session, resume_id, version_id, user)
 
 
 @router.post("/{resume_id}/versions/{version_id}/export", response_model=ExportResult)
@@ -516,6 +685,11 @@ async def export_version(
     version = await session.get(ResumeVersion, version_id)
     if version is None or version.resume_id != resume_id:
         raise HTTPException(404, "version not found")
+    if version.status != "final":
+        raise HTTPException(
+            409,
+            "Only a finalized resume can be exported. Use Preview while editing.",
+        )
 
     fmt = payload.format
     if fmt != "pdf":
@@ -562,6 +736,8 @@ async def download_version(
     version = await session.get(ResumeVersion, version_id)
     if version is None or version.resume_id != resume_id:
         raise HTTPException(404, "version not found")
+    if version.status != "final":
+        raise HTTPException(409, "Finalize this resume before downloading its PDF.")
 
     if version.pdf_bytes:
         pdf_bytes = bytes(version.pdf_bytes)
@@ -661,7 +837,7 @@ async def approve_version(
 
 async def _load_resume(session: AsyncSession, resume_id: UUID, user: User) -> Resume:
     resume = await session.get(Resume, resume_id)
-    if resume is None or resume.user_id != user.id:
+    if resume is None or resume.user_id != user.id or resume.archived_at is not None:
         raise HTTPException(404, "resume not found")
     return resume
 
@@ -674,7 +850,11 @@ async def _load_version(
 ) -> ResumeVersion:
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)
-    if version is None or version.resume_id != resume_id:
+    if (
+        version is None
+        or version.resume_id != resume_id
+        or version.archived_at is not None
+    ):
         raise HTTPException(404, "version not found")
     return version
 
@@ -722,7 +902,10 @@ async def tailor_version(
     baseline = (
         await session.execute(
             select(ResumeVersion)
-            .where(ResumeVersion.resume_id == master.id)
+            .where(
+                ResumeVersion.resume_id == master.id,
+                ResumeVersion.archived_at.is_(None),
+            )
             .order_by(ResumeVersion.created_at.desc())
             .limit(1)
         )

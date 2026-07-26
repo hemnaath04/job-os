@@ -9,7 +9,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>{{ basics.name }} — Resume</title>
+  <title>{{ basics.name }} - Resume</title>
   <link rel="stylesheet" href="master_resume.css" />
 </head>
 <body>
@@ -17,20 +17,17 @@
 <header class="masthead">
   <h1 class="name">{{ basics.name }}</h1>
   <div class="contact">
-    {% set bits = [] %}
     {% if basics.location and basics.location.city %}
-      {% set _ = bits.append(basics.location.city + ', ' + (basics.location.region or '')) %}
+      <span>{{ basics.location.city }}{% if basics.location.region %}, {{ basics.location.region }}{% endif %}</span>
     {% endif %}
-    {% if basics.phone %}{% set _ = bits.append(basics.phone) %}{% endif %}
-    {% if basics.email %}{% set _ = bits.append('<a href="mailto:' + basics.email + '">' + basics.email + '</a>') %}{% endif %}
+    {% if basics.phone %}<span>{{ basics.phone }}</span>{% endif %}
+    {% if basics.email %}<a href="mailto:{{ basics.email }}">{{ basics.email }}</a>{% endif %}
     {% if basics.profiles %}
       {% for p in basics.profiles %}
-        {%- if p.url -%}
-          {% set _ = bits.append('<a href="' + p.url + '">' + (p.url | replace('https://','') | replace('http://','') | replace('www.','')) + '</a>') %}
-        {%- endif -%}
+        {% set profile_url = p.url | safe_resume_url %}
+        {% if profile_url %}<a href="{{ profile_url }}">{{ profile_url | replace('https://','') | replace('http://','') | replace('www.','') }}</a>{% endif %}
       {% endfor %}
     {% endif %}
-    {{ bits | join(' | ') | safe }}
   </div>
 </header>
 
@@ -53,7 +50,7 @@
       </div>
       {% if ed.courses %}
         <div class="coursework">
-          <span class="label-inline">Related coursework:</span>
+          <span class="label-inline">Relevant coursework:</span>
           {{ ed.courses | join(', ') }}
         </div>
       {% endif %}
@@ -75,7 +72,7 @@
       <div class="entry-row">
         <span class="secondary">
           {%- if w.position %}<em>{{ w.position }}</em>{% endif -%}
-          {%- if w.summary %} · {{ w.summary }}{% endif -%}
+          {%- if w.summary %}, {{ w.summary }}{% endif -%}
         </span>
         <span class="meta">{{ fmt_range(w.startDate, w.endDate) }}</span>
       </div>
@@ -102,7 +99,8 @@
       {% if p.description or p.url %}
         <div class="secondary project-meta">
           {%- if p.description %}<em>{{ p.description }}</em>{% endif -%}
-          {%- if p.url %}{% if p.description %} · {% endif %}<a href="{{ p.url }}">{{ p.url | replace('https://','') | replace('http://','') }}</a>{% endif -%}
+          {% set project_url = p.url | safe_resume_url %}
+          {%- if project_url %}{% if p.description %} | {% endif %}<a href="{{ project_url }}">{{ project_url | replace('https://','') | replace('http://','') }}</a>{% endif -%}
         </div>
       {% endif %}
       {% if p.highlights %}
@@ -116,7 +114,7 @@
 {% endif %}
 
 {# ---------- TECHNICAL SKILLS (skills + certificates + interests grouped) ---------- #}
-{% if skills or certificates or interests %}
+{% if skills or certificates or languages or interests %}
 <section>
   <h2>Technical Skills</h2>
   <dl class="skills-grid">
@@ -129,7 +127,16 @@
       <dd>
         {%- for c in certificates -%}
           {{ c.name }}{% if c.issuer %} ({{ c.issuer }}){% endif %}
-          {%- if not loop.last %} · {% endif -%}
+          {%- if not loop.last %}, {% endif -%}
+        {%- endfor -%}
+      </dd>
+    {% endif %}
+    {% if languages %}
+      <dt>Languages</dt>
+      <dd>
+        {%- for language in languages -%}
+          {{ language.language }}{% if language.fluency %} ({{ language.fluency }}){% endif %}
+          {%- if not loop.last %}, {% endif -%}
         {%- endfor -%}
       </dd>
     {% endif %}
@@ -138,7 +145,7 @@
       <dd>
         {%- for i in interests -%}
           {%- if i.keywords -%}{{ i.keywords | join('; ') }}{%- else -%}{{ i.name }}{%- endif -%}
-          {%- if not loop.last %} · {% endif -%}
+          {%- if not loop.last %}, {% endif -%}
         {%- endfor -%}
       </dd>
     {% endif %}

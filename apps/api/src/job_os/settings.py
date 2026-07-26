@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     browserbase_api_key: str | None = None
     browserbase_project_id: str | None = None
     theirstack_api_key: str | None = None
+    github_token: str | None = None
 
     r2_account_id: str | None = None
     r2_access_key_id: str | None = None

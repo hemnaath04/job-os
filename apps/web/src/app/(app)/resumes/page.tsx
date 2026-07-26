@@ -3,16 +3,17 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
+  Archive,
   CheckCircle2,
   Crown,
   Download,
+  FolderOpen,
   FileUp,
   FileText,
   LibraryBig,
   MessageSquareText,
   Plus,
   Sparkles,
-  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useRef, useState } from "react";
@@ -21,7 +22,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
-import type { Resume, ResumeVersionSummary } from "@/lib/types";
+import type { Resume, ResumeImportItem, ResumeVersionSummary } from "@/lib/types";
 
 export default function ResumesPage() {
   const qc = useQueryClient();
@@ -32,7 +33,9 @@ export default function ResumesPage() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [baseRole, setBaseRole] = useState("");
-  const fileInput = useRef<HTMLInputElement>(null);
+  const masterInput = useRef<HTMLInputElement>(null);
+  const folderInput = useRef<HTMLInputElement>(null);
+  const [importResult, setImportResult] = useState<ResumeImportItem[]>([]);
 
   const create = useMutation({
     mutationFn: () =>
@@ -52,13 +55,51 @@ export default function ResumesPage() {
   });
 
   const importFiles = useMutation({
-    mutationFn: (files: File[]) => api.importResumes(files),
+    mutationFn: async ({
+      files,
+      masterFilename,
+    }: {
+      files: File[];
+      masterFilename?: string;
+    }) => {
+      const ordered = [...files].sort((left, right) => {
+        if (left.name === masterFilename) return -1;
+        if (right.name === masterFilename) return 1;
+        return left.name.localeCompare(right.name);
+      });
+      const items: ResumeImportItem[] = [];
+
+      // Resume extraction calls an AI parser. Small sequential requests avoid
+      // proxy timeouts while preserving every completed import if one file fails.
+      for (const file of ordered) {
+        try {
+          const result = await api.importResumes(
+            [file],
+            "iCloud Drive",
+            file.name === masterFilename ? masterFilename : undefined,
+          );
+          items.push(...result.items);
+        } catch (error) {
+          items.push({
+            filename: file.name,
+            imported: false,
+            resume_id: null,
+            version_id: null,
+            is_master: file.name === masterFilename,
+            note: error instanceof Error ? error.message : "Import failed",
+          });
+        }
+      }
+
+      return { items };
+    },
     onSuccess: ({ items }) => {
       const imported = items.filter((item) => item.imported).length;
       const failed = items.length - imported;
       toast.success(`${imported} resume${imported === 1 ? "" : "s"} imported`, {
         description: failed ? `${failed} file${failed === 1 ? "" : "s"} need attention.` : undefined,
       });
+      setImportResult(items);
       qc.invalidateQueries({ queryKey: ["resumes"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -74,24 +115,63 @@ export default function ResumesPage() {
         action={
           <div className="flex flex-wrap gap-2">
             <input
-              ref={fileInput}
+              ref={masterInput}
               type="file"
-              multiple
               accept=".pdf,.docx,.json,application/pdf,application/json"
               className="hidden"
               onChange={(event) => {
                 const files = Array.from(event.target.files ?? []);
-                if (files.length) importFiles.mutate(files);
+                if (files.length) {
+                  importFiles.mutate({
+                    files,
+                    masterFilename: files[0]?.name,
+                  });
+                }
+                event.target.value = "";
+              }}
+            />
+            <input
+              ref={folderInput}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.json,application/pdf,application/json"
+              className="hidden"
+              {...({
+                webkitdirectory: "",
+                directory: "",
+              } as React.InputHTMLAttributes<HTMLInputElement>)}
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []).filter(
+                  (file) =>
+                    /^Hemnaath_Balasubramani_/i.test(file.name) &&
+                    /\.(pdf|docx|json)$/i.test(file.name),
+                );
+                if (files.length) {
+                  importFiles.mutate({
+                    files,
+                    masterFilename: files.find((file) =>
+                      /master/i.test(file.name),
+                    )?.name,
+                  });
+                }
                 event.target.value = "";
               }}
             />
             <button
-              onClick={() => fileInput.current?.click()}
+              onClick={() => masterInput.current?.click()}
               disabled={importFiles.isPending}
               className="kinetic-button kinetic-button-secondary disabled:opacity-50"
             >
               <FileUp className="size-3.5" />
-              {importFiles.isPending ? "Importing…" : "Import from iCloud"}
+              {importFiles.isPending ? "Importing…" : "Set master"}
+            </button>
+            <button
+              onClick={() => folderInput.current?.click()}
+              disabled={importFiles.isPending}
+              className="kinetic-button kinetic-button-secondary disabled:opacity-50"
+            >
+              <FolderOpen className="size-3.5" />
+              Import iCloud folder
             </button>
             <button
               onClick={() => setCreating((current) => !current)}
@@ -108,10 +188,39 @@ export default function ResumesPage() {
       </PageIntro>
 
       <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        iCloud privacy requires you to choose the files. Import the master first,
-        then selected variants in batches of up to eight; originals remain in
-        iCloud and each imported copy becomes an editable revision here.
+        Brave will ask you to choose the iCloud-synced folder. The file named
+        Master becomes the protected source, originals remain in iCloud, and
+        every imported copy becomes a recoverable database revision.
       </p>
+
+      {importResult.length > 0 && (
+        <div className="workspace-panel mt-5 p-4">
+          <div className="text-sm font-semibold">Latest import</div>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
+            {importResult.map((item) => (
+              <div
+                key={item.filename}
+                className="flex items-start gap-2 rounded-lg bg-white/[0.025] px-3 py-2 text-xs"
+              >
+                {item.imported ? (
+                  <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[color:var(--color-mint)]" />
+                ) : (
+                  <Archive className="mt-0.5 size-3.5 shrink-0 text-[color:var(--color-amber)]" />
+                )}
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-white/80">
+                    {item.filename}
+                  </div>
+                  <div className="mt-0.5 text-[color:var(--color-text-dim)]">
+                    {item.is_master ? "Protected master. " : ""}
+                    {item.note}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {creating && (
         <div className="workspace-panel mt-5 p-5">
@@ -156,8 +265,7 @@ export default function ResumesPage() {
         <EmptyState
           icon={FileText}
           title="No resumes yet"
-          description="Upload your master PDF on Profile. The Master resume is created on import, and tailored versions appear here as they are generated."
-          cta={{ href: "/profile", label: "Open Profile" }}
+          description="Choose Set master to import the canonical PDF, DOCX, or JSON Resume from iCloud."
         />
       )}
 
@@ -179,7 +287,9 @@ function ResumeCard({ resume }: { resume: Resume }) {
   const removeResume = useMutation({
     mutationFn: () => api.deleteResume(resume.id),
     onSuccess: () => {
-      toast.success("Resume deleted");
+      toast.success("Resume archived", {
+        description: "Its versions remain stored in the database.",
+      });
       qc.invalidateQueries({ queryKey: ["resumes"] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -217,14 +327,14 @@ function ResumeCard({ resume }: { resume: Resume }) {
           {!resume.is_master && (
             <button
               onClick={() => {
-                if (window.confirm(`Delete ${resume.name} and all of its versions?`)) {
+                if (window.confirm(`Archive ${resume.name}? Its versions will remain stored.`)) {
                   removeResume.mutate();
                 }
               }}
               className="rounded-lg p-1.5 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
-              aria-label={`Delete ${resume.name}`}
+              aria-label={`Archive ${resume.name}`}
             >
-              <Trash2 className="size-3.5" />
+              <Archive className="size-3.5" />
             </button>
           )}
         </div>
@@ -262,7 +372,9 @@ function VersionRow({
   const removeVersion = useMutation({
     mutationFn: () => api.deleteVersion(resumeId, version.id),
     onSuccess: () => {
-      toast.success("Version deleted");
+      toast.success("Version archived", {
+        description: "The revision remains stored in the database.",
+      });
       qc.invalidateQueries({ queryKey: ["versions", resumeId] });
     },
     onError: (error: Error) => toast.error(error.message),
@@ -310,23 +422,25 @@ function VersionRow({
           <MessageSquareText className="size-3" />
           Open
         </Link>
+        {version.status === "final" && (
+          <button
+            onClick={() =>
+              downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
+            }
+            className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
+          >
+            <Download className="size-3" />
+            Download PDF
+          </button>
+        )}
         <button
-          onClick={() =>
-            downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
-          }
-          className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
-        >
-          <Download className="size-3" />
-          Download PDF
-        </button>
-        <button
-          onClick={() => {
-            if (window.confirm("Delete this resume version?")) removeVersion.mutate();
-          }}
+              onClick={() => {
+                if (window.confirm("Archive this resume version? It remains stored in the database.")) removeVersion.mutate();
+              }}
           className="rounded-lg p-2 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
-          aria-label="Delete resume version"
+          aria-label="Archive resume version"
         >
-          <Trash2 className="size-3.5" />
+          <Archive className="size-3.5" />
         </button>
       </div>
     </div>

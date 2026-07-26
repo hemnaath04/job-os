@@ -52,6 +52,10 @@ a { color: var(--link); text-decoration: none; }
   white-space: nowrap;
 }
 .contact a { color: var(--link); }
+.contact > *:not(:last-child)::after {
+  content: " | ";
+  color: var(--muted);
+}
 
 /* ---------- Section headings ---------- */
 section { margin-top: 3pt; }
@@ -130,7 +134,7 @@ ul.bullets li {
   font-size: 9pt;
   line-height: 1.18;
   color: var(--ink);
-  display: block;
+  display: list-item;
 }
 /* ---------- Skills grid ---------- */
 dl.skills-grid {

@@ -5,10 +5,11 @@ served from Appwrite for instant board reads and writes, while Python agents
 handle discovery, profile extraction, and resume tailoring with a hard
 "no hallucination" invariant.
 
-The Resume Studio treats JSON Resume as the canonical, editable source. Every
-manual or AI edit creates an immutable child version; generated PDFs are stored
-with that version, and no AI draft can be finalized until a separate quality
-model plus deterministic PDF checks approve it.
+The Resume Studio treats JSON Resume as the canonical, editable source. Manual
+edits create immutable child versions, while AI chat produces a reviewable
+proposal before it can be applied. Generated PDFs are stored with each version,
+and only versions approved by a separate quality model plus deterministic PDF
+checks can be finalized and downloaded.
 
 ## Layout
 
@@ -81,5 +82,6 @@ and tailoring use the quality route. See `docs/appwrite-revamp.md`.
 6. A score of 90 or higher with no blocking issues is required to finalize.
 
 All imports, edits, reviews, chat messages, PDFs, and final versions are stored
-in Postgres. The original master is never overwritten, and the only remaining
-master version cannot be deleted. See `docs/resume-engine.md`.
+in Postgres. The original master is never overwritten. Archive actions hide
+role variants and versions without erasing their stored history, and the only
+remaining master version cannot be archived. See `docs/resume-engine.md`.

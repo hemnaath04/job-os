@@ -20,6 +20,17 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     op.add_column("resumes", sa.Column("source_kind", sa.String(), nullable=True))
     op.add_column("resumes", sa.Column("source_label", sa.String(), nullable=True))
+    op.add_column(
+        "resumes",
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
+    )
+    op.create_index(
+        "uq_resumes_one_master_per_user",
+        "resumes",
+        ["user_id"],
+        unique=True,
+        postgresql_where=sa.text("is_master IS TRUE"),
+    )
 
     op.add_column(
         "resume_versions",
@@ -41,6 +52,10 @@ def upgrade() -> None:
         "resume_versions",
         sa.Column("finalized_at", sa.DateTime(timezone=True), nullable=True),
     )
+    op.add_column(
+        "resume_versions",
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
+    )
     op.create_foreign_key(
         "fk_resume_versions_parent",
         "resume_versions",
@@ -60,6 +75,11 @@ def upgrade() -> None:
             postgresql.JSONB(astext_type=sa.Text()),
             server_default="[]",
             nullable=False,
+        ),
+        sa.Column(
+            "proposed_json_resume",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=True,
         ),
         sa.Column("applied", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -87,6 +107,7 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_table("resume_revision_messages")
     op.drop_constraint("fk_resume_versions_parent", "resume_versions", type_="foreignkey")
+    op.drop_column("resume_versions", "archived_at")
     op.drop_column("resume_versions", "finalized_at")
     op.drop_column("resume_versions", "latex_source")
     op.drop_column("resume_versions", "revision_note")
@@ -95,5 +116,7 @@ def downgrade() -> None:
     op.drop_column("resume_versions", "review_report")
     op.drop_column("resume_versions", "review_score")
     op.drop_column("resume_versions", "status")
+    op.drop_index("uq_resumes_one_master_per_user", table_name="resumes")
+    op.drop_column("resumes", "archived_at")
     op.drop_column("resumes", "source_label")
     op.drop_column("resumes", "source_kind")

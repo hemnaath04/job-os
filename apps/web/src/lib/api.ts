@@ -123,10 +123,15 @@ const legacyApi = {
     }),
   deleteResume: (resumeId: string) =>
     request<void>(`/resumes/${resumeId}`, { method: "DELETE" }),
-  importResumes: async (files: File[], sourceLabel = "iCloud Drive") => {
+  importResumes: async (
+    files: File[],
+    sourceLabel = "iCloud Drive",
+    masterFilename?: string,
+  ) => {
     const body = new FormData();
     files.forEach((file) => body.append("files", file));
     body.append("source_label", sourceLabel);
+    if (masterFilename) body.append("master_filename", masterFilename);
     const response = await fetch("/api/backend/resumes/import", {
       method: "POST",
       body,
@@ -164,6 +169,15 @@ const legacyApi = {
       method: "POST",
       body: JSON.stringify({ message, apply }),
     }),
+  applyRevisionProposal: (
+    resumeId: string,
+    versionId: string,
+    messageId: string,
+  ) =>
+    request<ResumeChatResponse>(
+      `/resumes/${resumeId}/versions/${versionId}/messages/${messageId}/apply`,
+      { method: "POST" },
+    ),
   listRevisionMessages: (resumeId: string, versionId: string) =>
     request<RevisionMessage[]>(
       `/resumes/${resumeId}/versions/${versionId}/messages`,
@@ -176,6 +190,16 @@ const legacyApi = {
     `/api/backend/resumes/${resumeId}/versions/${versionId}/download`,
   previewVersionUrl: (resumeId: string, versionId: string) =>
     `/api/backend/resumes/${resumeId}/versions/${versionId}/preview`,
+  previewDraft: async (jsonResume: object) => {
+    const response = await fetch("/api/backend/resumes/preview", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ json_resume: jsonResume }),
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+    return response.text();
+  },
 
   tailorResume: (resumeId: string, jobId: string) =>
     request<TailorResponse>(`/resumes/${resumeId}/versions/tailor`, {

@@ -96,6 +96,7 @@ export interface Resume {
   is_master: boolean;
   source_kind: string | null;
   source_label: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -115,6 +116,7 @@ export interface ResumeVersionSummary {
   source_filename: string | null;
   revision_note: string | null;
   finalized_at: string | null;
+  archived_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -188,6 +190,7 @@ export interface JsonResume {
   }[];
   skills?: { name: string; keywords: string[] }[];
   certificates?: { name: string; issuer?: string | null; date?: string | null; url?: string | null }[];
+  languages?: { language: string; fluency?: string | null }[];
   publications?: {
     name: string;
     publisher?: string | null;
@@ -236,6 +239,8 @@ export interface ResumeReviewResult {
 export interface ResumeChatResponse {
   message: string;
   suggestions: string[];
+  proposal_id: string | null;
+  proposed_json_resume: JsonResume | null;
   version: ResumeVersion | null;
   review: ResumeReviewResult | null;
 }
@@ -246,6 +251,7 @@ export interface RevisionMessage {
   role: "user" | "assistant";
   content: string;
   suggestions: string[];
+  proposed_json_resume: JsonResume | null;
   applied: boolean;
   created_at: string;
   updated_at: string;

@@ -37,6 +37,7 @@ class Resume(UUIDPK, Timestamped, Base):
     is_master: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     source_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ResumeVersion(UUIDPK, Timestamped, Base):
@@ -80,6 +81,7 @@ class ResumeVersion(UUIDPK, Timestamped, Base):
     revision_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     latex_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class ResumeRevisionMessage(UUIDPK, Timestamped, Base):
@@ -99,4 +101,5 @@ class ResumeRevisionMessage(UUIDPK, Timestamped, Base):
     role: Mapped[str] = mapped_column(String, nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
     suggestions: Mapped[list] = mapped_column(JSONB, default=list, server_default="[]")
+    proposed_json_resume: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     applied: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")

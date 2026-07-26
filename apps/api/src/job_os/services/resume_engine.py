@@ -6,6 +6,8 @@ plus deterministic PDF checks before it can be finalized.
 """
 from __future__ import annotations
 
+import asyncio
+import base64
 import io
 import json
 import re
@@ -19,6 +21,7 @@ from pydantic import BaseModel, Field, ValidationError
 from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
+from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
 from job_os.services.jd_parse import _strip_json_fence
 from job_os.services.pdf_render import render_resume_pdf
 from job_os.settings import get_settings
@@ -47,44 +50,6 @@ BANNED_PHRASES = {
     "facilitated",
     "enabled",
 }
-KNOWN_GITHUB_REPOS = {
-    "bedrocked": ("hemnaath04", "bedrocked"),
-    "claimfarm": ("hemnaath04", "claimfarm"),
-    "hackradar": ("hemnaath04", "hackradar"),
-    "job os": ("hemnaath04", "job-os"),
-    "job-os": ("hemnaath04", "job-os"),
-    "job searcher": ("hemnaath04", "job-searcher"),
-    "repository learning builder": ("hemnaath04", "repo-learning-builder"),
-    "role reveal": ("hemnaath04", "rolereveal"),
-    "rolereveal": ("hemnaath04", "rolereveal"),
-}
-
-CAREER_OPS_RULES = """\
-You are the quality gate for Hemnaath Balasubramani's resume engine.
-
-Non-negotiable rules:
-- Never invent employers, dates, grades, metrics, technologies, coursework,
-  responsibilities, credentials, or outcomes.
-- He targets AI/ML, backend/systems, agentic AI/LLM, and test automation.
-  Do not frame him as a frontend engineer. React and Next.js may appear only
-  as project context; emphasize the backend, proxies, agents, APIs, pipelines,
-  concurrency, testing, and infrastructure he actually owns.
-- One page, single column, ATS-safe, Times-style, one-line contact, selectable
-  text, ordinary headings, thin rules, and no tables, icons, graphics, or
-  multi-column layouts.
-- Keep education precise. Northeastern MS CS is Jan 2026 to May 2028. Fall
-  2026 courses are registered, not completed. Do not show GPA 3.334 unless it
-  clearly helps.
-- EPAM Systems is the only professional experience. Everything else is a
-  project.
-- Use evidence from the canonical profile and current GitHub README text.
-- Use short, engineer-like sentences. No em dashes in prose and no inflated
-  marketing language.
-- A project bullet that is not supported by its README or verified profile is
-  blocking. Missing JD evidence becomes a suggestion or gap, not a claim.
-"""
-
-
 class ModelReviewIssue(BaseModel):
     severity: str
     code: str
@@ -103,6 +68,41 @@ class RevisionOutput(BaseModel):
     assistant_message: str
     suggestions: list[str] = Field(default_factory=list)
     json_resume: dict[str, Any]
+
+
+def validate_json_resume_document(doc: dict[str, Any]) -> dict[str, Any]:
+    """Reject malformed or oversized JSON Resume documents before persistence."""
+    if len(json.dumps(doc, ensure_ascii=False).encode("utf-8")) > 300_000:
+        raise ValueError("JSON Resume exceeds the 300 KB structured-data limit.")
+    basics = doc.get("basics", {})
+    if not isinstance(basics, dict):
+        raise ValueError("JSON Resume basics must be an object.")
+    for section in (
+        "work",
+        "education",
+        "projects",
+        "skills",
+        "certificates",
+        "languages",
+        "volunteer",
+        "publications",
+        "awards",
+    ):
+        entries = doc.get(section, [])
+        if entries is None:
+            continue
+        if not isinstance(entries, list) or not all(
+            isinstance(entry, dict) for entry in entries
+        ):
+            raise ValueError(f"JSON Resume section {section} must be a list of objects.")
+        for entry in entries:
+            highlights = entry.get("highlights")
+            if highlights is not None and (
+                not isinstance(highlights, list)
+                or not all(isinstance(item, str) for item in highlights)
+            ):
+                raise ValueError(f"{section}.highlights must be a list of strings.")
+    return doc
 
 
 def _client() -> anthropic.AsyncAnthropic:
@@ -134,39 +134,86 @@ def _repo_from_url(value: str | None) -> tuple[str, str] | None:
     return match.group(1), match.group(2).removesuffix(".git")
 
 
-async def load_github_context(doc: dict[str, Any]) -> tuple[dict[str, str], list[str]]:
-    """Fetch current public README text for projects included in this resume."""
+def _github_repositories(
+    doc: dict[str, Any], *, requested_text: str = ""
+) -> dict[str, tuple[str, str]]:
+    """Resolve only Hemnaath's known or explicitly linked project repositories."""
     repos: dict[str, tuple[str, str]] = {}
     for project in doc.get("projects", []) or []:
         project_name = str(project.get("name") or "").strip()
         parsed = _repo_from_url(project.get("url"))
-        if not parsed:
-            normalized = re.sub(r"[^a-z0-9]+", " ", project_name.lower()).strip()
-            parsed = KNOWN_GITHUB_REPOS.get(normalized)
-        if parsed:
-            repos[project_name or parsed[1]] = parsed
+        if parsed and parsed[0].lower() == "hemnaath04":
+            repos[f"{project_name or parsed[1]} [{parsed[1]}]"] = parsed
+            continue
+        normalized = re.sub(r"[^a-z0-9]+", " ", project_name.lower()).strip()
+        for known in KNOWN_GITHUB_REPOS.get(normalized, ()):
+            repos[f"{project_name or known[1]} [{known[1]}]"] = known
 
-    contexts: dict[str, str] = {}
+    normalized_request = re.sub(r"[^a-z0-9]+", " ", requested_text.lower())
+    for project_name, known_repos in KNOWN_GITHUB_REPOS.items():
+        if project_name in normalized_request:
+            for known in known_repos:
+                repos[f"{project_name.title()} [{known[1]}]"] = known
+    return repos
+
+
+async def load_github_context(
+    doc: dict[str, Any], *, requested_text: str = ""
+) -> tuple[dict[str, dict[str, str]], list[str], list[str]]:
+    """Fetch current README text and commit-pinned SHA for included projects."""
+    repos = _github_repositories(doc, requested_text=requested_text)
+
+    contexts: dict[str, dict[str, str]] = {}
     checked: list[str] = []
+    missing: list[str] = []
     if not repos:
-        return contexts, checked
+        return contexts, checked, missing
 
+    settings = get_settings()
     headers = {
-        "Accept": "application/vnd.github.raw+json",
+        "Accept": "application/vnd.github+json",
         "User-Agent": "job-os-resume-verifier",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
-    async with httpx.AsyncClient(timeout=8, follow_redirects=True, headers=headers) as client:
-        for project_name, (owner, repo) in repos.items():
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+
+    async with httpx.AsyncClient(timeout=6, follow_redirects=True, headers=headers) as client:
+
+        async def fetch_one(
+            project_name: str, owner: str, repo: str
+        ) -> tuple[str, str, str, str | None]:
+            slug = f"{owner}/{repo}"
             try:
-                response = await client.get(
-                    f"https://api.github.com/repos/{owner}/{repo}/readme"
-                )
-                if response.status_code == 200:
-                    contexts[project_name] = response.text[:12000]
-                    checked.append(f"{owner}/{repo}")
-            except httpx.HTTPError as exc:
-                log.info("resume.github_readme_unavailable", repo=f"{owner}/{repo}", error=str(exc))
-    return contexts, checked
+                response = await client.get(f"https://api.github.com/repos/{slug}/readme")
+                if response.status_code != 200:
+                    return project_name, slug, "", None
+                payload = response.json()
+                encoded = str(payload.get("content") or "").replace("\n", "")
+                readme = base64.b64decode(encoded).decode("utf-8", errors="replace")
+                return project_name, slug, readme[:16000], str(payload.get("sha") or "")
+            except (httpx.HTTPError, ValueError) as exc:
+                log.info("resume.github_readme_unavailable", repo=slug, error=str(exc))
+                return project_name, slug, "", None
+
+        results = await asyncio.gather(
+            *(
+                fetch_one(project_name, owner, repo)
+                for project_name, (owner, repo) in repos.items()
+            )
+        )
+
+    for project_name, slug, readme, sha in results:
+        if not readme:
+            missing.append(slug)
+            continue
+        contexts[project_name] = {
+            "repository": slug,
+            "readme_sha": sha or "unknown",
+            "readme": readme,
+        }
+        checked.append(f"{slug}@{(sha or 'unknown')[:8]}")
+    return contexts, checked, missing
 
 
 def deterministic_review(
@@ -248,14 +295,61 @@ def deterministic_review(
                 section="projects",
             )
         )
+    work = doc.get("work") or []
+    non_epam = [
+        str(item.get("name") or "")
+        for item in work
+        if "epam" not in str(item.get("name") or "").lower()
+    ]
+    if non_epam:
+        issues.append(
+            ResumeReviewIssue(
+                severity="blocking",
+                code="unsupported_employer",
+                message=(
+                    "EPAM Systems is the only verified professional employer. "
+                    f"Move unsupported entries to Projects or remove them: {', '.join(non_epam)}."
+                ),
+                section="work",
+            )
+        )
+    skills_text = " ".join(
+        str(keyword)
+        for group in doc.get("skills", []) or []
+        for keyword in group.get("keywords", []) or []
+    ).lower()
+    unsupported_skills = [
+        skill
+        for skill, pattern in (("C++", r"(?<!\w)c\+\+(?!\w)"), ("C#", r"(?<!\w)c#(?!\w)"))
+        if re.search(pattern, skills_text, re.I)
+    ]
+    if unsupported_skills:
+        issues.append(
+            ResumeReviewIssue(
+                severity="blocking",
+                code="unsupported_skill",
+                message=f"Remove unsupported skills: {', '.join(unsupported_skills)}.",
+                section="skills",
+            )
+        )
     return issues, page_count, text_selectable
 
 
 async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]:
     """Render, inspect, then run an independent quality-model review."""
+    validate_json_resume_document(doc)
     rendered = render_resume_pdf(doc)
     rule_issues, page_count, text_selectable = deterministic_review(doc, rendered.bytes_)
-    github_context, checked = await load_github_context(doc)
+    github_context, checked, missing_repos = await load_github_context(doc)
+    for slug in missing_repos:
+        rule_issues.append(
+            ResumeReviewIssue(
+                severity="warning",
+                code="github_evidence_unavailable",
+                message=f"Current README evidence could not be loaded for {slug}.",
+                section="projects",
+            )
+        )
 
     settings = get_settings()
     model_review = ModelReview(score=70, summary="Model review unavailable.")
@@ -343,7 +437,9 @@ async def revise_resume(
     verified_facts: list[dict[str, Any]],
 ) -> RevisionOutput:
     """Apply a conversational edit without allowing new unsupported claims."""
-    github_context, _checked = await load_github_context(doc)
+    github_context, _checked, missing_repos = await load_github_context(
+        doc, requested_text=message
+    )
     settings = get_settings()
     prompt = (
         "The user is editing a resume in chat. Apply the request only when it is "
@@ -355,6 +451,7 @@ async def revise_resume(
         f"CURRENT RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
         f"VERIFIED FACTS:\n{json.dumps(verified_facts, ensure_ascii=False)[:18000]}\n\n"
         f"GITHUB README EVIDENCE:\n{json.dumps(github_context, ensure_ascii=False)[:20000]}\n\n"
+        f"UNAVAILABLE GITHUB EVIDENCE:\n{json.dumps(missing_repos)}\n\n"
         f"OUTPUT SCHEMA:\n{json.dumps(RevisionOutput.model_json_schema())}"
     )
     response = await _client().messages.create(
@@ -366,12 +463,17 @@ async def revise_resume(
     )
     raw = "".join(block.text for block in response.content if block.type == "text")
     output = RevisionOutput.model_validate_json(_strip_json_fence(raw))
+    validate_json_resume_document(output.json_resume)
 
     # Defense in depth: new metrics must already exist in verified facts or
     # the current resume. Chat remains an editor, not a fact-creation path.
     source_numbers = set(
         NUMBER_RE.findall(
-            _resume_text(doc) + "\n" + json.dumps(verified_facts, ensure_ascii=False)
+            _resume_text(doc)
+            + "\n"
+            + json.dumps(verified_facts, ensure_ascii=False)
+            + "\n"
+            + json.dumps(github_context, ensure_ascii=False)
         )
     )
     new_numbers = set(NUMBER_RE.findall(_resume_text(output.json_resume)))

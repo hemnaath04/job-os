@@ -16,6 +16,7 @@ class ResumeRead(TimestampedRead):
     is_master: bool
     source_kind: str | None = None
     source_label: str | None = None
+    archived_at: datetime | None = None
 
 
 class ResumeCreate(ORMModel):
@@ -46,6 +47,7 @@ class ResumeVersionSummary(TimestampedRead):
     source_filename: str | None = None
     revision_note: str | None = None
     finalized_at: datetime | None = None
+    archived_at: datetime | None = None
 
 
 class ResumeVersionRead(ResumeVersionSummary):
@@ -70,6 +72,10 @@ class ResumeVersionCreate(ORMModel):
 class ResumeDirectEditRequest(ORMModel):
     json_resume: dict[str, Any]
     note: str = "Manual edit"
+
+
+class ResumePreviewRequest(ORMModel):
+    json_resume: dict[str, Any]
 
 
 class ResumeReviewIssue(BaseModel):
@@ -98,6 +104,8 @@ class ResumeChatRequest(ORMModel):
 class ResumeChatResponse(BaseModel):
     message: str
     suggestions: list[str] = Field(default_factory=list)
+    proposal_id: UUID | None = None
+    proposed_json_resume: dict[str, Any] | None = None
     version: ResumeVersionRead | None = None
     review: ResumeReviewResult | None = None
 
@@ -120,6 +128,7 @@ class RevisionMessageRead(TimestampedRead):
     role: str
     content: str
     suggestions: list[str] = Field(default_factory=list)
+    proposed_json_resume: dict[str, Any] | None = None
     applied: bool
 
 

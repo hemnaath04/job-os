@@ -109,6 +109,11 @@ async def get_current_user(
     settings = get_settings()
 
     if not settings.clerk_secret_key or not settings.clerk_jwks_url:
+        if not settings.is_dev:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Authentication is not configured for this deployment.",
+            )
         return await _get_or_create_user(
             session, clerk_id="dev-local", email="dev@local", display_name="Dev User"
         )

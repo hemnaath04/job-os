@@ -80,7 +80,13 @@ async def test_tailor_langgraph_refines_until_target(
     _, _, gaps, score, report, note = result
     assert len(calls) == 2
     assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-quality"}
-    assert score == 100
+    # The model's self-reported loop reaches 100, but the final assembled
+    # document is empty, so deterministic final-document coverage is 0.
+    assert score == 0
     assert report["iterations"] == [50.0, 100.0]
+    assert report["scoring"] == "deterministic_final_document"
     assert gaps == []
-    assert note == "refined\n(Hit target ATS 80 in 2 passes: 50 -> 100)"
+    assert note == (
+        "refined\n(Could not reach target ATS 80 after 2 passes (50 -> 100). "
+        "Remaining gaps need new facts on your Profile.)"
+    )
