@@ -10,9 +10,13 @@ handle discovery, profile extraction, and resume tailoring with a hard
 ```
 apps/
   web/        Next.js 15 (App Router, TypeScript, Tailwind, shadcn/ui)
-  api/        FastAPI + async SQLAlchemy + pgvector
-infra/        Render, Fly.io, and Vercel deployment configuration
+  api/        Python, FastAPI, LangGraph, async SQLAlchemy, pgvector
+infra/        Vercel web + Render agent-service deployment configuration
 ```
+
+Appwrite TablesDB is the low-latency application pipeline. Neon Postgres
+remains the rollback store and continues to support profile, resume, and vector
+data used by the Python service.
 
 ## Stack
 
