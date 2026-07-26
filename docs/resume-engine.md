@@ -7,7 +7,7 @@ editable source of truth.
 ## Workflow
 
 ```text
-iCloud PDF, DOCX, or JSON
+PDF, DOCX, or JSON
           |
           v
 editable JSON Resume + immutable version
@@ -77,10 +77,9 @@ Review failures are retained on the version so the user can continue revising
 in chat, accept another suggestion, and review again. Drafts remain previewable,
 but PDF download and export are available only for finalized versions.
 
-## iCloud import
+## Resume library import
 
-A browser cannot silently enumerate iCloud Drive. Use **Set master** for the
-canonical file or **Import iCloud folder** to authorize the whole synced resume
-folder in Brave. Imports accept up to 30 resume files per batch. The files
-remain in iCloud; job.os stores editable copies and version metadata in
-Postgres.
+Use **Set master** for the canonical file or **Import folder** to add an
+existing resume library. Imports accept up to 30 resume files per batch.
+Original files stay on the user's device; job.os stores editable copies and
+version metadata.

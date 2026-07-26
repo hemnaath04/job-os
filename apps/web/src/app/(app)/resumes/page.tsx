@@ -75,7 +75,7 @@ export default function ResumesPage() {
         try {
           const result = await api.importResumes(
             [file],
-            "iCloud Drive",
+            "Resume library",
             file.name === masterFilename ? masterFilename : undefined,
           );
           items.push(...result.items);
@@ -171,7 +171,7 @@ export default function ResumesPage() {
               className="kinetic-button kinetic-button-secondary disabled:opacity-50"
             >
               <FolderOpen className="size-3.5" />
-              Import iCloud folder
+              Import folder
             </button>
             <button
               onClick={() => setCreating((current) => !current)}
@@ -188,9 +188,9 @@ export default function ResumesPage() {
       </PageIntro>
 
       <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        Brave will ask you to choose the iCloud-synced folder. The file named
-        Master becomes the protected source, originals remain in iCloud, and
-        every imported copy becomes a recoverable database revision.
+        Upload one canonical master or import an existing resume library. A
+        file named Master becomes the protected source, originals stay on your
+        device, and each imported copy becomes a recoverable revision.
       </p>
 
       {importResult.length > 0 && (
@@ -265,7 +265,7 @@ export default function ResumesPage() {
         <EmptyState
           icon={FileText}
           title="No resumes yet"
-          description="Choose Set master to import the canonical PDF, DOCX, or JSON Resume from iCloud."
+          description="Choose Set master to upload the canonical PDF, DOCX, or JSON Resume."
         />
       )}
 

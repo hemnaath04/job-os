@@ -47,7 +47,7 @@ data used by the Python service.
 - **M2 (week 2)** — Profile KB + Reactive Resume render of master resume.
 - **M3 (week 3)** — Tailoring agent with provenance guardrails.
 - **M4 (week 4)** — Discovery feed (TheirStack + GitHub repos).
-- **Resume Studio** — iCloud import, structured editing, conversational
+- **Resume Studio** — resume-library import, structured editing, conversational
   revisions, GitHub README verification, immutable history, and final QA.
 
 ## Local dev
@@ -73,7 +73,7 @@ and tailoring use the quality route. See `docs/appwrite-revamp.md`.
 
 ## Resume quality gate
 
-1. Import the master PDF, DOCX, or JSON Resume from iCloud Drive.
+1. Upload a master PDF, DOCX, or JSON Resume.
 2. Edit fields directly or ask the resume chat to revise a specific section.
 3. The agent may use only the current resume, verified profile facts, and
    current README evidence from included GitHub projects.
