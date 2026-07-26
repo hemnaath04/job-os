@@ -72,6 +72,7 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         max_tokens=2048,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_prompt}],
+        extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
     )
 
     text = "".join(b.text for b in msg.content if b.type == "text")

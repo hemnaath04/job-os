@@ -56,6 +56,10 @@ class Settings(BaseSettings):
     anthropic_model_extract: str = "manifest/auto"
     anthropic_model_tailor: str = "manifest/auto"
     anthropic_model_verify: str = "manifest/auto"
+    # Manifest custom routing tiers. Fast handles short structured tasks;
+    # quality is reserved for resume extraction and tailoring.
+    manifest_tier_fast: str = "job-os-fast"
+    manifest_tier_quality: str = "job-os-quality"
 
     firecrawl_api_key: str | None = None
     apify_api_token: str | None = None

@@ -17,7 +17,6 @@ import { useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
-import { api } from "@/lib/api";
 import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
@@ -33,10 +32,14 @@ function belongsToVisibleStage(status: AppStatus, visibleStage: "wishlist" | App
 
 export function KanbanBoard({
   applications,
-  onChange,
+  onMove,
+  onArchive,
+  onRestore,
 }: {
   applications: Application[];
-  onChange: () => void;
+  onMove: (id: string, status: AppStatus) => Promise<unknown>;
+  onArchive: (id: string) => Promise<unknown>;
+  onRestore: (application: Application) => Promise<unknown>;
 }) {
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const [dragged, setDragged] = useState<Application | null>(null);
@@ -52,9 +55,8 @@ export function KanbanBoard({
     if (!app || app.status === target) return;
 
     try {
-      await api.patchApplication(appId, { status: target });
+      await onMove(appId, target);
       toast.success(`Moved to ${STATUS_LABELS[target]}`);
-      onChange();
     } catch (err) {
       toast.error(`Couldn't update: ${(err as Error).message}`);
     }
@@ -62,16 +64,14 @@ export function KanbanBoard({
 
   async function onDelete(app: Application) {
     try {
-      await api.archiveApplication(app.id);
-      onChange();
+      await onArchive(app.id);
       toast.success(`Archived "${app.job.title}"`, {
         description: app.job.company?.name ?? undefined,
         action: {
           label: "Undo",
           onClick: async () => {
             try {
-              await api.patchApplication(app.id, { archived: false });
-              onChange();
+              await onRestore(app);
             } catch (err) {
               toast.error(`Couldn't restore: ${(err as Error).message}`);
             }

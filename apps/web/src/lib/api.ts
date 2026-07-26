@@ -16,6 +16,8 @@ import type {
   UserSettings,
   UserSettingsPatch,
 } from "./types";
+import { appwritePipeline } from "./appwrite/client";
+import { isAppwritePipelineEnabled } from "./appwrite/config";
 
 export type ProfileFactCreate = {
   kind: string;
@@ -54,7 +56,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
-export const api = {
+const legacyApi = {
   listApplications: (params?: { status?: AppStatus; q?: string }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
@@ -187,4 +189,61 @@ export const api = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+};
+
+export const api = {
+  ...legacyApi,
+
+  listApplications: (params?: { status?: AppStatus; q?: string }) =>
+    isAppwritePipelineEnabled
+      ? appwritePipeline.listApplications(params)
+      : legacyApi.listApplications(params),
+
+  async patchApplication(id: string, body: Partial<Application>) {
+    if (!isAppwritePipelineEnabled) {
+      return legacyApi.patchApplication(id, body);
+    }
+
+    const updated = await appwritePipeline.patchApplication(id, body);
+    try {
+      // Keep Neon current as a rollback copy during the staged cutover.
+      await legacyApi.patchApplication(id, body);
+    } catch (error) {
+      console.error("[pipeline-dual-write] Neon update failed", { id, error });
+    }
+    return updated;
+  },
+
+  async createApplication(body: {
+    job_id: string;
+    status?: AppStatus;
+    notes?: string;
+  }) {
+    const application = await legacyApi.createApplication(body);
+    if (isAppwritePipelineEnabled) {
+      try {
+        await appwritePipeline.createApplicationCard(application);
+      } catch (error) {
+        // The durable Neon row exists; the repair import can safely replay it.
+        console.error("[pipeline-dual-write] Appwrite create failed", {
+          id: application.id,
+          error,
+        });
+      }
+    }
+    return application;
+  },
+
+  async archiveApplication(id: string) {
+    if (!isAppwritePipelineEnabled) {
+      return legacyApi.archiveApplication(id);
+    }
+
+    await appwritePipeline.archiveApplication(id);
+    try {
+      await legacyApi.archiveApplication(id);
+    } catch (error) {
+      console.error("[pipeline-dual-write] Neon archive failed", { id, error });
+    }
+  },
 };

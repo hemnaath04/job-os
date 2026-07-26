@@ -164,6 +164,19 @@ wheels = [
 ]
 
 [[package]]
+name = "appwrite"
+version = "22.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "requests" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/58/8f/3e28094d410d1b7c6ff1d5182ee1f5f1b9157e1e695666593e1ba31564cc/appwrite-22.2.0.tar.gz", hash = "sha256:ef08d16a6b8669405e8a44218cca167a24838ca419efe2c104b2461b0438a042", size = 188505, upload-time = "2026-07-24T06:15:08.007Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/76/b6/ec1c14d80fc324c432742b10f586041915eb6e0cd78111a05a8cd96a6e54/appwrite-22.2.0-py3-none-any.whl", hash = "sha256:12cc8c41e0f59e33ae5b2fcee04f06fe933ff977e2258148b4745e6bbd274379", size = 332277, upload-time = "2026-07-24T06:15:06.593Z" },
+]
+
+[[package]]
 name = "ast-serialize"
 version = "0.5.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1011,6 +1024,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "anthropic" },
+    { name = "appwrite" },
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
     { name = "boto3" },
@@ -1062,6 +1076,7 @@ dev = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
     { name = "anthropic", specifier = ">=0.40.0" },
+    { name = "appwrite", specifier = ">=22.2.0" },
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
     { name = "boto3", specifier = ">=1.35" },

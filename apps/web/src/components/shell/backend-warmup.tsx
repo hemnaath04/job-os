@@ -3,6 +3,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import { api } from "@/lib/api";
+import { isAppwritePipelineEnabled } from "@/lib/appwrite/config";
 
 /**
  * Wake the API when the signed-in shell mounts, then fill low-priority caches
@@ -17,6 +18,10 @@ export function BackendWarmup() {
   const qc = useQueryClient();
 
   useEffect(() => {
+    // Appwrite serves the interactive pipeline without waking the heavy API.
+    // Resume/profile requests wake it only when the user opens those tools.
+    if (isAppwritePipelineEnabled) return;
+
     let cancelled = false;
     let idleId: number | undefined;
     let timerId: ReturnType<typeof setTimeout> | undefined;

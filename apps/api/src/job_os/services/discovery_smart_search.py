@@ -89,6 +89,7 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
             schema=json.dumps(SmartSearchResponse.model_json_schema())
         ),
         messages=[{"role": "user", "content": user_prompt}],
+        extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
     )
 
     text = "".join(b.text for b in msg.content if b.type == "text")

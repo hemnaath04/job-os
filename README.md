@@ -1,8 +1,9 @@
 # job.os
 
-Personal AI-powered job-application OS.
-Tracker + resume tailoring + multi-source discovery, with a hard "no hallucination"
-invariant on resume content (every bullet cites a verified profile fact).
+Personal AI-powered job-application OS. The interactive application pipeline is
+served from Appwrite for instant board reads and writes, while Python agents
+handle discovery, profile extraction, and resume tailoring with a hard
+"no hallucination" invariant.
 
 ## Layout
 
@@ -18,16 +19,16 @@ infra/        Render, Fly.io, and Vercel deployment configuration
 | Layer            | Choice                                          |
 | ---------------- | ----------------------------------------------- |
 | Frontend         | Next.js 15, TypeScript, Tailwind, shadcn/ui     |
-| Backend          | FastAPI (Python 3.13), async SQLAlchemy 2.0     |
-| Database         | Postgres 16 + pgvector (Neon)                   |
-| Data fetching    | TanStack Query through an authenticated proxy   |
-| LLM              | Anthropic-compatible gateway (model configurable) |
+| Backend          | FastAPI (Python), LangGraph, async SQLAlchemy    |
+| Data             | Appwrite TablesDB + Neon Postgres/pgvector      |
+| Data fetching    | Appwrite Web SDK + optimistic TanStack Query    |
+| LLM routing      | Manifest: Haiku fast tier + quality resume tier |
 | Job discovery    | TheirStack + SimplifyJobs GitHub data           |
 | Job-page import  | Firecrawl, with direct HTTP fallback             |
 | Resume render    | WeasyPrint + Jinja2                              |
 | Auth             | Clerk                                           |
 | Blob             | Cloudflare R2 (optional)                        |
-| Hosting          | Vercel (web) + Render (FastAPI)                 |
+| Hosting          | Vercel (web) + Appwrite + Render (Python agents) |
 
 ## Milestones
 
@@ -51,6 +52,8 @@ pnpm install
 pnpm dev
 ```
 
-Neon, Clerk, and the Anthropic-compatible endpoint are the core production
-services. TheirStack, Firecrawl, and R2 enable optional discovery, import, and
-artifact-storage capabilities. See `.env.example`.
+The application board uses Appwrite directly through a short-lived
+Clerk-to-Appwrite session bridge. Neon remains a rollback copy during the
+cutover. Resume/profile screens and AI workloads stay on the Python service;
+short structured tasks use the fast Manifest route, while resume extraction
+and tailoring use the quality route. See `docs/appwrite-revamp.md`.

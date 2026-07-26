@@ -1,14 +1,13 @@
 # Production deployment
 
-The current production setup has independently deployed web and API projects:
+The current production setup separates the latency-sensitive application board
+from the heavier Python agent workloads:
 
 - Vercel serves the Next.js web app at `jobs.hemnaath.tech`.
-- Vercel serves the primary FastAPI backend at `job-os-api.vercel.app`.
-- Render remains available at `job-os-api.onrender.com` as a rollback target.
-
-The Vercel backend is a separate container project rooted at `apps/api`.
-`Dockerfile.vercel` preserves WeasyPrint's native libraries while using Fluid
-compute.
+- Appwrite TablesDB serves application-board reads and writes without a sleeping
+  backend hop.
+- Render serves FastAPI for profile, discovery, PDF, and AI-agent work.
+- Neon remains the durable rollback copy while Appwrite changes are dual-written.
 
 ## Backend → Render
 
@@ -29,10 +28,9 @@ Configure these values in the Render service:
 Optional features use `FIRECRAWL_API_KEY`, `THEIRSTACK_API_KEY`, and the `R2_*`
 values documented in `.env.example`.
 
-Render's free web-service plan spins down after 15 minutes without inbound
-traffic. `.github/workflows/keep-warm.yml` calls `/health` every five minutes
-to reduce cold starts. For dependable production latency, change the Render
-service itself to a paid instance that does not spin down.
+Render's free web-service plan can still spin down, but it is no longer in the
+Kanban board's critical path. A cold start can affect resume or discovery tools,
+not routine board loads, moves, archives, or refreshes.
 
 ## Backend → Vercel container
 
@@ -65,9 +63,16 @@ The Vercel project uses `infra/vercel/vercel.json` and should have:
 - `API_BASE_URL=https://job-os-api.onrender.com`
 - `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
 - `CLERK_SECRET_KEY`
+- `NEXT_PUBLIC_APPWRITE_ENDPOINT`
+- `NEXT_PUBLIC_APPWRITE_PROJECT_ID`
+- `NEXT_PUBLIC_APPWRITE_DATABASE_ID=job-os`
+- `NEXT_PUBLIC_APPWRITE_APPLICATIONS_TABLE_ID=application_cards`
+- `APPWRITE_API_KEY` (server-only and marked sensitive)
+- `NEXT_PUBLIC_PIPELINE_BACKEND=appwrite`
 
-The browser calls `/api/backend/*` on the web origin. The Next.js route handler
-adds the signed-in Clerk token and forwards requests to FastAPI.
+The applications board uses Appwrite after the Next.js session bridge exchanges
+the Clerk identity for a short-lived Appwrite token. Other routes continue
+through `/api/backend/*` to FastAPI.
 
 ## Smoke test
 
@@ -76,5 +81,6 @@ curl https://job-os-api.onrender.com/health
 # {"status":"ok","version":"0.0.1"}
 ```
 
-Then open `https://jobs.hemnaath.tech`, sign in, and confirm that Dashboard and
-Applications load without a cold-start wait.
+Then open `https://jobs.hemnaath.tech`, sign in, and confirm the Applications
+board loads immediately, a card move survives refresh, and resume/profile tools
+still wake the Python backend when needed.
