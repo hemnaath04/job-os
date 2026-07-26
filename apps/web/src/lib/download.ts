@@ -24,7 +24,13 @@ import { toast } from "sonner";
 export async function downloadPdf(url: string, filename: string): Promise<void> {
   const toastId = toast.loading("Generating PDF…");
   try {
-    const res = await fetch(url, { cache: "no-store" });
+    if (!url) {
+      throw new Error("This version does not have a finalized PDF yet.");
+    }
+    const res = await fetch(url, {
+      cache: "no-store",
+      credentials: "include",
+    });
     if (!res.ok) {
       throw new Error(`${res.status} ${res.statusText}`);
     }
@@ -32,9 +38,7 @@ export async function downloadPdf(url: string, filename: string): Promise<void> 
     if (!contentType.includes("pdf")) {
       // Backend was cold or the proxy timed out — Vercel handed us its
       // 404.html instead of our PDF. Don't save it.
-      throw new Error(
-        "Backend served an unexpected response (probably warming up). Try again in 20-30s.",
-      );
+      throw new Error("The stored file is not a valid PDF.");
     }
     const blob = await res.blob();
     const objectUrl = URL.createObjectURL(blob);

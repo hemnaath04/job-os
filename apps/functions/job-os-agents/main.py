@@ -70,6 +70,132 @@ def _header(req: Any, name: str) -> str:
     return str(headers.get(name) or headers.get(name.lower()) or "")
 
 
+def _profile_fact_specs(document: dict[str, Any]) -> list[tuple[dict[str, Any], list[str]]]:
+    """Conservatively map JSON Resume sections into verified profile facts."""
+    specs: list[tuple[dict[str, Any], list[str]]] = []
+
+    def add(
+        kind: str,
+        title: str,
+        *,
+        org: str | None = None,
+        start_date: str | None = None,
+        end_date: str | None = None,
+        location: str | None = None,
+        source_url: str | None = None,
+        payload: dict[str, Any] | None = None,
+        bullets: list[str] | None = None,
+    ) -> None:
+        specs.append(
+            (
+                {
+                    "kind": kind,
+                    "title": title,
+                    "org": org,
+                    "start_date": start_date,
+                    "end_date": end_date,
+                    "location": location,
+                    "payload": payload or {},
+                    "verified": True,
+                    "source_url": source_url,
+                },
+                [str(item) for item in bullets or [] if str(item).strip()],
+            )
+        )
+
+    for entry in document.get("education", []) or []:
+        title = f"{entry.get('studyType', '')} {entry.get('area', '')}".strip()
+        add(
+            "education",
+            title or "Education",
+            org=entry.get("institution"),
+            start_date=entry.get("startDate"),
+            end_date=entry.get("endDate"),
+            location=entry.get("location"),
+            source_url=entry.get("url"),
+            payload={
+                "courses": entry.get("courses", []),
+                "score": entry.get("score"),
+                "studyType": entry.get("studyType"),
+                "area": entry.get("area"),
+            },
+        )
+    for entry in document.get("work", []) or []:
+        add(
+            "experience",
+            entry.get("position") or entry.get("name") or "Experience",
+            org=entry.get("name"),
+            start_date=entry.get("startDate"),
+            end_date=entry.get("endDate"),
+            location=entry.get("location"),
+            source_url=entry.get("url"),
+            payload={
+                "summary": entry.get("summary"),
+                "keywords": entry.get("keywords", []),
+            },
+            bullets=entry.get("highlights", []),
+        )
+    for entry in document.get("projects", []) or []:
+        add(
+            "project",
+            entry.get("name") or "Project",
+            start_date=entry.get("startDate"),
+            end_date=entry.get("endDate"),
+            source_url=entry.get("url"),
+            payload={
+                "description": entry.get("description"),
+                "keywords": entry.get("keywords", []),
+                "roles": entry.get("roles", []),
+                "entity": entry.get("entity"),
+                "type": entry.get("type"),
+            },
+            bullets=entry.get("highlights", []),
+        )
+    for group in document.get("skills", []) or []:
+        category = group.get("name") or "Skills"
+        for keyword in group.get("keywords", []) or []:
+            add(
+                "skill",
+                str(keyword).strip(),
+                org=category,
+                payload={"category": category, "level": group.get("level")},
+            )
+    for section, kind, title_key, org_key, date_key in [
+        ("certificates", "certification", "name", "issuer", "date"),
+        ("publications", "publication", "name", "publisher", "releaseDate"),
+        ("awards", "award", "title", "awarder", "date"),
+    ]:
+        for entry in document.get(section, []) or []:
+            add(
+                kind,
+                entry.get(title_key) or kind.title(),
+                org=entry.get(org_key),
+                start_date=entry.get(date_key),
+                source_url=entry.get("url"),
+                payload={"summary": entry.get("summary")},
+            )
+    for entry in document.get("volunteer", []) or []:
+        add(
+            "volunteering",
+            entry.get("position") or entry.get("organization") or "Volunteering",
+            org=entry.get("organization"),
+            start_date=entry.get("startDate"),
+            end_date=entry.get("endDate"),
+            source_url=entry.get("url"),
+            payload={"summary": entry.get("summary")},
+            bullets=entry.get("highlights", []),
+        )
+    return specs
+
+
+def _profile_key(fact: dict[str, Any]) -> tuple[str, str, str]:
+    return (
+        str(fact["kind"]),
+        str(fact.get("org") or "").strip().lower(),
+        str(fact["title"]).strip().lower(),
+    )
+
+
 class Workspace:
     def __init__(self, req: Any):
         self.user_id = _header(req, "x-appwrite-user-id")
@@ -307,6 +433,140 @@ async def _import_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
     return {"resume": resume, "version": version}
 
 
+async def _extract_profile(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
+    filename = str(payload["filename"])
+    file_id = str(payload["file_id"])
+    raw = workspace.storage.get_file_download(workspace.files_bucket, file_id)
+    lowered = filename.lower()
+    if lowered.endswith(".pdf"):
+        document = await extract_json_resume_from_pdf(raw)
+    elif lowered.endswith(".docx"):
+        document = await extract_json_resume_from_docx(raw)
+    elif lowered.endswith(".json"):
+        document = json.loads(raw)
+    else:
+        raise ValueError("Only PDF, DOCX, and JSON resumes are supported.")
+    validate_json_resume_document(document)
+
+    existing_rows = workspace.tables.list_rows(
+        workspace.database_id,
+        workspace.profile_facts_table,
+        [Query.equal("owner_id", workspace.user_id), Query.limit(500)],
+        total=False,
+    ).rows
+    existing_keys = {_profile_key(_snapshot(row)) for row in existing_rows}
+    facts_created = 0
+    facts_skipped = 0
+    bullets_created = 0
+    timestamp = _now()
+    for fact, bullets in _profile_fact_specs(document):
+        key = _profile_key(fact)
+        if key in existing_keys:
+            facts_skipped += 1
+            continue
+        fact_id = str(uuid4())
+        fact.update(
+            id=fact_id,
+            created_at=timestamp,
+            updated_at=timestamp,
+        )
+        workspace.create_snapshot(
+            workspace.profile_facts_table,
+            row_id=fact_id,
+            snapshot=fact,
+            fields={"verified": True, "archived": False},
+        )
+        existing_keys.add(key)
+        facts_created += 1
+        for text in bullets:
+            bullet_id = str(uuid4())
+            bullet = {
+                "id": bullet_id,
+                "fact_id": fact_id,
+                "text": text,
+                "target_role": None,
+                "metric_verified": True,
+                "created_at": timestamp,
+                "updated_at": timestamp,
+            }
+            workspace.create_snapshot(
+                workspace.fact_bullets_table,
+                row_id=bullet_id,
+                snapshot=bullet,
+                fields={"fact_id": fact_id},
+            )
+            bullets_created += 1
+
+    master_rows = workspace.tables.list_rows(
+        workspace.database_id,
+        workspace.resumes_table,
+        [
+            Query.equal("owner_id", workspace.user_id),
+            Query.equal("is_master", True),
+            Query.limit(1),
+        ],
+        total=False,
+    ).rows
+    if not master_rows:
+        resume_id = str(uuid4())
+        version_id = str(uuid4())
+        resume = {
+            "id": resume_id,
+            "name": "Master",
+            "base_role": "master",
+            "is_master": True,
+            "source_kind": "upload",
+            "source_label": "Career profile",
+            "archived_at": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+        }
+        version = {
+            "id": version_id,
+            "resume_id": resume_id,
+            "json_resume": document,
+            "provenance": [],
+            "ats_score": None,
+            "ats_report": None,
+            "approved_by_user": True,
+            "pdf_r2_key": None,
+            "docx_r2_key": None,
+            "spawned_from_job_id": None,
+            "status": "draft",
+            "review_score": None,
+            "review_report": None,
+            "parent_version_id": None,
+            "source_filename": filename,
+            "revision_note": "Imported career profile",
+            "latex_source": None,
+            "finalized_at": None,
+            "archived_at": None,
+            "created_at": timestamp,
+            "updated_at": timestamp,
+            "source_file_id": file_id,
+            "pdf_file_id": None,
+        }
+        workspace.create_snapshot(
+            workspace.resumes_table,
+            row_id=resume_id,
+            snapshot=resume,
+            fields={"name": "Master", "is_master": True, "archived": False},
+        )
+        workspace.create_snapshot(
+            workspace.versions_table,
+            row_id=version_id,
+            snapshot=version,
+            fields={"resume_id": resume_id, "status": "draft", "archived": False},
+        )
+
+    return {
+        "facts_created": facts_created,
+        "facts_skipped": facts_skipped,
+        "bullets_created": bullets_created,
+        "notes": ["Imported into the Appwrite evidence vault."],
+    }
+
+
 async def _revise_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
     resume_id = str(payload["resume_id"])
     version_id = str(payload["version_id"])
@@ -403,6 +663,8 @@ async def _review_resume(
 async def _dispatch(workspace: Workspace, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if path == "/resume/import":
         return await _import_resume(workspace, payload)
+    if path == "/profile/extract":
+        return await _extract_profile(workspace, payload)
     if path == "/resume/revise":
         return await _revise_resume(workspace, payload)
     if path == "/resume/review":

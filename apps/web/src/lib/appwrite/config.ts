@@ -23,11 +23,22 @@ export const appwriteConfig = {
 };
 
 export type PipelineBackend = "legacy" | "appwrite";
+export type WorkspaceBackend = "legacy" | "appwrite";
 
 export const pipelineBackend: PipelineBackend =
   process.env.NEXT_PUBLIC_PIPELINE_BACKEND === "appwrite" ? "appwrite" : "legacy";
 
 export const isAppwritePipelineEnabled = pipelineBackend === "appwrite";
+
+export const workspaceBackend: WorkspaceBackend =
+  process.env.NEXT_PUBLIC_WORKSPACE_BACKEND === "appwrite"
+    ? "appwrite"
+    : "legacy";
+
+export const isAppwriteWorkspaceEnabled = workspaceBackend === "appwrite";
+
+export const isAppwriteInteractiveBackendEnabled =
+  isAppwritePipelineEnabled && isAppwriteWorkspaceEnabled;
 
 export function requirePublicAppwriteConfig() {
   const missing = Object.entries(appwriteConfig)

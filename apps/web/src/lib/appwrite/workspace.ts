@@ -7,8 +7,12 @@ import {
   type Models,
 } from "appwrite";
 import type {
+  FactBullet,
   JsonResume,
+  ProfileFact,
   Resume,
+  ResumeChatResponse,
+  ResumeReviewResult,
   ResumeVersion,
   ResumeVersionSummary,
   RevisionMessage,
@@ -48,6 +52,24 @@ interface AgentJobRow extends SnapshotRow {
   status: AgentJobStatus;
 }
 
+interface ProfileFactRow extends SnapshotRow {
+  verified: boolean;
+  archived: boolean;
+}
+
+interface FactBulletRow extends SnapshotRow {
+  fact_id: string;
+}
+
+type StoredResumeVersion = ResumeVersion & {
+  pdf_file_id?: string | null;
+  source_file_id?: string | null;
+};
+
+type StoredFactBullet = FactBullet & {
+  fact_id: string;
+};
+
 export type AgentJobKind =
   | "resume_import"
   | "resume_revision"
@@ -77,6 +99,22 @@ function parseSnapshot<T>(row: SnapshotRow): T {
 
 function now(): string {
   return new Date().toISOString();
+}
+
+const versionFileIds = new Map<string, string>();
+
+function rememberVersionFile(version: ResumeVersion): ResumeVersion {
+  const stored = version as StoredResumeVersion;
+  if (stored.pdf_file_id) versionFileIds.set(version.id, stored.pdf_file_id);
+  return version;
+}
+
+function ownerPermissions(ownerId: string): string[] {
+  return [
+    `read("user:${ownerId}")`,
+    `update("user:${ownerId}")`,
+    `delete("user:${ownerId}")`,
+  ];
 }
 
 async function createAgentJob<TInput extends Record<string, unknown>>(
@@ -269,7 +307,9 @@ export const appwriteWorkspace = {
       total: false,
       ttl: 0,
     });
-    return result.rows.map((row) => parseSnapshot<ResumeVersion>(row));
+    return result.rows.map((row) =>
+      rememberVersionFile(parseSnapshot<ResumeVersion>(row)),
+    );
   },
 
   async getVersion(versionId: string): Promise<ResumeVersion> {
@@ -280,7 +320,7 @@ export const appwriteWorkspace = {
       tableId: config.resumeVersionsTableId,
       rowId: versionId,
     });
-    return parseSnapshot<ResumeVersion>(row);
+    return rememberVersionFile(parseSnapshot<ResumeVersion>(row));
   },
 
   async editVersion(
@@ -326,7 +366,7 @@ export const appwriteWorkspace = {
         snapshot: JSON.stringify(version),
       },
     });
-    return version;
+    return rememberVersionFile(version);
   },
 
   async archiveVersion(versionId: string): Promise<void> {
@@ -372,6 +412,234 @@ export const appwriteWorkspace = {
     return result.rows.map((row) => parseSnapshot<RevisionMessage>(row));
   },
 
+  async approveVersion(versionId: string): Promise<ResumeVersion> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+    });
+    const version = {
+      ...parseSnapshot<ResumeVersion>(row),
+      approved_by_user: true,
+      updated_at: now(),
+    };
+    await tables.updateRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+      data: {
+        source_updated_at: version.updated_at,
+        snapshot: JSON.stringify(version),
+      },
+    });
+    return rememberVersionFile(version);
+  },
+
+  async applyRevisionProposal(
+    resumeId: string,
+    versionId: string,
+    messageId: string,
+  ): Promise<ResumeChatResponse> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<MessageRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeMessagesTableId,
+      rowId: messageId,
+    });
+    const message = parseSnapshot<RevisionMessage>(row);
+    if (message.resume_version_id !== versionId || !message.proposed_json_resume) {
+      throw new Error("This revision proposal is unavailable.");
+    }
+    const version = await this.editVersion(
+      versionId,
+      message.proposed_json_resume,
+      `AI revision: ${message.content.slice(0, 180)}`,
+    );
+    const updatedMessage = {
+      ...message,
+      applied: true,
+      updated_at: now(),
+    };
+    await tables.updateRow<MessageRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeMessagesTableId,
+      rowId: messageId,
+      data: {
+        source_updated_at: updatedMessage.updated_at,
+        snapshot: JSON.stringify(updatedMessage),
+      },
+    });
+    return {
+      message: message.content,
+      suggestions: message.suggestions,
+      proposal_id: message.id,
+      proposed_json_resume: message.proposed_json_resume,
+      version: { ...version, resume_id: resumeId },
+      review: null,
+    };
+  },
+
+  async listFacts(kind?: string): Promise<ProfileFact[]> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const factQueries = [
+      Query.equal("archived", false),
+      Query.orderDesc("source_updated_at"),
+      Query.limit(500),
+    ];
+    const factsResult = await tables.listRows<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      queries: factQueries,
+      total: false,
+      ttl: 0,
+    });
+    const facts = factsResult.rows
+      .map((row) => parseSnapshot<ProfileFact>(row))
+      .filter((fact) => !kind || fact.kind === kind);
+    if (!facts.length) return [];
+
+    const bullets: StoredFactBullet[] = [];
+    for (let start = 0; start < facts.length; start += 100) {
+      const ids = facts.slice(start, start + 100).map((fact) => fact.id);
+      const result = await tables.listRows<FactBulletRow>({
+        databaseId: config.databaseId,
+        tableId: config.factBulletsTableId,
+        queries: [
+          Query.equal("fact_id", ids),
+          Query.orderAsc("source_updated_at"),
+          Query.limit(500),
+        ],
+        total: false,
+        ttl: 0,
+      });
+      bullets.push(
+        ...result.rows.map((row) => ({
+          ...parseSnapshot<FactBullet>(row),
+          fact_id: row.fact_id,
+        })),
+      );
+    }
+    const byFact = new Map<string, FactBullet[]>();
+    for (const bullet of bullets) {
+      const group = byFact.get(bullet.fact_id) ?? [];
+      group.push(bullet);
+      byFact.set(bullet.fact_id, group);
+    }
+    return facts.map((fact) => ({
+      ...fact,
+      bullets: byFact.get(fact.id) ?? [],
+    }));
+  },
+
+  async createFact(input: {
+    kind: string;
+    title: string;
+    org?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    location?: string | null;
+    payload?: Record<string, unknown>;
+    verified?: boolean;
+    source_url?: string | null;
+    bullets?: {
+      text: string;
+      target_role?: string | null;
+      metric_verified?: boolean;
+    }[];
+  }): Promise<ProfileFact> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const ownerId = getCurrentAppwriteUserId();
+    const timestamp = now();
+    const fact: ProfileFact = {
+      id: ID.unique(),
+      kind: input.kind as ProfileFact["kind"],
+      title: input.title,
+      org: input.org ?? null,
+      start_date: input.start_date ?? null,
+      end_date: input.end_date ?? null,
+      location: input.location ?? null,
+      payload: input.payload ?? {},
+      verified: input.verified ?? true,
+      source_url: input.source_url ?? null,
+      bullets: [],
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    const tables = getAppwriteServices().tables;
+    const permissions = ownerPermissions(ownerId);
+    await tables.createRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: fact.id,
+      data: {
+        owner_id: ownerId,
+        verified: fact.verified,
+        archived: false,
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(fact),
+      },
+      permissions,
+    });
+    for (const inputBullet of input.bullets ?? []) {
+      const bullet: StoredFactBullet = {
+        id: ID.unique(),
+        fact_id: fact.id,
+        text: inputBullet.text,
+        target_role: inputBullet.target_role ?? null,
+        metric_verified: inputBullet.metric_verified ?? false,
+        created_at: timestamp,
+        updated_at: timestamp,
+      };
+      await tables.createRow<FactBulletRow>({
+        databaseId: config.databaseId,
+        tableId: config.factBulletsTableId,
+        rowId: bullet.id,
+        data: {
+          owner_id: ownerId,
+          fact_id: fact.id,
+          source_updated_at: timestamp,
+          snapshot: JSON.stringify(bullet),
+        },
+        permissions,
+      });
+      fact.bullets.push(bullet);
+    }
+    return fact;
+  },
+
+  async archiveFact(factId: string): Promise<void> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+    });
+    const fact = {
+      ...parseSnapshot<ProfileFact>(row),
+      updated_at: now(),
+    };
+    await tables.updateRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+      data: {
+        archived: true,
+        source_updated_at: fact.updated_at,
+        snapshot: JSON.stringify(fact),
+      },
+    });
+  },
+
   async uploadResume(file: File, isMaster: boolean): Promise<AgentJob> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
@@ -385,6 +653,22 @@ export const appwriteWorkspace = {
       filename: file.name,
       name: file.name.replace(/\.(pdf|docx|json)$/i, ""),
       is_master: isMaster,
+    });
+  },
+
+  async extractProfile(file: File): Promise<AgentJob> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const stored = await getAppwriteServices().storage.createFile({
+      bucketId: config.resumeFilesBucketId,
+      fileId: ID.unique(),
+      file,
+      permissions: ownerPermissions(getCurrentAppwriteUserId()),
+    });
+    return createAgentJob("profile_extract", "/profile/extract", {
+      file_id: stored.$id,
+      filename: file.name,
+      replace_existing: false,
     });
   },
 
@@ -423,5 +707,15 @@ export const appwriteWorkspace = {
       rowId: jobId,
     });
     return parseSnapshot<AgentJob<T>>(row);
+  },
+
+  downloadVersionUrl(versionId: string): string {
+    const fileId = versionFileIds.get(versionId);
+    if (!fileId) return "";
+    const config = requirePublicAppwriteConfig();
+    return getAppwriteServices().storage.getFileDownload({
+      bucketId: config.resumeFilesBucketId,
+      fileId,
+    });
   },
 };
