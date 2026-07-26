@@ -1,6 +1,6 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
 import { BriefcaseBusiness, Inbox, LayoutGrid, Plus, Rows3 } from "lucide-react";
 import { useState } from "react";
@@ -10,15 +10,96 @@ import { EmptyState } from "@/components/empty-state";
 import { KanbanBoard } from "@/components/kanban-board";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import type { Application, AppStatus } from "@/lib/types";
 
 export default function ApplicationsPage() {
   const [view, setView] = useState<"kanban" | "table">("kanban");
   const [open, setOpen] = useState(false);
+  const queryClient = useQueryClient();
 
   const { data: applications = [], refetch, isLoading } = useQuery({
     queryKey: ["applications"],
     queryFn: () => api.listApplications(),
   });
+
+  const updateApplication = useMutation({
+    mutationFn: ({
+      id,
+      patch,
+    }: {
+      id: string;
+      patch: Partial<Application>;
+      optimisticBase?: Application;
+    }) => api.patchApplication(id, patch),
+    onMutate: async ({ id, patch, optimisticBase }) => {
+      await queryClient.cancelQueries({ queryKey: ["applications"] });
+      const previous =
+        queryClient.getQueryData<Application[]>(["applications"]) ?? [];
+      queryClient.setQueryData<Application[]>(["applications"], (current = []) => {
+        const updated = current.map((application) =>
+          application.id === id
+            ? {
+                ...application,
+                ...patch,
+                updated_at: new Date().toISOString(),
+              }
+            : application,
+        );
+        if (!updated.some((application) => application.id === id) && optimisticBase) {
+          updated.unshift({
+            ...optimisticBase,
+            ...patch,
+            updated_at: new Date().toISOString(),
+          });
+        }
+        return updated;
+      });
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["applications"], context.previous);
+      }
+    },
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Application[]>(["applications"], (current = []) => {
+        const updated = current.map((application) =>
+          application.id === saved.id ? saved : application,
+        );
+        return updated.some((application) => application.id === saved.id)
+          ? updated
+          : [saved, ...updated];
+      });
+    },
+  });
+
+  const archiveApplication = useMutation({
+    mutationFn: (id: string) => api.archiveApplication(id),
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: ["applications"] });
+      const previous =
+        queryClient.getQueryData<Application[]>(["applications"]) ?? [];
+      queryClient.setQueryData<Application[]>(["applications"], (current = []) =>
+        current.filter((application) => application.id !== id),
+      );
+      return { previous };
+    },
+    onError: (_error, _id, context) => {
+      if (context?.previous) {
+        queryClient.setQueryData(["applications"], context.previous);
+      }
+    },
+  });
+
+  const moveApplication = (id: string, status: AppStatus) =>
+    updateApplication.mutateAsync({ id, patch: { status } });
+
+  const restoreApplication = (application: Application) =>
+    updateApplication.mutateAsync({
+      id: application.id,
+      patch: { archived: false },
+      optimisticBase: application,
+    });
 
   return (
     <div className="workspace-page max-w-[1680px]">
@@ -76,9 +157,18 @@ export default function ApplicationsPage() {
             cta={{ href: "/jobs", label: "Find internships" }}
           />
         ) : view === "kanban" ? (
-          <KanbanBoard applications={applications} onChange={() => refetch()} />
+          <KanbanBoard
+            applications={applications}
+            onMove={moveApplication}
+            onArchive={(id) => archiveApplication.mutateAsync(id)}
+            onRestore={restoreApplication}
+          />
         ) : (
-          <ApplicationsTable applications={applications} onChange={() => refetch()} />
+          <ApplicationsTable
+            applications={applications}
+            onArchive={(id) => archiveApplication.mutateAsync(id)}
+            onRestore={restoreApplication}
+          />
         )}
       </div>
 

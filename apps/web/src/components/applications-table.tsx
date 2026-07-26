@@ -6,15 +6,16 @@ import Link from "next/link";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
-import { api } from "@/lib/api";
 import type { Application } from "@/lib/types";
 
 export function ApplicationsTable({
   applications,
-  onChange,
+  onArchive,
+  onRestore,
 }: {
   applications: Application[];
-  onChange: () => void;
+  onArchive: (id: string) => Promise<unknown>;
+  onRestore: (application: Application) => Promise<unknown>;
 }) {
   function openJD(url: string | null | undefined) {
     if (!url) return;
@@ -23,16 +24,14 @@ export function ApplicationsTable({
 
   async function onDelete(a: Application) {
     try {
-      await api.archiveApplication(a.id);
-      onChange();
+      await onArchive(a.id);
       toast.success(`Archived "${a.job.title}"`, {
         description: a.job.company?.name ?? undefined,
         action: {
           label: "Undo",
           onClick: async () => {
             try {
-              await api.patchApplication(a.id, { archived: false });
-              onChange();
+              await onRestore(a);
             } catch (err) {
               toast.error(`Couldn't restore: ${(err as Error).message}`);
             }

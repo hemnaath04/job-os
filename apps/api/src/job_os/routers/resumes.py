@@ -7,7 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from job_os.auth import get_current_user
 from job_os.db.models import Job, Resume, ResumeVersion, User
 from job_os.db.session import get_session
-from job_os.integrations import r2
 from job_os.schemas.resumes import (
     ExportRequest,
     ExportResult,
@@ -19,8 +18,6 @@ from job_os.schemas.resumes import (
     TailorRequest,
     TailorResponse,
 )
-from job_os.services.pdf_render import render_resume_pdf
-from job_os.services.tailor import tailor_resume
 
 router = APIRouter(prefix="/resumes")
 
@@ -31,7 +28,9 @@ async def list_resumes(
     session: AsyncSession = Depends(get_session),
 ) -> list[Resume]:
     result = await session.execute(
-        select(Resume).where(Resume.user_id == user.id).order_by(Resume.is_master.desc(), Resume.name)
+        select(Resume)
+        .where(Resume.user_id == user.id)
+        .order_by(Resume.is_master.desc(), Resume.name)
     )
     return list(result.scalars().all())
 
@@ -121,6 +120,9 @@ async def export_version(
 ) -> ExportResult:
     """Render the version's JSON Resume to PDF via WeasyPrint, push to R2 if
     configured (otherwise just report the rendered byte count)."""
+    from job_os.integrations import r2
+    from job_os.services.pdf_render import render_resume_pdf
+
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)
     if version is None or version.resume_id != resume_id:
@@ -142,7 +144,10 @@ async def export_version(
             r2_key=None,
             presigned_url=None,
             rendered=True,
-            note=f"Rendered {len(rendered.bytes_)} bytes — R2 not configured, use /download instead.",
+            note=(
+                f"Rendered {len(rendered.bytes_)} bytes — "
+                "R2 not configured, use /download instead."
+            ),
         )
 
     setattr(version, f"{fmt}_r2_key", key)
@@ -172,6 +177,8 @@ async def download_version(
     if version.pdf_bytes:
         pdf_bytes = bytes(version.pdf_bytes)
     else:
+        from job_os.services.pdf_render import render_resume_pdf
+
         rendered = render_resume_pdf(version.json_resume)
         pdf_bytes = rendered.bytes_
         # Persist for subsequent clicks. flush() not commit — the session
@@ -202,6 +209,8 @@ async def upload_version(
     a minimal stub `{ "uploaded": True, "filename": ... }` since we don't
     extract on upload — the user provided the final artifact and we trust it.
     """
+    from job_os.integrations import r2
+
     await _load_resume(session, resume_id, user)
     content = await file.read()
     if not content:
@@ -276,6 +285,8 @@ async def tailor_version(
     no-hallucination baseline. The new version is unapproved; the user
     reviews via `/versions/{id}` and either approves or re-tailors.
     """
+    from job_os.services.tailor import tailor_resume
+
     resume = await _load_resume(session, resume_id, user)
 
     job = await session.get(Job, payload.job_id)
@@ -336,6 +347,8 @@ async def tailor_version(
     # for the first download, blowing past the Vercel proxy's serverless
     # timeout and producing a junk "404.html" download.
     try:
+        from job_os.services.pdf_render import render_resume_pdf
+
         rendered = render_resume_pdf(version.json_resume)
         version.pdf_bytes = rendered.bytes_
         await session.flush()

@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
@@ -18,12 +19,6 @@ from job_os.schemas.profile import (
     ProfileFactPatch,
     ProfileFactRead,
 )
-from job_os.services.embeddings import embed_one
-from job_os.services.profile_extract import (
-    extract_json_resume_from_docx,
-    extract_json_resume_from_pdf,
-)
-from job_os.services.profile_import import import_json_resume
 from job_os.settings import get_settings
 
 router = APIRouter(prefix="/profile")
@@ -53,6 +48,8 @@ async def create_fact(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ProfileFact:
+    from job_os.services.embeddings import embed_one
+
     fact = ProfileFact(
         user_id=user.id,
         kind=payload.kind,
@@ -113,6 +110,8 @@ async def add_bullet(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> FactBullet:
+    from job_os.services.embeddings import embed_one
+
     fact = await _load_fact(session, fact_id, user)
     bullet = FactBullet(
         fact_id=fact.id,
@@ -149,13 +148,15 @@ async def import_resume(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ImportReport:
+    from job_os.services.profile_import import import_json_resume
+
     settings = get_settings()
-    doc: dict | None = payload.json_resume
+    doc: dict[str, Any] | None = payload.json_resume
 
     if doc is None and payload.server_path:
         if not settings.is_dev:
             raise HTTPException(400, "server_path import only allowed in dev mode")
-        path = Path(payload.server_path).expanduser()
+        path = Path(payload.server_path).expanduser()  # noqa: ASYNC240
         if not path.is_file():
             raise HTTPException(400, f"file not found: {path}")
         doc = json.loads(path.read_text())
@@ -196,11 +197,17 @@ async def upload_resume(
     if name.endswith(".json") or "json" in ctype:
         doc = json.loads(content.decode("utf-8"))
     elif name.endswith(".pdf") or "pdf" in ctype:
+        from job_os.services.profile_extract import extract_json_resume_from_pdf
+
         doc = await extract_json_resume_from_pdf(content)
     elif name.endswith(".docx") or "wordprocessingml" in ctype:
+        from job_os.services.profile_extract import extract_json_resume_from_docx
+
         doc = await extract_json_resume_from_docx(content)
     else:
         raise HTTPException(400, f"unsupported file type: {file.content_type} / {file.filename}")
+
+    from job_os.services.profile_import import import_json_resume
 
     return await import_json_resume(
         session,

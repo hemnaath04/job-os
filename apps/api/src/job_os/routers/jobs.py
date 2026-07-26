@@ -8,10 +8,8 @@ from sqlalchemy.orm import joinedload
 from job_os.auth import get_current_user
 from job_os.db.models import Job, User
 from job_os.db.session import get_session
-from job_os.integrations.firecrawl import fetch_url_markdown
 from job_os.schemas.jobs import JobCreateManual, JobFromText, JobFromUrl, JobRead
 from job_os.services.companies import upsert_company
-from job_os.services.jd_parse import parse_jd
 
 router = APIRouter(prefix="/jobs")
 
@@ -69,6 +67,8 @@ async def create_manual(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    from job_os.services.jd_parse import parse_jd
+
     company = await upsert_company(
         session, name=payload.company_name, domain=payload.company_domain
     )
@@ -98,6 +98,9 @@ async def create_from_url(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    from job_os.integrations.firecrawl import fetch_url_markdown
+    from job_os.services.jd_parse import parse_jd
+
     url = str(payload.url)
     fetched = await fetch_url_markdown(url)
     parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
@@ -134,6 +137,8 @@ async def create_from_text(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    from job_os.services.jd_parse import parse_jd
+
     parsed = await parse_jd(payload.jd_text)
     company = await upsert_company(
         session,

@@ -20,11 +20,12 @@ from __future__ import annotations
 import json
 from datetime import date
 from decimal import Decimal
-from typing import Any
+from typing import Any, TypedDict
 from uuid import UUID
 
 import anthropic
 import structlog
+from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,6 +93,16 @@ Output: a single JSON object matching the provided schema. No prose, no fences.
 """
 
 
+class TailorGraphState(TypedDict):
+    """State shared by the draft → score → refine LangGraph."""
+
+    messages: list[anthropic.types.MessageParam]
+    best_agent: TailorAgentOutput | None
+    best_score: Decimal
+    iteration_scores: list[float]
+    done: bool
+
+
 def _refine_prompt(prev: TailorAgentOutput, target: Decimal) -> str:
     """Feedback turn after a pass that came in below the ATS target.
 
@@ -153,23 +164,16 @@ async def tailor_resume(
         base_url=settings.anthropic_base_url or None,
     )
 
-    # Multi-pass loop. Each iteration is one Opus call; we feed Claude back
-    # its previous attempt + the remaining missing keywords and ask for an
-    # honest semantic-match rewrite. We keep the best-scoring attempt and
-    # bail early when we hit the target.
-    messages: list[anthropic.types.MessageParam] = [
-        {"role": "user", "content": user_prompt}
-    ]
-    best_agent: TailorAgentOutput | None = None
-    best_score: Decimal = Decimal("-1")
-    iteration_scores: list[float] = []
+    graph = StateGraph(TailorGraphState)
 
-    for iteration in range(MAX_ITERATIONS):
+    async def draft_and_score(state: TailorGraphState) -> TailorGraphState:
+        """One quality-model pass followed by deterministic Python scoring."""
         msg = await client.messages.create(
             model=settings.anthropic_model_tailor,
             max_tokens=4096,
             system=SYSTEM_PROMPT,
-            messages=messages,
+            messages=state["messages"],
+            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
         )
         text = "".join(b.text for b in msg.content if b.type == "text")
         raw = _strip_json_fence(text)
@@ -180,33 +184,66 @@ async def tailor_resume(
                 "tailor.invalid_json",
                 error=str(e),
                 preview=raw[:400],
-                iteration=iteration + 1,
+                iteration=len(state["iteration_scores"]) + 1,
             )
-            if best_agent is not None:
-                # Earlier pass was valid; stop iterating and use it.
-                break
+            if state["best_agent"] is not None:
+                return {**state, "done": True}
             raise RuntimeError("Tailoring agent returned an invalid response.") from e
 
         score = _agent_quick_score(attempt)
-        iteration_scores.append(float(score))
+        scores = [*state["iteration_scores"], float(score)]
         log.info(
             "tailor.iteration",
-            iteration=iteration + 1,
+            iteration=len(scores),
             score=float(score),
             target=float(TARGET_ATS_SCORE),
         )
 
+        best_agent = state["best_agent"]
+        best_score = state["best_score"]
         if score > best_score:
             best_agent = attempt
             best_score = score
 
-        if score >= TARGET_ATS_SCORE:
-            break
+        done = score >= TARGET_ATS_SCORE or len(scores) >= MAX_ITERATIONS
+        messages = state["messages"]
+        if not done:
+            messages = [
+                *messages,
+                {"role": "assistant", "content": raw},
+                {
+                    "role": "user",
+                    "content": _refine_prompt(attempt, TARGET_ATS_SCORE),
+                },
+            ]
 
-        # Set up the next turn: include this attempt as the assistant message
-        # and append a refine instruction.
-        messages.append({"role": "assistant", "content": raw})
-        messages.append({"role": "user", "content": _refine_prompt(attempt, TARGET_ATS_SCORE)})
+        return {
+            "messages": messages,
+            "best_agent": best_agent,
+            "best_score": best_score,
+            "iteration_scores": scores,
+            "done": done,
+        }
+
+    def route_after_score(state: TailorGraphState) -> str:
+        return END if state["done"] else "draft_and_score"
+
+    graph.add_node("draft_and_score", draft_and_score)
+    graph.add_edge(START, "draft_and_score")
+    graph.add_conditional_edges("draft_and_score", route_after_score)
+    compiled_graph = graph.compile()
+    graph_result = await compiled_graph.ainvoke(
+        {
+            "messages": [{"role": "user", "content": user_prompt}],
+            "best_agent": None,
+            "best_score": Decimal("-1"),
+            "iteration_scores": [],
+            "done": False,
+        }
+    )
+
+    best_agent = graph_result["best_agent"]
+    iteration_scores = graph_result["iteration_scores"]
 
     if best_agent is None:
         raise RuntimeError("Tailoring agent returned no valid response after retries.")

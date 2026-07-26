@@ -9,6 +9,8 @@
     "build": "turbo run build",
     "lint": "turbo run lint",
     "typecheck": "turbo run typecheck",
+    "appwrite:bootstrap": "cd apps/api && uv run python -m job_os.scripts.bootstrap_appwrite",
+    "appwrite:import": "cd apps/api && uv run python -m job_os.scripts.import_appwrite_snapshot",
     "gen:types": "cd apps/api && uv run python -m job_os.scripts.export_openapi > ../../packages/types/openapi.json && cd ../.. && pnpm --filter @job-os/types build"
   },
   "devDependencies": {
