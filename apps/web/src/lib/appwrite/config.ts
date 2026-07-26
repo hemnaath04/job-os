@@ -4,6 +4,22 @@ export const appwriteConfig = {
   databaseId: process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID ?? "job-os",
   applicationsTableId:
     process.env.NEXT_PUBLIC_APPWRITE_APPLICATIONS_TABLE_ID ?? "application_cards",
+  resumesTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_RESUMES_TABLE_ID ?? "resumes",
+  resumeVersionsTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_RESUME_VERSIONS_TABLE_ID ?? "resume_versions",
+  resumeMessagesTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_RESUME_MESSAGES_TABLE_ID ?? "resume_messages",
+  profileFactsTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_PROFILE_FACTS_TABLE_ID ?? "profile_facts",
+  factBulletsTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_FACT_BULLETS_TABLE_ID ?? "fact_bullets",
+  agentJobsTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_AGENT_JOBS_TABLE_ID ?? "agent_jobs",
+  resumeFilesBucketId:
+    process.env.NEXT_PUBLIC_APPWRITE_RESUME_FILES_BUCKET_ID ?? "resume_files",
+  agentFunctionId:
+    process.env.NEXT_PUBLIC_APPWRITE_AGENT_FUNCTION_ID ?? "job-os-agents",
 };
 
 export type PipelineBackend = "legacy" | "appwrite";

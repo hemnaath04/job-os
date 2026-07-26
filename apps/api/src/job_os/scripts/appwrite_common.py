@@ -19,6 +19,13 @@ class AppwriteAdminConfig:
     api_key: str
     database_id: str
     applications_table_id: str
+    resumes_table_id: str
+    resume_versions_table_id: str
+    resume_messages_table_id: str
+    profile_facts_table_id: str
+    fact_bullets_table_id: str
+    agent_jobs_table_id: str
+    resume_files_bucket_id: str
 
     @classmethod
     def from_environment(cls) -> AppwriteAdminConfig:
@@ -56,6 +63,23 @@ class AppwriteAdminConfig:
                     "NEXT_PUBLIC_APPWRITE_APPLICATIONS_TABLE_ID",
                 )
                 or "application_cards"
+            ),
+            resumes_table_id=value("APPWRITE_RESUMES_TABLE_ID") or "resumes",
+            resume_versions_table_id=(
+                value("APPWRITE_RESUME_VERSIONS_TABLE_ID") or "resume_versions"
+            ),
+            resume_messages_table_id=(
+                value("APPWRITE_RESUME_MESSAGES_TABLE_ID") or "resume_messages"
+            ),
+            profile_facts_table_id=(
+                value("APPWRITE_PROFILE_FACTS_TABLE_ID") or "profile_facts"
+            ),
+            fact_bullets_table_id=(
+                value("APPWRITE_FACT_BULLETS_TABLE_ID") or "fact_bullets"
+            ),
+            agent_jobs_table_id=value("APPWRITE_AGENT_JOBS_TABLE_ID") or "agent_jobs",
+            resume_files_bucket_id=(
+                value("APPWRITE_RESUME_FILES_BUCKET_ID") or "resume_files"
             ),
         )
 

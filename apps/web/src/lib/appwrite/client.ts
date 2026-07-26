@@ -3,7 +3,9 @@
 import {
   Account,
   Client,
+  Functions,
   Query,
+  Storage,
   TablesDB,
   type Models,
 } from "appwrite";
@@ -22,6 +24,8 @@ interface ApplicationCardRow extends Models.Row {
 let services:
   | {
       account: Account;
+      functions: Functions;
+      storage: Storage;
       tables: TablesDB;
     }
   | undefined;
@@ -38,12 +42,14 @@ function getServices() {
 
   services = {
     account: new Account(client),
+    functions: new Functions(client),
+    storage: new Storage(client),
     tables: new TablesDB(client),
   };
   return services;
 }
 
-async function ensureSession(): Promise<void> {
+export async function ensureAppwriteSession(): Promise<void> {
   if (sessionPromise) return sessionPromise;
 
   sessionPromise = (async () => {
@@ -72,6 +78,15 @@ async function ensureSession(): Promise<void> {
   return sessionPromise;
 }
 
+export function getAppwriteServices() {
+  return getServices();
+}
+
+export function getCurrentAppwriteUserId(): string {
+  if (!currentUserId) throw new Error("Appwrite session has no user");
+  return currentUserId;
+}
+
 function applicationFromRow(row: ApplicationCardRow): Application {
   const snapshot = JSON.parse(row.snapshot) as Application;
   return {
@@ -97,7 +112,7 @@ export const appwritePipeline = {
     status?: AppStatus;
     q?: string;
   }): Promise<Application[]> {
-    await ensureSession();
+    await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const queries = [
       Query.equal("archived", false),
@@ -125,7 +140,7 @@ export const appwritePipeline = {
     id: string,
     patch: Partial<Application>,
   ): Promise<Application> {
-    await ensureSession();
+    await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const tables = getServices().tables;
     const row = await tables.getRow<ApplicationCardRow>({
@@ -161,7 +176,7 @@ export const appwritePipeline = {
   },
 
   async createApplicationCard(application: Application): Promise<Application> {
-    await ensureSession();
+    await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     if (!currentUserId) throw new Error("Appwrite session has no user");
     const now = new Date().toISOString();

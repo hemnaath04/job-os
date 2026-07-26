@@ -11,6 +11,7 @@
     "typecheck": "turbo run typecheck",
     "appwrite:bootstrap": "cd apps/api && uv run python -m job_os.scripts.bootstrap_appwrite",
     "appwrite:import": "cd apps/api && uv run python -m job_os.scripts.import_appwrite_snapshot",
+    "appwrite:migrate-workspace": "cd apps/api && uv run python -m job_os.scripts.migrate_resume_workspace_to_appwrite",
     "gen:types": "cd apps/api && uv run python -m job_os.scripts.export_openapi > ../../packages/types/openapi.json && cd ../.. && pnpm --filter @job-os/types build"
   },
   "devDependencies": {
