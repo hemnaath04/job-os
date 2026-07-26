@@ -5,6 +5,11 @@ served from Appwrite for instant board reads and writes, while Python agents
 handle discovery, profile extraction, and resume tailoring with a hard
 "no hallucination" invariant.
 
+The Resume Studio treats JSON Resume as the canonical, editable source. Every
+manual or AI edit creates an immutable child version; generated PDFs are stored
+with that version, and no AI draft can be finalized until a separate quality
+model plus deterministic PDF checks approve it.
+
 ## Layout
 
 ```
@@ -29,7 +34,8 @@ data used by the Python service.
 | LLM routing      | Manifest: Haiku fast tier + quality resume tier |
 | Job discovery    | TheirStack + SimplifyJobs GitHub data           |
 | Job-page import  | Firecrawl, with direct HTTP fallback             |
-| Resume render    | WeasyPrint + Jinja2                              |
+| Resume engine    | JSON Resume, LangGraph, Claude review, GitHub evidence |
+| Resume render    | WeasyPrint + Jinja2, portable LaTeX source           |
 | Auth             | Clerk                                           |
 | Blob             | Cloudflare R2 (optional)                        |
 | Hosting          | Vercel (web) + Appwrite + Render (Python agents) |
@@ -40,6 +46,8 @@ data used by the Python service.
 - **M2 (week 2)** — Profile KB + Reactive Resume render of master resume.
 - **M3 (week 3)** — Tailoring agent with provenance guardrails.
 - **M4 (week 4)** — Discovery feed (TheirStack + GitHub repos).
+- **Resume Studio** — iCloud import, structured editing, conversational
+  revisions, GitHub README verification, immutable history, and final QA.
 
 ## Local dev
 
@@ -61,3 +69,17 @@ Clerk-to-Appwrite session bridge. Neon remains a rollback copy during the
 cutover. Resume/profile screens and AI workloads stay on the Python service;
 short structured tasks use the fast Manifest route, while resume extraction
 and tailoring use the quality route. See `docs/appwrite-revamp.md`.
+
+## Resume quality gate
+
+1. Import the master PDF, DOCX, or JSON Resume from iCloud Drive.
+2. Edit fields directly or ask the resume chat to revise a specific section.
+3. The agent may use only the current resume, verified profile facts, and
+   current README evidence from included GitHub projects.
+4. A separate quality model reviews the result after generation.
+5. Deterministic checks require exactly one page and selectable PDF text.
+6. A score of 90 or higher with no blocking issues is required to finalize.
+
+All imports, edits, reviews, chat messages, PDFs, and final versions are stored
+in Postgres. The original master is never overwritten, and the only remaining
+master version cannot be deleted. See `docs/resume-engine.md`.

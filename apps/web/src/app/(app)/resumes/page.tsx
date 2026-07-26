@@ -6,14 +6,16 @@ import {
   CheckCircle2,
   Crown,
   Download,
-  ExternalLink,
+  FileUp,
   FileText,
   LibraryBig,
+  MessageSquareText,
   Plus,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
@@ -30,6 +32,7 @@ export default function ResumesPage() {
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [baseRole, setBaseRole] = useState("");
+  const fileInput = useRef<HTMLInputElement>(null);
 
   const create = useMutation({
     mutationFn: () =>
@@ -48,6 +51,19 @@ export default function ResumesPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
+  const importFiles = useMutation({
+    mutationFn: (files: File[]) => api.importResumes(files),
+    onSuccess: ({ items }) => {
+      const imported = items.filter((item) => item.imported).length;
+      const failed = items.length - imported;
+      toast.success(`${imported} resume${imported === 1 ? "" : "s"} imported`, {
+        description: failed ? `${failed} file${failed === 1 ? "" : "s"} need attention.` : undefined,
+      });
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+
   return (
     <div className="workspace-page max-w-6xl">
       <PageIntro
@@ -56,15 +72,46 @@ export default function ResumesPage() {
         description="One verified master, multiple role-specific templates, and a traceable history of every tailored version you generate."
         icon={LibraryBig}
         action={
-          <button onClick={() => setCreating((c) => !c)} className="kinetic-button kinetic-button-primary">
-            <Plus className="size-3.5" /> New template
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={fileInput}
+              type="file"
+              multiple
+              accept=".pdf,.docx,.json,application/pdf,application/json"
+              className="hidden"
+              onChange={(event) => {
+                const files = Array.from(event.target.files ?? []);
+                if (files.length) importFiles.mutate(files);
+                event.target.value = "";
+              }}
+            />
+            <button
+              onClick={() => fileInput.current?.click()}
+              disabled={importFiles.isPending}
+              className="kinetic-button kinetic-button-secondary disabled:opacity-50"
+            >
+              <FileUp className="size-3.5" />
+              {importFiles.isPending ? "Importing…" : "Import from iCloud"}
+            </button>
+            <button
+              onClick={() => setCreating((current) => !current)}
+              className="kinetic-button kinetic-button-primary"
+            >
+              <Plus className="size-3.5" /> New template
+            </button>
+          </div>
         }
       >
         <InfoChip tone="sage">{resumes.length} templates</InfoChip>
         <InfoChip>Evidence-backed bullets</InfoChip>
-        <InfoChip tone="clay">PDF ready</InfoChip>
+        <InfoChip tone="clay">AI quality gate</InfoChip>
       </PageIntro>
+
+      <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-dim)]">
+        iCloud privacy requires you to choose the files. Import the master first,
+        then selected variants in batches of up to eight; originals remain in
+        iCloud and each imported copy becomes an editable revision here.
+      </p>
 
       {creating && (
         <div className="workspace-panel mt-5 p-5">
@@ -109,7 +156,7 @@ export default function ResumesPage() {
         <EmptyState
           icon={FileText}
           title="No resumes yet"
-          description="Upload your master PDF on Profile — the Master resume is auto-created on import, and tailored versions land here as they're generated."
+          description="Upload your master PDF on Profile. The Master resume is created on import, and tailored versions appear here as they are generated."
           cta={{ href: "/profile", label: "Open Profile" }}
         />
       )}
@@ -124,9 +171,18 @@ export default function ResumesPage() {
 }
 
 function ResumeCard({ resume }: { resume: Resume }) {
+  const qc = useQueryClient();
   const { data: versions = [], isLoading } = useQuery({
     queryKey: ["versions", resume.id],
     queryFn: () => api.listVersions(resume.id),
+  });
+  const removeResume = useMutation({
+    mutationFn: () => api.deleteResume(resume.id),
+    onSuccess: () => {
+      toast.success("Resume deleted");
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 
   return (
@@ -154,8 +210,23 @@ function ResumeCard({ resume }: { resume: Resume }) {
             )}
           </div>
         </div>
-        <div className="text-xs text-[color:var(--color-text-dim)]">
-          {versions.length} version{versions.length === 1 ? "" : "s"}
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-[color:var(--color-text-dim)]">
+            {versions.length} version{versions.length === 1 ? "" : "s"}
+          </div>
+          {!resume.is_master && (
+            <button
+              onClick={() => {
+                if (window.confirm(`Delete ${resume.name} and all of its versions?`)) {
+                  removeResume.mutate();
+                }
+              }}
+              className="rounded-lg p-1.5 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+              aria-label={`Delete ${resume.name}`}
+            >
+              <Trash2 className="size-3.5" />
+            </button>
+          )}
         </div>
       </div>
 
@@ -185,8 +256,17 @@ function VersionRow({
   version: ResumeVersionSummary;
   resumeId: string;
 }) {
+  const qc = useQueryClient();
   const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
   const created = format(new Date(version.created_at), "MMM d, yyyy");
+  const removeVersion = useMutation({
+    mutationFn: () => api.deleteVersion(resumeId, version.id),
+    onSuccess: () => {
+      toast.success("Version deleted");
+      qc.invalidateQueries({ queryKey: ["versions", resumeId] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   return (
     <div className="flex items-center justify-between px-5 py-3 hover:bg-white/[0.02]">
       <div className="flex items-center gap-3">
@@ -194,17 +274,23 @@ function VersionRow({
         <div>
           <div className="text-sm font-medium">{created}</div>
           <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-dim)]">
-            {version.approved_by_user ? (
+            {version.status === "final" ? (
               <span className="inline-flex items-center gap-1 text-[color:var(--color-mint)]">
-                <CheckCircle2 className="size-3" /> approved
+                <CheckCircle2 className="size-3" /> final
               </span>
             ) : (
-              <span>draft</span>
+              <span>{version.status.replaceAll("_", " ")}</span>
             )}
             {version.ats_score !== null && version.ats_score !== undefined && (
               <>
                 <span>·</span>
                 <span>ATS {version.ats_score}</span>
+              </>
+            )}
+            {version.review_score !== null && version.review_score !== undefined && (
+              <>
+                <span>·</span>
+                <span>QA {Math.round(Number(version.review_score))}</span>
               </>
             )}
             {version.spawned_from_job_id && (
@@ -217,15 +303,13 @@ function VersionRow({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <a
-          href={downloadUrl}
-          target="_blank"
-          rel="noreferrer"
+        <Link
+          href={`/resumes/${resumeId}/${version.id}`}
           className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
         >
-          <ExternalLink className="size-3" />
-          Preview
-        </a>
+          <MessageSquareText className="size-3" />
+          Open
+        </Link>
         <button
           onClick={() =>
             downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
@@ -234,6 +318,15 @@ function VersionRow({
         >
           <Download className="size-3" />
           Download PDF
+        </button>
+        <button
+          onClick={() => {
+            if (window.confirm("Delete this resume version?")) removeVersion.mutate();
+          }}
+          className="rounded-lg p-2 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+          aria-label="Delete resume version"
+        >
+          <Trash2 className="size-3.5" />
         </button>
       </div>
     </div>

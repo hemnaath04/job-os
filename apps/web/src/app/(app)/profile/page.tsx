@@ -233,9 +233,9 @@ function formatRange(start: string | null, end: string | null): string {
   };
   const s = fmt(start);
   const e = fmt(end);
-  if (!e) return `${s} — Present`;
+  if (!e) return `${s} to Present`;
   if (!s) return e;
-  return `${s} — ${e}`;
+  return `${s} to ${e}`;
 }
 
 function UploadResumeButton({ onDone }: { onDone: () => void }) {

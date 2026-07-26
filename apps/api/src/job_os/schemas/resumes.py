@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 from typing import Any, Literal
 from uuid import UUID
@@ -13,12 +14,21 @@ class ResumeRead(TimestampedRead):
     name: str
     base_role: str | None = None
     is_master: bool
+    source_kind: str | None = None
+    source_label: str | None = None
 
 
 class ResumeCreate(ORMModel):
     name: str
     base_role: str | None = None
     is_master: bool = False
+    source_kind: str | None = None
+    source_label: str | None = None
+
+
+class ResumePatch(ORMModel):
+    name: str | None = None
+    base_role: str | None = None
 
 
 class ResumeVersionSummary(TimestampedRead):
@@ -29,12 +39,20 @@ class ResumeVersionSummary(TimestampedRead):
     approved_by_user: bool
     pdf_r2_key: str | None = None
     docx_r2_key: str | None = None
+    status: str = "draft"
+    review_score: Decimal | None = None
+    review_report: dict[str, Any] | None = None
+    parent_version_id: UUID | None = None
+    source_filename: str | None = None
+    revision_note: str | None = None
+    finalized_at: datetime | None = None
 
 
 class ResumeVersionRead(ResumeVersionSummary):
     json_resume: dict[str, Any]
     provenance: list[dict[str, Any]] = Field(default_factory=list)
     ats_report: dict[str, Any] | None = None
+    latex_source: str | None = None
 
 
 class ResumeVersionCreate(ORMModel):
@@ -44,6 +62,65 @@ class ResumeVersionCreate(ORMModel):
     provenance: list[dict[str, Any]] = Field(default_factory=list)
     ats_score: Decimal | None = None
     ats_report: dict[str, Any] | None = None
+    parent_version_id: UUID | None = None
+    source_filename: str | None = None
+    revision_note: str | None = None
+
+
+class ResumeDirectEditRequest(ORMModel):
+    json_resume: dict[str, Any]
+    note: str = "Manual edit"
+
+
+class ResumeReviewIssue(BaseModel):
+    severity: Literal["blocking", "warning", "suggestion"]
+    code: str
+    message: str
+    section: str | None = None
+
+
+class ResumeReviewResult(BaseModel):
+    score: Decimal
+    passed: bool
+    page_count: int
+    text_selectable: bool
+    issues: list[ResumeReviewIssue] = Field(default_factory=list)
+    strengths: list[str] = Field(default_factory=list)
+    github_projects_checked: list[str] = Field(default_factory=list)
+    model_summary: str = ""
+
+
+class ResumeChatRequest(ORMModel):
+    message: str = Field(min_length=2, max_length=4000)
+    apply: bool = True
+
+
+class ResumeChatResponse(BaseModel):
+    message: str
+    suggestions: list[str] = Field(default_factory=list)
+    version: ResumeVersionRead | None = None
+    review: ResumeReviewResult | None = None
+
+
+class ResumeImportItem(BaseModel):
+    filename: str
+    resume_id: UUID | None = None
+    version_id: UUID | None = None
+    imported: bool
+    is_master: bool = False
+    note: str = ""
+
+
+class ResumeImportResult(BaseModel):
+    items: list[ResumeImportItem] = Field(default_factory=list)
+
+
+class RevisionMessageRead(TimestampedRead):
+    resume_version_id: UUID
+    role: str
+    content: str
+    suggestions: list[str] = Field(default_factory=list)
+    applied: bool
 
 
 class ExportRequest(ORMModel):

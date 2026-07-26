@@ -44,7 +44,7 @@ export default async function Landing() {
         </h1>
         <p className="mt-6 max-w-xl text-lg leading-relaxed text-[color:var(--color-text-muted)]">
           A single workspace for the co-op and new-grad grind. Tracker, resume
-          tailoring, and a discovery feed — wired together by agents that refuse
+          tailoring, and a discovery feed, wired together by agents that refuse
           to invent experience you don&apos;t have.
         </p>
 
@@ -73,7 +73,7 @@ export default async function Landing() {
         <Feature
           icon={<Sparkles className="size-4" />}
           title="Resume tailoring"
-          body="Paste a JD; get a resume tuned to it — with provenance dots on every bullet."
+          body="Paste a JD and get a resume tuned to it, with provenance dots on every bullet."
         />
         <Feature
           icon={<ShieldCheck className="size-4" />}

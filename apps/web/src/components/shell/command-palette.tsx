@@ -1,21 +1,22 @@
 "use client";
 
 import { Command } from "cmdk";
-import { AnimatePresence, motion } from "framer-motion";
-import { CommandIcon, Search } from "lucide-react";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
+import { Plus, Radar, Search, Sparkles, UserRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { SIDEBAR_NAV } from "./sidebar";
 
 const ACTIONS = [
-  { id: "add-job", label: "Add job from URL", action: "/applications?add=1" },
-  { id: "tailor", label: "Tailor a resume", action: "/tailor" },
-  { id: "find-jobs", label: "Find internships", action: "/jobs" },
-  { id: "profile", label: "Edit profile", action: "/profile" },
+  { id: "add-job", label: "Add job from URL", action: "/applications?add=1", icon: Plus },
+  { id: "tailor", label: "Tailor a resume", action: "/tailor", icon: Sparkles },
+  { id: "find-jobs", label: "Find internships", action: "/jobs", icon: Radar },
+  { id: "profile", label: "Edit profile", action: "/profile", icon: UserRound },
 ] as const;
 
 export function CommandPalette() {
   const router = useRouter();
+  const reduceMotion = useReducedMotion();
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
@@ -42,7 +43,7 @@ export function CommandPalette() {
     <AnimatePresence>
       {open && (
         <motion.div
-          initial={{ opacity: 0 }}
+          initial={reduceMotion ? false : { opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           transition={{ duration: 0.15 }}
@@ -50,7 +51,7 @@ export function CommandPalette() {
           onClick={() => setOpen(false)}
         >
           <motion.div
-            initial={{ opacity: 0, y: -8, scale: 0.98 }}
+            initial={reduceMotion ? false : { opacity: 0, y: -8, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.98 }}
             transition={{ duration: 0.18 }}
@@ -71,7 +72,7 @@ export function CommandPalette() {
               </div>
               <Command.List className="max-h-80 overflow-y-auto p-2">
                 <Command.Empty className="px-3 py-6 text-center text-xs text-[color:var(--color-text-dim)]">
-                  No matches — try another query.
+                  No matches. Try another query.
                 </Command.Empty>
 
                 <Command.Group
@@ -95,17 +96,20 @@ export function CommandPalette() {
                   heading="Actions"
                   className="mt-1 text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)] [&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1"
                 >
-                  {ACTIONS.map((a) => (
-                    <Command.Item
-                      key={a.id}
-                      value={`action ${a.label}`}
-                      onSelect={() => go(a.action)}
-                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-white/[0.06] data-[selected=true]:text-white"
-                    >
-                      <CommandIcon className="size-3.5 text-[color:var(--color-cyan)]" />
-                      <span>{a.label}</span>
-                    </Command.Item>
-                  ))}
+                  {ACTIONS.map((a) => {
+                    const Icon = a.icon;
+                    return (
+                      <Command.Item
+                        key={a.id}
+                        value={`action ${a.label}`}
+                        onSelect={() => go(a.action)}
+                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-white/[0.06] data-[selected=true]:text-white"
+                      >
+                        <Icon className="size-3.5 text-[color:var(--color-cyan)]" />
+                        <span>{a.label}</span>
+                      </Command.Item>
+                    );
+                  })}
                 </Command.Group>
               </Command.List>
             </Command>
@@ -127,7 +131,7 @@ export function CommandPaletteTrigger() {
         });
         window.dispatchEvent(evt);
       }}
-      className="inline-flex items-center gap-2 rounded-full border border-[color:var(--color-border)] bg-white/[0.02] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-white/[0.05] hover:text-white"
+      className="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-border)] bg-white/[0.02] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-white/[0.05] hover:text-white active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
     >
       <Search className="size-3.5" />
       <span>Search or jump</span>

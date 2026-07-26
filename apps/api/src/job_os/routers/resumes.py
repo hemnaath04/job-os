@@ -1,20 +1,32 @@
+import json
+from datetime import UTC, datetime
+from pathlib import Path
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
-from sqlalchemy import select
+from pydantic import ValidationError
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.auth import get_current_user
-from job_os.db.models import Job, Resume, ResumeVersion, User
+from job_os.db.models import Job, Resume, ResumeRevisionMessage, ResumeVersion, User
 from job_os.db.session import get_session
 from job_os.schemas.resumes import (
     ExportRequest,
     ExportResult,
+    ResumeChatRequest,
+    ResumeChatResponse,
     ResumeCreate,
+    ResumeDirectEditRequest,
+    ResumeImportItem,
+    ResumeImportResult,
+    ResumePatch,
     ResumeRead,
+    ResumeReviewResult,
     ResumeVersionCreate,
     ResumeVersionRead,
     ResumeVersionSummary,
+    RevisionMessageRead,
     TailorRequest,
     TailorResponse,
 )
@@ -53,10 +65,162 @@ async def create_resume(
         name=payload.name,
         base_role=payload.base_role,
         is_master=payload.is_master,
+        source_kind=payload.source_kind,
+        source_label=payload.source_label,
     )
     session.add(resume)
     await session.flush()
     return resume
+
+
+@router.post("/import", response_model=ResumeImportResult, status_code=201)
+async def import_resume_files(
+    files: list[UploadFile] = File(...),
+    source_label: str = Form(default="iCloud Drive"),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeImportResult:
+    """Import master and role-specific PDF, DOCX, or JSON Resume files.
+
+    Browsers cannot silently read iCloud Drive. The web picker supplies the
+    selected files here, and this endpoint turns each into editable JSON while
+    retaining the original PDF bytes when available.
+    """
+    from job_os.services.profile_extract import (
+        extract_json_resume_from_docx,
+        extract_json_resume_from_pdf,
+    )
+    from job_os.services.profile_import import import_json_resume
+
+    if len(files) > 8:
+        raise HTTPException(
+            400,
+            "Import at most 8 resumes per batch so every file can be extracted reliably.",
+        )
+
+    result = ResumeImportResult()
+    for upload in files:
+        filename = Path(upload.filename or "resume").name
+        raw = await upload.read()
+        if not raw:
+            result.items.append(
+                ResumeImportItem(filename=filename, imported=False, note="Empty file")
+            )
+            continue
+        try:
+            lower = filename.lower()
+            if lower.endswith(".pdf"):
+                doc = await extract_json_resume_from_pdf(raw)
+            elif lower.endswith(".docx"):
+                doc = await extract_json_resume_from_docx(raw)
+            elif lower.endswith(".json"):
+                doc = json.loads(raw.decode("utf-8"))
+            else:
+                raise ValueError("Only PDF, DOCX, and JSON Resume files are supported.")
+
+            display_name = _resume_name_from_filename(filename)
+            is_master = "master" in display_name.lower()
+            resume = (
+                await session.execute(
+                    select(Resume).where(
+                        Resume.user_id == user.id,
+                        Resume.is_master.is_(True) if is_master else Resume.name == display_name,
+                    )
+                )
+            ).scalar_one_or_none()
+            if resume is None:
+                resume = Resume(
+                    user_id=user.id,
+                    name="Master" if is_master else display_name,
+                    base_role="master" if is_master else display_name,
+                    is_master=is_master,
+                    source_kind="icloud",
+                    source_label=source_label,
+                )
+                session.add(resume)
+                await session.flush()
+
+            version = ResumeVersion(
+                resume_id=resume.id,
+                json_resume=doc,
+                approved_by_user=False,
+                pdf_bytes=raw if lower.endswith(".pdf") else None,
+                source_filename=filename,
+                status="imported",
+                revision_note=f"Imported from {source_label}",
+            )
+            session.add(version)
+            await session.flush()
+
+            if is_master:
+                await import_json_resume(
+                    session,
+                    user=user,
+                    doc=doc,
+                    mark_verified=True,
+                    replace_existing=False,
+                )
+
+            result.items.append(
+                ResumeImportItem(
+                    filename=filename,
+                    resume_id=resume.id,
+                    version_id=version.id,
+                    imported=True,
+                    is_master=is_master,
+                    note="Imported as editable JSON Resume.",
+                )
+            )
+        except (ValueError, json.JSONDecodeError, RuntimeError) as exc:
+            result.items.append(
+                ResumeImportItem(filename=filename, imported=False, note=str(exc))
+            )
+    return result
+
+
+@router.patch("/{resume_id}", response_model=ResumeRead)
+async def update_resume(
+    resume_id: UUID,
+    payload: ResumePatch,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Resume:
+    resume = await _load_resume(session, resume_id, user)
+    if payload.name is not None:
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(400, "Resume name cannot be empty.")
+        duplicate = (
+            await session.execute(
+                select(Resume).where(
+                    Resume.user_id == user.id,
+                    Resume.name == name,
+                    Resume.id != resume.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if duplicate:
+            raise HTTPException(409, f"Resume named {name!r} already exists.")
+        resume.name = name
+    if payload.base_role is not None:
+        resume.base_role = payload.base_role.strip() or None
+    return resume
+
+
+@router.delete("/{resume_id}", status_code=204)
+async def delete_resume(
+    resume_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    resume = await _load_resume(session, resume_id, user)
+    if resume.is_master:
+        raise HTTPException(
+            409,
+            "The master resume cannot be deleted. Import a replacement instead.",
+        )
+    await session.delete(resume)
+    return Response(status_code=204)
 
 
 @router.get("/{resume_id}/versions", response_model=list[ResumeVersionSummary])
@@ -90,10 +254,235 @@ async def create_version(
         provenance=payload.provenance,
         ats_score=payload.ats_score,
         ats_report=payload.ats_report,
+        parent_version_id=payload.parent_version_id,
+        source_filename=payload.source_filename,
+        revision_note=payload.revision_note,
     )
     session.add(version)
     await session.flush()
     return version
+
+
+@router.post(
+    "/{resume_id}/versions/{version_id}/edit",
+    response_model=ResumeVersionRead,
+    status_code=201,
+)
+async def edit_version(
+    resume_id: UUID,
+    version_id: UUID,
+    payload: ResumeDirectEditRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeVersion:
+    from job_os.services.resume_engine import generate_latex_source
+
+    await _load_version(session, resume_id, version_id, user)
+    edited = ResumeVersion(
+        resume_id=resume_id,
+        json_resume=payload.json_resume,
+        parent_version_id=version_id,
+        revision_note=payload.note,
+        latex_source=generate_latex_source(payload.json_resume),
+        status="draft",
+        approved_by_user=False,
+    )
+    session.add(edited)
+    await session.flush()
+    return edited
+
+
+@router.delete("/{resume_id}/versions/{version_id}", status_code=204)
+async def delete_version(
+    resume_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    resume = await _load_resume(session, resume_id, user)
+    version = await _load_version(session, resume_id, version_id, user)
+    if resume.is_master:
+        count = await session.scalar(
+            select(func.count()).select_from(ResumeVersion).where(
+                ResumeVersion.resume_id == resume_id
+            )
+        )
+        if int(count or 0) <= 1:
+            raise HTTPException(409, "The only master version cannot be deleted.")
+    await session.delete(version)
+    return Response(status_code=204)
+
+
+@router.post(
+    "/{resume_id}/versions/{version_id}/review",
+    response_model=ResumeReviewResult,
+)
+async def review_version(
+    resume_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeReviewResult:
+    from job_os.services.resume_engine import review_resume
+
+    version = await _load_version(session, resume_id, version_id, user)
+    review, pdf_bytes = await review_resume(version.json_resume)
+    version.review_score = review.score
+    version.review_report = review.model_dump(mode="json")
+    version.pdf_bytes = pdf_bytes
+    version.status = "reviewed" if review.passed else "needs_changes"
+    return review
+
+
+@router.post(
+    "/{resume_id}/versions/{version_id}/chat",
+    response_model=ResumeChatResponse,
+)
+async def chat_edit_version(
+    resume_id: UUID,
+    version_id: UUID,
+    payload: ResumeChatRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeChatResponse:
+    from job_os.services.resume_engine import (
+        generate_latex_source,
+        review_resume,
+        revise_resume,
+    )
+    from job_os.services.tailor import (
+        _build_facts_payload,
+        _load_bullets,
+        _load_verified_facts,
+    )
+
+    current = await _load_version(session, resume_id, version_id, user)
+    facts = await _load_verified_facts(session, user.id)
+    bullets = await _load_bullets(session, [fact.id for fact in facts])
+    verified_facts = _build_facts_payload(facts, bullets)
+
+    user_message = ResumeRevisionMessage(
+        resume_version_id=version_id,
+        role="user",
+        content=payload.message,
+        applied=payload.apply,
+    )
+    session.add(user_message)
+
+    try:
+        revision = await revise_resume(
+            current.json_resume,
+            message=payload.message,
+            verified_facts=verified_facts,
+        )
+    except (ValueError, ValidationError, RuntimeError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+    new_version: ResumeVersion | None = None
+    review: ResumeReviewResult | None = None
+    if payload.apply:
+        review, pdf_bytes = await review_resume(revision.json_resume)
+        new_version = ResumeVersion(
+            resume_id=resume_id,
+            json_resume=revision.json_resume,
+            parent_version_id=version_id,
+            revision_note=payload.message,
+            latex_source=generate_latex_source(revision.json_resume),
+            status="reviewed" if review.passed else "needs_changes",
+            review_score=review.score,
+            review_report=review.model_dump(mode="json"),
+            pdf_bytes=pdf_bytes,
+            approved_by_user=False,
+        )
+        session.add(new_version)
+        await session.flush()
+        # Keep the full request/response pair on the resulting branch so the
+        # conversation remains visible after the editor navigates to it.
+        user_message.resume_version_id = new_version.id
+
+    assistant_message = ResumeRevisionMessage(
+        resume_version_id=new_version.id if new_version else version_id,
+        role="assistant",
+        content=revision.assistant_message,
+        suggestions=revision.suggestions,
+        applied=payload.apply,
+    )
+    session.add(assistant_message)
+    return ResumeChatResponse(
+        message=revision.assistant_message,
+        suggestions=revision.suggestions,
+        version=new_version,
+        review=review,
+    )
+
+
+@router.get(
+    "/{resume_id}/versions/{version_id}/messages",
+    response_model=list[RevisionMessageRead],
+)
+async def list_revision_messages(
+    resume_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[ResumeRevisionMessage]:
+    await _load_version(session, resume_id, version_id, user)
+    result = await session.execute(
+        select(ResumeRevisionMessage)
+        .where(ResumeRevisionMessage.resume_version_id == version_id)
+        .order_by(ResumeRevisionMessage.created_at)
+    )
+    return list(result.scalars().all())
+
+
+@router.post(
+    "/{resume_id}/versions/{version_id}/finalize",
+    response_model=ResumeVersionRead,
+)
+async def finalize_version(
+    resume_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeVersion:
+    from job_os.services.resume_engine import generate_latex_source, review_resume
+
+    version = await _load_version(session, resume_id, version_id, user)
+    review, pdf_bytes = await review_resume(version.json_resume)
+    version.review_score = review.score
+    version.review_report = review.model_dump(mode="json")
+    version.pdf_bytes = pdf_bytes
+    version.latex_source = generate_latex_source(version.json_resume)
+    if not review.passed:
+        version.status = "needs_changes"
+        # Preserve the useful review report even though the endpoint returns
+        # a conflict response and the normal dependency would otherwise roll
+        # the transaction back.
+        await session.commit()
+        raise HTTPException(
+            409,
+            {
+                "message": "Resume did not pass the final quality gate.",
+                "review": review.model_dump(mode="json"),
+            },
+        )
+    version.status = "final"
+    version.approved_by_user = True
+    version.finalized_at = datetime.now(UTC)
+    return version
+
+
+@router.get("/{resume_id}/versions/{version_id}/preview")
+async def preview_version(
+    resume_id: UUID,
+    version_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Response:
+    from job_os.services.pdf_render import render_resume_html
+
+    version = await _load_version(session, resume_id, version_id, user)
+    return Response(render_resume_html(version.json_resume), media_type="text/html")
 
 
 @router.get("/{resume_id}/versions/{version_id}", response_model=ResumeVersionRead)
@@ -256,11 +645,17 @@ async def approve_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeVersion:
-    await _load_resume(session, resume_id, user)
-    version = await session.get(ResumeVersion, version_id)
-    if version is None or version.resume_id != resume_id:
-        raise HTTPException(404, "version not found")
+    version = await _load_version(session, resume_id, version_id, user)
+    report = version.review_report or {}
+    if not report.get("passed"):
+        raise HTTPException(
+            409,
+            "This version has not passed the independent quality gate. "
+            "Open it in Resume Studio, review the issues, and finalize it there.",
+        )
     version.approved_by_user = True
+    version.status = "final"
+    version.finalized_at = datetime.now(UTC)
     return version
 
 
@@ -269,6 +664,27 @@ async def _load_resume(session: AsyncSession, resume_id: UUID, user: User) -> Re
     if resume is None or resume.user_id != user.id:
         raise HTTPException(404, "resume not found")
     return resume
+
+
+async def _load_version(
+    session: AsyncSession,
+    resume_id: UUID,
+    version_id: UUID,
+    user: User,
+) -> ResumeVersion:
+    await _load_resume(session, resume_id, user)
+    version = await session.get(ResumeVersion, version_id)
+    if version is None or version.resume_id != resume_id:
+        raise HTTPException(404, "version not found")
+    return version
+
+
+def _resume_name_from_filename(filename: str) -> str:
+    stem = Path(filename).stem
+    for prefix in ("Hemnaath_Balasubramani_", "Hemnaath Balasubramani "):
+        if stem.startswith(prefix):
+            stem = stem[len(prefix) :]
+    return " ".join(stem.replace("_", " ").replace("-", " ").split()) or "Imported Resume"
 
 
 @router.post("/{resume_id}/versions/tailor", response_model=TailorResponse, status_code=201)
@@ -341,22 +757,39 @@ async def tailor_version(
     session.add(version)
     await session.flush()
 
-    # Pre-render the PDF inline (adds ~1-2s to the tailor response) so the
-    # subsequent /download click hits the cache and returns in <100ms.
-    # Without this, a cold-started Render container has to wake AND render
-    # for the first download, blowing past the Vercel proxy's serverless
-    # timeout and producing a junk "404.html" download.
+    # A separate quality-model pass verifies every AI-generated draft before
+    # it is shown to the user. The same pass performs deterministic one-page
+    # and selectable-text checks, then caches the resulting PDF.
     try:
-        from job_os.services.pdf_render import render_resume_pdf
+        from job_os.services.resume_engine import generate_latex_source, review_resume
 
-        rendered = render_resume_pdf(version.json_resume)
-        version.pdf_bytes = rendered.bytes_
+        review, pdf_bytes = await review_resume(version.json_resume)
+        version.review_score = review.score
+        version.review_report = review.model_dump(mode="json")
+        version.status = "reviewed" if review.passed else "needs_changes"
+        version.pdf_bytes = pdf_bytes
+        version.latex_source = generate_latex_source(version.json_resume)
         await session.flush()
     except Exception as e:  # noqa: BLE001 — render failure is non-fatal
         from structlog import get_logger
 
+        version.status = "needs_changes"
+        version.review_score = None
+        version.review_report = {
+            "passed": False,
+            "issues": [
+                {
+                    "severity": "blocking",
+                    "code": "review_unavailable",
+                    "message": (
+                        "The independent quality review could not complete. "
+                        "Run Review in the resume editor before finalizing."
+                    ),
+                }
+            ],
+        }
         get_logger(__name__).warning(
-            "tailor.prerender_failed",
+            "tailor.review_failed",
             version_id=str(version.id),
             error=str(e),
         )
@@ -375,6 +808,14 @@ async def tailor_version(
         docx_r2_key=version.docx_r2_key,
         json_resume=version.json_resume,
         provenance=version.provenance,
+        status=version.status,
+        review_score=version.review_score,
+        review_report=version.review_report,
+        parent_version_id=version.parent_version_id,
+        source_filename=version.source_filename,
+        revision_note=version.revision_note,
+        finalized_at=version.finalized_at,
+        latex_source=version.latex_source,
         gap_questions=gap_questions,
         agent_note=agent_note,
     )

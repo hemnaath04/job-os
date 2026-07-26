@@ -266,7 +266,7 @@ export default function DiscoverPage() {
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" /> Smart search
         </label>
         <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-          Type a sentence — Claude extracts the filters and runs the search.
+          Type a sentence. The fast agent extracts the filters and runs the search.
         </p>
         <div className="mt-2 flex gap-2">
           <input

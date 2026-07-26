@@ -85,6 +85,15 @@
     color: #101215;
   }
 
+  .lucide {
+    stroke-width: 1.75;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-kiwi);
+    outline-offset: 3px;
+  }
+
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
@@ -208,165 +217,90 @@
   to { transform: translateX(100%); }
 }
 
-/* ── Dashboard flight deck ────────────────────────────────────────────────
-   The motion is deliberately transform/opacity-only so the dashboard keeps
-   its energy without turning every frame into a paint benchmark. */
-
-.dashboard-stage {
-  --flight-line: rgba(255, 255, 255, 0.048);
-}
-
-.dashboard-grid {
-  opacity: 0.48;
-  background-image:
-    linear-gradient(var(--flight-line) 1px, transparent 1px),
-    linear-gradient(90deg, var(--flight-line) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: linear-gradient(to bottom, black, transparent 82%);
-}
-
-.dashboard-grid::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 0 43%, rgba(154, 167, 255, 0.045) 50%, transparent 57%);
-  background-size: 220% 100%;
-  animation: grid-scan 11s linear infinite;
-}
-
-.signal-orb {
-  width: 32rem;
-  height: 32rem;
-  border-radius: 999px;
-  filter: blur(90px);
-  opacity: 0.035;
-  transform: translateZ(0);
-}
-
-.signal-orb-a {
-  right: -12rem;
-  top: 5rem;
-  background: #9AA7FF;
-  animation: orbit-drift 12s ease-in-out infinite alternate;
-}
-
-.signal-orb-b {
-  bottom: 4rem;
-  left: 14%;
-  background: #7FA28E;
-  opacity: 0.028;
-  animation: orbit-drift 16s ease-in-out -5s infinite alternate-reverse;
-}
-
-.flight-panel,
-.metric-tile {
-  border: 1px solid rgba(255, 255, 255, 0.065);
-  background:
-    linear-gradient(145deg, rgba(255, 255, 255, 0.037), transparent 42%),
-    rgba(21, 24, 29, 0.86);
-  box-shadow:
-    inset 0 1px rgba(255, 255, 255, 0.035),
-    0 24px 80px -48px rgba(0, 0, 0, 0.95);
-  backdrop-filter: blur(12px);
-}
-
-.flight-panel {
-  transition: border-color 300ms ease, background-color 300ms ease, transform 300ms ease;
-}
-
-.flight-panel:hover {
-  border-color: rgba(154, 167, 255, 0.13);
-  background-color: rgba(11, 11, 11, 0.87);
-}
-
-.metric-tile::after {
-  content: "";
-  position: absolute;
-  inset: auto -20% -60% 20%;
-  height: 80%;
-  border-radius: 50%;
-  background: radial-gradient(circle, rgba(255, 255, 255, 0.07), transparent 66%);
-  transition: transform 500ms cubic-bezier(.22, 1, .36, 1), opacity 300ms ease;
-  opacity: 0.35;
-}
-
-.metric-tile:hover::after { transform: translate3d(-10%, -15%, 0) scale(1.2); }
-
-.metric-tile-hot {
-  background:
-    linear-gradient(145deg, rgba(154, 167, 255, 0.10), transparent 55%),
-    #171A21;
-  border-color: rgba(154, 167, 255, 0.18);
-}
-
-.status-beacon {
-  position: relative;
-  width: 6px;
-  height: 6px;
-  border-radius: 999px;
-  background: var(--color-kiwi);
-  box-shadow: 0 0 7px rgba(154, 167, 255, 0.45);
-}
-
-.status-beacon::after {
-  content: "";
-  position: absolute;
-  inset: -5px;
-  border: 1px solid rgba(154, 167, 255, 0.36);
-  border-radius: inherit;
-  animation: beacon 1.8s ease-out infinite;
-}
-
+/* ── Product surfaces and controls ─────────────────────────────────────── */
+.product-button,
 .kinetic-button {
   position: relative;
-  isolation: isolate;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
   min-height: 40px;
-  overflow: hidden;
-  border-radius: 999px;
+  border-radius: 0.7rem;
   padding: 0.6rem 1rem;
   font-size: 0.75rem;
   font-weight: 650;
-  transition: transform 220ms cubic-bezier(.22, 1, .36, 1), border-color 220ms ease, box-shadow 220ms ease;
+  transition: transform 160ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
 
-.kinetic-button::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  top: -150%;
-  left: -35%;
-  width: 42%;
-  height: 400%;
-  transform: rotate(22deg) translate3d(-150%, 0, 0);
-  background: rgba(255, 255, 255, 0.5);
-  filter: blur(8px);
-  transition: transform 650ms cubic-bezier(.22, 1, .36, 1);
-}
+.product-button:hover,
+.kinetic-button:hover { transform: translateY(-1px); }
+.product-button:active,
+.kinetic-button:active { transform: scale(0.98); }
 
-.kinetic-button:hover { transform: translateY(-2px); }
-.kinetic-button:hover::before { transform: rotate(22deg) translate3d(420%, 0, 0); }
-
+.product-button-primary,
 .kinetic-button-primary {
   color: #111319;
-  background: linear-gradient(105deg, #8F9EEB, #AEB8EE 54%, #C9CEF4);
+  background: #aeb8ee;
   box-shadow: 0 12px 30px -18px rgba(107, 120, 210, 0.5);
 }
 
-.kinetic-button-primary:hover { box-shadow: 0 16px 34px -18px rgba(107, 120, 210, 0.58); }
+.product-button-primary:hover,
+.kinetic-button-primary:hover {
+  background: #c0c8f2;
+  box-shadow: 0 16px 34px -18px rgba(107, 120, 210, 0.58);
+}
 
+.product-button-secondary,
 .kinetic-button-secondary {
   color: rgba(255, 255, 255, 0.68);
   border: 1px solid rgba(255, 255, 255, 0.09);
   background: rgba(255, 255, 255, 0.035);
 }
 
-.kinetic-button-secondary:hover { border-color: rgba(154, 167, 255, 0.22); color: white; }
+.product-button-secondary:hover,
+.kinetic-button-secondary:hover {
+  border-color: rgba(154, 167, 255, 0.22);
+  background: rgba(255, 255, 255, 0.055);
+  color: white;
+}
 
-.chart-grid {
+.product-panel,
+.product-metric {
+  border: 1px solid rgba(241, 238, 232, 0.075);
+  border-radius: var(--radius-card);
+  background: rgba(21, 24, 29, 0.88);
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025), 0 24px 70px -52px rgba(0, 0, 0, 0.98);
+}
+
+.product-panel {
+  overflow: hidden;
+}
+
+.product-metric {
+  min-height: 164px;
+  padding: 1.25rem;
+  transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+}
+
+.product-metric:hover {
+  border-color: rgba(154, 167, 255, 0.16);
+  background: rgba(27, 31, 37, 0.92);
+  transform: translateY(-1px);
+}
+
+.product-icon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  border: 1px solid rgba(154, 167, 255, 0.16);
+  border-radius: 0.65rem;
+  color: var(--color-kiwi);
+  background: rgba(154, 167, 255, 0.07);
+}
+
+.product-chart-grid {
   background-image:
     linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
@@ -374,72 +308,33 @@
   mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
 }
 
-.momentum-path {
-  stroke-dasharray: 800;
-  stroke-dashoffset: 800;
-  animation: draw-path 1.4s cubic-bezier(.22, 1, .36, 1) forwards;
-  filter: drop-shadow(0 2px 3px rgba(107, 120, 210, 0.25));
+.product-row {
+  display: flex;
+  min-height: 48px;
+  align-items: center;
+  gap: .75rem;
+  border-radius: .7rem;
+  padding: .55rem .65rem;
+  transition: background-color 160ms ease, transform 160ms ease;
 }
+.product-row:hover { background: rgba(255,255,255,.025); }
+.product-row:active { transform: scale(.995); }
 
-.orbit-segment { transition: opacity 200ms ease, stroke-width 200ms ease; }
-.orbit-segment:hover { opacity: 0.72; stroke-width: 10; }
-
-.signal-row { position: relative; }
-.signal-row::before {
-  content: "";
-  position: absolute;
-  inset: 0 -0.6rem;
-  z-index: -1;
-  border-radius: 0.75rem;
-  background: linear-gradient(90deg, rgba(154, 167, 255, 0.065), transparent 68%);
-  opacity: 0;
-  transform: scaleX(0.96);
-  transform-origin: left;
-  transition: opacity 200ms ease, transform 300ms cubic-bezier(.22, 1, .36, 1);
+.product-empty-state {
+  display: grid;
+  min-height: min(620px, 70dvh);
+  place-items: center;
+  align-content: center;
+  gap: .75rem;
+  border: 1px dashed rgba(255,255,255,.1);
+  border-radius: var(--radius-card);
+  padding: 2rem;
+  text-align: center;
+  background: rgba(21,24,29,.55);
 }
-.signal-row:hover::before { opacity: 1; transform: scaleX(1); }
-
-.runway-step::after {
-  content: "";
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  left: -30%;
-  width: 22%;
-  transform: skewX(-20deg);
-  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.055), transparent);
-  animation: runway-sweep 7s ease-in-out infinite;
-}
-
-.first-launch {
-  background:
-    radial-gradient(circle at center, rgba(154, 167, 255, 0.05), transparent 42%),
-    rgba(8, 8, 8, 0.7);
-}
-
-.radar-field {
-  border: 1px solid rgba(154, 167, 255, 0.12);
-  background:
-    repeating-radial-gradient(circle, transparent 0 59px, rgba(154, 167, 255, 0.09) 60px 61px),
-    conic-gradient(from 20deg, transparent 0 84%, rgba(154, 167, 255, 0.14) 96%, transparent 100%);
-  animation: radar-spin 8s linear infinite;
-}
-
-.radar-field::before,
-.radar-field::after {
-  content: "";
-  position: absolute;
-  background: rgba(154, 167, 255, 0.08);
-}
-.radar-field::before { left: 50%; top: 0; bottom: 0; width: 1px; }
-.radar-field::after { top: 50%; left: 0; right: 0; height: 1px; }
-
-@keyframes grid-scan { to { background-position: -220% 0; } }
-@keyframes orbit-drift { to { transform: translate3d(1.5rem, 2.5rem, 0) scale(1.08); } }
-@keyframes beacon { from { opacity: 0.8; transform: scale(0.5); } to { opacity: 0; transform: scale(1.5); } }
-@keyframes draw-path { to { stroke-dashoffset: 0; } }
-@keyframes runway-sweep { 0%, 56% { transform: translate3d(0,0,0) skewX(-20deg); opacity: 0; } 70% { opacity: 1; } 88%, 100% { transform: translate3d(700%,0,0) skewX(-20deg); opacity: 0; } }
-@keyframes radar-spin { to { transform: rotate(360deg); } }
+.product-empty-state > svg { color: var(--color-kiwi); }
+.product-empty-state h1 { font-size: 1.25rem; font-weight: 650; letter-spacing: -.025em; }
+.product-empty-state p { max-width: 30rem; color: var(--color-text-muted); font-size: .875rem; line-height: 1.6; }
 
 /* ── Shared workspace language ──────────────────────────────────────────── */
 .workspace-page {
@@ -457,7 +352,7 @@
   z-index: -1;
   inset: 3.25rem 0 0 0;
   pointer-events: none;
-  opacity: 0.28;
+  opacity: 0.16;
   background-image:
     linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
     linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
@@ -468,41 +363,20 @@
 .page-intro {
   position: relative;
   display: flex;
-  min-height: 170px;
+  min-height: 136px;
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.5rem;
-  overflow: hidden;
   border: 1px solid rgba(241, 238, 232, 0.08);
-  border-radius: 1.5rem;
+  border-radius: var(--radius-card);
   padding: clamp(1.25rem, 2.4vw, 2rem);
-  background:
-    radial-gradient(38rem 16rem at 92% -22%, rgba(154, 167, 255, 0.14), transparent 66%),
-    linear-gradient(135deg, rgba(255,255,255,.048), transparent 48%),
-    rgba(21, 24, 29, 0.88);
+  background: rgba(21, 24, 29, 0.88);
   box-shadow: inset 0 1px rgba(255,255,255,.035), 0 28px 90px -60px rgba(0,0,0,.95);
   animation: intro-rise 420ms cubic-bezier(.22,1,.36,1) both;
 }
 
-.page-intro::after {
-  content: "";
-  position: absolute;
-  width: 17rem;
-  height: 17rem;
-  right: -5rem;
-  top: -9rem;
-  border: 1px solid rgba(154, 167, 255, .11);
-  border-radius: 999px;
-  box-shadow: 0 0 0 34px rgba(154,167,255,.022), 0 0 0 72px rgba(154,167,255,.014);
-}
-
 .page-intro-grid {
-  position: absolute;
-  inset: 0;
-  opacity: .2;
-  background-image: radial-gradient(rgba(255,255,255,.14) .65px, transparent .65px);
-  background-size: 13px 13px;
-  mask-image: linear-gradient(105deg, transparent 20%, black 110%);
+  display: none;
 }
 
 .page-intro-icon {
@@ -556,7 +430,7 @@
   transition: transform 260ms cubic-bezier(.22,1,.36,1), border-color 260ms ease, background-color 260ms ease;
 }
 .workspace-panel-interactive:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1px);
   border-color: rgba(154,167,255,.16);
   background-color: rgba(27,31,37,.92);
 }
@@ -588,26 +462,32 @@
 
 @media (max-width: 700px) {
   .page-intro { min-height: 0; flex-direction: column; }
-  .page-intro::after { right: -9rem; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .dashboard-grid::after,
-  .signal-orb,
-  .status-beacon::after,
-  .momentum-path,
-  .runway-step::after,
-  .radar-field {
-    animation: none !important;
-  }
-
   .loading-surface,
   .page-intro,
   .page-intro-icon { animation: none !important; }
 
-  .momentum-path { stroke-dashoffset: 0; }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .product-button,
   .kinetic-button,
-  .kinetic-button::before,
-  .flight-panel,
-  .signal-row::before { transition-duration: 0.01ms !important; }
+  .product-metric,
+  .product-row,
+  .workspace-panel-interactive { transition-duration: 0.01ms !important; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .glass,
+  .glass-strong,
+  [class*="backdrop-blur"] {
+    backdrop-filter: none !important;
+  }
 }

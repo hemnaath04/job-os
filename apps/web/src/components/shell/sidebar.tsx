@@ -1,7 +1,7 @@
 "use client";
 
 import { SignOutButton, UserButton } from "@clerk/nextjs";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Bookmark,
   CalendarDays,
@@ -44,6 +44,7 @@ const SECTIONS = ["Overview", "Pipeline", "Documents", "Other"] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
+  const reduceMotion = useReducedMotion();
   const [collapsed, setCollapsed] = useState(false);
   const width = collapsed ? 72 : 232;
 
@@ -51,8 +52,8 @@ export function Sidebar() {
     <>
     <motion.aside
       animate={{ width }}
-      transition={{ type: "spring", stiffness: 220, damping: 28 }}
-      className="sticky top-0 z-30 hidden h-screen shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/40 backdrop-blur-xl lg:flex"
+      transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 220, damping: 28 }}
+      className="sticky top-0 z-30 hidden h-[100dvh] shrink-0 flex-col border-r border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/75 backdrop-blur-xl lg:flex"
     >
       {/* Brand */}
       <Link
@@ -64,7 +65,7 @@ export function Sidebar() {
           {!collapsed && (
             <motion.span
               key="brand"
-              initial={{ opacity: 0, x: -4 }}
+              initial={reduceMotion ? false : { opacity: 0, x: -4 }}
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: -4 }}
               className="font-mono text-sm tracking-tight whitespace-nowrap"
@@ -86,7 +87,7 @@ export function Sidebar() {
                 {!collapsed && (
                   <motion.div
                     key={`${section}-label`}
-                    initial={{ opacity: 0 }}
+                    initial={reduceMotion ? false : { opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     className="px-2 pb-1.5 text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]"
@@ -103,6 +104,7 @@ export function Sidebar() {
                     pathname === item.href || pathname.startsWith(item.href + "/")
                   }
                   collapsed={collapsed}
+                  reduceMotion={Boolean(reduceMotion)}
                 />
               ))}
             </div>
@@ -116,12 +118,13 @@ export function Sidebar() {
           item={{ href: "/settings" as Route, label: "Settings", icon: SettingsIcon }}
           active={pathname === "/settings"}
           collapsed={collapsed}
+          reduceMotion={Boolean(reduceMotion)}
         />
         <SignOutButton>
           <button
             type="button"
             className={
-              "flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-[color:var(--color-text-muted)] transition hover:bg-white/[0.04] hover:text-[color:var(--color-rose)] " +
+              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[color:var(--color-text-muted)] transition hover:bg-white/[0.04] hover:text-[color:var(--color-rose)] active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
               (collapsed ? "justify-center" : "")
             }
             title="Sign out"
@@ -145,7 +148,7 @@ export function Sidebar() {
         </div>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="mt-2 inline-flex items-center justify-center rounded-lg border border-[color:var(--color-border)] bg-white/[0.02] p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-white/[0.05] hover:text-white"
+          className="mt-2 inline-flex items-center justify-center rounded-lg border border-[color:var(--color-border)] bg-white/[0.02] p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-white/[0.05] hover:text-white active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (
@@ -164,10 +167,10 @@ export function Sidebar() {
           <Link
             key={item.href}
             href={item.href}
-            className={`relative flex size-10 items-center justify-center rounded-xl transition ${active ? "text-black" : "text-white/42 hover:text-white"}`}
+            className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${active ? "text-white" : "text-white/42 hover:text-white"}`}
             aria-label={item.label}
           >
-            {active && <motion.span layoutId="mobile-nav-active" className="absolute inset-0 rounded-xl bg-gradient-brand" transition={{ type: "spring", stiffness: 380, damping: 30 }} />}
+            {active && <motion.span layoutId="mobile-nav-active" className="absolute inset-0 rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/12" transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }} />}
             <Icon className="relative size-[18px]" />
           </Link>
         );
@@ -181,31 +184,38 @@ function NavLink({
   item,
   active,
   collapsed,
+  reduceMotion,
 }: {
   item: { href: Route; label: string; icon: LucideIcon };
   active: boolean;
   collapsed: boolean;
+  reduceMotion: boolean;
 }) {
   const Icon = item.icon;
   return (
     <Link
       href={item.href}
       className={
-        "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition " +
+        "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition active:scale-[.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
         (active
-          ? "font-semibold text-black"
+          ? "font-semibold text-white"
           : "text-[color:var(--color-text-muted)] hover:bg-white/[0.04] hover:text-white") +
         (collapsed ? " justify-center" : "")
       }
       title={collapsed ? item.label : undefined}
     >
-      {/* Active background — muted periwinkle with clear dark text */}
       {active && (
         <motion.span
           layoutId="nav-active"
-          className="absolute inset-0 rounded-lg bg-gradient-brand"
-          style={{ boxShadow: "0 12px 28px -18px rgba(107,120,210,0.52)" }}
-          transition={{ type: "spring", stiffness: 380, damping: 30 }}
+          className="absolute inset-0 rounded-lg border border-[color:var(--color-kiwi)]/15 bg-[color:var(--color-kiwi)]/[0.09]"
+          transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
+        />
+      )}
+      {active && !collapsed && (
+        <motion.span
+          layoutId="nav-indicator"
+          className="absolute left-0 h-4 w-0.5 rounded-full bg-[color:var(--color-kiwi)]"
+          transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
         />
       )}
       <Icon className="relative size-4 shrink-0" />

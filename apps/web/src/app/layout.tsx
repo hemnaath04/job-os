@@ -10,7 +10,7 @@ const manrope = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "job.os — personal job-search OS",
+  title: "job.os | personal job-search OS",
   description: "Track applications, tailor resumes, never lie on your CV.",
 };
 

@@ -48,6 +48,6 @@ export async function downloadPdf(url: string, filename: string): Promise<void> 
     toast.success("Downloaded", { id: toastId });
   } catch (e) {
     const msg = (e as Error).message;
-    toast.error(`Couldn't download PDF — ${msg}`, { id: toastId });
+    toast.error(`Couldn't download PDF: ${msg}`, { id: toastId });
   }
 }

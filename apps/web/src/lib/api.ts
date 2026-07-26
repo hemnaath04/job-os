@@ -8,6 +8,10 @@ import type {
   MeRead,
   ProfileFact,
   Resume,
+  ResumeChatResponse,
+  ResumeImportItem,
+  ResumeReviewResult,
+  RevisionMessage,
   ResumeVersion,
   ResumeVersionSummary,
   SavedSearch,
@@ -112,6 +116,25 @@ const legacyApi = {
       method: "POST",
       body: JSON.stringify(body),
     }),
+  updateResume: (resumeId: string, body: { name?: string; base_role?: string | null }) =>
+    request<Resume>(`/resumes/${resumeId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteResume: (resumeId: string) =>
+    request<void>(`/resumes/${resumeId}`, { method: "DELETE" }),
+  importResumes: async (files: File[], sourceLabel = "iCloud Drive") => {
+    const body = new FormData();
+    files.forEach((file) => body.append("files", file));
+    body.append("source_label", sourceLabel);
+    const response = await fetch("/api/backend/resumes/import", {
+      method: "POST",
+      body,
+      cache: "no-store",
+    });
+    if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
+    return (await response.json()) as { items: ResumeImportItem[] };
+  },
   listVersions: (resumeId: string) =>
     request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`),
   getVersion: (resumeId: string, versionId: string) =>
@@ -120,8 +143,39 @@ const legacyApi = {
     request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}/approve`, {
       method: "POST",
     }),
+  editVersion: (resumeId: string, versionId: string, jsonResume: object, note: string) =>
+    request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}/edit`, {
+      method: "POST",
+      body: JSON.stringify({ json_resume: jsonResume, note }),
+    }),
+  deleteVersion: (resumeId: string, versionId: string) =>
+    request<void>(`/resumes/${resumeId}/versions/${versionId}`, { method: "DELETE" }),
+  reviewVersion: (resumeId: string, versionId: string) =>
+    request<ResumeReviewResult>(`/resumes/${resumeId}/versions/${versionId}/review`, {
+      method: "POST",
+    }),
+  chatEditVersion: (
+    resumeId: string,
+    versionId: string,
+    message: string,
+    apply = true,
+  ) =>
+    request<ResumeChatResponse>(`/resumes/${resumeId}/versions/${versionId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ message, apply }),
+    }),
+  listRevisionMessages: (resumeId: string, versionId: string) =>
+    request<RevisionMessage[]>(
+      `/resumes/${resumeId}/versions/${versionId}/messages`,
+    ),
+  finalizeVersion: (resumeId: string, versionId: string) =>
+    request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}/finalize`, {
+      method: "POST",
+    }),
   downloadVersionUrl: (resumeId: string, versionId: string) =>
     `/api/backend/resumes/${resumeId}/versions/${versionId}/download`,
+  previewVersionUrl: (resumeId: string, versionId: string) =>
+    `/api/backend/resumes/${resumeId}/versions/${versionId}/preview`,
 
   tailorResume: (resumeId: string, jobId: string) =>
     request<TailorResponse>(`/resumes/${resumeId}/versions/tailor`, {

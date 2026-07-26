@@ -100,7 +100,7 @@ export default function SettingsPage() {
         <section className="workspace-panel p-6">
           <SectionHeader title="Tailoring defaults" />
           <Field label="Default target resume" help="Auto-select this role-specific resume when tailoring.">
-            <Select value={form.default_resume_id ?? ""} onChange={(v) => update("default_resume_id", v || null)} options={[{ value: "", label: "— none —" }, ...candidateResumes.map((r: Resume) => ({ value: r.id, label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}` }))]} />
+            <Select value={form.default_resume_id ?? ""} onChange={(v) => update("default_resume_id", v || null)} options={[{ value: "", label: "None" }, ...candidateResumes.map((r: Resume) => ({ value: r.id, label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}` }))]} />
           </Field>
         </section>
 
@@ -108,10 +108,10 @@ export default function SettingsPage() {
           <SectionHeader title="Discovery defaults" />
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="Function" help="Pre-fills the role filter.">
-              <Select value={form.default_function ?? ""} onChange={(v) => update("default_function", v || null)} options={[{ value: "", label: "— any —" }, ...FUNCTIONS.map((f) => ({ value: f, label: f }))]} />
+              <Select value={form.default_function ?? ""} onChange={(v) => update("default_function", v || null)} options={[{ value: "", label: "Any" }, ...FUNCTIONS.map((f) => ({ value: f, label: f }))]} />
             </Field>
             <Field label="Level">
-              <Select value={form.default_level ?? ""} onChange={(v) => update("default_level", v || null)} options={[{ value: "", label: "— any —" }, ...LEVELS.map((l) => ({ value: l, label: l }))]} />
+              <Select value={form.default_level ?? ""} onChange={(v) => update("default_level", v || null)} options={[{ value: "", label: "Any" }, ...LEVELS.map((l) => ({ value: l, label: l }))]} />
             </Field>
           </div>
           <Field label="Location" help="City, region, or Remote.">
@@ -121,10 +121,10 @@ export default function SettingsPage() {
 
         <section className="workspace-panel p-6">
           <SectionHeader title="Schedule & updates" />
-          <Field label="Timezone" help="IANA name — e.g. America/New_York.">
+          <Field label="Timezone" help="IANA name, for example America/New_York.">
             <input type="text" placeholder="America/New_York" value={form.timezone ?? ""} onChange={(e) => update("timezone", e.target.value || null)} className="field-control" />
           </Field>
-          <Field label="Weekly summary email" help="Stub — no email is sent yet.">
+          <Field label="Weekly summary email" help="Preview only. No email is sent yet.">
             <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm">
               <input type="checkbox" checked={form.weekly_summary_email} onChange={(e) => update("weekly_summary_email", e.target.checked)} className="mt-0.5 size-4 accent-[#9AA7FF]" />
               <span className="text-[color:var(--color-text-muted)]">Send a weekly digest of applications and upcoming follow-ups.</span>

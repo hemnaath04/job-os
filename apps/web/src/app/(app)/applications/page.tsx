@@ -104,9 +104,9 @@ export default function ApplicationsPage() {
   return (
     <div className="workspace-page max-w-[1680px]">
       <PageIntro
-        eyebrow="Pipeline control"
+        eyebrow="Application pipeline"
         title="Applications"
-        description="A tactile command board for every role in motion. Drag cards between stages, switch to a dense table, and keep the next decision obvious."
+        description="Move roles between stages, switch to a table, and keep every follow-up visible."
         icon={BriefcaseBusiness}
         action={
           <button
@@ -118,8 +118,8 @@ export default function ApplicationsPage() {
         }
       >
         <InfoChip tone="sage">{applications.length} roles tracked</InfoChip>
-        <InfoChip>Drag to update status</InfoChip>
-        <InfoChip tone="clay">{view === "kanban" ? "Spatial view" : "Dense view"}</InfoChip>
+        <InfoChip>Instant status updates</InfoChip>
+        <InfoChip tone="clay">{view === "kanban" ? "Kanban view" : "Table view"}</InfoChip>
       </PageIntro>
 
       <motion.div

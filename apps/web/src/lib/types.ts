@@ -94,6 +94,8 @@ export interface Resume {
   name: string;
   base_role: string | null;
   is_master: boolean;
+  source_kind: string | null;
+  source_label: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -106,6 +108,13 @@ export interface ResumeVersionSummary {
   pdf_r2_key: string | null;
   docx_r2_key: string | null;
   spawned_from_job_id: string | null;
+  status: "draft" | "reviewed" | "needs_changes" | "final" | string;
+  review_score: string | null;
+  review_report: ResumeReviewResult | null;
+  parent_version_id: string | null;
+  source_filename: string | null;
+  revision_note: string | null;
+  finalized_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -203,6 +212,52 @@ export interface ResumeVersion extends ResumeVersionSummary {
     matched_count: number;
     missing_count: number;
   } | null;
+  latex_source: string | null;
+}
+
+export interface ResumeReviewIssue {
+  severity: "blocking" | "warning" | "suggestion";
+  code: string;
+  message: string;
+  section: string | null;
+}
+
+export interface ResumeReviewResult {
+  score: string;
+  passed: boolean;
+  page_count: number;
+  text_selectable: boolean;
+  issues: ResumeReviewIssue[];
+  strengths: string[];
+  github_projects_checked: string[];
+  model_summary: string;
+}
+
+export interface ResumeChatResponse {
+  message: string;
+  suggestions: string[];
+  version: ResumeVersion | null;
+  review: ResumeReviewResult | null;
+}
+
+export interface RevisionMessage {
+  id: string;
+  resume_version_id: string;
+  role: "user" | "assistant";
+  content: string;
+  suggestions: string[];
+  applied: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResumeImportItem {
+  filename: string;
+  resume_id: string | null;
+  version_id: string | null;
+  imported: boolean;
+  is_master: boolean;
+  note: string;
 }
 
 export interface TailorResponse extends ResumeVersion {

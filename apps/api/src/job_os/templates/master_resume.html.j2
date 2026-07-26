@@ -16,9 +16,6 @@
 
 <header class="masthead">
   <h1 class="name">{{ basics.name }}</h1>
-  {% if basics.label %}
-    <div class="label">{{ basics.label }}</div>
-  {% endif %}
   <div class="contact">
     {% set bits = [] %}
     {% if basics.location and basics.location.city %}
@@ -26,18 +23,15 @@
     {% endif %}
     {% if basics.phone %}{% set _ = bits.append(basics.phone) %}{% endif %}
     {% if basics.email %}{% set _ = bits.append('<a href="mailto:' + basics.email + '">' + basics.email + '</a>') %}{% endif %}
-    {{ bits | join(' · ') | safe }}
-  </div>
-  {% if basics.profiles %}
-    <div class="contact">
+    {% if basics.profiles %}
       {% for p in basics.profiles %}
         {%- if p.url -%}
-          <a href="{{ p.url }}">{{ p.url | replace('https://','') | replace('http://','') | replace('www.','') }}</a>
-          {%- if not loop.last %} · {% endif -%}
+          {% set _ = bits.append('<a href="' + p.url + '">' + (p.url | replace('https://','') | replace('http://','') | replace('www.','')) + '</a>') %}
         {%- endif -%}
       {% endfor %}
-    </div>
-  {% endif %}
+    {% endif %}
+    {{ bits | join(' | ') | safe }}
+  </div>
 </header>
 
 {# ---------- EDUCATION ---------- #}
@@ -87,7 +81,7 @@
       </div>
       {% if w.highlights %}
         <ul class="bullets">
-          {% for h in w.highlights %}<li>{{ h }}</li>{% endfor %}
+          {% for h in w.highlights %}<li>{{ h | replace('—', ',') }}</li>{% endfor %}
         </ul>
       {% endif %}
     </div>
@@ -113,7 +107,7 @@
       {% endif %}
       {% if p.highlights %}
         <ul class="bullets">
-          {% for h in p.highlights %}<li>{{ h }}</li>{% endfor %}
+          {% for h in p.highlights %}<li>{{ h | replace('—', ',') }}</li>{% endfor %}
         </ul>
       {% endif %}
     </div>

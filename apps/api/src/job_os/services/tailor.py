@@ -10,8 +10,8 @@ Hard rules baked into the prompt:
   - Every bullet in the output must reference a `fact_bullet_id` that exists
     in the provided bullets list. The agent NEVER invents new bullets.
   - Unmet JD requirements become `gap_questions` — surface the gap, do not
-    paper over it. JS/TS specifically must always be a gap (the user does not
-    write JavaScript/TypeScript).
+    paper over it. TypeScript is allowed only where verified project evidence
+    supports it; frontend-heavy experience must never be invented.
   - Light rewrites are allowed (rewording, reordering keywords) as long as
     no metric or fact in the bullet changes.
 """
@@ -60,10 +60,11 @@ HARD CONSTRAINTS — these are non-negotiable:
    that are not present in the original bullet text or the parent fact's
    payload. If a JD keyword is missing from the candidate's profile, it goes
    in `gap_questions`, not into a bullet.
-3. If the JD requires JavaScript, TypeScript, React, or any frontend
-   framework, surface that as a gap_question — the candidate explicitly does
-   NOT write JS/TS, so never include it in selected facts/bullets even if a
-   "skill" fact for it appears.
+3. TypeScript, React, and Next.js may appear only when the candidate's
+   verified profile or project evidence supports them. Do not position the
+   candidate as a frontend engineer. Frontend-heavy experience that is not
+   verified belongs in `gap_questions`; emphasize verified backend, APIs,
+   agents, pipelines, testing, concurrency, and infrastructure work instead.
 4. `selected_fact_ids` includes the facts to render in the resume. Order
    doesn't matter (Python sorts by date / section).
 5. `summary_objective` is a 1-2 sentence tailored summary line for the

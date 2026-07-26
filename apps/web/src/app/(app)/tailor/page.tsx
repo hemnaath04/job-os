@@ -83,7 +83,7 @@ function TailorInner() {
       <ResultView
         result={result}
         resume={targetResume}
-        jobTitle={job?.title ?? "—"}
+        jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
         onReset={() => setResult(null)}
       />
@@ -113,7 +113,7 @@ function TailorInner() {
               <Link href="/profile" className="text-[color:var(--color-violet)] underline">
                 Profile
               </Link>{" "}
-              page first — tailoring always starts from a clean master baseline.
+              page first. Tailoring always starts from a clean master baseline.
             </p>
           </div>
         </div>
@@ -131,7 +131,7 @@ function TailorInner() {
             disabled={jobsLoading}
             className="field-control"
           >
-            <option value="">— pick a job —</option>
+            <option value="">Pick a job</option>
             {jobs.map((j) => (
               <option key={j.id} value={j.id}>
                 {j.title}
@@ -143,7 +143,7 @@ function TailorInner() {
 
         <Field
           label="Target resume template"
-          help="Where the new tailored version gets saved. Pick a role-specific resume — not Master."
+          help="Where the new tailored version gets saved. Pick a role-specific resume, not Master."
         >
           <TemplatePicker
             value={resumeId}
@@ -171,7 +171,7 @@ function TailorInner() {
 
         {tailor.isPending && (
           <p className="text-xs text-[color:var(--color-text-dim)]">
-            One Opus pass through Manifest — usually 20–60s.
+            Drafting, then running a separate quality-model and PDF verification pass.
           </p>
         )}
         </section>
@@ -182,6 +182,7 @@ function TailorInner() {
               ["01", "Read", "Job requirements and role language"],
               ["02", "Ground", "Your master resume and verified facts"],
               ["03", "Compose", "A traceable draft plus gap questions"],
+              ["04", "Verify", "Independent AI review and one-page PDF checks"],
             ].map(([number, title, copy]) => (
               <li key={number} className="flex gap-3">
                 <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[#9AA7FF]/15 bg-[#9AA7FF]/[.06] font-mono text-[10px] text-[#c9cef4]">{number}</span>
@@ -227,9 +228,9 @@ function ResultView({
   }, [facts]);
 
   const approve = useMutation({
-    mutationFn: () => api.approveVersion(result.resume_id, result.id),
+    mutationFn: () => api.finalizeVersion(result.resume_id, result.id),
     onSuccess: () => {
-      toast.success("Version approved");
+      toast.success("Resume finalized and stored");
       qc.invalidateQueries({ queryKey: ["versions", result.resume_id] });
     },
     onError: (err: Error) => toast.error(err.message),
@@ -275,16 +276,50 @@ function ResultView({
           >
             <Download className="size-3" /> Download PDF
           </button>
+          <Link
+            href={`/resumes/${result.resume_id}/${result.id}`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+          >
+            <Sparkles className="size-3" /> Edit with AI
+          </Link>
           <button
             onClick={() => approve.mutate()}
-            disabled={result.approved_by_user || approve.isPending}
+            disabled={
+              result.approved_by_user ||
+              approve.isPending ||
+              !result.review_report?.passed
+            }
             className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             <CheckCircle2 className="size-3" />
-            {result.approved_by_user ? "Approved" : approve.isPending ? "…" : "Approve"}
+            {result.approved_by_user ? "Final" : approve.isPending ? "…" : "Finalize"}
           </button>
         </div>
       </header>
+
+      <div
+        className={`mt-5 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-xs ${
+          result.review_report?.passed
+            ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-200"
+            : "border-amber-400/20 bg-amber-400/[0.05] text-amber-100"
+        }`}
+      >
+        {result.review_report?.passed ? (
+          <CheckCircle2 className="size-4" />
+        ) : (
+          <AlertCircle className="size-4" />
+        )}
+        <span className="font-semibold">
+          Quality review{" "}
+          {result.review_score !== null ? Math.round(Number(result.review_score)) : "pending"}
+          /100
+        </span>
+        <span className="text-white/55">
+          {result.review_report?.passed
+            ? "Passed. You can finalize now."
+            : "Open Edit with AI to resolve the review suggestions before finalizing."}
+        </span>
+      </div>
 
       {result.agent_note && (
         <div className="workspace-panel mt-6 border-[#9AA7FF]/20 p-5">
@@ -366,7 +401,7 @@ function TemplatePicker({
             disabled={loading}
             className="field-control flex-1"
           >
-            <option value="">— pick a template —</option>
+            <option value="">Pick a template</option>
             {candidates.map((r) => (
               <option key={r.id} value={r.id}>
                 {r.name}
@@ -389,7 +424,7 @@ function TemplatePicker({
           {candidates.length === 0 && (
             <p className="mb-2 text-xs text-[color:var(--color-text-muted)]">
               You only have a Master resume. Create a role-specific template
-              here — tailored versions will save under it.
+              here. Tailored versions will save under it.
             </p>
           )}
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -544,7 +579,7 @@ function KeywordGroup({
       </div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {items.length === 0 && (
-          <span className="text-xs text-[color:var(--color-text-dim)]">—</span>
+          <span className="text-xs text-[color:var(--color-text-dim)]">Not available</span>
         )}
         {items.map((k) => (
           <span
@@ -571,7 +606,7 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
       <div className="flex items-center gap-2">
         <AlertCircle className="size-4 text-amber-400" />
         <div className="text-sm font-medium">
-          Gaps the agent surfaced — {gaps.length} requirement
+          Gaps the agent surfaced: {gaps.length} requirement
           {gaps.length === 1 ? "" : "s"} the JD asks for that your profile
           doesn&apos;t cover
         </div>
@@ -637,7 +672,7 @@ function GapRow({
           : [],
       }),
     onSuccess: () => {
-      toast.success("Added — re-tailor to pick it up");
+      toast.success("Added. Tailor again to include it.");
       qc.invalidateQueries({ queryKey: ["facts"] });
       setOpen(false);
       setOrg("");
@@ -724,7 +759,7 @@ function GapRow({
             <textarea
               value={bullet}
               onChange={(e) => setBullet(e.target.value)}
-              placeholder="One verified bullet (optional) — keep metrics real."
+              placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
               className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
             />
@@ -1009,7 +1044,7 @@ function dateRange(start?: string | null, end?: string | null): string {
   const s = formatMonth(start);
   const e = end ? formatMonth(end) : "Present";
   if (!s && !e) return "";
-  return `${s ?? ""}${s ? " – " : ""}${e}`;
+  return `${s ?? ""}${s ? " to " : ""}${e}`;
 }
 
 function formatMonth(iso?: string | null): string | null {

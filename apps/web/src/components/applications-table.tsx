@@ -68,7 +68,7 @@ export function ApplicationsTable({
               <Td>
                 <div className="flex items-center gap-2">
                   <CompanyAvatar name={a.job.company?.name ?? "Unknown"} size={24} />
-                  <span className="truncate">{a.job.company?.name ?? "—"}</span>
+                  <span className="truncate">{a.job.company?.name ?? "Unknown"}</span>
                 </div>
               </Td>
               <Td className="font-medium">
@@ -93,12 +93,12 @@ export function ApplicationsTable({
               <Td>
                 <StatusPill status={a.status} />
               </Td>
-              <Td className="text-white/70">{a.job.location ?? "—"}</Td>
+              <Td className="text-white/70">{a.job.location ?? "Not set"}</Td>
               <Td className="text-white/60">
                 {formatDistanceToNow(new Date(a.updated_at), { addSuffix: true })}
               </Td>
               <Td className="text-[color:var(--color-amber)]">
-                {a.next_action_label ?? "—"}
+                {a.next_action_label ?? "Not set"}
               </Td>
               <Td>
                 <div className="inline-flex items-center gap-2">

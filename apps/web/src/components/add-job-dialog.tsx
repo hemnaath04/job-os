@@ -46,7 +46,7 @@ export function AddJobDialog({
               <div>
                 <Dialog.Title className="text-lg font-medium">Add a job</Dialog.Title>
                 <Dialog.Description className="text-sm text-[color:var(--color-text-muted)]">
-                  Paste the URL — we&apos;ll fetch the JD and parse it.
+                  Paste a job URL and we&apos;ll import its details.
                 </Dialog.Description>
               </div>
               <Dialog.Close className="rounded-md p-1 text-[color:var(--color-text-muted)] hover:bg-white/[0.05] hover:text-white">
@@ -55,23 +55,27 @@ export function AddJobDialog({
             </div>
 
             <form onSubmit={onSubmit} className="mt-5 flex flex-col gap-3">
+              <label htmlFor="job-url" className="text-xs font-medium text-white/75">
+                Job URL
+              </label>
               <input
+                id="job-url"
                 type="url"
                 placeholder="https://jobs.lever.co/anthropic/..."
                 value={url}
                 onChange={(e) => setUrl(e.target.value)}
                 required
                 autoFocus
-                className="w-full rounded-md border border-white/10 bg-white/[0.03] px-3 py-2 text-sm outline-none placeholder:text-[color:var(--color-text-dim)] focus:border-[#9AA7FF]/50 focus:bg-white/[0.05]"
+                className="field-control"
               />
               <div className="mt-2 flex justify-end gap-2">
-                <Dialog.Close className="rounded-full border border-white/10 px-4 py-1.5 text-sm hover:bg-white/[0.04]">
+                <Dialog.Close className="product-button product-button-secondary">
                   Cancel
                 </Dialog.Close>
                 <button
                   type="submit"
                   disabled={loading}
-                  className="flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+                  className="product-button product-button-primary disabled:opacity-50"
                 >
                   {loading && <Loader2 className="size-3.5 animate-spin" />}
                   {loading ? "Fetching…" : "Add to wishlist"}
