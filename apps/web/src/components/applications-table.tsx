@@ -106,7 +106,7 @@ export function ApplicationsTable({
                     href={{ pathname: "/tailor", query: { job_id: a.job.id } }}
                     onClick={(e) => e.stopPropagation()}
                     onDoubleClick={(e) => e.stopPropagation()}
-                    className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)] transition hover:scale-[1.05]"
+                    className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-1 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)] transition hover:scale-[1.05]"
                   >
                     <Sparkles className="size-3" /> Tailor
                   </Link>

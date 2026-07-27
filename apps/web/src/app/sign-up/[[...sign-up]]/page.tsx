@@ -8,7 +8,7 @@ export default function SignUpPage() {
       <BackendReadiness />
       <div className="flex flex-col items-center">
         <div className="mb-6 flex items-center gap-2">
-          <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />
+          <BrandMark className="drop-shadow-[0_12px_16px_rgba(233,198,74,.28)]" />
           <span className="font-mono text-sm tracking-tight">job.os</span>
         </div>
         <SignUp
@@ -17,7 +17,7 @@ export default function SignUpPage() {
           forceRedirectUrl="/dashboard"
           appearance={{
             variables: {
-              colorPrimary: "#9AA7FF",
+              colorPrimary: "#8A6D12",
               colorBackground: "#13131B",
               colorInputBackground: "#1A1A24",
               colorInputText: "#F5F5FA",

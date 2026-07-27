@@ -68,13 +68,13 @@ export default function CalendarPage() {
       )}
 
       {!isLoading && entries.length > 0 && (
-        <div className="relative mt-7 space-y-8 before:absolute before:bottom-2 before:left-[6px] before:top-3 before:w-px before:bg-gradient-to-b before:from-[#9AA7FF]/35 before:via-[color:var(--color-border-strong)] before:to-transparent">
+        <div className="relative mt-7 space-y-8 before:absolute before:bottom-2 before:left-[6px] before:top-3 before:w-px before:bg-gradient-to-b before:from-[#8A6D12]/35 before:via-[color:var(--color-border-strong)] before:to-transparent">
           {BUCKETS.map(({ id, label }) => {
             const items = grouped[id];
             if (items.length === 0) return null;
             return (
               <section key={id} className="relative pl-7">
-                <span className="absolute left-0 top-1 size-3 rounded-full border-2 border-[#15181D] bg-[#9AA7FF] shadow-[0_0_0_1px_rgba(154,167,255,.25)]" />
+                <span className="absolute left-0 top-1 size-3 rounded-full border-2 border-[#15181D] bg-[#8A6D12] shadow-[0_0_0_1px_rgba(233,198,74,.25)]" />
                 <h2 className="section-kicker">
                   {label}
                   <span className="ml-2 text-[color:var(--color-text-muted)]">

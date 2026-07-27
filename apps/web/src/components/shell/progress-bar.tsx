@@ -58,8 +58,8 @@ export function TopProgressBar() {
             className="h-full rounded-r-full"
             style={{
               background:
-                "linear-gradient(90deg, #9AA7FF 0%, #AEB8EE 50%, #C7CDF0 100%)",
-              boxShadow: "0 2px 8px rgba(107,120,210,0.28)",
+                "linear-gradient(90deg, #8A6D12 0%, #E9C64A 50%, #EAD98A 100%)",
+              boxShadow: "0 2px 8px rgba(233,198,74,0.28)",
             }}
             animate={{ width: `${pct}%` }}
             transition={{ duration: 0.25, ease: "easeOut" }}

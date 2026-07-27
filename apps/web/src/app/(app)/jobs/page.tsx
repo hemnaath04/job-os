@@ -748,7 +748,7 @@ function SourceToggle({
       onClick={onClick}
       className={`flex flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
         active
-          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
+          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
           : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-2)]"
       }`}
     >

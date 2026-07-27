@@ -185,7 +185,7 @@ function TailorInner() {
               ["04", "Verify", "Independent AI review and one-page PDF checks"],
             ].map(([number, title, copy]) => (
               <li key={number} className="flex gap-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[#9AA7FF]/15 bg-[#9AA7FF]/[.06] font-mono text-[10px] text-[#c9cef4]">{number}</span>
+                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[#8A6D12]/15 bg-[#8A6D12]/[.06] font-mono text-[10px] text-[#EAD98A]">{number}</span>
                 <div><div className="text-sm font-semibold">{title}</div><p className="mt-0.5 text-xs leading-5 text-[color:var(--color-text-dim)]">{copy}</p></div>
               </li>
             ))}
@@ -322,7 +322,7 @@ function ResultView({
       </div>
 
       {result.agent_note && (
-        <div className="workspace-panel mt-6 border-[#9AA7FF]/20 p-5">
+        <div className="workspace-panel mt-6 border-[#8A6D12]/20 p-5">
           <div className="flex items-start gap-3">
             <Sparkles className="mt-0.5 size-4 text-[color:var(--color-violet)]" />
             <p className="text-sm leading-relaxed text-[color:var(--color-text-muted)]">
@@ -739,7 +739,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
           />
           {kind !== "skill" && (
             <input
@@ -752,7 +752,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
             />
           )}
           {supportsBullets && (
@@ -761,7 +761,7 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
             />
           )}
           <div className="flex items-center gap-2">

@@ -169,7 +169,7 @@ function Column({
       className={
         "workspace-panel flex min-h-[18rem] min-w-0 flex-col p-3.5 transition " +
         (isOver
-          ? "border-[#9AA7FF]/40 bg-[#9AA7FF]/[0.045] shadow-[0_18px_50px_-32px_rgba(107,120,210,.7)]"
+          ? "border-[#8A6D12]/40 bg-[#8A6D12]/[0.045] shadow-[0_18px_50px_-32px_rgba(233,198,74,.7)]"
           : "border-[color:var(--color-border)]")
       }
     >
@@ -245,7 +245,7 @@ function Card({
         (compact ? "p-4 " : "p-3.5 ") +
         (dragging
           ? "rotate-2 shadow-2xl"
-          : "hover:-translate-y-0.5 hover:border-[#9AA7FF]/20 hover:bg-[#181c22]")
+          : "hover:-translate-y-0.5 hover:border-[#8A6D12]/20 hover:bg-[#FFFFFF]")
       }
     >
       <div className="flex items-start gap-2.5">
@@ -304,7 +304,7 @@ function Card({
             onPointerDown={stopDrag}
             onClick={stopDrag}
             onDoubleClick={stopDrag}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-[color:var(--color-on-accent)] shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-[color:var(--color-on-accent)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
           >
             <Sparkles className="size-2.5" /> Tailor
           </Link>

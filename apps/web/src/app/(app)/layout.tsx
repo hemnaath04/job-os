@@ -38,14 +38,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </div>
       <CommandPalette />
       <Toaster
-        theme="dark"
         position="bottom-right"
         toastOptions={{
           style: {
-            background: "color-mix(in oklch, #1B1F25 94%, transparent)",
+            background: "var(--color-surface-1)",
             backdropFilter: "blur(20px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            color: "#F1EEE8",
+            border: "1px solid var(--color-border)",
+            color: "var(--color-text)",
+            boxShadow: "var(--shadow-glass)",
           },
         }}
       />

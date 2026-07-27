@@ -24,18 +24,19 @@ import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
 const DAY = 86_400_000;
+const WEEKDAY = ["S", "M", "T", "W", "T", "F", "S"];
 
 const STATUS_COLORS: Record<AppStatus, string> = {
-  wishlist: "#898C91",
-  ready_to_apply: "#7F9CCB",
-  applied: "#9AA7FF",
-  oa_received: "#D0A15E",
-  interview_scheduled: "#7FA28E",
-  offer: "#91AA9A",
-  accepted: "#A7B99F",
-  rejected: "#CC7A82",
-  withdrawn: "#74777C",
-  ghosted: "#565A61",
+  wishlist: "#9C948A",
+  ready_to_apply: "#3F6FA6",
+  applied: "#8A6D12",
+  oa_received: "#B0791C",
+  interview_scheduled: "#4E8A5F",
+  offer: "#4E8A5F",
+  accepted: "#3E7A54",
+  rejected: "#C0555F",
+  withdrawn: "#9C948A",
+  ghosted: "#B7ABB2",
 };
 
 export default function DashboardClient({
@@ -69,32 +70,29 @@ export default function DashboardClient({
 
   if (!applications.length) return <FirstLaunch />;
 
-  const itemVariants = {
-    hidden: reduceMotion ? {} : { opacity: 0, y: 10 },
+  const itemVariants: Variants = {
+    hidden: reduceMotion ? {} : { opacity: 0, y: 12 },
     visible: { opacity: 1, y: 0 },
   };
 
   return (
     <div className="workspace-page max-w-[1560px]">
+      {/* Header */}
       <motion.header
         initial={reduceMotion ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-        className="mb-6 flex flex-col gap-5 border-b border-[color:var(--color-border)] pb-6 md:flex-row md:items-end md:justify-between"
+        className="mb-7 flex flex-col gap-4 md:flex-row md:items-center md:justify-between"
       >
         <div>
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium text-[color:var(--color-text-muted)]">
-            <DatabaseZap className="size-3.5 text-[color:var(--color-kiwi)]" />
-            Live application data
-          </div>
-          <h1 className="text-3xl font-semibold tracking-[-0.045em] text-[color:var(--color-text)] sm:text-4xl">
-            Your job search, at a glance
+          <h1 className="text-[2rem] font-extrabold leading-none tracking-[-0.03em] text-[color:var(--color-text)]">
+            Dashboard
           </h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-muted)]">
-            Review momentum, upcoming actions, and recent changes without waiting for the agent service.
+          <p className="mt-2.5 text-sm text-[color:var(--color-text-muted)]">
+            Track, tailor, and land your next role, all in one place.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2.5">
           <Link href="/jobs" className="product-button product-button-secondary">
             <Radar className="size-4" />
             Find roles
@@ -102,71 +100,73 @@ export default function DashboardClient({
           <Link href="/tailor" className="product-button product-button-primary">
             <Sparkles className="size-4" />
             Tailor resume
-            <ArrowUpRight className="size-3.5" />
           </Link>
         </div>
       </motion.header>
 
+      {/* KPI row — hero card filled jasmine, Donezo-style */}
       <motion.div
         initial="hidden"
         animate="visible"
-        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.045 } } }}
-        className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4"
+        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.05 } } }}
+        className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4"
       >
-        <Metric
+        <KpiCard
           variants={itemVariants}
+          accent
           icon={BriefcaseBusiness}
-          label="Applications"
+          label="Total Applications"
           value={intelligence.total}
-          detail={`${signed(intelligence.weekDelta)} this week`}
+          trend={`${signed(intelligence.weekDelta)} this week`}
+          positive={intelligence.weekDelta >= 0}
         />
-        <Metric
+        <KpiCard
           variants={itemVariants}
           icon={TrendingUp}
-          label="Response rate"
+          label="Response Rate"
           value={`${intelligence.responseRate}%`}
-          detail={`${intelligence.responses} responses`}
+          trend={`${intelligence.responses} responses`}
+          positive
         />
-        <Metric
+        <KpiCard
           variants={itemVariants}
           icon={CalendarClock}
           label="Interviews"
           value={intelligence.interviews}
-          detail={`${intelligence.interviewRate}% conversion`}
+          trend={`${intelligence.interviewRate}% conversion`}
+          positive
         />
-        <Metric
+        <KpiCard
           variants={itemVariants}
           icon={CheckCircle2}
           label="Offers"
           value={intelligence.offers}
-          detail={intelligence.offers ? "Offer stage reached" : "No offers yet"}
+          trend={intelligence.offers ? "Offer stage reached" : "No offers yet"}
+          positive={intelligence.offers > 0}
         />
       </motion.div>
 
+      {/* Analytics bars + pipeline gauge */}
       <motion.div
         initial="hidden"
         animate="visible"
-        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.055 } } }}
-        className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.55fr)_minmax(300px,.75fr)]"
+        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.06 } } }}
+        className="mt-3.5 grid gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,.7fr)]"
       >
         <DashboardPanel variants={itemVariants} title="Application activity" icon={TrendingUp}>
-          <ActivityChart intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
+          <WeekdayBars intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
         </DashboardPanel>
-        <DashboardPanel
-          variants={itemVariants}
-          title="Next actions"
-          icon={Clock3}
-          action={{ href: "/calendar", label: "Open calendar" }}
-        >
-          <NextActions applications={intelligence.nextMoves} />
+        <DashboardPanel variants={itemVariants} title="Pipeline progress" icon={DatabaseZap}>
+          <ProgressGauge intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
         </DashboardPanel>
       </motion.div>
 
+      {/* Recent + next actions */}
       <motion.div
         initial="hidden"
         animate="visible"
-        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.055 } } }}
-        className="mt-3 grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(300px,.55fr)]"
+        variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.06 } } }}
+        className="mt-3.5 grid gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,.7fr)]"
       >
         <DashboardPanel
           variants={itemVariants}
@@ -176,38 +176,92 @@ export default function DashboardClient({
         >
           <RecentApplications applications={intelligence.recent} />
         </DashboardPanel>
-        <DashboardPanel variants={itemVariants} title="Pipeline" icon={DatabaseZap}>
-          <PipelineSummary distribution={intelligence.distribution} total={intelligence.total} />
+        <DashboardPanel
+          variants={itemVariants}
+          title="Next actions"
+          icon={Clock3}
+          action={{ href: "/calendar", label: "Calendar" }}
+        >
+          <NextActions applications={intelligence.nextMoves} />
         </DashboardPanel>
       </motion.div>
     </div>
   );
 }
 
-function Metric({
+function KpiCard({
   icon: Icon,
   label,
   value,
-  detail,
+  trend,
+  positive,
+  accent = false,
   variants,
 }: {
   icon: LucideIcon;
   label: string;
   value: string | number;
-  detail: string;
+  trend: string;
+  positive?: boolean;
+  accent?: boolean;
   variants: Variants;
 }) {
   return (
-    <motion.section variants={variants} className="product-metric">
-      <div className="flex items-center justify-between">
-        <span className="product-icon">
-          <Icon className="size-4" />
+    <motion.section
+      variants={variants}
+      whileHover={{ y: -3 }}
+      transition={{ type: "spring", stiffness: 320, damping: 26 }}
+      className={
+        "relative overflow-hidden rounded-2xl p-5 " +
+        (accent
+          ? "border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent)] text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)]"
+          : "border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-glass)]")
+      }
+    >
+      <div className="flex items-start justify-between">
+        <span
+          className={
+            "grid size-9 place-items-center rounded-xl " +
+            (accent
+              ? "bg-[color:var(--color-on-accent)]/10 text-[color:var(--color-on-accent)]"
+              : "border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)]")
+          }
+        >
+          <Icon className="size-[18px]" />
         </span>
-        <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)]" />
+        <span
+          className={
+            "grid size-7 place-items-center rounded-full border " +
+            (accent
+              ? "border-[color:var(--color-on-accent)]/20 text-[color:var(--color-on-accent)]"
+              : "border-[color:var(--color-border)] text-[color:var(--color-text-dim)]")
+          }
+        >
+          <ArrowUpRight className="size-3.5" />
+        </span>
       </div>
-      <div className="mt-5 text-3xl font-semibold tracking-[-0.045em] text-[color:var(--color-text)]">{value}</div>
-      <div className="mt-2 text-xs font-medium text-[color:var(--color-text-muted)]">{label}</div>
-      <div className="mt-1 text-xs text-[color:var(--color-text-dim)]">{detail}</div>
+      <div className="mt-6 text-[2.4rem] font-extrabold leading-none tracking-[-0.045em]">{value}</div>
+      <div
+        className={
+          "mt-2.5 text-[0.8rem] font-semibold " +
+          (accent ? "text-[color:var(--color-on-accent)]/80" : "text-[color:var(--color-text-muted)]")
+        }
+      >
+        {label}
+      </div>
+      <div
+        className={
+          "mt-2 inline-flex items-center gap-1.5 text-[0.72rem] font-medium " +
+          (accent
+            ? "text-[color:var(--color-on-accent)]/70"
+            : positive
+              ? "text-[color:var(--color-mint)]"
+              : "text-[color:var(--color-text-dim)]")
+        }
+      >
+        <TrendingUp className={"size-3.5 " + (positive ? "" : "rotate-180")} />
+        {trend}
+      </div>
     </motion.section>
   );
 }
@@ -229,13 +283,15 @@ function DashboardPanel({
     <motion.section variants={variants} className="product-panel">
       <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-5 py-4">
         <div className="flex items-center gap-2.5">
-          <Icon className="size-4 text-[color:var(--color-kiwi)]" />
+          <span className="grid size-7 place-items-center rounded-lg border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)]">
+            <Icon className="size-3.5" />
+          </span>
           <h2 className="text-sm font-semibold text-[color:var(--color-text)]">{title}</h2>
         </div>
         {action && (
           <Link
             href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] transition hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1 text-xs font-medium text-[color:var(--color-text-muted)] transition hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-ink)]"
           >
             {action.label}
             <ArrowUpRight className="size-3" />
@@ -247,59 +303,124 @@ function DashboardPanel({
   );
 }
 
-function ActivityChart({
+function WeekdayBars({
   intelligence,
   reduceMotion,
 }: {
   intelligence: Intelligence;
   reduceMotion: boolean;
 }) {
-  const peak = Math.max(...intelligence.daily.map((day) => day.value), 1);
-  const points = intelligence.daily
-    .map((day, index) => {
-      const x = (index / Math.max(intelligence.daily.length - 1, 1)) * 100;
-      const y = 82 - (day.value / peak) * 62;
-      return `${x},${y}`;
-    })
-    .join(" ");
+  const now = Date.now();
+  const last7 = intelligence.daily.slice(-7).map((day, i) => {
+    const date = new Date(now - (6 - i) * DAY);
+    return { value: day.value, label: WEEKDAY[date.getDay()] };
+  });
+  const peak = Math.max(...last7.map((d) => d.value), 1);
+  const busiest = last7.reduce((a, b) => (b.value >= a.value ? b : a), last7[0]);
 
   return (
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-2xl font-semibold tracking-tight">{intelligence.last30}</div>
+          <div className="text-2xl font-extrabold tracking-tight text-[color:var(--color-text)]">
+            {intelligence.last30}
+          </div>
           <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">Applications added in 30 days</p>
         </div>
-        <div className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-          <TrendingUp className="size-3.5 text-[color:var(--color-kiwi)]" />
+        <div className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-1 text-xs font-medium text-[color:var(--color-accent-ink)]">
+          <TrendingUp className="size-3.5" />
           {intelligence.velocity} this week
         </div>
       </div>
-      <div className="relative mt-6 h-52 overflow-hidden rounded-xl border border-[color:var(--color-border)] bg-black/20 px-3 py-4">
-        <div className="product-chart-grid absolute inset-0" />
-        <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="relative h-full w-full" role="img" aria-label="Applications added over the last 30 days">
-          <defs>
-            <linearGradient id="activity-fill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0" stopColor="#9AA7FF" stopOpacity=".2" />
-              <stop offset="1" stopColor="#9AA7FF" stopOpacity="0" />
-            </linearGradient>
-          </defs>
-          <polygon points={`0,100 ${points} 100,100`} fill="url(#activity-fill)" />
-          <motion.polyline
-            points={points}
+      <div className="mt-6 flex h-40 items-end justify-between gap-2.5">
+        {last7.map((d, i) => {
+          const h = Math.max((d.value / peak) * 100, 6);
+          const isPeak = d.value === busiest.value && d.value > 0;
+          return (
+            <div key={i} className="flex flex-1 flex-col items-center gap-2">
+              <div className="relative flex h-full w-full items-end justify-center">
+                {isPeak && (
+                  <span className="absolute -top-1 rounded-md bg-[color:var(--color-text)] px-1.5 py-0.5 text-[9px] font-bold text-[color:var(--color-surface-1)]">
+                    {d.value}
+                  </span>
+                )}
+                <motion.div
+                  initial={reduceMotion ? false : { height: 0 }}
+                  animate={{ height: `${h}%` }}
+                  transition={{ duration: 0.55, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                  className={
+                    "w-full max-w-[38px] rounded-lg " +
+                    (isPeak
+                      ? "bg-[color:var(--color-accent)]"
+                      : d.value > 0
+                        ? "bg-[color:var(--color-accent)]/45"
+                        : "bg-[color:var(--color-surface-3)]")
+                  }
+                />
+              </div>
+              <span className="text-[11px] font-medium text-[color:var(--color-text-dim)]">{d.label}</span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ProgressGauge({
+  intelligence,
+  reduceMotion,
+}: {
+  intelligence: Intelligence;
+  reduceMotion: boolean;
+}) {
+  const pct = intelligence.responseRate;
+  const legend = [
+    { label: "Responses", value: intelligence.responses, color: "var(--color-accent-ink)" },
+    { label: "Interviews", value: intelligence.interviews, color: "var(--color-mint)" },
+    { label: "Offers", value: intelligence.offers, color: "var(--color-sky)" },
+  ];
+  return (
+    <div className="flex flex-col items-center">
+      <div className="relative w-full max-w-[220px]">
+        <svg viewBox="0 0 120 68" className="w-full" role="img" aria-label={`Response rate ${pct}%`}>
+          <path
+            d="M8 62 A52 52 0 0 1 112 62"
             fill="none"
-            stroke="#AEB8EE"
-            strokeWidth="1.6"
-            vectorEffect="non-scaling-stroke"
+            stroke="var(--color-surface-3)"
+            strokeWidth="13"
             strokeLinecap="round"
-            strokeLinejoin="round"
-            initial={reduceMotion ? false : { pathLength: 0, opacity: 0 }}
-            animate={{ pathLength: 1, opacity: 1 }}
-            transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
+            pathLength={100}
+          />
+          <motion.path
+            d="M8 62 A52 52 0 0 1 112 62"
+            fill="none"
+            stroke="var(--color-accent)"
+            strokeWidth="13"
+            strokeLinecap="round"
+            pathLength={100}
+            initial={reduceMotion ? false : { strokeDasharray: "0 100" }}
+            animate={{ strokeDasharray: `${pct} 100` }}
+            transition={{ duration: 0.9, ease: [0.16, 1, 0.3, 1] }}
           />
         </svg>
-        <span className="absolute bottom-3 left-4 text-[10px] text-[color:var(--color-text-dim)]">30 days ago</span>
-        <span className="absolute bottom-3 right-4 text-[10px] text-[color:var(--color-text-dim)]">Today</span>
+        <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
+          <span className="text-[2.1rem] font-extrabold leading-none tracking-[-0.04em] text-[color:var(--color-text)]">
+            {pct}%
+          </span>
+          <span className="mt-1 text-[11px] text-[color:var(--color-text-dim)]">Response rate</span>
+        </div>
+      </div>
+      <div className="mt-6 grid w-full grid-cols-3 gap-2">
+        {legend.map((l) => (
+          <div key={l.label} className="flex flex-col items-center rounded-xl bg-[color:var(--color-surface-2)] py-2.5">
+            <span className="text-lg font-bold text-[color:var(--color-text)]">{l.value}</span>
+            <span className="mt-0.5 flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)]">
+              <span className="size-1.5 rounded-full" style={{ backgroundColor: l.color }} />
+              {l.label}
+            </span>
+          </div>
+        ))}
       </div>
     </div>
   );
@@ -324,14 +445,14 @@ function NextActions({ applications }: { applications: Application[] }) {
         <Link key={app.id} href="/applications" className="product-row group">
           <CompanyAvatar name={app.job.company?.name || "Unknown"} size={28} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-medium text-[color:var(--color-text-muted)]">
+            <div className="truncate text-xs font-semibold text-[color:var(--color-text)]">
               {app.next_action_label || "Follow up"}
             </div>
             <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
               {app.job.company?.name || "Unknown company"} / {app.job.title}
             </div>
           </div>
-          <span className="shrink-0 text-[11px] font-medium text-[color:var(--color-kiwi)]">
+          <span className="shrink-0 text-[11px] font-semibold text-[color:var(--color-accent-ink)]">
             {relativeDate(app.next_action_at)}
           </span>
           <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-text-muted)]" />
@@ -348,7 +469,7 @@ function RecentApplications({ applications }: { applications: Application[] }) {
         <Link key={app.id} href="/applications" className="product-row group">
           <CompanyAvatar name={app.job.company?.name || "Unknown"} size={30} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-[color:var(--color-text-muted)]">{app.job.title}</div>
+            <div className="truncate text-sm font-semibold text-[color:var(--color-text)]">{app.job.title}</div>
             <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
               {app.job.company?.name || "Unknown company"}
             </div>
@@ -360,38 +481,6 @@ function RecentApplications({ applications }: { applications: Application[] }) {
           <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)] transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-text-muted)]" />
         </Link>
       ))}
-    </div>
-  );
-}
-
-function PipelineSummary({
-  distribution,
-  total,
-}: {
-  distribution: Distribution[];
-  total: number;
-}) {
-  return (
-    <div className="space-y-4">
-      {distribution.slice(0, 7).map((item) => {
-        const share = total ? Math.round((item.value / total) * 100) : 0;
-        return (
-          <div key={item.name}>
-            <div className="flex items-center gap-2 text-xs">
-              <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="flex-1 text-[color:var(--color-text-muted)]">{item.name}</span>
-              <span className="font-medium text-[color:var(--color-text)]">{item.value}</span>
-              <span className="w-8 text-right text-[color:var(--color-text-dim)]">{share}%</span>
-            </div>
-            <div className="mt-2 h-px bg-[color:var(--color-surface-hover)]">
-              <div
-                className="h-px origin-left"
-                style={{ width: `${share}%`, backgroundColor: item.color }}
-              />
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -422,14 +511,14 @@ function FirstLaunch() {
 function DashboardSkeleton() {
   return (
     <div className="workspace-page max-w-[1560px]" aria-label="Loading dashboard">
-      <div className="h-8 w-72 animate-pulse rounded-lg bg-[color:var(--color-surface-hover)]" />
-      <div className="mt-3 h-4 w-[28rem] max-w-full animate-pulse rounded bg-[color:var(--color-surface-2)]" />
-      <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="h-9 w-56 animate-pulse rounded-lg bg-[color:var(--color-surface-hover)]" />
+      <div className="mt-3 h-4 w-[24rem] max-w-full animate-pulse rounded bg-[color:var(--color-surface-2)]" />
+      <div className="mt-7 grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((item) => (
-          <div key={item} className="loading-surface min-h-36" />
+          <div key={item} className="loading-surface min-h-[150px]" />
         ))}
       </div>
-      <div className="mt-3 grid gap-3 xl:grid-cols-[1.55fr_.75fr]">
+      <div className="mt-3.5 grid gap-3.5 xl:grid-cols-[1.6fr_.7fr]">
         <div className="loading-surface min-h-80" />
         <div className="loading-surface min-h-80" />
       </div>
@@ -512,3 +601,5 @@ function relativeDate(value: string | null) {
 function signed(value: number) {
   return value > 0 ? `+${value}` : String(value);
 }
+
+export type { Distribution };

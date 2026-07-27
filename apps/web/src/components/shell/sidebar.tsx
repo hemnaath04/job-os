@@ -60,7 +60,7 @@ export function Sidebar() {
         href="/dashboard"
         className="flex items-center gap-2.5 px-4 pt-5 pb-6"
       >
-        <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />
+        <BrandMark className="drop-shadow-[0_12px_16px_rgba(233,198,74,.28)]" />
         <AnimatePresence initial={false}>
           {!collapsed && (
             <motion.span

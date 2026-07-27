@@ -14,7 +14,7 @@ export default async function Landing() {
       <BackendReadiness />
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
-          <BrandMark className="drop-shadow-[0_12px_16px_rgba(107,120,210,.28)]" />
+          <BrandMark className="drop-shadow-[0_12px_16px_rgba(233,198,74,.28)]" />
           <span className="font-mono text-sm tracking-tight">job.os</span>
         </div>
         <div className="flex items-center gap-2">
