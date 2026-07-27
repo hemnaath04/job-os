@@ -74,7 +74,7 @@ export default function CalendarPage() {
             if (items.length === 0) return null;
             return (
               <section key={id} className="relative pl-7">
-                <span className="absolute left-0 top-1 size-3 rounded-full border-2 border-[#15181D] bg-[#8A6D12] shadow-[0_0_0_1px_rgba(233,198,74,.25)]" />
+                <span className="absolute left-0 top-1 size-3 rounded-full border-2 border-[color:var(--color-bg)] bg-[color:var(--color-accent)] shadow-[0_0_0_1px_rgba(233,198,74,.35)]" />
                 <h2 className="section-kicker">
                   {label}
                   <span className="ml-2 text-[color:var(--color-text-muted)]">

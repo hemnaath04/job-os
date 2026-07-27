@@ -106,7 +106,7 @@ export function KanbanBoard({
               Roles you are considering. Drag a card into Applied when you submit.
             </p>
           </div>
-          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[#b8c0ef]">
+          <div className="flex items-center gap-1.5 text-[11px] font-medium text-[color:var(--color-accent-ink)]">
             Drag to Applied <ArrowDownRight className="size-3.5" />
           </div>
         </div>
@@ -241,11 +241,11 @@ function Card({
       onDoubleClick={openJD}
       title={sourceUrl ? "Double-click to open the original JD" : undefined}
       className={
-        "group cursor-grab rounded-[0.95rem] border border-[color:var(--color-border)] bg-[#111419]/90 transition-all " +
-        (compact ? "p-4 " : "p-3.5 ") +
+        "group cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-all " +
+        (compact ? "p-3.5 " : "p-3 ") +
         (dragging
           ? "rotate-2 shadow-2xl"
-          : "hover:-translate-y-0.5 hover:border-[#8A6D12]/20 hover:bg-[#FFFFFF]")
+          : "hover:-translate-y-0.5 hover:border-[color:var(--color-accent-border)] hover:shadow-[var(--shadow-glass)]")
       }
     >
       <div className="flex items-start gap-2.5">
@@ -273,8 +273,9 @@ function Card({
         </div>
       </div>
       {app.job.location && (
-        <div className="mt-2 flex items-center gap-1 text-xs text-[color:var(--color-text-dim)]">
-          <MapPin className="size-3" /> {app.job.location}
+        <div className="mt-1.5 flex min-w-0 items-center gap-1 text-xs text-[color:var(--color-text-dim)]">
+          <MapPin className="size-3 shrink-0" />
+          <span className="truncate">{app.job.location}</span>
         </div>
       )}
       {app.next_action_at && (
@@ -283,7 +284,7 @@ function Card({
         </div>
       )}
       {!dragging && (
-        <div className={`mt-2 flex items-center justify-end gap-2 transition-opacity ${compact ? "opacity-100" : "opacity-0 group-hover:opacity-100"}`}>
+        <div className={`mt-2 items-center justify-end gap-2 ${compact ? "flex" : "hidden group-hover:flex"}`}>
           {onDelete && (
             <button
               onPointerDown={stopDrag}

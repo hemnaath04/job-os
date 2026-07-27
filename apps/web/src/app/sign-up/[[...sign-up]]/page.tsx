@@ -18,18 +18,18 @@ export default function SignUpPage() {
           appearance={{
             variables: {
               colorPrimary: "#8A6D12",
-              colorBackground: "#13131B",
-              colorInputBackground: "#1A1A24",
-              colorInputText: "#F5F5FA",
-              colorText: "#F5F5FA",
-              colorTextSecondary: "#A1A1AE",
-              colorNeutral: "#F5F5FA",
+              colorBackground: "#FFFFFF",
+              colorInputBackground: "#FFFFFF",
+              colorInputText: "#2A2530",
+              colorText: "#2A2530",
+              colorTextSecondary: "#6C6470",
+              colorNeutral: "#2A2530",
               borderRadius: "0.75rem",
             },
             elements: {
               formFieldInput:
-                "text-[color:var(--color-text)] placeholder:text-zinc-500 bg-[#1A1A24] border-[color:var(--color-border)]",
-              formFieldLabel: "text-zinc-200",
+                "text-[color:var(--color-text)] placeholder:text-[color:var(--color-text-dim)] bg-[#FFFFFF] border-[color:var(--color-border)]",
+              formFieldLabel: "text-zinc-700",
             },
           }}
         />
