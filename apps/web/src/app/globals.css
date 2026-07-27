@@ -1,5 +1,8 @@
 @import "tailwindcss";
 
+/* Class-based dark mode: toggled by `.dark` on <html>. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   /* ===================================================================
      job.os design system — Warm Light theme
@@ -520,4 +523,83 @@
   [class*="backdrop-blur"] {
     backdrop-filter: none !important;
   }
+}
+
+/* ───────────────────────────────────────────────────────────────
+   Dark theme — warm graphite. Same jasmine accent; on dark, jasmine
+   itself is legible so accent-ink = jasmine. Tokens flip at runtime,
+   so every component that reads var(--color-*) follows automatically.
+   ─────────────────────────────────────────────────────────────── */
+.dark {
+  --color-bg: #100E0A;
+  --color-surface-1: #191712;
+  --color-surface-2: #201D17;
+  --color-surface-3: #2A261E;
+  --color-surface-hover: #221F18;
+
+  --color-border: rgba(236, 231, 205, 0.10);
+  --color-border-strong: rgba(236, 231, 205, 0.18);
+
+  --color-text: #ECEAE1;
+  --color-text-muted: #B4AEA1;
+  --color-text-dim: #857E71;
+
+  --color-accent: #FFE787;
+  --color-accent-hover: #FFDF6A;
+  --color-accent-border: rgba(255, 231, 135, 0.38);
+  --color-accent-soft: rgba(255, 231, 135, 0.12);
+  --color-on-accent: #221F0E;
+  --color-accent-ink: #FFE787;      /* jasmine reads fine as text on dark */
+
+  --color-mauve: #B79FB0;
+  --color-khaki: #C7C2AF;
+  --color-kiwi: var(--color-accent-ink);
+  --color-chartreuse: #EAD98A;
+  --color-electric: #F0E3A0;
+  --color-indigo: var(--color-accent-ink);
+  --color-purple: var(--color-mauve);
+  --color-violet: var(--color-mauve);
+  --color-brand: var(--color-accent);
+
+  --color-mint: #83B896;
+  --color-amber: #E2B468;
+  --color-rose: #E28A92;
+  --color-emerald: #83B896;
+  --color-sky: #8FB2E0;
+  --color-cyan: #8FB2E0;
+  --color-blue: #8FB2E0;
+
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.5);
+  --shadow-glass:
+    0 1px 0 rgba(255, 255, 255, 0.03) inset,
+    0 20px 50px -26px rgba(0, 0, 0, 0.85);
+  --shadow-glass-hover:
+    0 1px 0 rgba(255, 255, 255, 0.05) inset,
+    0 26px 60px -26px rgba(0, 0, 0, 0.92);
+  --shadow-brand-glow: 0 12px 30px -16px rgba(255, 231, 135, 0.42);
+}
+
+.dark body::before {
+  background:
+    radial-gradient(70rem 50rem at 82% -18%, rgba(255, 231, 135, 0.07), transparent 60%),
+    radial-gradient(60rem 42rem at -10% 112%, rgba(183, 159, 176, 0.06), transparent 60%);
+}
+
+.dark ::selection { background: rgba(255, 231, 135, 0.32); color: #ECEAE1; }
+.dark ::-webkit-scrollbar-thumb { background: rgba(236, 231, 205, 0.16); background-clip: padding-box; }
+.dark ::-webkit-scrollbar-thumb:hover { background: rgba(236, 231, 205, 0.28); background-clip: padding-box; }
+
+/* Chart gridlines flip to light-on-dark. */
+.dark .product-chart-grid {
+  background-image:
+    linear-gradient(rgba(236, 231, 205, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(236, 231, 205, 0.06) 1px, transparent 1px);
+}
+.dark .workspace-page::before {
+  background-image:
+    linear-gradient(rgba(236, 231, 205, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(236, 231, 205, 0.03) 1px, transparent 1px);
+}
+.dark .shimmer::after {
+  background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.05) 50%, transparent 75%);
 }

@@ -4,6 +4,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { usePathname } from "next/navigation";
 import { CommandPaletteTrigger } from "./command-palette";
 import { SIDEBAR_NAV } from "./sidebar";
+import { ThemeToggle } from "./theme-toggle";
 
 const FRIENDLY_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
@@ -37,7 +38,10 @@ export function TopBar() {
         {ActiveIcon && <ActiveIcon className="size-4 shrink-0 text-[color:var(--color-kiwi)]" />}
         <span className="truncate font-medium">{title}</span>
       </div>
-      <CommandPaletteTrigger />
+      <div className="flex items-center gap-2">
+        <CommandPaletteTrigger />
+        <ThemeToggle />
+      </div>
     </motion.div>
   );
 }
