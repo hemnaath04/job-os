@@ -23,7 +23,6 @@ const DEFAULT_SETTINGS: UserSettings = {
   default_level: null,
   default_location: null,
   timezone: null,
-  weekly_summary_email: false,
 };
 
 function applyTheme(theme: UserSettings["theme"]) {

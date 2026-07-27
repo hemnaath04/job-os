@@ -288,7 +288,6 @@ export interface UserSettings {
   default_level: string | null;
   default_location: string | null;
   timezone: string | null;
-  weekly_summary_email: boolean;
 }
 
 export type UserSettingsPatch = Partial<UserSettings>;

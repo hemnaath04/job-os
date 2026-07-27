@@ -15,7 +15,6 @@ class UserSettings(ORMModel):
     default_level: str | None = None
     default_location: str | None = None
     timezone: str | None = None
-    weekly_summary_email: bool = False
 
 
 class UserSettingsPatch(ORMModel):
@@ -27,7 +26,6 @@ class UserSettingsPatch(ORMModel):
     default_level: str | None = None
     default_location: str | None = None
     timezone: str | None = None
-    weekly_summary_email: bool | None = None
 
 
 class MeRead(ORMModel):
