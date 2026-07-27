@@ -17,23 +17,52 @@ const THEMES: { value: UserSettings["theme"]; label: string }[] = [
 const FUNCTIONS = ["swe", "ml", "ai", "data", "research", "sre", "infra", "security", "pm", "design"];
 const LEVELS = ["intern", "new-grad", "mid", "senior", "staff"];
 
+const DEFAULT_SETTINGS: UserSettings = {
+  theme: "light",
+  default_resume_id: null,
+  default_function: null,
+  default_level: null,
+  default_location: null,
+  timezone: null,
+  weekly_summary_email: false,
+};
+
+function applyTheme(theme: UserSettings["theme"]) {
+  if (typeof document === "undefined") return;
+  const dark =
+    theme === "dark" ||
+    (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  document.documentElement.classList.toggle("dark", dark);
+  try {
+    if (theme === "system") localStorage.removeItem("theme");
+    else localStorage.setItem("theme", theme);
+  } catch {
+    /* storage unavailable; class still applied for this session */
+  }
+}
+
 export default function SettingsPage() {
   const qc = useQueryClient();
-  const { data: settings, isLoading } = useQuery({
+  const { data: settings, isError } = useQuery({
     queryKey: ["settings"],
     queryFn: () => api.getSettings(),
+    retry: 1,
   });
   const { data: resumes = [] } = useQuery({
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
   });
 
-  const [form, setForm] = useState<UserSettings | null>(null);
-
-  // Hydrate form when settings load.
+  // Open immediately with defaults; hydrate from the server when it responds,
+  // but never block the page on a slow or unavailable backend.
+  const [form, setForm] = useState<UserSettings>(DEFAULT_SETTINGS);
+  const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
-    if (settings && !form) setForm(settings);
-  }, [settings, form]);
+    if (settings && !hydrated) {
+      setForm(settings);
+      setHydrated(true);
+    }
+  }, [settings, hydrated]);
 
   const save = useMutation({
     mutationFn: (body: Partial<UserSettings>) => api.patchSettings(body),
@@ -44,16 +73,10 @@ export default function SettingsPage() {
     onError: (err: Error) => toast.error(err.message),
   });
 
-  if (isLoading || !form) {
-    return (
-      <div className="workspace-page max-w-6xl">
-        <div className="loading-surface" />
-      </div>
-    );
-  }
-
   function update<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {
-    setForm((prev) => (prev ? { ...prev, [key]: value } : prev));
+    setHydrated(true);
+    setForm((prev) => ({ ...prev, [key]: value }));
+    if (key === "theme") applyTheme(value as UserSettings["theme"]);
   }
 
   const candidateResumes = resumes.filter((r: Resume) => !r.is_master);
@@ -78,7 +101,7 @@ export default function SettingsPage() {
       <div className="mt-6 grid gap-5 lg:grid-cols-2">
         <section className="workspace-panel p-6">
           <SectionHeader title="Appearance" />
-          <Field label="Theme" help="Affects the app shell. Light mode is a stub today.">
+          <Field label="Theme" help="Switches the whole app between light and dark. System follows your device.">
           <div className="flex gap-2">
             {THEMES.map((t) => (
               <button
