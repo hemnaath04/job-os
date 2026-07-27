@@ -149,15 +149,9 @@ export default function SettingsPage() {
         </section>
 
         <section className="workspace-panel p-6">
-          <SectionHeader title="Schedule & updates" />
+          <SectionHeader title="Schedule" />
           <Field label="Timezone" help="IANA name, for example America/New_York.">
             <input type="text" placeholder="America/New_York" value={form.timezone ?? ""} onChange={(e) => update("timezone", e.target.value || null)} className="field-control" />
-          </Field>
-          <Field label="Weekly summary email" help="Preview only. No email is sent yet.">
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-4 text-sm">
-              <input type="checkbox" checked={form.weekly_summary_email} onChange={(e) => update("weekly_summary_email", e.target.checked)} className="mt-0.5 size-4 accent-[#8A6D12]" />
-              <span className="text-[color:var(--color-text-muted)]">Send a weekly digest of applications and upcoming follow-ups.</span>
-            </label>
           </Field>
         </section>
       </div>
