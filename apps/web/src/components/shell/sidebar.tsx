@@ -124,7 +124,7 @@ export function Sidebar() {
           <button
             type="button"
             className={
-              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[color:var(--color-text-muted)] transition hover:bg-white/[0.04] hover:text-[color:var(--color-rose)] active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
+              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-rose)] active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
               (collapsed ? "justify-center" : "")
             }
             title="Sign out"
@@ -148,7 +148,7 @@ export function Sidebar() {
         </div>
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className="mt-2 inline-flex items-center justify-center rounded-lg border border-[color:var(--color-border)] bg-white/[0.02] p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-white/[0.05] hover:text-white active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
+          className="mt-2 inline-flex items-center justify-center rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] active:scale-[.97] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
           aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (
@@ -159,7 +159,7 @@ export function Sidebar() {
         </button>
       </div>
     </motion.aside>
-    <nav className="fixed inset-x-3 bottom-3 z-50 flex h-14 items-center justify-around rounded-2xl border border-white/[0.09] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
+    <nav className="fixed inset-x-3 bottom-3 z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
       {NAV.slice(0, 5).map((item) => {
         const Icon = item.icon;
         const active = pathname === item.href || pathname.startsWith(item.href + "/");
@@ -167,7 +167,7 @@ export function Sidebar() {
           <Link
             key={item.href}
             href={item.href}
-            className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${active ? "text-white" : "text-white/42 hover:text-white"}`}
+            className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${active ? "text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}
             aria-label={item.label}
           >
             {active && <motion.span layoutId="mobile-nav-active" className="absolute inset-0 rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/12" transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }} />}
@@ -198,8 +198,8 @@ function NavLink({
       className={
         "relative flex items-center gap-2.5 rounded-lg px-2.5 py-2 transition active:scale-[.985] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
         (active
-          ? "font-semibold text-white"
-          : "text-[color:var(--color-text-muted)] hover:bg-white/[0.04] hover:text-white") +
+          ? "font-semibold text-[color:var(--color-text)]"
+          : "text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-text)]") +
         (collapsed ? " justify-center" : "")
       }
       title={collapsed ? item.label : undefined}

@@ -23,8 +23,8 @@ export function EmptyState({
       transition={{ duration: 0.25 }}
       className="workspace-panel mt-8 p-12 text-center"
     >
-      <div className="relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-gradient-brand text-black shadow-[var(--shadow-brand-glow)]">
-        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-white/20 to-transparent" />
+      <div className="relative mx-auto flex size-14 items-center justify-center rounded-2xl bg-gradient-brand text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)]">
+        <div className="absolute inset-0 rounded-2xl bg-gradient-to-br from-[color:var(--color-cream)]/50 to-transparent" />
         <Icon className="relative size-6" />
       </div>
       <h3 className="mt-5 text-lg font-medium tracking-tight">{title}</h3>

@@ -200,7 +200,7 @@ export default function ResumesPage() {
             {importResult.map((item) => (
               <div
                 key={item.filename}
-                className="flex items-start gap-2 rounded-lg bg-white/[0.025] px-3 py-2 text-xs"
+                className="flex items-start gap-2 rounded-lg bg-[color:var(--color-surface-2)] px-3 py-2 text-xs"
               >
                 {item.imported ? (
                   <CheckCircle2 className="mt-0.5 size-3.5 shrink-0 text-[color:var(--color-mint)]" />
@@ -208,7 +208,7 @@ export default function ResumesPage() {
                   <Archive className="mt-0.5 size-3.5 shrink-0 text-[color:var(--color-amber)]" />
                 )}
                 <div className="min-w-0">
-                  <div className="truncate font-medium text-white/80">
+                  <div className="truncate font-medium text-[color:var(--color-text-muted)]">
                     {item.filename}
                   </div>
                   <div className="mt-0.5 text-[color:var(--color-text-dim)]">
@@ -297,7 +297,7 @@ function ResumeCard({ resume }: { resume: Resume }) {
 
   return (
     <div className="workspace-panel workspace-panel-interactive overflow-hidden">
-      <div className="flex items-center justify-between border-b border-white/[0.05] px-5 py-3.5">
+      <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-5 py-3.5">
         <div className="flex items-center gap-2.5">
           {resume.is_master ? (
             <Crown className="size-4 text-[color:var(--color-amber)]" />
@@ -331,7 +331,7 @@ function ResumeCard({ resume }: { resume: Resume }) {
                   removeResume.mutate();
                 }
               }}
-              className="rounded-lg p-1.5 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+              className="rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
               aria-label={`Archive ${resume.name}`}
             >
               <Archive className="size-3.5" />
@@ -340,7 +340,7 @@ function ResumeCard({ resume }: { resume: Resume }) {
         </div>
       </div>
 
-      <div className="divide-y divide-white/[0.04]">
+      <div className="divide-y divide-[color:var(--color-border)]">
         {isLoading && (
           <div className="px-5 py-3 text-sm text-[color:var(--color-text-muted)]">
             loading versions…
@@ -380,7 +380,7 @@ function VersionRow({
     onError: (error: Error) => toast.error(error.message),
   });
   return (
-    <div className="flex items-center justify-between px-5 py-3 hover:bg-white/[0.02]">
+    <div className="flex items-center justify-between px-5 py-3 hover:bg-[color:var(--color-surface-2)]">
       <div className="flex items-center gap-3">
         <FileText className="size-4 text-[color:var(--color-text-muted)]" />
         <div>
@@ -437,7 +437,7 @@ function VersionRow({
               onClick={() => {
                 if (window.confirm("Archive this resume version? It remains stored in the database.")) removeVersion.mutate();
               }}
-          className="rounded-lg p-2 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+          className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
           aria-label="Archive resume version"
         >
           <Archive className="size-3.5" />

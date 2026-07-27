@@ -240,7 +240,7 @@ function ResultView({
     <div className="workspace-page max-w-7xl">
       <button
         onClick={onReset}
-        className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-white"
+        className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
       >
         <ArrowLeft className="size-3" /> Tailor another
       </button>
@@ -264,7 +264,7 @@ function ResultView({
         <div className="flex items-center gap-2">
           <button
             onClick={onReset}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
           >
             <RefreshCw className="size-3" /> Re-tailor
           </button>
@@ -272,13 +272,13 @@ function ResultView({
             onClick={() =>
               downloadPdf(downloadUrl, `resume_${result.id.slice(0, 8)}.pdf`)
             }
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
           >
             <Download className="size-3" /> Download PDF
           </button>
           <Link
             href={`/resumes/${result.resume_id}/${result.id}`}
-            className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
           >
             <Sparkles className="size-3" /> Edit with AI
           </Link>
@@ -289,7 +289,7 @@ function ResultView({
               approve.isPending ||
               !result.review_report?.passed
             }
-            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             <CheckCircle2 className="size-3" />
             {result.approved_by_user ? "Final" : approve.isPending ? "…" : "Finalize"}
@@ -314,7 +314,7 @@ function ResultView({
           {result.review_score !== null ? Math.round(Number(result.review_score)) : "pending"}
           /100
         </span>
-        <span className="text-white/55">
+        <span className="text-[color:var(--color-text-dim)]">
           {result.review_report?.passed
             ? "Passed. You can finalize now."
             : "Open Edit with AI to resolve the review suggestions before finalizing."}
@@ -412,7 +412,7 @@ function TemplatePicker({
           <button
             type="button"
             onClick={() => setCreating((c) => !c)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs hover:bg-white/[0.06]"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
           >
             <Plus className="size-3" /> New
           </button>
@@ -446,7 +446,7 @@ function TemplatePicker({
               type="button"
               onClick={() => create.mutate()}
               disabled={create.isPending || !name.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
             >
               {create.isPending ? "Creating…" : "Create"}
             </button>
@@ -454,7 +454,7 @@ function TemplatePicker({
               <button
                 type="button"
                 onClick={() => setCreating(false)}
-                className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+                className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]"
               >
                 Cancel
               </button>
@@ -684,7 +684,7 @@ function GapRow({
   const supportsBullets = kind === "project" || kind === "experience";
 
   return (
-    <li className="rounded-[var(--radius-card)] bg-white/[0.02] p-3">
+    <li className="rounded-[var(--radius-card)] bg-[color:var(--color-surface-2)] p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="text-sm font-medium">{gap.requirement}</div>
@@ -699,7 +699,7 @@ function GapRow({
                 return (
                   <span
                     key={fid}
-                    className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[11px] text-[color:var(--color-text-muted)]"
+                    className="rounded-full bg-[color:var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--color-text-muted)]"
                   >
                     nearest: {f.title}
                   </span>
@@ -711,7 +711,7 @@ function GapRow({
         {!open && (
           <button
             onClick={() => setOpen(true)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] hover:bg-white/[0.06]"
+            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] hover:bg-[color:var(--color-surface-hover)]"
           >
             <Plus className="size-3" /> Add fact
           </button>
@@ -719,7 +719,7 @@ function GapRow({
       </div>
 
       {open && (
-        <div className="mt-3 space-y-2 rounded-[var(--radius-card)] border border-white/[0.06] bg-white/[0.02] p-3">
+        <div className="mt-3 space-y-2 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3">
           <div className="flex flex-wrap gap-1.5">
             {GAP_KINDS.map((k) => (
               <button
@@ -727,8 +727,8 @@ function GapRow({
                 onClick={() => setKind(k)}
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   kind === k
-                    ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-black opacity-90"
-                    : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)]"
+                    ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-[color:var(--color-on-accent)] opacity-90"
+                    : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
                 }`}
               >
                 {k}
@@ -739,7 +739,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
           />
           {kind !== "skill" && (
             <input
@@ -752,7 +752,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
             />
           )}
           {supportsBullets && (
@@ -761,20 +761,20 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#9AA7FF]/60"
             />
           )}
           <div className="flex items-center gap-2">
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !title.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
             >
               {create.isPending ? "Saving…" : "Save fact"}
             </button>
             <button
               onClick={() => setOpen(false)}
-              className="rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] hover:bg-white/[0.06]"
+              className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]"
             >
               Cancel
             </button>
@@ -807,7 +807,7 @@ function ResumeRender({
   return (
     <article className="workspace-panel p-8">
       {json.basics && (
-        <header className="border-b border-white/[0.06] pb-4">
+        <header className="border-b border-[color:var(--color-border)] pb-4">
           {json.basics.name && (
             <h2 className="text-xl font-semibold tracking-tight">
               {json.basics.name}

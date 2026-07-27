@@ -66,7 +66,7 @@ export function CommandPalette() {
                   placeholder="Search applications, jump to a page, run an action…"
                   className="flex-1 bg-transparent outline-none placeholder:text-[color:var(--color-text-dim)]"
                 />
-                <kbd className="rounded-md border border-[color:var(--color-border)] bg-white/[0.04] px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--color-text-dim)]">
+                <kbd className="rounded-md border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-1.5 py-0.5 font-mono text-[10px] text-[color:var(--color-text-dim)]">
                   ESC
                 </kbd>
               </div>
@@ -84,7 +84,7 @@ export function CommandPalette() {
                       key={item.href}
                       value={`page ${item.label}`}
                       onSelect={() => go(item.href)}
-                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-white/[0.06] data-[selected=true]:text-white"
+                      className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-[color:var(--color-surface-hover)] data-[selected=true]:text-[color:var(--color-text)]"
                     >
                       <item.icon className="size-4 text-[color:var(--color-violet)]" />
                       <span>{item.label}</span>
@@ -103,7 +103,7 @@ export function CommandPalette() {
                         key={a.id}
                         value={`action ${a.label}`}
                         onSelect={() => go(a.action)}
-                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-white/[0.06] data-[selected=true]:text-white"
+                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-[color:var(--color-text-muted)] data-[selected=true]:bg-[color:var(--color-surface-hover)] data-[selected=true]:text-[color:var(--color-text)]"
                       >
                         <Icon className="size-3.5 text-[color:var(--color-cyan)]" />
                         <span>{a.label}</span>
@@ -131,11 +131,11 @@ export function CommandPaletteTrigger() {
         });
         window.dispatchEvent(evt);
       }}
-      className="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-border)] bg-white/[0.02] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-white/[0.05] hover:text-white active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
+      className="inline-flex items-center gap-2 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] active:scale-[.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
     >
       <Search className="size-3.5" />
       <span>Search or jump</span>
-      <kbd className="ml-2 rounded border border-[color:var(--color-border)] bg-white/[0.04] px-1 py-0.5 font-mono text-[10px]">
+      <kbd className="ml-2 rounded border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-1 py-0.5 font-mono text-[10px]">
         ⌘K
       </kbd>
     </button>

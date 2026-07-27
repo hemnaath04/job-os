@@ -49,13 +49,13 @@ export function AddJobDialog({
                   Paste a job URL and we&apos;ll import its details.
                 </Dialog.Description>
               </div>
-              <Dialog.Close className="rounded-md p-1 text-[color:var(--color-text-muted)] hover:bg-white/[0.05] hover:text-white">
+              <Dialog.Close className="rounded-md p-1 text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]">
                 <X className="size-4" />
               </Dialog.Close>
             </div>
 
             <form onSubmit={onSubmit} className="mt-5 flex flex-col gap-3">
-              <label htmlFor="job-url" className="text-xs font-medium text-white/75">
+              <label htmlFor="job-url" className="text-xs font-medium text-[color:var(--color-text-muted)]">
                 Job URL
               </label>
               <input

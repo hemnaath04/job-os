@@ -20,13 +20,13 @@ export default async function Landing() {
         <div className="flex items-center gap-2">
           <Link
             href="/sign-in"
-            className="rounded-full border border-[color:var(--color-border)] bg-white/[0.03] px-4 py-1.5 text-sm transition hover:bg-white/[0.08]"
+            className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-4 py-1.5 text-sm transition hover:bg-[color:var(--color-surface-hover)]"
           >
             Sign in
           </Link>
           <Link
             href="/sign-up"
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             Get started <ArrowRight className="size-3.5" />
           </Link>
@@ -51,13 +51,13 @@ export default async function Landing() {
         <div className="mt-8 flex items-center gap-3">
           <Link
             href="/sign-in"
-            className="rounded-full bg-gradient-brand px-5 py-2.5 text-sm font-semibold text-black shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            className="rounded-full bg-gradient-brand px-5 py-2.5 text-sm font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
           >
             Sign in to dashboard
           </Link>
           <a
             href="https://github.com/hemnaath04/job-os"
-            className="rounded-full border border-[color:var(--color-border)] px-5 py-2.5 text-sm transition hover:bg-white/[0.04]"
+            className="rounded-full border border-[color:var(--color-border)] px-5 py-2.5 text-sm transition hover:bg-[color:var(--color-surface-2)]"
           >
             View on GitHub
           </a>
@@ -96,7 +96,7 @@ function Feature({
 }) {
   return (
     <div className="glass hover-lift rounded-[var(--radius-card-lg)] p-5">
-      <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-brand text-black shadow-[var(--shadow-brand-glow)]">
+      <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-brand text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)]">
         {icon}
       </div>
       <h3 className="mt-4 text-base font-medium">{title}</h3>

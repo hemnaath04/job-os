@@ -29,7 +29,7 @@ export function CompanyAvatar({
   const [from, to] = PALETTE[hash(name || "?") % PALETTE.length];
   return (
     <div
-      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg font-semibold text-white ${className}`}
+      className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg font-semibold text-[color:var(--color-text)] ${className}`}
       style={{
         width: size,
         height: size,
@@ -39,7 +39,7 @@ export function CompanyAvatar({
       }}
       aria-hidden
     >
-      <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent" />
+      <div className="absolute inset-0 bg-gradient-to-br from-[color:var(--color-cream)]/40 to-transparent" />
       <span className="relative">{letter}</span>
     </div>
   );

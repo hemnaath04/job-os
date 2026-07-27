@@ -176,11 +176,11 @@ export default function ResumeEditorClient({
 
   return (
     <div className="workspace-page max-w-[1720px]">
-      <header className="mb-4 flex flex-col gap-4 border-b border-white/[0.07] pb-4 lg:flex-row lg:items-center lg:justify-between">
+      <header className="mb-4 flex flex-col gap-4 border-b border-[color:var(--color-border)] pb-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Link
             href="/resumes"
-            className="rounded-lg border border-white/[0.08] p-2 text-white/55 transition hover:bg-white/[0.04] hover:text-white"
+            className="rounded-lg border border-[color:var(--color-border)] p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-text)]"
             aria-label="Back to resumes"
           >
             <ArrowLeft className="size-4" />
@@ -203,7 +203,7 @@ export default function ResumeEditorClient({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <div className="flex rounded-lg border border-white/[0.08] bg-white/[0.025] p-0.5">
+          <div className="flex rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
             <ModeButton active={mode === "edit"} onClick={() => setMode("edit")} icon={Save}>
               Edit
             </ModeButton>
@@ -252,7 +252,7 @@ export default function ResumeEditorClient({
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.55fr)]">
         <main className="min-w-0">
           {mode === "preview" ? (
-            <div className="product-panel min-h-[78dvh] overflow-hidden bg-white">
+            <div className="product-panel min-h-[78dvh] overflow-hidden bg-[color:var(--color-surface-hover)]">
               {previewQuery.isLoading ? (
                 <div className="loading-surface h-[78dvh]" />
               ) : previewQuery.isError ? (
@@ -280,7 +280,7 @@ export default function ResumeEditorClient({
             onImprove={() => chatEdit.mutate(improveMessage)}
           />
           <section className="product-panel overflow-hidden xl:sticky xl:top-16">
-            <div className="border-b border-white/[0.06] px-4 py-3">
+            <div className="border-b border-[color:var(--color-border)] px-4 py-3">
               <div className="flex items-center gap-2">
                 <MessageSquareText className="size-4 text-[color:var(--color-kiwi)]" />
                 <h2 className="text-sm font-semibold">Edit with AI</h2>
@@ -301,8 +301,8 @@ export default function ResumeEditorClient({
                   <div
                     className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-5 ${
                       message.role === "user"
-                        ? "bg-[color:var(--color-kiwi)]/12 text-white/85"
-                        : "border border-white/[0.07] bg-white/[0.025] text-white/72"
+                        ? "bg-[color:var(--color-kiwi)]/12 text-[color:var(--color-text)]"
+                        : "border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
                     }`}
                   >
                     {message.content}
@@ -311,7 +311,7 @@ export default function ResumeEditorClient({
               ))}
               {!messagesQuery.data?.length && (
                 <div className="py-6 text-center">
-                  <Sparkles className="mx-auto size-5 text-white/20" />
+                  <Sparkles className="mx-auto size-5 text-[color:var(--color-text-dim)]" />
                   <p className="mt-2 text-xs text-[color:var(--color-text-dim)]">
                     Try “Make the BedRocked bullets more backend-focused.”
                   </p>
@@ -329,7 +329,7 @@ export default function ResumeEditorClient({
                 />
               )}
             </div>
-            <div className="border-t border-white/[0.06] p-3">
+            <div className="border-t border-[color:var(--color-border)] p-3">
               <textarea
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
@@ -375,18 +375,18 @@ function ProposalPanel({
   );
   return (
     <div className="rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/[0.06] p-3">
-      <div className="flex items-center gap-2 text-xs font-semibold text-white/85">
+      <div className="flex items-center gap-2 text-xs font-semibold text-[color:var(--color-text)]">
         <Sparkles className="size-3.5 text-[color:var(--color-kiwi)]" />
         Review before applying
       </div>
-      <p className="mt-2 text-xs leading-5 text-white/65">{proposal.message}</p>
+      <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-muted)]">{proposal.message}</p>
       {sections.length > 0 && (
         <p className="mt-2 text-[11px] text-[color:var(--color-text-dim)]">
           Changes: {sections.join(", ")}
         </p>
       )}
       {proposal.suggestions.length > 0 && (
-        <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-4 text-white/58">
+        <ul className="mt-2 list-disc space-y-1 pl-4 text-[11px] leading-4 text-[color:var(--color-text-dim)]">
           {proposal.suggestions.slice(0, 4).map((suggestion) => (
             <li key={suggestion}>{suggestion}</li>
           ))}
@@ -589,7 +589,7 @@ function EducationEditor({
           return (
             <div
               key={`${item.institution}-${index}`}
-              className="rounded-xl border border-white/[0.07] bg-black/10 p-4"
+              className="rounded-xl border border-[color:var(--color-border)] bg-black/10 p-4"
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Institution" value={item.institution ?? ""} onChange={(next) => update("institution", next)} />
@@ -727,7 +727,7 @@ function EntryEditor({
             onChange(copy);
           };
           return (
-            <div key={`${String(item[nameKey])}-${index}`} className="rounded-xl border border-white/[0.07] bg-black/10 p-4">
+            <div key={`${String(item[nameKey])}-${index}`} className="rounded-xl border border-[color:var(--color-border)] bg-black/10 p-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Organization or project" value={String(item[nameKey] ?? "")} onChange={(next) => update(nameKey, next)} />
                 <Field label="Role or description" value={String(item[roleKey] ?? "")} onChange={(next) => update(roleKey, next)} />
@@ -798,7 +798,7 @@ function QualityPanel({
         <div className="text-2xl font-semibold">{Math.round(Number(review.score))}</div>
       </div>
       {review.github_projects_checked.length > 0 && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg bg-white/[0.025] px-3 py-2 text-[11px] text-white/55">
+        <div className="mt-3 flex items-center gap-2 rounded-lg bg-[color:var(--color-surface-2)] px-3 py-2 text-[11px] text-[color:var(--color-text-dim)]">
           <Github className="size-3.5" />
           {review.github_projects_checked.length} GitHub README{review.github_projects_checked.length === 1 ? "" : "s"} checked
         </div>
@@ -826,11 +826,11 @@ function QualityPanel({
 
 function Issue({ issue }: { issue: ResumeReviewIssue }) {
   return (
-    <div className="rounded-lg border border-white/[0.06] px-3 py-2">
+    <div className="rounded-lg border border-[color:var(--color-border)] px-3 py-2">
       <div className="text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-text-dim)]">
         {issue.severity}
       </div>
-      <p className="mt-1 text-xs leading-5 text-white/68">{issue.message}</p>
+      <p className="mt-1 text-xs leading-5 text-[color:var(--color-text-muted)]">{issue.message}</p>
     </div>
   );
 }
@@ -838,7 +838,7 @@ function Issue({ issue }: { issue: ResumeReviewIssue }) {
 function EditorSection({ title, icon: Icon, children }: { title: string; icon: typeof UserRound; children: React.ReactNode }) {
   return (
     <section className="product-panel">
-      <div className="flex items-center gap-2 border-b border-white/[0.06] px-5 py-4">
+      <div className="flex items-center gap-2 border-b border-[color:var(--color-border)] px-5 py-4">
         <Icon className="size-4 text-[color:var(--color-kiwi)]" />
         <h2 className="text-sm font-semibold">{title}</h2>
       </div>
@@ -849,7 +849,7 @@ function EditorSection({ title, icon: Icon, children }: { title: string; icon: t
 
 function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
-    <label className="block text-xs font-medium text-white/62">
+    <label className="block text-xs font-medium text-[color:var(--color-text-muted)]">
       {label}
       <input className="field-control mt-1.5" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
@@ -858,7 +858,7 @@ function Field({ label, value, onChange }: { label: string; value: string; onCha
 
 function TextArea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
   return (
-    <label className="mt-3 block text-xs font-medium text-white/62">
+    <label className="mt-3 block text-xs font-medium text-[color:var(--color-text-muted)]">
       {label}
       <textarea className="field-control mt-1.5 min-h-24 resize-y" value={value} onChange={(event) => onChange(event.target.value)} />
     </label>
@@ -867,7 +867,7 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
 
 function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="rounded-lg p-2 text-white/35 transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]" aria-label={label}>
+    <button onClick={onClick} className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]" aria-label={label}>
       <Trash2 className="size-4" />
     </button>
   );
@@ -875,7 +875,7 @@ function RemoveButton({ label, onClick }: { label: string; onClick: () => void }
 
 function ModeButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: typeof Save; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs transition ${active ? "bg-white/[0.08] text-white" : "text-white/45 hover:text-white"}`}>
+    <button onClick={onClick} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs transition ${active ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}>
       <Icon className="size-3.5" />
       {children}
     </button>
@@ -885,7 +885,7 @@ function ModeButton({ active, onClick, icon: Icon, children }: { active: boolean
 function StatusBadge({ status }: { status: string }) {
   const final = status === "final";
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${final ? "border-[color:var(--color-mint)]/20 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint)]" : "border-white/[0.08] bg-white/[0.03] text-white/45"}`}>
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${final ? "border-[color:var(--color-mint)]/20 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint)]" : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)]"}`}>
       {status.replaceAll("_", " ")}
     </span>
   );

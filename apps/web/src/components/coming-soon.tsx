@@ -18,7 +18,7 @@ export function ComingSoon({
   return (
     <div className="mx-auto max-w-3xl px-8 py-16">
       <div className="glass rounded-[var(--radius-card)] p-10 text-center">
-        <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-white/[0.04]">
+        <div className="mx-auto flex size-12 items-center justify-center rounded-xl bg-[color:var(--color-surface-2)]">
           <Icon className="size-5 text-[color:var(--color-violet)]" />
         </div>
         <div className="mt-5 inline-block rounded-full bg-[color:var(--color-violet)]/15 px-2.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-violet)]">
@@ -31,7 +31,7 @@ export function ComingSoon({
         {cta && (
           <Link
             href={cta.href}
-            className="mt-6 inline-block rounded-full border border-white/10 bg-white/[0.04] px-4 py-1.5 text-sm hover:bg-white/[0.08]"
+            className="mt-6 inline-block rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-4 py-1.5 text-sm hover:bg-[color:var(--color-surface-hover)]"
           >
             {cta.label}
           </Link>

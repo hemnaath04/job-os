@@ -28,7 +28,7 @@ export default function SignUpPage() {
             },
             elements: {
               formFieldInput:
-                "text-white placeholder:text-zinc-500 bg-[#1A1A24] border-white/10",
+                "text-[color:var(--color-text)] placeholder:text-zinc-500 bg-[#1A1A24] border-[color:var(--color-border)]",
               formFieldLabel: "text-zinc-200",
             },
           }}

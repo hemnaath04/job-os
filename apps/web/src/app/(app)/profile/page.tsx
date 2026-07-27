@@ -140,7 +140,7 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
         {Object.entries(byCat).map(([cat, skills]) => (
           <div
             key={cat}
-            className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 border-b border-white/[0.04] py-2 last:border-b-0"
+            className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 border-b border-[color:var(--color-border)] py-2 last:border-b-0"
           >
             <div className="text-sm font-medium text-[color:var(--color-text)]">
               {cat}
@@ -149,7 +149,7 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
               {skills.map((s) => (
                 <span
                   key={s.id}
-                  className="rounded-full border border-white/[0.06] bg-white/[0.03] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]"
+                  className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2 py-0.5 text-xs text-[color:var(--color-text-muted)]"
                 >
                   {s.title}
                 </span>

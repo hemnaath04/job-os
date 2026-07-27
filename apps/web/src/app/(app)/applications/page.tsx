@@ -129,7 +129,7 @@ export default function ApplicationsPage() {
         className="mt-5 flex justify-end"
       >
         <div className="flex items-center gap-2">
-          <div className="flex rounded-full border border-[color:var(--color-border)] bg-white/[0.03] p-0.5">
+          <div className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
             <ViewToggle
               active={view === "kanban"}
               onClick={() => setView("kanban")}
@@ -194,8 +194,8 @@ function ViewToggle({
       className={
         "relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition " +
         (active
-          ? "font-bold text-black"
-          : "font-medium text-[color:var(--color-text-muted)] hover:text-white")
+          ? "font-bold text-[color:var(--color-on-accent)]"
+          : "font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]")
       }
     >
       {active && (

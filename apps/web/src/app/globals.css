@@ -1,61 +1,93 @@
 @import "tailwindcss";
 
 @theme {
-  /* === Surfaces — editorial graphite, warm rather than pitch black === */
-  --color-bg: #101215;
-  --color-surface-1: #15181D;
-  --color-surface-2: #1B1F25;
-  --color-surface-3: #252A32;
+  /* ===================================================================
+     job.os design system — Warm Light theme
+     Base: parchment. Accent: Jasmine (#FFE787) fill + gold ink for text.
+     Neutrals pulled from the palette (mauve / khaki). Status colors are
+     semantic and tuned for contrast on a light surface.
+     =================================================================== */
 
-  --color-border: rgba(241, 238, 232, 0.10);
-  --color-border-strong: rgba(154, 167, 255, 0.32);
+  /* === Surfaces === */
+  --color-bg: #F1EFE3;          /* warm parchment page */
+  --color-surface-1: #FFFFFF;   /* cards / primary surface */
+  --color-surface-2: #F7F5EB;   /* inset / secondary */
+  --color-surface-3: #EFECDD;   /* deeper inset / track */
+  --color-surface-hover: #F3F1E7;
+
+  --color-border: #E5E1D1;      /* hairline warm border */
+  --color-border-strong: #D8D3C0;
 
   /* === Type === */
-  --color-text: #F1EEE8;
-  --color-text-muted: #A9AAA6;
-  --color-text-dim: #70736F;
+  --color-text: #2A2530;        /* deep warm charcoal-mauve */
+  --color-text-muted: #6C6470;  /* mauve-grey */
+  --color-text-dim: #9C948A;    /* khaki-grey */
 
-  /* === Brand: muted periwinkle — calm, precise, and non-neon === */
-  --color-kiwi: #9AA7FF;
-  --color-chartreuse: #AEB8EE;
-  --color-electric: #C7CDF0;
+  /* === Brand accent (Jasmine) ===
+     `accent` is the FILL (buttons, active tints); text on it is `on-accent`.
+     `accent-ink` is the readable brand color for text / icons / links on
+     light surfaces (pale jasmine fails contrast as text). */
+  --color-accent: #FFE787;
+  --color-accent-hover: #F8D64F;
+  --color-accent-border: #E9C64A;
+  --color-accent-soft: #FBF1CE;      /* tint background for active states */
+  --color-on-accent: #221F0E;
+  --color-accent-ink: #8A6D12;       /* gold — AA on white/parchment */
 
-  /* Compatibility aliases used by existing components. */
-  --color-indigo: var(--color-kiwi);
-  --color-purple: var(--color-chartreuse);
-  --color-violet: var(--color-electric);
-  --color-brand: var(--color-kiwi);
+  /* Secondary palette tokens (tints, charts, secondary buttons) */
+  --color-mauve: #7C6C77;
+  --color-khaki: #AAA694;
+  --color-sage: #D1D0A3;
+  --color-cream: #EBF8B8;
 
-  --color-cyan: #87A6B5;
-  --color-blue: #91A8D8;
+  /* Compatibility aliases used across existing components.
+     Text/icon uses map to readable gold ink or mauve; fills are set
+     explicitly in the component classes below. */
+  --color-kiwi: var(--color-accent-ink);
+  --color-chartreuse: #A9861F;
+  --color-electric: #B99A2E;
+  --color-indigo: var(--color-accent-ink);
+  --color-purple: var(--color-mauve);
+  --color-violet: var(--color-mauve);
+  --color-brand: var(--color-accent);
 
-  /* === Status accents (semantic, not brand) === */
-  --color-mint: #91AA9A;
-  --color-amber: #D0A15E;
-  --color-rose: #CC7A82;
-  --color-emerald: #7FA28E;
-  --color-sky: #7F9CCB;
+  --color-cyan: #3F6FA6;
+  --color-blue: #3F6FA6;
+
+  /* === Status accents (semantic, not brand) — tuned for light === */
+  --color-mint: #4E8A5F;
+  --color-amber: #B0791C;
+  --color-rose: #C0555F;
+  --color-emerald: #4E8A5F;
+  --color-sky: #3F6FA6;
 
   /* === Fonts === */
   --font-sans: var(--font-manrope), "Manrope", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
 
+  /* === Radii === */
+  --radius-sm: 0.5rem;
+  --radius-control: 0.7rem;
   --radius-card: 1rem;
   --radius-card-lg: 1.25rem;
   --radius-pill: 999px;
 
+  /* === Motion (design the curve, not the default) === */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 130ms;
+  --dur: 190ms;
+  --dur-slow: 320ms;
+
+  /* === Shadows — soft, warm, low; light UI reads premium on restraint === */
+  --shadow-xs: 0 1px 2px rgba(60, 50, 40, 0.05);
   --shadow-glass:
-    0 1px 0 0 rgba(255, 255, 255, 0.04) inset,
-    0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 20px 60px -20px rgba(0, 0, 0, 0.85);
-
+    0 1px 2px rgba(60, 50, 40, 0.04),
+    0 12px 30px -18px rgba(60, 50, 40, 0.22);
   --shadow-glass-hover:
-    0 1px 0 0 rgba(255, 255, 255, 0.08) inset,
-    0 0 0 1px rgba(154, 167, 255, 0.16),
-    0 30px 80px -20px rgba(0, 0, 0, 0.95);
-
-  --shadow-brand-glow:
-    0 14px 34px -18px rgba(107, 120, 210, 0.48);
+    0 2px 4px rgba(60, 50, 40, 0.06),
+    0 22px 48px -24px rgba(60, 50, 40, 0.30);
+  --shadow-brand-glow: 0 10px 24px -12px rgba(233, 198, 74, 0.65);
 }
 
 @layer base {
@@ -68,42 +100,41 @@
     text-rendering: optimizeLegibility;
   }
 
-  /* Soft atmospheric color keeps graphite from reading as flat. */
+  /* Faint warm atmosphere so parchment never reads as flat grey. */
   body::before {
     content: "";
     position: fixed;
     inset: 0;
     pointer-events: none;
     background:
-      radial-gradient(70rem 50rem at 80% -20%, rgba(130, 143, 215, 0.075), transparent 60%),
-      radial-gradient(60rem 40rem at -10% 110%, rgba(143, 166, 151, 0.045), transparent 60%);
+      radial-gradient(70rem 50rem at 82% -18%, rgba(255, 231, 135, 0.16), transparent 60%),
+      radial-gradient(60rem 42rem at -10% 112%, rgba(209, 208, 163, 0.20), transparent 60%);
     z-index: -1;
   }
 
   ::selection {
-    background: rgba(154, 167, 255, 0.55);
-    color: #101215;
+    background: rgba(255, 231, 135, 0.75);
+    color: #221F0E;
   }
 
-  .lucide {
-    stroke-width: 1.75;
-  }
+  .lucide { stroke-width: 1.75; }
 
   :focus-visible {
-    outline: 2px solid var(--color-kiwi);
-    outline-offset: 3px;
+    outline: 2px solid var(--color-accent-ink);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
-    background: rgba(154, 167, 255, 0.18);
+    background: rgba(124, 108, 119, 0.32);
     border-radius: 999px;
     border: 2px solid transparent;
     background-clip: padding-box;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: rgba(154, 167, 255, 0.32);
+    background: rgba(124, 108, 119, 0.5);
     background-clip: padding-box;
   }
 }
@@ -111,49 +142,49 @@
 /* ──── Utilities ─────────────────────────────────────────── */
 
 @utility glass {
-  background: color-mix(in oklch, var(--color-surface-1) 65%, transparent);
-  backdrop-filter: blur(20px) saturate(140%);
+  background: color-mix(in oklch, var(--color-surface-1) 78%, transparent);
+  backdrop-filter: blur(20px) saturate(120%);
   border: 1px solid var(--color-border);
   box-shadow: var(--shadow-glass);
 }
 
 @utility glass-strong {
-  background: color-mix(in oklch, var(--color-surface-2) 80%, transparent);
-  backdrop-filter: blur(24px) saturate(160%);
+  background: color-mix(in oklch, var(--color-surface-1) 92%, transparent);
+  backdrop-filter: blur(24px) saturate(130%);
   border: 1px solid var(--color-border-strong);
   box-shadow: var(--shadow-glass);
 }
 
 @utility glass-hover {
-  transition: box-shadow 200ms ease, background 200ms ease, transform 200ms ease;
+  transition: box-shadow var(--dur) var(--ease-out), background var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
   &:hover {
     box-shadow: var(--shadow-glass-hover);
-    background: color-mix(in oklch, var(--color-surface-2) 65%, transparent);
+    background: color-mix(in oklch, var(--color-surface-1) 96%, transparent);
   }
 }
 
 @utility violet-ring {
-  box-shadow: 0 0 0 1px var(--color-purple), 0 0 30px -5px var(--color-purple);
+  box-shadow: 0 0 0 1px var(--color-accent-border), 0 0 24px -6px rgba(233, 198, 74, 0.5);
 }
 
-/* Brand gradient text (use for hero titles, big numbers). */
+/* Brand gradient text — for hero titles / big numbers, gold to mauve. */
 @utility text-gradient-brand {
-  background: linear-gradient(120deg, #C9CEF4 0%, #AEB8EE 50%, #8F9EEB 100%);
+  background: linear-gradient(120deg, #6E5A10 0%, #A9861F 55%, #7C6C77 100%);
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
 }
 
-/* Brand gradient surface — muted periwinkle with dark text. */
+/* Brand gradient surface — jasmine fill with dark text. */
 @utility bg-gradient-brand {
-  background-image: linear-gradient(120deg, #8F9EEB 0%, #AEB8EE 55%, #C9CEF4 100%);
+  background-image: linear-gradient(120deg, #FFE787 0%, #FFDF6A 55%, #F8D64F 100%);
 }
 
 @utility bg-gradient-accent {
-  background-image: linear-gradient(120deg, var(--color-cyan) 0%, var(--color-blue) 100%);
+  background-image: linear-gradient(120deg, var(--color-sage) 0%, var(--color-cream) 100%);
 }
 
-/* Soft border-gradient stroke — sits on top of glass cards for accent. */
+/* Soft border-gradient stroke — sits on top of cards for accent. */
 @utility border-gradient-brand {
   position: relative;
   &::before {
@@ -162,7 +193,7 @@
     inset: 0;
     border-radius: inherit;
     padding: 1px;
-    background: linear-gradient(135deg, #8F9EEB, #AEB8EE, #C9CEF4);
+    background: linear-gradient(135deg, #F8D64F, #FFE787, #EBF8B8);
     -webkit-mask:
       linear-gradient(#000 0 0) content-box,
       linear-gradient(#000 0 0);
@@ -172,22 +203,22 @@
   }
 }
 
-/* Restrained accent depth — no bloom or neon halo. */
+/* Restrained accent depth — no bloom. */
 @utility glow-brand {
   box-shadow:
-    0 0 0 1px rgba(154, 167, 255, 0.34),
-    0 16px 36px -22px rgba(107, 120, 210, 0.62);
+    0 0 0 1px var(--color-accent-border),
+    0 16px 36px -22px rgba(233, 198, 74, 0.7);
 }
 
 @utility hover-lift {
-  transition: transform 200ms ease, box-shadow 200ms ease;
+  transition: transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
   &:hover {
     transform: translateY(-2px);
     box-shadow: var(--shadow-glass-hover);
   }
 }
 
-/* ── Status gradient pills ── */
+/* ── Status pill base ── */
 @utility pill-status {
   padding: 0.15rem 0.6rem;
   border-radius: 999px;
@@ -207,7 +238,7 @@
     content: "";
     position: absolute;
     inset: 0;
-    background: linear-gradient(110deg, transparent 25%, rgba(255,255,255,0.05) 50%, transparent 75%);
+    background: linear-gradient(110deg, transparent 25%, rgba(60, 50, 40, 0.05) 50%, transparent 75%);
     transform: translateX(-100%);
     animation: shimmer 2.2s infinite;
   }
@@ -226,11 +257,11 @@
   justify-content: center;
   gap: 0.5rem;
   min-height: 40px;
-  border-radius: 0.7rem;
+  border-radius: var(--radius-control);
   padding: 0.6rem 1rem;
   font-size: 0.75rem;
   font-weight: 650;
-  transition: transform 160ms ease, border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
+  transition: transform var(--dur-fast) var(--ease-out), border-color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
 }
 
 .product-button:hover,
@@ -240,52 +271,51 @@
 
 .product-button-primary,
 .kinetic-button-primary {
-  color: #111319;
-  background: #aeb8ee;
-  box-shadow: 0 12px 30px -18px rgba(107, 120, 210, 0.5);
+  color: var(--color-on-accent);
+  background: var(--color-accent);
+  border: 1px solid var(--color-accent-border);
+  box-shadow: var(--shadow-brand-glow);
 }
 
 .product-button-primary:hover,
 .kinetic-button-primary:hover {
-  background: #c0c8f2;
-  box-shadow: 0 16px 34px -18px rgba(107, 120, 210, 0.58);
+  background: var(--color-accent-hover);
+  box-shadow: 0 14px 30px -14px rgba(233, 198, 74, 0.8);
 }
 
 .product-button-secondary,
 .kinetic-button-secondary {
-  color: rgba(255, 255, 255, 0.68);
-  border: 1px solid rgba(255, 255, 255, 0.09);
-  background: rgba(255, 255, 255, 0.035);
+  color: var(--color-text);
+  border: 1px solid var(--color-border-strong);
+  background: var(--color-surface-1);
 }
 
 .product-button-secondary:hover,
 .kinetic-button-secondary:hover {
-  border-color: rgba(154, 167, 255, 0.22);
-  background: rgba(255, 255, 255, 0.055);
-  color: white;
+  border-color: var(--color-accent-border);
+  background: var(--color-surface-2);
+  color: var(--color-text);
 }
 
 .product-panel,
 .product-metric {
-  border: 1px solid rgba(241, 238, 232, 0.075);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
-  background: rgba(21, 24, 29, 0.88);
-  box-shadow: inset 0 1px rgba(255, 255, 255, 0.025), 0 24px 70px -52px rgba(0, 0, 0, 0.98);
+  background: var(--color-surface-1);
+  box-shadow: var(--shadow-glass);
 }
 
-.product-panel {
-  overflow: hidden;
-}
+.product-panel { overflow: hidden; }
 
 .product-metric {
   min-height: 164px;
   padding: 1.25rem;
-  transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+  transition: border-color var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out), transform var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out);
 }
 
 .product-metric:hover {
-  border-color: rgba(154, 167, 255, 0.16);
-  background: rgba(27, 31, 37, 0.92);
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-glass-hover);
   transform: translateY(-1px);
 }
 
@@ -294,16 +324,16 @@
   width: 2rem;
   height: 2rem;
   place-items: center;
-  border: 1px solid rgba(154, 167, 255, 0.16);
+  border: 1px solid var(--color-accent-border);
   border-radius: 0.65rem;
-  color: var(--color-kiwi);
-  background: rgba(154, 167, 255, 0.07);
+  color: var(--color-accent-ink);
+  background: var(--color-accent-soft);
 }
 
 .product-chart-grid {
   background-image:
-    linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    linear-gradient(rgba(60, 50, 40, 0.06) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(60, 50, 40, 0.06) 1px, transparent 1px);
   background-size: 100% 33.33%, 12.5% 100%;
   mask-image: linear-gradient(to right, transparent, black 8%, black 92%, transparent);
 }
@@ -313,11 +343,11 @@
   min-height: 48px;
   align-items: center;
   gap: .75rem;
-  border-radius: .7rem;
+  border-radius: var(--radius-control);
   padding: .55rem .65rem;
-  transition: background-color 160ms ease, transform 160ms ease;
+  transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
-.product-row:hover { background: rgba(255,255,255,.025); }
+.product-row:hover { background: var(--color-surface-hover); }
 .product-row:active { transform: scale(.995); }
 
 .product-empty-state {
@@ -326,13 +356,13 @@
   place-items: center;
   align-content: center;
   gap: .75rem;
-  border: 1px dashed rgba(255,255,255,.1);
+  border: 1px dashed var(--color-border-strong);
   border-radius: var(--radius-card);
   padding: 2rem;
   text-align: center;
-  background: rgba(21,24,29,.55);
+  background: var(--color-surface-2);
 }
-.product-empty-state > svg { color: var(--color-kiwi); }
+.product-empty-state > svg { color: var(--color-accent-ink); }
 .product-empty-state h1 { font-size: 1.25rem; font-weight: 650; letter-spacing: -.025em; }
 .product-empty-state p { max-width: 30rem; color: var(--color-text-muted); font-size: .875rem; line-height: 1.6; }
 
@@ -352,10 +382,10 @@
   z-index: -1;
   inset: 3.25rem 0 0 0;
   pointer-events: none;
-  opacity: 0.16;
+  opacity: 0.5;
   background-image:
-    linear-gradient(rgba(255,255,255,.025) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.025) 1px, transparent 1px);
+    linear-gradient(rgba(60, 50, 40, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(60, 50, 40, 0.03) 1px, transparent 1px);
   background-size: 72px 72px;
   mask-image: linear-gradient(to bottom, black, transparent 75%);
 }
@@ -367,17 +397,15 @@
   align-items: flex-start;
   justify-content: space-between;
   gap: 1.5rem;
-  border: 1px solid rgba(241, 238, 232, 0.08);
+  border: 1px solid var(--color-border);
   border-radius: var(--radius-card);
   padding: clamp(1.25rem, 2.4vw, 2rem);
-  background: rgba(21, 24, 29, 0.88);
-  box-shadow: inset 0 1px rgba(255,255,255,.035), 0 28px 90px -60px rgba(0,0,0,.95);
-  animation: intro-rise 420ms cubic-bezier(.22,1,.36,1) both;
+  background: var(--color-surface-1);
+  box-shadow: var(--shadow-glass);
+  animation: intro-rise 420ms var(--ease-out) both;
 }
 
-.page-intro-grid {
-  display: none;
-}
+.page-intro-grid { display: none; }
 
 .page-intro-icon {
   display: grid;
@@ -385,12 +413,11 @@
   height: 2.75rem;
   flex: 0 0 auto;
   place-items: center;
-  color: #c9cef4;
-  border: 1px solid rgba(154,167,255,.2);
+  color: var(--color-accent-ink);
+  border: 1px solid var(--color-accent-border);
   border-radius: .9rem;
-  background: rgba(154,167,255,.08);
-  box-shadow: inset 0 1px rgba(255,255,255,.08);
-  animation: icon-settle 520ms 90ms cubic-bezier(.22,1,.36,1) both;
+  background: var(--color-accent-soft);
+  animation: icon-settle 520ms 90ms var(--ease-out) both;
 }
 
 .section-kicker {
@@ -407,52 +434,55 @@
   align-items: center;
   gap: .35rem;
   padding: .28rem .7rem;
-  color: #bdc0c5;
-  border: 1px solid rgba(255,255,255,.075);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
   border-radius: 999px;
-  background: rgba(255,255,255,.035);
+  background: var(--color-surface-2);
   font-size: .7rem;
   font-weight: 600;
 }
-.info-chip-sage { color: #b3c5b9; border-color: rgba(127,162,142,.18); background: rgba(127,162,142,.075); }
-.info-chip-clay { color: #d7b184; border-color: rgba(208,161,94,.18); background: rgba(208,161,94,.07); }
+.info-chip-sage { color: #5C6B4E; border-color: rgba(129, 148, 96, 0.30); background: rgba(129, 148, 96, 0.10); }
+.info-chip-clay { color: #8A5A1C; border-color: rgba(176, 121, 28, 0.28); background: rgba(176, 121, 28, 0.10); }
 
 .workspace-panel {
-  border: 1px solid rgba(241,238,232,.075);
+  border: 1px solid var(--color-border);
   border-radius: 1.25rem;
-  background:
-    linear-gradient(145deg, rgba(255,255,255,.032), transparent 42%),
-    rgba(21,24,29,.82);
-  box-shadow: inset 0 1px rgba(255,255,255,.025), 0 24px 70px -52px rgba(0,0,0,.98);
+  background: var(--color-surface-1);
+  box-shadow: var(--shadow-glass);
 }
 
 .workspace-panel-interactive {
-  transition: transform 260ms cubic-bezier(.22,1,.36,1), border-color 260ms ease, background-color 260ms ease;
+  transition: transform var(--dur-slow) var(--ease-out), border-color var(--dur-slow) var(--ease-out), box-shadow var(--dur-slow) var(--ease-out);
 }
 .workspace-panel-interactive:hover {
   transform: translateY(-1px);
-  border-color: rgba(154,167,255,.16);
-  background-color: rgba(27,31,37,.92);
+  border-color: var(--color-accent-border);
+  box-shadow: var(--shadow-glass-hover);
 }
 
 .field-control {
   width: 100%;
   min-height: 42px;
-  border: 1px solid rgba(255,255,255,.09);
+  border: 1px solid var(--color-border-strong);
   border-radius: .8rem;
-  background: rgba(10,12,15,.5);
+  background: var(--color-surface-1);
   padding: .65rem .8rem;
   color: var(--color-text);
   font-size: .875rem;
   outline: none;
-  transition: border-color 180ms ease, box-shadow 180ms ease, background-color 180ms ease;
+  transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
 }
-.field-control:focus { border-color: rgba(154,167,255,.44); box-shadow: 0 0 0 3px rgba(154,167,255,.075); background: rgba(10,12,15,.75); }
+.field-control::placeholder { color: var(--color-text-dim); }
+.field-control:focus {
+  border-color: var(--color-accent-border);
+  box-shadow: 0 0 0 3px rgba(255, 231, 135, 0.45);
+  background: var(--color-surface-1);
+}
 
 .loading-surface {
   min-height: 120px;
   border-radius: 1.25rem;
-  background: linear-gradient(100deg, rgba(255,255,255,.025), rgba(255,255,255,.06), rgba(255,255,255,.025));
+  background: linear-gradient(100deg, var(--color-surface-2), var(--color-surface-3), var(--color-surface-2));
   background-size: 200% 100%;
   animation: loading-drift 1.8s ease-in-out infinite;
 }

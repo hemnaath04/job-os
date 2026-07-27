@@ -25,7 +25,7 @@ export function StatusPill({ status, size = "sm" }: { status: AppStatus; size?: 
       : "text-[10px] px-2 py-0.5";
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full font-semibold uppercase tracking-wider text-white ${cls}`}
+      className={`inline-flex items-center gap-1 rounded-full font-semibold uppercase tracking-wider text-[color:var(--color-text)] ${cls}`}
       style={{
         background: `linear-gradient(135deg, ${s.from}33, ${s.to}33)`,
         boxShadow: `inset 0 0 0 1px ${s.ring}80`,

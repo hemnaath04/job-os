@@ -80,14 +80,14 @@ export default function DashboardClient({
         initial={reduceMotion ? false : { opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35, ease: [0.16, 1, 0.3, 1] }}
-        className="mb-6 flex flex-col gap-5 border-b border-white/[0.07] pb-6 md:flex-row md:items-end md:justify-between"
+        className="mb-6 flex flex-col gap-5 border-b border-[color:var(--color-border)] pb-6 md:flex-row md:items-end md:justify-between"
       >
         <div>
           <div className="mb-2 flex items-center gap-2 text-xs font-medium text-[color:var(--color-text-muted)]">
             <DatabaseZap className="size-3.5 text-[color:var(--color-kiwi)]" />
             Live application data
           </div>
-          <h1 className="text-3xl font-semibold tracking-[-0.045em] text-white sm:text-4xl">
+          <h1 className="text-3xl font-semibold tracking-[-0.045em] text-[color:var(--color-text)] sm:text-4xl">
             Your job search, at a glance
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-muted)]">
@@ -203,10 +203,10 @@ function Metric({
         <span className="product-icon">
           <Icon className="size-4" />
         </span>
-        <ArrowUpRight className="size-3.5 text-white/20" />
+        <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)]" />
       </div>
-      <div className="mt-5 text-3xl font-semibold tracking-[-0.045em] text-white">{value}</div>
-      <div className="mt-2 text-xs font-medium text-white/72">{label}</div>
+      <div className="mt-5 text-3xl font-semibold tracking-[-0.045em] text-[color:var(--color-text)]">{value}</div>
+      <div className="mt-2 text-xs font-medium text-[color:var(--color-text-muted)]">{label}</div>
       <div className="mt-1 text-xs text-[color:var(--color-text-dim)]">{detail}</div>
     </motion.section>
   );
@@ -227,15 +227,15 @@ function DashboardPanel({
 }) {
   return (
     <motion.section variants={variants} className="product-panel">
-      <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-4">
+      <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-5 py-4">
         <div className="flex items-center gap-2.5">
           <Icon className="size-4 text-[color:var(--color-kiwi)]" />
-          <h2 className="text-sm font-semibold text-white/90">{title}</h2>
+          <h2 className="text-sm font-semibold text-[color:var(--color-text)]">{title}</h2>
         </div>
         {action && (
           <Link
             href={action.href}
-            className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] transition hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
+            className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] transition hover:text-[color:var(--color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)]"
           >
             {action.label}
             <ArrowUpRight className="size-3" />
@@ -275,7 +275,7 @@ function ActivityChart({
           {intelligence.velocity} this week
         </div>
       </div>
-      <div className="relative mt-6 h-52 overflow-hidden rounded-xl border border-white/[0.055] bg-black/20 px-3 py-4">
+      <div className="relative mt-6 h-52 overflow-hidden rounded-xl border border-[color:var(--color-border)] bg-black/20 px-3 py-4">
         <div className="product-chart-grid absolute inset-0" />
         <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="relative h-full w-full" role="img" aria-label="Applications added over the last 30 days">
           <defs>
@@ -298,8 +298,8 @@ function ActivityChart({
             transition={{ duration: 0.8, ease: [0.16, 1, 0.3, 1] }}
           />
         </svg>
-        <span className="absolute bottom-3 left-4 text-[10px] text-white/25">30 days ago</span>
-        <span className="absolute bottom-3 right-4 text-[10px] text-white/25">Today</span>
+        <span className="absolute bottom-3 left-4 text-[10px] text-[color:var(--color-text-dim)]">30 days ago</span>
+        <span className="absolute bottom-3 right-4 text-[10px] text-[color:var(--color-text-dim)]">Today</span>
       </div>
     </div>
   );
@@ -309,8 +309,8 @@ function NextActions({ applications }: { applications: Application[] }) {
   if (!applications.length) {
     return (
       <div className="flex min-h-52 flex-col items-center justify-center text-center">
-        <CalendarClock className="size-5 text-white/25" />
-        <p className="mt-3 text-sm text-white/65">No upcoming actions</p>
+        <CalendarClock className="size-5 text-[color:var(--color-text-dim)]" />
+        <p className="mt-3 text-sm text-[color:var(--color-text-muted)]">No upcoming actions</p>
         <p className="mt-1 max-w-xs text-xs leading-5 text-[color:var(--color-text-dim)]">
           Add a follow-up date to an application to see it here.
         </p>
@@ -324,7 +324,7 @@ function NextActions({ applications }: { applications: Application[] }) {
         <Link key={app.id} href="/applications" className="product-row group">
           <CompanyAvatar name={app.job.company?.name || "Unknown"} size={28} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-xs font-medium text-white/82">
+            <div className="truncate text-xs font-medium text-[color:var(--color-text-muted)]">
               {app.next_action_label || "Follow up"}
             </div>
             <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
@@ -334,7 +334,7 @@ function NextActions({ applications }: { applications: Application[] }) {
           <span className="shrink-0 text-[11px] font-medium text-[color:var(--color-kiwi)]">
             {relativeDate(app.next_action_at)}
           </span>
-          <ArrowUpRight className="size-3.5 text-white/18 transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-white/60" />
+          <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)] transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-text-muted)]" />
         </Link>
       ))}
     </div>
@@ -348,16 +348,16 @@ function RecentApplications({ applications }: { applications: Application[] }) {
         <Link key={app.id} href="/applications" className="product-row group">
           <CompanyAvatar name={app.job.company?.name || "Unknown"} size={30} />
           <div className="min-w-0 flex-1">
-            <div className="truncate text-sm font-medium text-white/82">{app.job.title}</div>
+            <div className="truncate text-sm font-medium text-[color:var(--color-text-muted)]">{app.job.title}</div>
             <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
               {app.job.company?.name || "Unknown company"}
             </div>
           </div>
           <StatusPill status={app.status} />
-          <span className="hidden w-16 text-right text-[11px] text-white/28 sm:block">
+          <span className="hidden w-16 text-right text-[11px] text-[color:var(--color-text-dim)] sm:block">
             {relativeDate(app.updated_at)}
           </span>
-          <ArrowUpRight className="size-3.5 text-white/15 transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-white/60" />
+          <ArrowUpRight className="size-3.5 text-[color:var(--color-text-dim)] transition group-hover:-translate-y-0.5 group-hover:translate-x-0.5 group-hover:text-[color:var(--color-text-muted)]" />
         </Link>
       ))}
     </div>
@@ -379,11 +379,11 @@ function PipelineSummary({
           <div key={item.name}>
             <div className="flex items-center gap-2 text-xs">
               <span className="size-2 rounded-full" style={{ backgroundColor: item.color }} />
-              <span className="flex-1 text-white/62">{item.name}</span>
-              <span className="font-medium text-white/85">{item.value}</span>
-              <span className="w-8 text-right text-white/28">{share}%</span>
+              <span className="flex-1 text-[color:var(--color-text-muted)]">{item.name}</span>
+              <span className="font-medium text-[color:var(--color-text)]">{item.value}</span>
+              <span className="w-8 text-right text-[color:var(--color-text-dim)]">{share}%</span>
             </div>
-            <div className="mt-2 h-px bg-white/[0.055]">
+            <div className="mt-2 h-px bg-[color:var(--color-surface-hover)]">
               <div
                 className="h-px origin-left"
                 style={{ width: `${share}%`, backgroundColor: item.color }}
@@ -422,8 +422,8 @@ function FirstLaunch() {
 function DashboardSkeleton() {
   return (
     <div className="workspace-page max-w-[1560px]" aria-label="Loading dashboard">
-      <div className="h-8 w-72 animate-pulse rounded-lg bg-white/[0.05]" />
-      <div className="mt-3 h-4 w-[28rem] max-w-full animate-pulse rounded bg-white/[0.035]" />
+      <div className="h-8 w-72 animate-pulse rounded-lg bg-[color:var(--color-surface-hover)]" />
+      <div className="mt-3 h-4 w-[28rem] max-w-full animate-pulse rounded bg-[color:var(--color-surface-2)]" />
       <div className="mt-8 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((item) => (
           <div key={item} className="loading-surface min-h-36" />

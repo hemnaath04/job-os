@@ -24,7 +24,7 @@ export function PageIntro({
         </div>
         <div className="min-w-0">
           <div className="section-kicker">{eyebrow}</div>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-white sm:text-[2rem]">
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-[color:var(--color-text)] sm:text-[2rem]">
             {title}
           </h1>
           <p className="mt-2 max-w-2xl text-sm leading-6 text-[color:var(--color-text-muted)]">

@@ -305,7 +305,7 @@ export default function DiscoverPage() {
               >
                 <button
                   onClick={() => applySaved(s)}
-                  className="inline-flex items-center gap-1 hover:text-white"
+                  className="inline-flex items-center gap-1 hover:text-[color:var(--color-text)]"
                   title={s.last_run_count !== null ? `${s.last_run_count} last run` : ""}
                 >
                   <Bookmark className="size-3 text-[color:var(--color-violet)]" />
@@ -313,7 +313,7 @@ export default function DiscoverPage() {
                 </button>
                 <button
                   onClick={() => deleteSaved.mutate(s.id)}
-                  className="ml-0.5 rounded-full p-1 text-[color:var(--color-text-dim)] opacity-0 transition group-hover:opacity-100 hover:bg-white/[0.06] hover:text-rose-300"
+                  className="ml-0.5 rounded-full p-1 text-[color:var(--color-text-dim)] opacity-0 transition group-hover:opacity-100 hover:bg-[color:var(--color-surface-hover)] hover:text-rose-300"
                   aria-label={`Delete saved search ${s.name}`}
                 >
                   <X className="size-3" />
@@ -422,7 +422,7 @@ export default function DiscoverPage() {
           {results !== null && (
             <button
               onClick={clearResults}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-white/[0.06] hover:text-white"
+              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
             >
               <X className="size-3.5" /> Clear results
             </button>
@@ -484,7 +484,7 @@ export default function DiscoverPage() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-[color:var(--color-text-dim)]">Sort by</span>
-              <div className="flex rounded-full border border-white/10 bg-white/[0.03] p-0.5">
+              <div className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
                 {(Object.keys(SORT_LABEL) as SortMode[]).map((m) => {
                   const disabled = m === "location" && !userLocation;
                   return (
@@ -494,8 +494,8 @@ export default function DiscoverPage() {
                       className={
                         "rounded-full px-3 py-1 text-xs transition " +
                         (sort === m
-                          ? "bg-gradient-brand font-semibold text-black"
-                          : "text-[color:var(--color-text-muted)] hover:text-white") +
+                          ? "bg-gradient-brand font-semibold text-[color:var(--color-on-accent)]"
+                          : "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]") +
                         (disabled ? " cursor-not-allowed opacity-40" : "")
                       }
                       title={
@@ -629,7 +629,7 @@ function ResultCard({
                 href={result.source_url}
                 target="_blank"
                 rel="noreferrer"
-                className="shrink-0 text-[color:var(--color-text-muted)] hover:text-white"
+                className="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
               >
                 <ExternalLink className="size-3.5" />
               </a>
@@ -654,7 +654,7 @@ function ResultCard({
             {formatDistanceToNow(parseISO(result.posted_at), { addSuffix: true })}
           </span>
         )}
-        <span className="rounded-full bg-white/[0.04] px-1.5 py-0.5 uppercase tracking-wide">
+        <span className="rounded-full bg-[color:var(--color-surface-2)] px-1.5 py-0.5 uppercase tracking-wide">
           {result.source_label || result.source}
         </span>
       </div>
@@ -671,7 +671,7 @@ function ResultCard({
           {result.technologies.slice(0, 6).map((t) => (
             <span
               key={t}
-              className="rounded-full bg-white/[0.04] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
+              className="rounded-full bg-[color:var(--color-surface-2)] px-2 py-0.5 text-[10px] text-[color:var(--color-text-muted)]"
             >
               {t}
             </span>
@@ -688,7 +688,7 @@ function ResultCard({
           <button
             onClick={() => importJob.mutate()}
             disabled={importJob.isPending || tailorJob.isPending}
-            className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1 text-[11px] hover:bg-white/[0.06] disabled:opacity-50"
+            className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] hover:bg-[color:var(--color-surface-hover)] disabled:opacity-50"
           >
             {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
             Import
@@ -697,7 +697,7 @@ function ResultCard({
         <button
           onClick={() => tailorJob.mutate()}
           disabled={tailorJob.isPending || importJob.isPending}
-          className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-black shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+          className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
           title="Import + create application + open the tailoring agent"
         >
           {tailorJob.isPending ? (
@@ -748,8 +748,8 @@ function SourceToggle({
       onClick={onClick}
       className={`flex flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
         active
-          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-white shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
-          : "border-white/10 bg-white/[0.02] text-[color:var(--color-text-muted)] hover:bg-white/[0.04]"
+          ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
+          : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-2)]"
       }`}
     >
       <span className="text-sm font-medium">{label}</span>

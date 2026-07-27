@@ -68,7 +68,7 @@ export default function CalendarPage() {
       )}
 
       {!isLoading && entries.length > 0 && (
-        <div className="relative mt-7 space-y-8 before:absolute before:bottom-2 before:left-[6px] before:top-3 before:w-px before:bg-gradient-to-b before:from-[#9AA7FF]/35 before:via-white/10 before:to-transparent">
+        <div className="relative mt-7 space-y-8 before:absolute before:bottom-2 before:left-[6px] before:top-3 before:w-px before:bg-gradient-to-b before:from-[#9AA7FF]/35 before:via-[color:var(--color-border-strong)] before:to-transparent">
           {BUCKETS.map(({ id, label }) => {
             const items = grouped[id];
             if (items.length === 0) return null;
@@ -117,7 +117,7 @@ function EntryRow({
         <div className="min-w-0">
           <div className="flex items-center gap-2 text-sm">
             <span className="font-medium">{entry.label}</span>
-            <span className="rounded-full bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-text-muted)]">
+            <span className="rounded-full bg-[color:var(--color-surface-2)] px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-[color:var(--color-text-muted)]">
               {STATUS_LABELS[entry.status]}
             </span>
           </div>

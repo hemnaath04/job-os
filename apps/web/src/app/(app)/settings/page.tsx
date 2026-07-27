@@ -86,8 +86,8 @@ export default function SettingsPage() {
                 onClick={() => update("theme", t.value)}
                 className={`rounded-full border px-3 py-1 text-xs ${
                   form.theme === t.value
-                    ? "border-[color:var(--color-purple)]/50 bg-[color:var(--color-purple)]/15 text-white shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
-                    : "border-white/10 bg-white/[0.03] text-[color:var(--color-text-muted)] hover:text-white"
+                    ? "border-[color:var(--color-purple)]/50 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(107,120,210,.45)]"
+                    : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
                 }`}
               >
                 {t.label}
@@ -125,7 +125,7 @@ export default function SettingsPage() {
             <input type="text" placeholder="America/New_York" value={form.timezone ?? ""} onChange={(e) => update("timezone", e.target.value || null)} className="field-control" />
           </Field>
           <Field label="Weekly summary email" help="Preview only. No email is sent yet.">
-            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-white/[0.07] bg-white/[0.025] p-4 text-sm">
+            <label className="flex cursor-pointer items-start gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-4 text-sm">
               <input type="checkbox" checked={form.weekly_summary_email} onChange={(e) => update("weekly_summary_email", e.target.checked)} className="mt-0.5 size-4 accent-[#9AA7FF]" />
               <span className="text-[color:var(--color-text-muted)]">Send a weekly digest of applications and upcoming follow-ups.</span>
             </label>
@@ -138,7 +138,7 @@ export default function SettingsPage() {
 
 function SectionHeader({ title }: { title: string }) {
   return (
-    <h2 className="section-kicker mb-5 border-b border-white/[0.06] pb-3">
+    <h2 className="section-kicker mb-5 border-b border-[color:var(--color-border)] pb-3">
       {title}
     </h2>
   );
