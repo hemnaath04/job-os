@@ -14,8 +14,9 @@ export const metadata: Metadata = {
   description: "Track applications, tailor resumes, never lie on your CV.",
 };
 
-// Runs before paint to apply the saved (or system) theme with no flash.
-const themeInit = `try{var t=localStorage.getItem('theme');if(t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}`;
+// Light is the default; dark is opt-in via the toggle and persisted. Runs
+// before paint so there is no flash for someone who chose dark previously.
+const themeInit = `try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark')}}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
