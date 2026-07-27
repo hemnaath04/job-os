@@ -618,7 +618,7 @@ function ResultCard({
       className="workspace-panel workspace-panel-interactive flex h-full flex-col p-5"
     >
       <div className="flex items-start gap-3">
-        <CompanyAvatar name={result.company_name ?? "?"} size={36} />
+        <CompanyAvatar name={result.company_name ?? "?"} domain={result.company_domain} size={36} />
         <div className="min-w-0 flex-1">
           <div className="flex items-start gap-2">
             <h3 className="line-clamp-2 text-sm font-medium leading-snug">

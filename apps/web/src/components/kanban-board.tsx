@@ -249,7 +249,7 @@ function Card({
       }
     >
       <div className="flex items-start gap-2.5">
-        <CompanyAvatar name={company} size={28} />
+        <CompanyAvatar name={company} domain={app.job.company?.domain} size={28} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1 truncate text-sm font-medium text-[color:var(--color-text)]">
             <span className="truncate">{app.job.title}</span>

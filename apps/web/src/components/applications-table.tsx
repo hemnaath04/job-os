@@ -67,7 +67,7 @@ export function ApplicationsTable({
             >
               <Td>
                 <div className="flex items-center gap-2">
-                  <CompanyAvatar name={a.job.company?.name ?? "Unknown"} size={24} />
+                  <CompanyAvatar name={a.job.company?.name ?? "Unknown"} domain={a.job.company?.domain} size={24} />
                   <span className="truncate">{a.job.company?.name ?? "Unknown"}</span>
                 </div>
               </Td>

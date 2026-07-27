@@ -447,7 +447,7 @@ function NextActions({ applications }: { applications: Application[] }) {
     <div className="space-y-1">
       {applications.slice(0, 5).map((app) => (
         <Link key={app.id} href="/applications" className="product-row group">
-          <CompanyAvatar name={app.job.company?.name || "Unknown"} size={28} />
+          <CompanyAvatar name={app.job.company?.name || "Unknown"} domain={app.job.company?.domain} size={28} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-xs font-semibold text-[color:var(--color-text)]">
               {app.next_action_label || "Follow up"}
@@ -471,7 +471,7 @@ function RecentApplications({ applications }: { applications: Application[] }) {
     <div className="space-y-1">
       {applications.slice(0, 6).map((app) => (
         <Link key={app.id} href="/applications" className="product-row group">
-          <CompanyAvatar name={app.job.company?.name || "Unknown"} size={30} />
+          <CompanyAvatar name={app.job.company?.name || "Unknown"} domain={app.job.company?.domain} size={30} />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold text-[color:var(--color-text)]">{app.job.title}</div>
             <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
