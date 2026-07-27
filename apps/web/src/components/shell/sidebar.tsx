@@ -34,7 +34,7 @@ const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
   { href: "/applications", label: "Applications", icon: LayoutGrid, section: "Pipeline" },
   { href: "/tailor", label: "AI Resume Tailor", icon: Sparkles, section: "Pipeline" },
-  { href: "/jobs", label: "Internship Finder", icon: Radar, section: "Pipeline" },
+  { href: "/jobs", label: "Job Finder", icon: Radar, section: "Pipeline" },
   { href: "/resumes", label: "Resumes", icon: FileText, section: "Documents" },
   { href: "/profile", label: "Profile", icon: UserSquare2, section: "Documents" },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, section: "Other" },

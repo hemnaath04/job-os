@@ -251,7 +251,7 @@ export default function DiscoverPage() {
     <div className="workspace-page max-w-7xl">
       <PageIntro
         eyebrow="Opportunity radar"
-        title="Internship finder"
+        title="Job finder"
         description="Translate plain-English intent into focused job-board searches, then bring the strongest roles into your private pipeline."
         icon={Radar}
       >

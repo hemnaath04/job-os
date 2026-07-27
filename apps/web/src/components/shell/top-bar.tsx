@@ -10,7 +10,7 @@ const FRIENDLY_TITLES: Record<string, string> = {
   "/dashboard": "Dashboard",
   "/applications": "Applications",
   "/tailor": "AI Resume Tailor",
-  "/jobs": "Internship Finder",
+  "/jobs": "Job Finder",
   "/resumes": "Resumes",
   "/profile": "Profile",
   "/calendar": "Calendar",
