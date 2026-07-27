@@ -9,9 +9,8 @@ import { api } from "@/lib/api";
 import type { Resume, UserSettings } from "@/lib/types";
 
 const THEMES: { value: UserSettings["theme"]; label: string }[] = [
-  { value: "dark", label: "Dark" },
   { value: "light", label: "Light" },
-  { value: "system", label: "System" },
+  { value: "dark", label: "Dark" },
 ];
 
 const FUNCTIONS = ["swe", "ml", "ai", "data", "research", "sre", "infra", "security", "pm", "design"];
@@ -43,7 +42,7 @@ function applyTheme(theme: UserSettings["theme"]) {
 
 export default function SettingsPage() {
   const qc = useQueryClient();
-  const { data: settings, isError } = useQuery({
+  const { data: settings } = useQuery({
     queryKey: ["settings"],
     queryFn: () => api.getSettings(),
     retry: 1,
