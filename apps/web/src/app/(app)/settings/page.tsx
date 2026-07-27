@@ -57,9 +57,15 @@ export default function SettingsPage() {
   // but never block the page on a slow or unavailable backend.
   const [form, setForm] = useState<UserSettings>(DEFAULT_SETTINGS);
   const [hydrated, setHydrated] = useState(false);
+  // Reflect the actual active theme (client-controlled) in the Theme control,
+  // rather than whatever the server last stored.
+  useEffect(() => {
+    const isDark = document.documentElement.classList.contains("dark");
+    setForm((prev) => ({ ...prev, theme: isDark ? "dark" : "light" }));
+  }, []);
   useEffect(() => {
     if (settings && !hydrated) {
-      setForm(settings);
+      setForm((prev) => ({ ...settings, theme: prev.theme }));
       setHydrated(true);
     }
   }, [settings, hydrated]);

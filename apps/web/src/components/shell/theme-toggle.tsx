@@ -17,6 +17,15 @@ export function ThemeToggle() {
   useEffect(() => {
     setDark(document.documentElement.classList.contains("dark"));
     setMounted(true);
+    // Keep already-open tabs in sync when the theme changes elsewhere.
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== "theme") return;
+      const d = e.newValue === "dark";
+      document.documentElement.classList.toggle("dark", d);
+      setDark(d);
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
   }, []);
 
   function toggle() {
