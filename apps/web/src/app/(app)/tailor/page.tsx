@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { Select } from "@/components/ui/select";
 import type {
   GapQuestion,
   JsonResume,
@@ -125,20 +126,19 @@ function TailorInner() {
           label="Job"
           help="The JD to tailor against. Add jobs from Applications."
         >
-          <select
+          <Select
             value={jobId}
-            onChange={(e) => setJobId(e.target.value)}
+            onChange={setJobId}
             disabled={jobsLoading}
-            className="field-control"
-          >
-            <option value="">Pick a job</option>
-            {jobs.map((j) => (
-              <option key={j.id} value={j.id}>
-                {j.title}
-                {j.company?.name ? ` · ${j.company.name}` : ""}
-              </option>
-            ))}
-          </select>
+            aria-label="Job to tailor against"
+            options={[
+              { value: "", label: "Pick a job" },
+              ...jobs.map((j) => ({
+                value: j.id,
+                label: `${j.title}${j.company?.name ? ` · ${j.company.name}` : ""}`,
+              })),
+            ]}
+          />
         </Field>
 
         <Field
@@ -395,20 +395,20 @@ function TemplatePicker({
     <div className="space-y-2">
       {candidates.length > 0 && (
         <div className="flex gap-2">
-          <select
+          <Select
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={onChange}
             disabled={loading}
-            className="field-control flex-1"
-          >
-            <option value="">Pick a template</option>
-            {candidates.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-                {r.base_role ? ` · ${r.base_role}` : ""}
-              </option>
-            ))}
-          </select>
+            className="flex-1"
+            aria-label="Target resume template"
+            options={[
+              { value: "", label: "Pick a template" },
+              ...candidates.map((r) => ({
+                value: r.id,
+                label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}`,
+              })),
+            ]}
+          />
           <button
             type="button"
             onClick={() => setCreating((c) => !c)}

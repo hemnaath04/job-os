@@ -5,6 +5,7 @@ import { Save, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import type { Resume, UserSettings } from "@/lib/types";
 
@@ -185,26 +186,3 @@ function Field({
   );
 }
 
-function Select({
-  value,
-  onChange,
-  options,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      className="field-control"
-    >
-      {options.map((o) => (
-        <option key={o.value} value={o.value}>
-          {o.label}
-        </option>
-      ))}
-    </select>
-  );
-}

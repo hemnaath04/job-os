@@ -492,6 +492,7 @@
 @keyframes loading-drift { to { background-position: -200% 0; } }
 @keyframes intro-rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes icon-settle { from { opacity: 0; transform: scale(.86) rotate(-8deg); } }
+@keyframes select-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
 
 @media (max-width: 700px) {
   .page-intro { min-height: 0; flex-direction: column; }
