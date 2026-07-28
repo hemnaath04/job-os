@@ -90,7 +90,10 @@ type PersistedState = {
 function loadState(): Partial<PersistedState> {
   if (typeof window === "undefined") return {};
   try {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+    // localStorage, not sessionStorage: results must survive closing and
+    // reopening the browser, not just navigation and reload. They persist
+    // until the user hits Clear results.
+    const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as PersistedState) : {};
   } catch {
     return {};
@@ -100,9 +103,9 @@ function loadState(): Partial<PersistedState> {
 function saveState(s: PersistedState) {
   if (typeof window === "undefined") return;
   try {
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
   } catch {
-    /* quota — fine, treat as ephemeral */
+    /* quota: fine, treat as ephemeral */
   }
 }
 
@@ -269,7 +272,8 @@ export default function DiscoverPage() {
     queryFn: () => api.listSavedSearches(),
   });
 
-  // Hydrate from sessionStorage so the result list survives nav + reload.
+  // Hydrate from localStorage so the result list survives nav, reload, and
+  // closing and reopening the browser, until Clear results.
   const initial = useMemo(loadState, []);
   const [titles, setTitles] = useState<string>(initial.titles ?? "");
   const [techs, setTechs] = useState<string>(initial.techs ?? "");
