@@ -278,7 +278,7 @@ async def run_tailor(
             max_tokens=4096,
             system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
             messages=state["messages"],
-            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
+            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
         text = "".join(b.text for b in msg.content if b.type == "text")
         raw = _strip_json_fence(text)
