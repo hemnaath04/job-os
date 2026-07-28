@@ -373,7 +373,7 @@ async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]
                     ),
                 }
             ],
-            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
+            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
         raw = "".join(block.text for block in response.content if block.type == "text")
         model_review = ModelReview.model_validate_json(_strip_json_fence(raw))
@@ -459,7 +459,7 @@ async def revise_resume(
         max_tokens=7000,
         system=CAREER_OPS_RULES,
         messages=[{"role": "user", "content": prompt}],
-        extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
+        extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
     )
     raw = "".join(block.text for block in response.content if block.type == "text")
     output = RevisionOutput.model_validate_json(_strip_json_fence(raw))
