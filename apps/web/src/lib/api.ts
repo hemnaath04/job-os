@@ -42,6 +42,15 @@ export type DiscoverNoKeyRequest = {
   limit?: number;
   companies?: string[];
   include_remote_boards?: boolean;
+  /**
+   * Bring-your-own-key credentials, read from localStorage at call time. They
+   * ride along with the request instead of living on the server.
+   */
+  keys?: {
+    jsearch?: string;
+    adzuna_app_id?: string;
+    adzuna_app_key?: string;
+  };
 };
 
 export type ProfileFactCreate = {

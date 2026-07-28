@@ -9,6 +9,7 @@ import {
   ExternalLink,
   KeyRound,
   Loader2,
+  Lock,
   MapPin,
   Radar,
   Search,
@@ -16,12 +17,20 @@ import {
   Wand2,
   X,
 } from "lucide-react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import {
+  hasKey,
+  isByoSource,
+  KEYS_CHANGED_EVENT,
+  loadKeys,
+  type DiscoveryKeys,
+} from "@/lib/discover/keys";
 import {
   emptyDiscoveryResponse,
   FREE_SOURCES,
@@ -53,8 +62,10 @@ const SORT_LABEL: Record<SortMode, string> = {
 const STORAGE_KEY = "discover:state:v2";
 
 // The FastAPI SavedSearch schema validates `sources` against a Literal of
-// theirstack | github, so a saved query cannot carry the key-free selections.
+// theirstack | github, so a saved query cannot carry the selections that run
+// through /api/discover: the key-free boards or the bring-your-own-key APIs.
 // Keep them alongside, keyed by saved-search id, until the backend catches up.
+// Only the source ids are stored here, never a key.
 const SAVED_NO_KEY_STORAGE_KEY = "discover:saved-no-key:v1";
 
 type PersistedState = {
@@ -120,6 +131,20 @@ function forgetSavedNoKey(id: string) {
 }
 
 /**
+ * The half of a selection that /api/discover serves: the key-free boards plus
+ * whichever bring-your-own-key sources actually have a key pasted. A selected
+ * source with no key is dropped rather than sent, so the route never has to
+ * answer for a credential the user never gave it.
+ */
+function routeSources(
+  selected: DiscoverySource[],
+  keys: DiscoveryKeys,
+): DiscoverySource[] {
+  const { noKey, byoKey } = splitSources(selected);
+  return [...noKey, ...byoKey.filter((s) => hasKey(s, keys))];
+}
+
+/**
  * Fan a query out to whichever backends the selected sources live on, then
  * merge. Both halves run in parallel and neither can sink the other: if one
  * rejects, its failure becomes an error row attributed to the sources it was
@@ -128,26 +153,29 @@ function forgetSavedNoKey(id: string) {
  */
 async function runSplitSearch(
   query: DiscoverySearchRequest,
+  keys: DiscoveryKeys,
 ): Promise<DiscoverySearchResponse> {
   const selected = query.sources ?? [];
-  const { backend, noKey } = splitSources(selected);
+  const { backend } = splitSources(selected);
+  const route = routeSources(selected, keys);
 
-  const [backendPart, noKeyPart] = await Promise.allSettled([
+  const [backendPart, routePart] = await Promise.allSettled([
     backend.length
       ? api.discoverySearch({ ...query, sources: backend })
       : Promise.resolve(emptyDiscoveryResponse()),
-    noKey.length
+    route.length
       ? api.discoverNoKey({
-          sources: noKey,
+          sources: route,
           title_keywords: query.title_keywords ?? [],
           country_codes: query.country_codes ?? [],
           max_age_days: query.max_age_days,
           limit: query.limit,
+          keys,
         })
       : Promise.resolve(emptyDiscoveryResponse()),
   ]);
 
-  if (backendPart.status === "rejected" && noKeyPart.status === "rejected") {
+  if (backendPart.status === "rejected" && routePart.status === "rejected") {
     throw backendPart.reason as Error;
   }
 
@@ -157,8 +185,8 @@ async function runSplitSearch(
     selected,
     backend,
     backendPart,
-    noKey,
-    noKeyPart,
+    route,
+    routePart,
     query.limit,
   );
 }
@@ -167,8 +195,8 @@ function combineParts(
   selected: DiscoverySource[],
   backend: DiscoverySource[],
   backendPart: PromiseSettledResult<DiscoverySearchResponse>,
-  noKey: DiscoverySource[],
-  noKeyPart: PromiseSettledResult<DiscoverySearchResponse>,
+  route: DiscoverySource[],
+  routePart: PromiseSettledResult<DiscoverySearchResponse>,
   limit?: number,
 ): DiscoverySearchResponse {
   const parts: DiscoverySearchResponse[] = [];
@@ -176,7 +204,7 @@ function combineParts(
 
   for (const [half, group] of [
     [backendPart, backend],
-    [noKeyPart, noKey],
+    [routePart, route],
   ] as const) {
     if (half.status === "fulfilled") {
       parts.push(half.value);
@@ -224,13 +252,39 @@ export default function DiscoverPage() {
 
   const [smartQuery, setSmartQuery] = useState<string>("");
 
+  // Pasted keys live in localStorage, which the server render cannot see, so
+  // start empty and pick them up on mount. The event fires from /jobs/keys in
+  // this tab; `storage` covers the same page open in another one.
+  const [keys, setKeys] = useState<DiscoveryKeys>({});
+  useEffect(() => {
+    const refresh = () => {
+      const next = loadKeys();
+      setKeys(next);
+      // A source whose key was just removed cannot run, so un-select it rather
+      // than leaving it lit and silently skipped.
+      setSources((prev) => {
+        const kept = prev.filter((s) => !isByoSource(s) || hasKey(s, next));
+        return kept.length > 0 && kept.length < prev.length ? kept : prev;
+      });
+    };
+    refresh();
+    window.addEventListener(KEYS_CHANGED_EVENT, refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener(KEYS_CHANGED_EVENT, refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
+
   // Persist on any change so reload restores state.
   useEffect(() => {
     saveState({ titles, techs, country, maxAgeDays, limit, sources, results, sort });
   }, [titles, techs, country, maxAgeDays, limit, sources, results, sort]);
 
   const search = useMutation({
-    mutationFn: (body: DiscoverySearchRequest) => runSplitSearch(body),
+    // Read the keys at call time rather than closing over state: the user may
+    // have connected a source in another tab since this page mounted.
+    mutationFn: (body: DiscoverySearchRequest) => runSplitSearch(body, loadKeys()),
     onSuccess: (data) => {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
@@ -285,14 +339,14 @@ export default function DiscoverPage() {
   const saveSearch = useMutation({
     mutationFn: async (name: string) => {
       const query = currentQuery();
-      const { backend, noKey } = splitSources(query.sources ?? []);
+      const { backend, noKey, byoKey } = splitSources(query.sources ?? []);
       // FastAPI rejects the key-free ids outright, so strip them from the
       // stored query and remember them locally against the new id.
       const saved = await api.createSavedSearch({
         name,
         query: { ...query, sources: backend },
       });
-      saveSavedNoKey(saved.id, noKey);
+      saveSavedNoKey(saved.id, [...noKey, ...byoKey]);
       return saved;
     },
     onSuccess: () => {
@@ -304,33 +358,36 @@ export default function DiscoverPage() {
 
   const runSaved = useMutation({
     mutationFn: async (s: SavedSearch) => {
-      const noKey = loadSavedNoKey()[s.id] ?? [];
+      const stored = loadSavedNoKey()[s.id] ?? [];
+      const savedKeys = loadKeys();
+      const route = routeSources(stored, savedKeys);
       const backend = s.query.sources ?? [];
       // runSavedSearch is what updates last_run_at / last_run_count upstream,
       // so keep using it for the backend half rather than replaying the query.
-      const [backendPart, noKeyPart] = await Promise.allSettled([
+      const [backendPart, routePart] = await Promise.allSettled([
         backend.length
           ? api.runSavedSearch(s.id)
           : Promise.resolve(emptyDiscoveryResponse()),
-        noKey.length
+        route.length
           ? api.discoverNoKey({
-              sources: noKey,
+              sources: route,
               title_keywords: s.query.title_keywords ?? [],
               country_codes: s.query.country_codes ?? [],
               max_age_days: s.query.max_age_days,
               limit: s.query.limit,
+              keys: savedKeys,
             })
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
-      if (backendPart.status === "rejected" && noKeyPart.status === "rejected") {
+      if (backendPart.status === "rejected" && routePart.status === "rejected") {
         throw backendPart.reason as Error;
       }
       return combineParts(
-        [...backend, ...noKey],
+        [...backend, ...route],
         backend,
         backendPart,
-        noKey,
-        noKeyPart,
+        route,
+        routePart,
         s.query.limit,
       );
     },
@@ -526,22 +583,48 @@ export default function DiscoverPage() {
           </div>
 
           <div className="mt-4">
-            <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
-              Add a key for more coverage
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+                Add a key for more coverage
+              </div>
+              <Link
+                href="/jobs/keys"
+                className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
+              >
+                <KeyRound className="size-2.5" /> Connect job sources
+              </Link>
             </div>
             <div className="mt-2 flex flex-wrap gap-2">
-              {KEYED_SOURCES.map((s) => (
-                <SourceToggle
-                  key={s}
-                  active={sources.includes(s)}
-                  onClick={() => toggleSource(s)}
-                  label={SOURCE_META[s].label}
-                  hint={SOURCE_META[s].hint}
-                  badge="needs key"
-                  keySteps={SOURCE_META[s].keySteps}
-                  keyUrl={SOURCE_META[s].keyUrl}
-                />
-              ))}
+              {KEYED_SOURCES.map((s) => {
+                const meta = SOURCE_META[s];
+                // The bring-your-own-key sources are only selectable once a key
+                // is in this browser; until then the tile is a route to the
+                // page that asks for one.
+                if (meta.credential === "byo") {
+                  return (
+                    <ByoSourceToggle
+                      key={s}
+                      connected={hasKey(s, keys)}
+                      active={sources.includes(s) && hasKey(s, keys)}
+                      onToggle={() => toggleSource(s)}
+                      label={meta.label}
+                      hint={meta.hint}
+                    />
+                  );
+                }
+                return (
+                  <SourceToggle
+                    key={s}
+                    active={sources.includes(s)}
+                    onClick={() => toggleSource(s)}
+                    label={meta.label}
+                    hint={meta.hint}
+                    badge="needs key"
+                    keySteps={meta.keySteps}
+                    keyUrl={meta.keyUrl}
+                  />
+                );
+              })}
             </div>
           </div>
         </div>
@@ -1027,6 +1110,71 @@ function SourceToggle({
   );
 }
 
+/**
+ * A source whose key lives in this browser. Locked until the key is pasted:
+ * clicking an unconnected tile goes to /jobs/keys rather than selecting a
+ * source that would be dropped from the request anyway.
+ */
+function ByoSourceToggle({
+  active,
+  connected,
+  onToggle,
+  label,
+  hint,
+}: {
+  active: boolean;
+  connected: boolean;
+  onToggle: () => void;
+  label: string;
+  hint: string;
+}) {
+  const tile =
+    "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition " +
+    (active
+      ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
+      : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]");
+
+  const heading = (
+    <>
+      <span className="flex items-center gap-1.5">
+        <span className="text-sm font-medium">{label}</span>
+        {connected ? (
+          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-mint)]">
+            <span className="size-1 rounded-full bg-[color:var(--color-mint)]" />
+            connected
+          </span>
+        ) : (
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-300">
+            <Lock className="size-2" /> add key
+          </span>
+        )}
+      </span>
+      <span className="text-[10px] text-[color:var(--color-text-dim)]">{hint}</span>
+    </>
+  );
+
+  return (
+    <div className="relative">
+      {connected ? (
+        <button onClick={onToggle} aria-pressed={active} className={tile}>
+          {heading}
+        </button>
+      ) : (
+        <Link href="/jobs/keys" className={tile}>
+          {heading}
+        </Link>
+      )}
+      <Link
+        href="/jobs/keys"
+        className="mt-1 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--color-text)]"
+      >
+        <KeyRound className="size-2.5" />
+        {connected ? "Manage key" : "Paste your free key"}
+      </Link>
+    </div>
+  );
+}
+
 function splitCsv(s: string): string[] {
   return s
     .split(",")
@@ -1067,9 +1215,9 @@ function mergeSmartSources(
   fromAgent: DiscoverySource[] | undefined,
   current: DiscoverySource[],
 ): DiscoverySource[] {
-  const { noKey } = splitSources(current);
+  const { noKey, byoKey } = splitSources(current);
   if (!fromAgent || fromAgent.length === 0) return current;
-  const merged = [...splitSources(fromAgent).backend, ...noKey];
+  const merged = [...splitSources(fromAgent).backend, ...noKey, ...byoKey];
   return merged.length > 0 ? merged : current;
 }
 
@@ -1087,6 +1235,17 @@ function prettyError(source: DiscoverySource, msg: string): string {
     }
     if (lower.includes("402") || lower.includes("credit")) {
       return "Out of TheirStack credits. Top up the account or fall back to GitHub.";
+    }
+  }
+  if (isByoSource(source)) {
+    if (lower.includes("add a key")) {
+      return "No key saved in this browser yet. Add one on the Connect job sources page.";
+    }
+    if (lower.includes("key rejected")) {
+      return `${msg}. Re-copy the key on the Connect job sources page.`;
+    }
+    if (lower.includes("quota")) {
+      return `${msg}. The provider is rate-limiting; try again shortly.`;
     }
   }
   if (NO_KEY_SOURCES.includes(source)) {

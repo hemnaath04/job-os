@@ -8,6 +8,7 @@ import { NextRequest, NextResponse } from "next/server";
 
 import {
   discoverNoKey,
+  type DiscoverNoKeyOptions,
   type NoKeySource,
 } from "@/lib/discover/no-key-sources";
 
@@ -17,6 +18,8 @@ const VALID_SOURCES: NoKeySource[] = [
   "ashby",
   "remotive",
   "remoteok",
+  "jsearch",
+  "adzuna",
 ];
 
 // Node runtime: the orchestrator relies on AbortController timeouts across
@@ -36,11 +39,32 @@ interface DiscoverRequestBody {
   limit?: unknown;
   companies?: unknown;
   include_remote_boards?: unknown;
+  keys?: unknown;
 }
 
 function toStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((v): v is string => typeof v === "string");
+}
+
+/**
+ * Credentials for the bring-your-own-key sources. They arrive from the user's
+ * localStorage on every request, are handed straight to the provider and are
+ * never persisted or logged: keep it that way.
+ */
+function toKeys(value: unknown): DiscoverNoKeyOptions["keys"] {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Record<string, unknown>;
+  const pick = (name: string): string | undefined =>
+    typeof raw[name] === "string" ? (raw[name] as string) : undefined;
+  const keys = {
+    jsearch: pick("jsearch"),
+    adzunaAppId: pick("adzuna_app_id"),
+    adzunaAppKey: pick("adzuna_app_key"),
+  };
+  return keys.jsearch || keys.adzunaAppId || keys.adzunaAppKey
+    ? keys
+    : undefined;
 }
 
 function toSources(value: unknown): NoKeySource[] | undefined {
@@ -74,6 +98,7 @@ export async function POST(req: NextRequest): Promise<Response> {
         typeof body.include_remote_boards === "boolean"
           ? body.include_remote_boards
           : undefined,
+      keys: toKeys(body.keys),
     });
     return NextResponse.json(payload, {
       headers: { "cache-control": "no-store" },

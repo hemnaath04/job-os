@@ -4,18 +4,24 @@
 //
 //   FastAPI (/api/backend/discovery/search)  theirstack, github
 //   this app (/api/discover)                 greenhouse, lever, ashby,
-//                                            remotive, remoteok
+//                                            remotive, remoteok,
+//                                            jsearch, adzuna
 //
 // The FastAPI side validates `sources` against a Pydantic
 // Literal["theirstack","github"], so sending it a key-free source id is a 422,
 // not a no-op. Always route a search through splitSources() before calling
 // either backend.
 //
+// jsearch and adzuna share the second route but need a credential, and it is
+// the user's own: splitSources reports them separately so the caller can drop
+// the ones with no key pasted yet.
+//
 // Deliberately free of any import from ./no-key-sources: that module is the
 // server-side fetch layer and pulling it in here would drag its country
-// tables into the client bundle.
+// tables into the client bundle. ./keys is client-safe, so its type is fine.
 
 import type { DiscoverySearchResponse, DiscoverySource } from "../types";
+import type { DiscoveryKeys } from "./keys";
 
 export const BACKEND_SOURCES: DiscoverySource[] = ["theirstack", "github"];
 
@@ -27,6 +33,9 @@ export const NO_KEY_SOURCES: DiscoverySource[] = [
   "remoteok",
 ];
 
+/** Served by /api/discover, but only once the user has pasted a key. */
+export const BYO_KEY_SOURCES: DiscoverySource[] = ["jsearch", "adzuna"];
+
 /** Sources that are free but still served by FastAPI. */
 const FREE_BACKEND_SOURCES: DiscoverySource[] = ["github"];
 
@@ -36,17 +45,31 @@ export const FREE_SOURCES: DiscoverySource[] = [
   ...NO_KEY_SOURCES,
 ];
 
-/** Sources gated behind a credential the user has to supply. */
-export const KEYED_SOURCES: DiscoverySource[] = ["theirstack"];
+/** Sources gated behind a credential, wherever that credential lives. */
+export const KEYED_SOURCES: DiscoverySource[] = [
+  "theirstack",
+  ...BYO_KEY_SOURCES,
+];
 
 export interface SourceMeta {
   label: string;
   hint: string;
   /** Shown as a badge and used to group the toggle. */
   needsKey?: boolean;
+  /**
+   * Where the credential lives. "server" is an environment variable on the
+   * API; "byo" is pasted into the browser on /jobs/keys.
+   */
+  credential?: "server" | "byo";
   /** Rendered by the "How to get a key" disclosure. */
   keySteps?: string[];
   keyUrl?: string;
+  /** The inputs /jobs/keys renders for a "byo" source. */
+  keyFields?: {
+    name: keyof DiscoveryKeys;
+    label: string;
+    placeholder: string;
+  }[];
 }
 
 export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
@@ -78,6 +101,7 @@ export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
     label: "TheirStack",
     hint: "LinkedIn, Lever, Greenhouse, Ashby, Workday",
     needsKey: true,
+    credential: "server",
     keyUrl: "https://theirstack.com",
     keySteps: [
       "Create an account at theirstack.com and open Settings, then API keys.",
@@ -86,17 +110,60 @@ export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
       "Redeploy the service. TheirStack charges one credit per result it returns.",
     ],
   },
+  jsearch: {
+    label: "JSearch",
+    hint: "Google-for-Jobs: LinkedIn, Indeed, Glassdoor and more",
+    needsKey: true,
+    credential: "byo",
+    keyUrl: "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch",
+    keyFields: [
+      {
+        name: "jsearch",
+        label: "RapidAPI key",
+        placeholder: "paste your X-RapidAPI-Key",
+      },
+    ],
+    keySteps: [
+      "Open the JSearch API on RapidAPI and sign in (GitHub login works).",
+      "Subscribe to the free Basic plan (200 searches a month, no credit card).",
+      "Open the Endpoints tab and copy the X-RapidAPI-Key value from the code snippet.",
+      "Paste it below. It is stored only in this browser and sent straight to the job boards.",
+    ],
+  },
+  adzuna: {
+    label: "Adzuna",
+    hint: "Aggregated postings across 15+ countries",
+    needsKey: true,
+    credential: "byo",
+    keyUrl: "https://developer.adzuna.com/signup",
+    keyFields: [
+      { name: "adzuna_app_id", label: "app_id", placeholder: "Adzuna app_id" },
+      {
+        name: "adzuna_app_key",
+        label: "app_key",
+        placeholder: "Adzuna app_key",
+      },
+    ],
+    keySteps: [
+      "Register at developer.adzuna.com/signup (free).",
+      "Adzuna emails you an app_id and an app_key.",
+      "Paste both below. The free tier allows 2,500 searches a month.",
+      "Keys stay in this browser only.",
+    ],
+  },
 };
 
 export interface SplitSources {
   backend: DiscoverySource[];
   noKey: DiscoverySource[];
+  byoKey: DiscoverySource[];
 }
 
 export function splitSources(sources: DiscoverySource[]): SplitSources {
   return {
     backend: sources.filter((s) => BACKEND_SOURCES.includes(s)),
     noKey: sources.filter((s) => NO_KEY_SOURCES.includes(s)),
+    byoKey: sources.filter((s) => BYO_KEY_SOURCES.includes(s)),
   };
 }
 

@@ -299,8 +299,10 @@ export interface MeRead {
   settings: UserSettings;
 }
 
-// "theirstack" and "github" come from the FastAPI backend; the rest are the
-// key-free boards aggregated in lib/discover/no-key-sources.ts.
+// "theirstack" and "github" come from the FastAPI backend; the boards in the
+// middle are the key-free ones aggregated in lib/discover/no-key-sources.ts.
+// "jsearch" and "adzuna" run through that same route but on a key the user
+// pastes into their own browser (lib/discover/keys.ts).
 export type DiscoverySource =
   | "theirstack"
   | "github"
@@ -308,7 +310,9 @@ export type DiscoverySource =
   | "lever"
   | "ashby"
   | "remotive"
-  | "remoteok";
+  | "remoteok"
+  | "jsearch"
+  | "adzuna";
 
 export interface DiscoveryResult {
   source: DiscoverySource | string;

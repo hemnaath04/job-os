@@ -1,9 +1,13 @@
 // Key-free job discovery.
 //
-// Every source here is a public JSON endpoint that needs no API key and no
+// Most sources here are public JSON endpoints that need no API key and no
 // account: the three big ATS vendors expose each company's board, and
 // Remotive / RemoteOK expose their remote-job feeds. That makes this the
 // zero-cost fallback for discovery when TheirStack credits run out.
+//
+// The orchestrator also drives the two bring-your-own-key providers in
+// ./keyed-sources, because they answer to this route rather than to FastAPI.
+// They only run when the caller passes the matching key.
 //
 // Everything normalizes to DiscoveryResult so the existing /jobs UI and the
 // /discovery/import backend call work unchanged.
@@ -15,8 +19,16 @@
 
 import type { DiscoveryResult, DiscoverySourceError } from "../types";
 import { ATS_COMPANIES, type AtsCompany, type AtsProvider } from "./ats-companies";
+import { fetchAdzuna, fetchJSearch } from "./keyed-sources";
 
-export type NoKeySource = AtsProvider | "remotive" | "remoteok";
+// jsearch and adzuna are not key-free, but they are served by this route
+// rather than FastAPI, on a key the caller passes in per request.
+export type NoKeySource =
+  | AtsProvider
+  | "remotive"
+  | "remoteok"
+  | "jsearch"
+  | "adzuna";
 
 const SOURCE_LABELS: Record<NoKeySource, string> = {
   greenhouse: "Greenhouse",
@@ -24,10 +36,14 @@ const SOURCE_LABELS: Record<NoKeySource, string> = {
   ashby: "Ashby",
   remotive: "Remotive",
   remoteok: "RemoteOK",
+  jsearch: "JSearch",
+  adzuna: "Adzuna",
 };
 
 /** One slow board must never hold up the whole search. */
 const DEFAULT_TIMEOUT_MS = 6_000;
+/** The keyed APIs search their whole index per call, so they run slower. */
+const KEYED_TIMEOUT_MS = 9_000;
 const DEFAULT_LIMIT = 60;
 /** Per-company cap applied before the global cap, newest first. */
 const MAX_PER_COMPANY = 40;
@@ -604,6 +620,15 @@ export interface DiscoverNoKeyOptions {
   /** Fetch Greenhouse descriptions for the final result set. Default true. */
   hydrateDescriptions?: boolean;
   timeoutMs?: number;
+  /**
+   * Credentials for the bring-your-own-key sources, forwarded from the user's
+   * browser on every request. Never read from the environment, never stored.
+   */
+  keys?: {
+    jsearch?: string;
+    adzunaAppId?: string;
+    adzunaAppKey?: string;
+  };
 }
 
 export interface DiscoverNoKeyResponse {
@@ -856,6 +881,81 @@ export async function discoverNoKey(
     }
   }
 
+  // --- bring-your-own-key APIs --------------------------------------------
+  // These two filter server-side, so keep() would double-filter and over-drop:
+  // the provider decides what "software engineer" matches, and the titles it
+  // returns are whatever the originating board wrote. Age and the remote flag
+  // are the only local filters that still make sense.
+  const keepKeyed = (result: DiscoveryResult): boolean => {
+    if (!result.title || !result.source_url) return false;
+    if (cutoff && result.posted_at && Date.parse(result.posted_at) < cutoff) {
+      return false;
+    }
+    if (options.remote === true && !isRemoteResult(result)) return false;
+    return true;
+  };
+
+  const keyedQuery = keywords.join(" ").trim();
+  const keyedOptions = {
+    query: keyedQuery,
+    countryCode: countryCodes[0],
+    location: options.location,
+    datePostedDays: options.maxAgeDays,
+    limit,
+    timeoutMs: options.timeoutMs ?? KEYED_TIMEOUT_MS,
+  };
+  const keyedTasks: {
+    source: NoKeySource;
+    run: () => Promise<DiscoveryResult[]>;
+  }[] = [];
+
+  if (enabled.has("jsearch")) {
+    const key = nonEmpty(options.keys?.jsearch);
+    if (!key) {
+      failuresByProvider.set("jsearch", ["add a key to enable this source"]);
+    } else if (!keyedQuery && !locationFilter) {
+      // The endpoint rejects an empty `query`, so say what is missing rather
+      // than surfacing a 400.
+      failuresByProvider.set("jsearch", [
+        "add a title keyword or a location: this source needs a query",
+      ]);
+    } else {
+      keyedTasks.push({
+        source: "jsearch",
+        run: () => fetchJSearch(key, keyedOptions),
+      });
+    }
+  }
+
+  if (enabled.has("adzuna")) {
+    const appId = nonEmpty(options.keys?.adzunaAppId);
+    const appKey = nonEmpty(options.keys?.adzunaAppKey);
+    if (!appId || !appKey) {
+      failuresByProvider.set("adzuna", ["add a key to enable this source"]);
+    } else {
+      keyedTasks.push({
+        source: "adzuna",
+        run: () => fetchAdzuna(appId, appKey, keyedOptions),
+      });
+    }
+  }
+
+  if (keyedTasks.length > 0) {
+    const keyed = await mapPool(keyedTasks, keyedTasks.length, (task) =>
+      task.run(),
+    );
+    keyed.forEach((settled, i) => {
+      const { source } = keyedTasks[i];
+      if (settled.status === "rejected") {
+        failuresByProvider.set(source, [
+          (settled.reason as Error)?.message ?? "failed",
+        ]);
+        return;
+      }
+      collected.push(...settled.value.filter(keepKeyed));
+    });
+  }
+
   for (const [source, messages] of failuresByProvider) {
     const shown = messages.slice(0, 3).join("; ");
     const extra = messages.length > 3 ? ` (+${messages.length - 3} more)` : "";
@@ -875,6 +975,8 @@ export async function discoverNoKey(
     ashby: 0,
     remotive: 0,
     remoteok: 0,
+    jsearch: 0,
+    adzuna: 0,
   };
   for (const r of results) {
     const key = r.source as NoKeySource;
