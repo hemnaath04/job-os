@@ -11,6 +11,7 @@ import {
   Plus,
   RefreshCw,
   Sparkles,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -269,6 +270,15 @@ function TailorInner() {
         pct={progress?.pct ?? 0.02}
         jobTitle={job?.title ?? "the selected role"}
         resumeName={targetResume?.name ?? null}
+        onCancel={() => {
+          // Stop watching and return to the form. The server run cannot be
+          // aborted mid-execution, so it may still finish and save a version;
+          // this just detaches the UI so the user is not stuck on the spinner.
+          clearActiveTailor();
+          setActive(null);
+          setProgress(null);
+          setError(null);
+        }}
       />
     );
   }
@@ -390,11 +400,13 @@ function TailorProgress({
   pct,
   jobTitle,
   resumeName,
+  onCancel,
 }: {
   stage: string;
   pct: number;
   jobTitle: string;
   resumeName: string | null;
+  onCancel: () => void;
 }) {
   const percent = Math.round(Math.max(0, Math.min(1, pct)) * 100);
   return (
@@ -433,6 +445,15 @@ function TailorProgress({
           server, so you can navigate away and come back. The run keeps going and
           this page will show the result when it finishes.
         </p>
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onClick={onCancel}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+          >
+            <X className="size-3" /> Cancel
+          </button>
+        </div>
       </section>
     </div>
   );
