@@ -1,22 +1,23 @@
 name: keep-warm
 
-# Keep the Render free-tier API container from sleeping by hitting /health
-# every 5 minutes. Render sleeps after 15 minutes of idle traffic, and GitHub
-# schedules can be delayed, so this cadence leaves room for a missed run.
+# Keep the Vercel API container from scaling to zero by hitting /health on a
+# tight cadence. The container cold-starts in roughly 9 seconds when idle,
+# which stalls the first /jobs and /jobs/{id} call the app makes (the Tailor
+# job dropdown and the tailor kickoff both wait on it). A steady trickle of
+# requests keeps one instance warm so those calls stay sub-second.
 #
-# The workflow only fails on local errors (curl can't run). A non-2xx
-# upstream response is logged but treated as success, because even a 502
-# proves the request reached Render's edge and started waking the
-# container — which is the whole point.
+# GitHub schedules can be delayed, so each run fires several pings a minute
+# apart to cover more of the window. A non-2xx upstream response is logged but
+# treated as success: even a 502 proves the request reached the edge and woke
+# the container, which is the whole point.
 
 on:
   schedule:
-    # Offset from the top of the hour, when scheduled Actions are busiest.
+    # Every 5 minutes, offset from the top of the hour when schedulers are busiest.
     - cron: "2-57/5 * * * *"
   workflow_dispatch:          # manual trigger from the Actions UI
 
-# Cancel any in-flight run if a new schedule fires — we don't want
-# overlapping pings piling up if a previous run got stuck.
+# Cancel any in-flight run if a new schedule fires so pings never pile up.
 concurrency:
   group: keep-warm
   cancel-in-progress: true
@@ -24,36 +25,34 @@ concurrency:
 jobs:
   ping:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - name: Validate config
         env:
-          URL: https://job-os-api.onrender.com
+          URL: https://job-os-api.vercel.app
         run: |
-          if [[ "$URL" != https://*.onrender.com ]]; then
-            echo "::error::Render API URL is invalid."
+          if [[ "$URL" != https://*.vercel.app ]]; then
+            echo "::error::API URL is invalid."
             exit 1
           fi
 
-      - name: Ping /health
+      - name: Ping /health repeatedly
         env:
-          URL: https://job-os-api.onrender.com
+          URL: https://job-os-api.vercel.app
         run: |
-          # 90s connect timeout covers Render cold-start wake (~30-60s).
-          # We DON'T fail on a non-2xx — the goal is to land a request on
-          # the container, not validate the response. Print the status so
-          # the run history is useful if something is misconfigured.
-          http_status=$(curl -sS -o /tmp/body -w '%{http_code}' \
-            --max-time 90 \
-            --retry 2 --retry-delay 5 \
-            "$URL/health" || echo "curl-failed")
-          echo "status=$http_status"
-          head -c 500 /tmp/body || true
-          echo
-          if [ "$http_status" = "curl-failed" ]; then
-            echo "::warning::curl failed entirely — Render may be down, not just cold."
-          elif [ "$http_status" = "200" ]; then
-            echo "ok"
-          else
-            echo "::warning::Non-200 status ($http_status) — Render saw the ping but the upstream isn't 2xx."
-          fi
+          # Fire 4 pings 60s apart so one 5-minute run covers most of the
+          # window even if the next scheduled run is delayed. 90s max-time
+          # comfortably covers a cold-start wake.
+          for i in 1 2 3 4; do
+            http_status=$(curl -sS -o /tmp/body -w '%{http_code}' \
+              --max-time 90 \
+              --retry 2 --retry-delay 5 \
+              "$URL/health" || echo "curl-failed")
+            echo "ping $i status=$http_status"
+            if [ "$http_status" = "curl-failed" ]; then
+              echo "::warning::curl failed entirely, the backend may be down, not just cold."
+            elif [ "$http_status" != "200" ]; then
+              echo "::warning::Non-200 status ($http_status), the edge saw the ping but upstream isn't 2xx."
+            fi
+            if [ "$i" -lt 4 ]; then sleep 60; fi
+          done
