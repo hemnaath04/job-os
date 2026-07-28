@@ -181,7 +181,10 @@ export function splitSources(sources: DiscoverySource[]): SplitSources {
  */
 export function mergeDiscoveryResponses(
   parts: DiscoverySearchResponse[],
-  selected: DiscoverySource[],
+  // `string[]` rather than DiscoverySource[]: a user's own feed is selected as
+  // "custom:<id>", which no union can enumerate. DiscoverySource[] still
+  // assigns cleanly, so every existing call site is unchanged.
+  selected: string[],
   limit?: number,
 ): DiscoverySearchResponse {
   const seen = new Set<string>();
@@ -208,13 +211,15 @@ export function mergeDiscoveryResponses(
   }
 
   // Report a count for every selected source, including the ones that came
-  // back empty: the warning banner keys off a zero to explain itself. Sources
-  // the user did not select are left out entirely.
+  // back empty: the warning banner keys off a zero to explain itself. Every key
+  // a backend reports is merged in rather than only the pre-seeded ones, which
+  // is what lets a "custom:<id>" count through: a backend only answers for what
+  // it was asked, so nothing unselected can appear this way.
   const source_counts: Record<string, number> = {};
   for (const s of selected) source_counts[s] = 0;
   for (const part of parts) {
     for (const [source, count] of Object.entries(part.source_counts ?? {})) {
-      if (source in source_counts) source_counts[source] += count;
+      source_counts[source] = (source_counts[source] ?? 0) + count;
     }
   }
 

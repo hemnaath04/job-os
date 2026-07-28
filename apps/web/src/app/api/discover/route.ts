@@ -40,6 +40,7 @@ interface DiscoverRequestBody {
   companies?: unknown;
   include_remote_boards?: unknown;
   keys?: unknown;
+  custom_sources?: unknown;
 }
 
 function toStringArray(value: unknown): string[] | undefined {
@@ -65,6 +66,35 @@ function toKeys(value: unknown): DiscoverNoKeyOptions["keys"] {
   return keys.jsearch || keys.adzunaAppId || keys.adzunaAppKey
     ? keys
     : undefined;
+}
+
+/**
+ * Endpoints the user hosts themselves. Same rule as the keys above: they arrive
+ * from localStorage on every request, are used once and are never persisted or
+ * logged, and that includes the auth header value. A malformed entry is dropped
+ * rather than failing the whole search.
+ */
+function toCustomSources(value: unknown): DiscoverNoKeyOptions["customSources"] {
+  if (!Array.isArray(value)) return undefined;
+  const out: NonNullable<DiscoverNoKeyOptions["customSources"]> = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object") continue;
+    const raw = entry as Record<string, unknown>;
+    const pick = (name: string): string | undefined =>
+      typeof raw[name] === "string" ? (raw[name] as string) : undefined;
+    const id = pick("id");
+    const name = pick("name");
+    const url = pick("url");
+    if (!id || !name || !url) continue;
+    out.push({
+      id,
+      name,
+      url,
+      authHeader: pick("auth_header"),
+      authValue: pick("auth_value"),
+    });
+  }
+  return out.length > 0 ? out : undefined;
 }
 
 function toSources(value: unknown): NoKeySource[] | undefined {
@@ -99,6 +129,7 @@ export async function POST(req: NextRequest): Promise<Response> {
           ? body.include_remote_boards
           : undefined,
       keys: toKeys(body.keys),
+      customSources: toCustomSources(body.custom_sources),
     });
     return NextResponse.json(payload, {
       headers: { "cache-control": "no-store" },

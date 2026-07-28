@@ -357,7 +357,9 @@ export interface SmartSearchResponse {
 }
 
 export interface DiscoverySourceError {
-  source: DiscoverySource;
+  // Widened for the same reason DiscoveryResult.source is: a user's own feed
+  // reports as "custom:<id>", which no union can enumerate.
+  source: DiscoverySource | string;
   message: string;
 }
 

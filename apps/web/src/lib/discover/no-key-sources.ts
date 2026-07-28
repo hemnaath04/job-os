@@ -7,7 +7,9 @@
 //
 // The orchestrator also drives the two bring-your-own-key providers in
 // ./keyed-sources, because they answer to this route rather than to FastAPI.
-// They only run when the caller passes the matching key.
+// They only run when the caller passes the matching key. Custom sources in
+// ./custom-fetch ride the same route: the caller passes the endpoint it wants
+// fetched, and it reports as "custom:<id>" rather than as a named source.
 //
 // Everything normalizes to DiscoveryResult so the existing /jobs UI and the
 // /discovery/import backend call work unchanged.
@@ -19,6 +21,7 @@
 
 import type { DiscoveryResult, DiscoverySourceError } from "../types";
 import { ATS_COMPANIES, type AtsCompany, type AtsProvider } from "./ats-companies";
+import { fetchCustomSource, type CustomFetchInput } from "./custom-fetch";
 import { fetchAdzuna, fetchJSearch } from "./keyed-sources";
 
 // jsearch and adzuna are not key-free, but they are served by this route
@@ -629,11 +632,17 @@ export interface DiscoverNoKeyOptions {
     adzunaAppId?: string;
     adzunaAppKey?: string;
   };
+  /**
+   * Endpoints the user hosts themselves, forwarded from their browser on every
+   * request. Each one reports as "custom:<id>" in the counts and errors.
+   */
+  customSources?: CustomFetchInput[];
 }
 
 export interface DiscoverNoKeyResponse {
   results: DiscoveryResult[];
-  source_counts: Record<NoKeySource, number>;
+  /** Keyed by NoKeySource plus one "custom:<id>" per custom endpoint. */
+  source_counts: Record<string, number>;
   errors: DiscoverySourceError[];
 }
 
@@ -776,10 +785,16 @@ export async function discoverNoKey(
       ? Date.now() - options.maxAgeDays * 86_400_000
       : null;
 
+  // No `sources` at all still means "show me everything recent". An empty list
+  // alongside a custom endpoint does not: that is a search for the custom
+  // source only, and fanning out to every board would answer a question the
+  // caller did not ask.
   const enabled = new Set<NoKeySource>(
     options.sources?.length
       ? options.sources
-      : ["greenhouse", "lever", "ashby", "remotive", "remoteok"],
+      : options.customSources?.length
+        ? []
+        : ["greenhouse", "lever", "ashby", "remotive", "remoteok"],
   );
   const includeRemoteBoards =
     (options.includeRemoteBoards ?? true) &&
@@ -793,7 +808,8 @@ export async function discoverNoKey(
   );
 
   const errors: DiscoverySourceError[] = [];
-  const failuresByProvider = new Map<NoKeySource, string[]>();
+  // Keyed by NoKeySource, plus "custom:<id>" for a user's own endpoint.
+  const failuresByProvider = new Map<string, string[]>();
   const collected: DiscoveryResult[] = [];
 
   const keep = (result: DiscoveryResult): boolean => {
@@ -956,6 +972,37 @@ export async function discoverNoKey(
     });
   }
 
+  // --- custom endpoints ---------------------------------------------------
+  // Unlike the keyed APIs these get the full keep() treatment: the contract
+  // says a source may return a whole board and let job.os narrow it, so the
+  // title, location, country and age filters have to run locally.
+  const customSources = options.customSources ?? [];
+  if (customSources.length > 0) {
+    const custom = await mapPool(customSources, customSources.length, (cfg) =>
+      fetchCustomSource(
+        cfg,
+        {
+          titleKeywords: options.titleKeywords ?? [],
+          location: options.location,
+          countryCodes,
+          maxAgeDays: options.maxAgeDays,
+          limit,
+        },
+        { timeoutMs: options.timeoutMs },
+      ),
+    );
+    custom.forEach((settled, i) => {
+      const source = `custom:${customSources[i].id}`;
+      if (settled.status === "rejected") {
+        failuresByProvider.set(source, [
+          (settled.reason as Error)?.message ?? "failed",
+        ]);
+        return;
+      }
+      collected.push(...settled.value.filter(keep));
+    });
+  }
+
   for (const [source, messages] of failuresByProvider) {
     const shown = messages.slice(0, 3).join("; ");
     const extra = messages.length > 3 ? ` (+${messages.length - 3} more)` : "";
@@ -969,7 +1016,7 @@ export async function discoverNoKey(
     await hydrateGreenhouseContent(results, { timeoutMs });
   }
 
-  const source_counts: Record<NoKeySource, number> = {
+  const source_counts: Record<string, number> = {
     greenhouse: 0,
     lever: 0,
     ashby: 0,
@@ -978,9 +1025,11 @@ export async function discoverNoKey(
     jsearch: 0,
     adzuna: 0,
   };
+  // Seed the custom ids too, so an endpoint that answered with nothing usable
+  // reports a zero rather than dropping out of the banner entirely.
+  for (const cfg of customSources) source_counts[`custom:${cfg.id}`] = 0;
   for (const r of results) {
-    const key = r.source as NoKeySource;
-    if (key in source_counts) source_counts[key] += 1;
+    if (r.source in source_counts) source_counts[r.source] += 1;
   }
 
   return { results, source_counts, errors };

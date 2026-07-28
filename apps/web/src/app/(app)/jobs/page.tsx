@@ -11,6 +11,7 @@ import {
   Loader2,
   Lock,
   MapPin,
+  Plug,
   Radar,
   Search,
   Sparkles,
@@ -24,6 +25,13 @@ import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import {
+  CUSTOM_SOURCES_CHANGED_EVENT,
+  hasAcceptedTerms,
+  loadCustomSources,
+  setCustomEnabled,
+  type CustomSource,
+} from "@/lib/discover/custom-sources";
 import {
   hasKey,
   isByoSource,
@@ -145,6 +153,29 @@ function routeSources(
 }
 
 /**
+ * The custom endpoints a search should hit. Read fresh rather than from state,
+ * for the same reason the keys are, and gated on the acceptance: a revoked
+ * acceptance must stop the fetching even if a stale toggle is still lit.
+ *
+ * Custom sources apply globally by their enabled flag rather than per saved
+ * search, so this is the one answer for both search paths.
+ */
+function enabledCustomSources(): CustomSource[] {
+  if (!hasAcceptedTerms()) return [];
+  return loadCustomSources().filter((s) => s.enabled);
+}
+
+function toCustomPayload(sources: CustomSource[]) {
+  return sources.map((s) => ({
+    id: s.id,
+    name: s.name,
+    url: s.url,
+    auth_header: s.authHeader,
+    auth_value: s.authValue,
+  }));
+}
+
+/**
  * Fan a query out to whichever backends the selected sources live on, then
  * merge. Both halves run in parallel and neither can sink the other: if one
  * rejects, its failure becomes an error row attributed to the sources it was
@@ -154,16 +185,20 @@ function routeSources(
 async function runSplitSearch(
   query: DiscoverySearchRequest,
   keys: DiscoveryKeys,
+  custom: CustomSource[],
 ): Promise<DiscoverySearchResponse> {
   const selected = query.sources ?? [];
   const { backend } = splitSources(selected);
   const route = routeSources(selected, keys);
+  // Custom endpoints ride the same /api/discover call as the key-free and
+  // bring-your-own-key sources, so they share that half's fate as well.
+  const routeGroup: string[] = [...route, ...custom.map((s) => `custom:${s.id}`)];
 
   const [backendPart, routePart] = await Promise.allSettled([
     backend.length
       ? api.discoverySearch({ ...query, sources: backend })
       : Promise.resolve(emptyDiscoveryResponse()),
-    route.length
+    routeGroup.length
       ? api.discoverNoKey({
           sources: route,
           title_keywords: query.title_keywords ?? [],
@@ -171,6 +206,7 @@ async function runSplitSearch(
           max_age_days: query.max_age_days,
           limit: query.limit,
           keys,
+          custom_sources: toCustomPayload(custom),
         })
       : Promise.resolve(emptyDiscoveryResponse()),
   ]);
@@ -182,20 +218,20 @@ async function runSplitSearch(
   // `limit` is what each backend was asked for, so the merged list is capped
   // to it as well. Otherwise picking 20 would quietly return up to 40.
   return combineParts(
-    selected,
+    [...selected, ...routeGroup.filter((s) => s.startsWith("custom:"))],
     backend,
     backendPart,
-    route,
+    routeGroup,
     routePart,
     query.limit,
   );
 }
 
 function combineParts(
-  selected: DiscoverySource[],
+  selected: string[],
   backend: DiscoverySource[],
   backendPart: PromiseSettledResult<DiscoverySearchResponse>,
-  route: DiscoverySource[],
+  route: string[],
   routePart: PromiseSettledResult<DiscoverySearchResponse>,
   limit?: number,
 ): DiscoverySearchResponse {
@@ -256,6 +292,10 @@ export default function DiscoverPage() {
   // start empty and pick them up on mount. The event fires from /jobs/keys in
   // this tab; `storage` covers the same page open in another one.
   const [keys, setKeys] = useState<DiscoveryKeys>({});
+  // Same story for the user's own endpoints and the acceptance that unlocks
+  // them: both live in localStorage and are edited on /jobs/keys.
+  const [customSources, setCustomSources] = useState<CustomSource[]>([]);
+  const [customAccepted, setCustomAccepted] = useState(false);
   useEffect(() => {
     const refresh = () => {
       const next = loadKeys();
@@ -266,12 +306,16 @@ export default function DiscoverPage() {
         const kept = prev.filter((s) => !isByoSource(s) || hasKey(s, next));
         return kept.length > 0 && kept.length < prev.length ? kept : prev;
       });
+      setCustomSources(loadCustomSources());
+      setCustomAccepted(hasAcceptedTerms());
     };
     refresh();
     window.addEventListener(KEYS_CHANGED_EVENT, refresh);
+    window.addEventListener(CUSTOM_SOURCES_CHANGED_EVENT, refresh);
     window.addEventListener("storage", refresh);
     return () => {
       window.removeEventListener(KEYS_CHANGED_EVENT, refresh);
+      window.removeEventListener(CUSTOM_SOURCES_CHANGED_EVENT, refresh);
       window.removeEventListener("storage", refresh);
     };
   }, []);
@@ -284,7 +328,8 @@ export default function DiscoverPage() {
   const search = useMutation({
     // Read the keys at call time rather than closing over state: the user may
     // have connected a source in another tab since this page mounted.
-    mutationFn: (body: DiscoverySearchRequest) => runSplitSearch(body, loadKeys()),
+    mutationFn: (body: DiscoverySearchRequest) =>
+      runSplitSearch(body, loadKeys(), enabledCustomSources()),
     onSuccess: (data) => {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
@@ -361,6 +406,13 @@ export default function DiscoverPage() {
       const stored = loadSavedNoKey()[s.id] ?? [];
       const savedKeys = loadKeys();
       const route = routeSources(stored, savedKeys);
+      // Custom sources are not tied to a saved search: a saved query re-runs
+      // whichever of them are switched on right now.
+      const custom = enabledCustomSources();
+      const routeGroup: string[] = [
+        ...route,
+        ...custom.map((c) => `custom:${c.id}`),
+      ];
       const backend = s.query.sources ?? [];
       // runSavedSearch is what updates last_run_at / last_run_count upstream,
       // so keep using it for the backend half rather than replaying the query.
@@ -368,7 +420,7 @@ export default function DiscoverPage() {
         backend.length
           ? api.runSavedSearch(s.id)
           : Promise.resolve(emptyDiscoveryResponse()),
-        route.length
+        routeGroup.length
           ? api.discoverNoKey({
               sources: route,
               title_keywords: s.query.title_keywords ?? [],
@@ -376,6 +428,7 @@ export default function DiscoverPage() {
               max_age_days: s.query.max_age_days,
               limit: s.query.limit,
               keys: savedKeys,
+              custom_sources: toCustomPayload(custom),
             })
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
@@ -383,10 +436,10 @@ export default function DiscoverPage() {
         throw backendPart.reason as Error;
       }
       return combineParts(
-        [...backend, ...route],
+        [...backend, ...routeGroup],
         backend,
         backendPart,
-        route,
+        routeGroup,
         routePart,
         s.query.limit,
       );
@@ -426,6 +479,10 @@ export default function DiscoverPage() {
     const name = window.prompt("Name this search (e.g. 'SWE intern · Boston')");
     if (!name) return;
     saveSearch.mutate(name.trim());
+  }
+
+  function toggleCustom(source: CustomSource) {
+    setCustomSources(setCustomEnabled(source.id, !source.enabled));
   }
 
   function toggleSource(s: DiscoverySource) {
@@ -627,6 +684,39 @@ export default function DiscoverPage() {
               })}
             </div>
           </div>
+
+          {customSources.length > 0 && (
+            <div className="mt-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+                  Your custom sources
+                </div>
+                <Link
+                  href="/jobs/keys#custom"
+                  className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
+                >
+                  <Plug className="size-2.5" /> Add a custom source
+                </Link>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {customSources.map((s) => (
+                  <CustomSourceToggle
+                    key={s.id}
+                    source={s}
+                    accepted={customAccepted}
+                    active={customAccepted && s.enabled}
+                    onToggle={() => toggleCustom(s)}
+                  />
+                ))}
+              </div>
+              <Link
+                href="/jobs/keys#custom"
+                className="mt-2 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--color-text)]"
+              >
+                <Plug className="size-2.5" /> Manage custom sources
+              </Link>
+            </div>
+          )}
         </div>
         <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
           <input
@@ -1175,6 +1265,70 @@ function ByoSourceToggle({
   );
 }
 
+/**
+ * A feed the user hosts themselves. Locked until the terms on /jobs/keys are
+ * accepted: clicking an ungated tile goes there rather than selecting a source
+ * the search would drop anyway.
+ */
+function CustomSourceToggle({
+  source,
+  accepted,
+  active,
+  onToggle,
+}: {
+  source: CustomSource;
+  accepted: boolean;
+  active: boolean;
+  onToggle: () => void;
+}) {
+  const tile =
+    "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition " +
+    (active
+      ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
+      : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]");
+
+  const heading = (
+    <>
+      <span className="flex items-center gap-1.5">
+        <span className="text-sm font-medium">{source.name}</span>
+        <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-violet)]/40 bg-[color:var(--color-violet)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-violet)]">
+          custom
+        </span>
+        {!accepted && (
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-300">
+            <Lock className="size-2" /> accept terms
+          </span>
+        )}
+      </span>
+      <span className="text-[10px] text-[color:var(--color-text-dim)]">
+        {hostnameOf(source.url)}
+      </span>
+    </>
+  );
+
+  if (!accepted) {
+    return (
+      <Link href="/jobs/keys#custom" className={tile}>
+        {heading}
+      </Link>
+    );
+  }
+  return (
+    <button onClick={onToggle} aria-pressed={active} className={tile}>
+      {heading}
+    </button>
+  );
+}
+
+/** The tile shows where a custom source points without showing the full path. */
+function hostnameOf(url: string): string {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
 function splitCsv(s: string): string[] {
   return s
     .split(",")
@@ -1221,8 +1375,29 @@ function mergeSmartSources(
   return merged.length > 0 ? merged : current;
 }
 
-function prettyError(source: DiscoverySource, msg: string): string {
+function prettyError(source: DiscoverySource | string, msg: string): string {
   const lower = msg.toLowerCase();
+  // A custom endpoint is the user's own deployment, so every one of these
+  // points at something they can go and fix.
+  if (source.startsWith("custom:")) {
+    if (lower.includes("timed out")) {
+      return "Your endpoint did not answer in time.";
+    }
+    if (lower.includes("too large")) {
+      return "Your endpoint returned too much data.";
+    }
+    if (lower.includes("blocked host") || lower.includes("https")) {
+      return "That endpoint URL is not allowed (must be a public https URL).";
+    }
+    if (
+      lower.includes("rejected") ||
+      lower.includes("not found") ||
+      lower.includes("error")
+    ) {
+      return `job.os could not reach your custom endpoint: ${msg}.`;
+    }
+    return msg;
+  }
   if (source === "theirstack") {
     if (lower.includes("not configured") || lower.includes("api_key")) {
       return (
@@ -1237,7 +1412,7 @@ function prettyError(source: DiscoverySource, msg: string): string {
       return "Out of TheirStack credits. Top up the account or fall back to GitHub.";
     }
   }
-  if (isByoSource(source)) {
+  if (isByoSource(source as DiscoverySource)) {
     if (lower.includes("add a key")) {
       return "No key saved in this browser yet. Add one on the Connect job sources page.";
     }
@@ -1248,7 +1423,7 @@ function prettyError(source: DiscoverySource, msg: string): string {
       return `${msg}. The provider is rate-limiting; try again shortly.`;
     }
   }
-  if (NO_KEY_SOURCES.includes(source)) {
+  if ((NO_KEY_SOURCES as string[]).includes(source)) {
     if (lower.includes("timed out")) {
       return `${msg}. The board was slow to answer; try again.`;
     }

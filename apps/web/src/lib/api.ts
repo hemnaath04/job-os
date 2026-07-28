@@ -51,6 +51,18 @@ export type DiscoverNoKeyRequest = {
     adzuna_app_id?: string;
     adzuna_app_key?: string;
   };
+  /**
+   * Endpoints the user hosts themselves, read from localStorage at call time
+   * and gated behind the acceptance on /jobs/keys. Same rule as the keys: they
+   * ride along with the request instead of living on the server.
+   */
+  custom_sources?: {
+    id: string;
+    name: string;
+    url: string;
+    auth_header?: string;
+    auth_value?: string;
+  }[];
 };
 
 export type ProfileFactCreate = {
