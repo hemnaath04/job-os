@@ -299,7 +299,16 @@ export interface MeRead {
   settings: UserSettings;
 }
 
-export type DiscoverySource = "theirstack" | "github";
+// "theirstack" and "github" come from the FastAPI backend; the rest are the
+// key-free boards aggregated in lib/discover/no-key-sources.ts.
+export type DiscoverySource =
+  | "theirstack"
+  | "github"
+  | "greenhouse"
+  | "lever"
+  | "ashby"
+  | "remotive"
+  | "remoteok";
 
 export interface DiscoveryResult {
   source: DiscoverySource | string;
