@@ -23,8 +23,8 @@
 
   /* === Type === */
   --color-text: #2A2530;        /* deep warm charcoal-mauve */
-  --color-text-muted: #6C6470;  /* mauve-grey */
-  --color-text-dim: #9C948A;    /* khaki-grey */
+  --color-text-muted: #635C68;  /* mauve-grey, AA on white */
+  --color-text-dim: #837B6E;    /* khaki-grey, darkened for readable hints */
 
   /* === Brand accent (Jasmine) ===
      `accent` is the FILL (buttons, active tints); text on it is `on-accent`.

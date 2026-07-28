@@ -1114,6 +1114,20 @@ function Field({
   );
 }
 
+// Shared source-tile styling. Selected reads as a clear jasmine fill with a gold
+// border and a check, not the faint mauve tint it used to be, and the label
+// stays at full text colour in both states so it is legible on the light theme.
+const TILE_BASE =
+  "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs text-[color:var(--color-text)] transition";
+const TILE_ACTIVE =
+  "border-[color:var(--color-accent-ink)]/45 bg-[color:var(--color-accent)]/40 shadow-[0_10px_24px_-18px_rgba(233,198,74,.6)]";
+const TILE_INACTIVE =
+  "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] hover:border-[color:var(--color-accent-border)] hover:bg-[color:var(--color-surface-hover)]";
+
+function tileClass(active: boolean) {
+  return `${TILE_BASE} ${active ? TILE_ACTIVE : TILE_INACTIVE}`;
+}
+
 function SourceToggle({
   active,
   onClick,
@@ -1135,24 +1149,19 @@ function SourceToggle({
 
   return (
     <div className="relative">
-      <button
-        onClick={onClick}
-        aria-pressed={active}
-        className={`flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition ${
-          active
-            ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
-            : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-2)]"
-        }`}
-      >
-        <span className="flex items-center gap-1.5">
+      <button onClick={onClick} aria-pressed={active} className={tileClass(active)}>
+        <span className="flex w-full items-center gap-1.5">
           <span className="text-sm font-medium">{label}</span>
           {badge && (
-            <span className="rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-300">
+            <span className="rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
               {badge}
             </span>
           )}
+          {active && (
+            <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
+          )}
         </span>
-        <span className="text-[10px] text-[color:var(--color-text-dim)]">{hint}</span>
+        <span className="mt-0.5 text-[10px] text-[color:var(--color-text-muted)]">{hint}</span>
       </button>
 
       {keySteps && keySteps.length > 0 && (
@@ -1222,15 +1231,11 @@ function ByoSourceToggle({
   label: string;
   hint: string;
 }) {
-  const tile =
-    "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition " +
-    (active
-      ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
-      : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]");
+  const tile = tileClass(active);
 
   const heading = (
     <>
-      <span className="flex items-center gap-1.5">
+      <span className="flex w-full items-center gap-1.5">
         <span className="text-sm font-medium">{label}</span>
         {connected ? (
           <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-mint)]">
@@ -1238,12 +1243,15 @@ function ByoSourceToggle({
             connected
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-300">
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
             <Lock className="size-2" /> add key
           </span>
         )}
+        {active && (
+          <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
+        )}
       </span>
-      <span className="text-[10px] text-[color:var(--color-text-dim)]">{hint}</span>
+      <span className="text-[10px] text-[color:var(--color-text-muted)]">{hint}</span>
     </>
   );
 
@@ -1285,26 +1293,25 @@ function CustomSourceToggle({
   active: boolean;
   onToggle: () => void;
 }) {
-  const tile =
-    "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs transition " +
-    (active
-      ? "border-[color:var(--color-purple)]/60 bg-[color:var(--color-purple)]/15 text-[color:var(--color-text)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
-      : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]");
+  const tile = tileClass(active);
 
   const heading = (
     <>
-      <span className="flex items-center gap-1.5">
+      <span className="flex w-full items-center gap-1.5">
         <span className="text-sm font-medium">{source.name}</span>
         <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-violet)]/40 bg-[color:var(--color-violet)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-violet)]">
           custom
         </span>
         {!accepted && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-300">
+          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
             <Lock className="size-2" /> accept terms
           </span>
         )}
+        {active && (
+          <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
+        )}
       </span>
-      <span className="text-[10px] text-[color:var(--color-text-dim)]">
+      <span className="text-[10px] text-[color:var(--color-text-muted)]">
         {hostnameOf(source.url)}
       </span>
     </>
