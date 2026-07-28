@@ -441,14 +441,26 @@ class Workspace:
                     total=False,
                 ).rows
             )
+        # Join on the row columns, which are what the queries above filtered on,
+        # not on the ids duplicated inside the snapshot JSON. The two agree
+        # today, but bullets are the entire substance of a tailored resume: if
+        # they ever drifted, a snapshot-keyed join would quietly yield a resume
+        # with empty highlights and no error to explain it.
         bullets_by_fact: dict[str, list[dict[str, Any]]] = {}
         for bullet in bullets:
             payload = _snapshot(bullet)
-            bullets_by_fact.setdefault(str(payload["fact_id"]), []).append(payload)
+            if not payload.get("id"):
+                payload["id"] = str(_field(bullet, "$id"))
+            bullets_by_fact.setdefault(
+                str(_field(bullet, "fact_id")), []
+            ).append(payload)
         result = []
         for fact in facts:
             payload = _snapshot(fact)
-            payload["bullets"] = bullets_by_fact.get(str(payload["id"]), [])
+            row_id = str(_field(fact, "$id"))
+            if not payload.get("id"):
+                payload["id"] = row_id
+            payload["bullets"] = bullets_by_fact.get(row_id, [])
             result.append(payload)
         return result
 
