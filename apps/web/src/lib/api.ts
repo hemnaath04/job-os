@@ -31,6 +31,19 @@ import {
 } from "./appwrite/workspace";
 import { renderResumePreview } from "./resume-preview";
 
+/** Body accepted by the /api/discover route handler. */
+export type DiscoverNoKeyRequest = {
+  sources?: string[];
+  title_keywords?: string[];
+  location?: string;
+  country_codes?: string[];
+  max_age_days?: number;
+  remote?: boolean;
+  limit?: number;
+  companies?: string[];
+  include_remote_boards?: boolean;
+};
+
 export type ProfileFactCreate = {
   kind: string;
   title: string;
@@ -46,8 +59,8 @@ export type ProfileFactCreate = {
 
 const BASE = "/api/backend";
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
+async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, {
     ...init,
     headers: {
       "Content-Type": "application/json",
@@ -66,6 +79,19 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/** Calls the FastAPI backend through the token-injecting proxy. */
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchJson<T>(`${BASE}${path}`, init);
+}
+
+/**
+ * Calls a Next.js route handler in this app rather than the FastAPI backend.
+ * The Clerk middleware still gates it, so the auth story is the same.
+ */
+async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
+  return fetchJson<T>(path, init);
 }
 
 const AGENT_POLL_MS = 1_200;
@@ -256,6 +282,16 @@ const legacyApi = {
 
   discoverySearch: (body: DiscoverySearchRequest) =>
     request<DiscoverySearchResponse>("/discovery/search", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /**
+   * Key-free sources (public ATS boards + remote feeds). Served by this app's
+   * own /api/discover route, not by FastAPI, so it works with no credits and
+   * no server-side keys.
+   */
+  discoverNoKey: (body: DiscoverNoKeyRequest) =>
+    localRequest<DiscoverySearchResponse>("/api/discover", {
       method: "POST",
       body: JSON.stringify(body),
     }),

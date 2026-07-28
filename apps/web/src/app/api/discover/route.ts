@@ -6,7 +6,18 @@
 // not in the public matcher), so anything reaching the handler is signed in.
 import { NextRequest, NextResponse } from "next/server";
 
-import { discoverNoKey } from "@/lib/discover/no-key-sources";
+import {
+  discoverNoKey,
+  type NoKeySource,
+} from "@/lib/discover/no-key-sources";
+
+const VALID_SOURCES: NoKeySource[] = [
+  "greenhouse",
+  "lever",
+  "ashby",
+  "remotive",
+  "remoteok",
+];
 
 // Node runtime: the orchestrator relies on AbortController timeouts across
 // ~30 outbound requests and parses multi-hundred-KB JSON payloads.
@@ -16,8 +27,11 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 interface DiscoverRequestBody {
+  sources?: unknown;
   title_keywords?: unknown;
   location?: unknown;
+  country_codes?: unknown;
+  max_age_days?: unknown;
   remote?: unknown;
   limit?: unknown;
   companies?: unknown;
@@ -27,6 +41,14 @@ interface DiscoverRequestBody {
 function toStringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   return value.filter((v): v is string => typeof v === "string");
+}
+
+function toSources(value: unknown): NoKeySource[] | undefined {
+  const list = toStringArray(value);
+  if (!list) return undefined;
+  return list.filter((s): s is NoKeySource =>
+    (VALID_SOURCES as string[]).includes(s),
+  );
 }
 
 export async function POST(req: NextRequest): Promise<Response> {
@@ -39,8 +61,12 @@ export async function POST(req: NextRequest): Promise<Response> {
 
   try {
     const payload = await discoverNoKey({
+      sources: toSources(body.sources),
       titleKeywords: toStringArray(body.title_keywords),
       location: typeof body.location === "string" ? body.location : undefined,
+      countryCodes: toStringArray(body.country_codes),
+      maxAgeDays:
+        typeof body.max_age_days === "number" ? body.max_age_days : undefined,
       remote: typeof body.remote === "boolean" ? body.remote : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
       companies: toStringArray(body.companies),

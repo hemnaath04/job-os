@@ -584,10 +584,16 @@ async function hydrateGreenhouseContent(
 // ---------------------------------------------------------------------------
 
 export interface DiscoverNoKeyOptions {
+  /** Which of the five sources to query. Defaults to all of them. */
+  sources?: NoKeySource[];
   /** Case-insensitive substring match against the job title. ANY match wins. */
   titleKeywords?: string[];
   /** Case-insensitive substring match against the location label. */
   location?: string;
+  /** ISO-3166 alpha-2 codes matched against the inferred country_code. */
+  countryCodes?: string[];
+  /** Drop postings older than this many days. Undated postings are kept. */
+  maxAgeDays?: number;
   /** When true, keep only remote-friendly postings. False/undefined: no filter. */
   remote?: boolean;
   limit?: number;
@@ -617,6 +623,16 @@ function matchesTitle(title: string, keywords: string[]): boolean {
 function isRemoteResult(result: DiscoveryResult): boolean {
   if (result.source === "remotive" || result.source === "remoteok") return true;
   return REMOTE_PATTERN.test(result.location ?? "");
+}
+
+/**
+ * A hire-from-anywhere posting has no country to infer but is open to every
+ * country the user might filter on, so it passes. A posting whose location we
+ * simply could not parse ("AMER") does not.
+ */
+function matchesCountry(result: DiscoveryResult, codes: string[]): boolean {
+  if (result.country_code) return codes.includes(result.country_code);
+  return /\b(worldwide|anywhere)\b/i.test(result.location ?? "");
 }
 
 function newestFirst(a: DiscoveryResult, b: DiscoveryResult): number {
@@ -727,14 +743,29 @@ export async function discoverNoKey(
   const locationFilter = (options.location ?? "").trim().toLowerCase();
   const limit = Math.max(1, options.limit ?? DEFAULT_LIMIT);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const includeRemoteBoards = options.includeRemoteBoards ?? true;
+  const countryCodes = (options.countryCodes ?? [])
+    .map((c) => c.trim().toUpperCase())
+    .filter(Boolean);
+  const cutoff =
+    options.maxAgeDays && options.maxAgeDays > 0
+      ? Date.now() - options.maxAgeDays * 86_400_000
+      : null;
+
+  const enabled = new Set<NoKeySource>(
+    options.sources?.length
+      ? options.sources
+      : ["greenhouse", "lever", "ashby", "remotive", "remoteok"],
+  );
+  const includeRemoteBoards =
+    (options.includeRemoteBoards ?? true) &&
+    (enabled.has("remotive") || enabled.has("remoteok"));
 
   const wanted = options.companies?.length
     ? new Set(options.companies.map((s) => s.toLowerCase()))
     : null;
-  const companies = wanted
-    ? ATS_COMPANIES.filter((c) => wanted.has(c.slug.toLowerCase()))
-    : ATS_COMPANIES;
+  const companies = ATS_COMPANIES.filter(
+    (c) => enabled.has(c.ats) && (!wanted || wanted.has(c.slug.toLowerCase())),
+  );
 
   const errors: DiscoverySourceError[] = [];
   const failuresByProvider = new Map<NoKeySource, string[]>();
@@ -746,6 +777,13 @@ export async function discoverNoKey(
     if (locationFilter) {
       if (!result.location) return false;
       if (!result.location.toLowerCase().includes(locationFilter)) return false;
+    }
+    if (countryCodes.length && !matchesCountry(result, countryCodes)) return false;
+    // Ashby in particular carries postings first published years ago, so an
+    // age filter is what keeps a "last 30 days" search honest. An undated
+    // posting is kept: unknown is not the same as old.
+    if (cutoff && result.posted_at && Date.parse(result.posted_at) < cutoff) {
+      return false;
     }
     if (options.remote === true && !isRemoteResult(result)) return false;
     return true;
