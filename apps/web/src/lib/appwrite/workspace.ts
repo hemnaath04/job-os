@@ -698,6 +698,26 @@ export const appwriteWorkspace = {
     });
   },
 
+  tailorResume(
+    resumeId: string,
+    jobId: string,
+    jdParsed: Record<string, unknown>,
+    jdClean: string,
+  ): Promise<AgentJob> {
+    return createAgentJob("resume_tailor", "/resume/tailor", {
+      resume_id: resumeId,
+      spawned_from_job_id: jobId,
+      jd_parsed: jdParsed,
+      jd_clean: jdClean,
+    });
+  },
+
+  // Register a version's stored PDF so `downloadVersionUrl` resolves it right
+  // after an agent job returns, without an extra fetch.
+  registerVersionFile(version: ResumeVersion): ResumeVersion {
+    return rememberVersionFile(version);
+  },
+
   async getAgentJob<T = unknown>(jobId: string): Promise<AgentJob<T>> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();

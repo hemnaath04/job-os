@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from appwrite.client import Client
 from appwrite.id import ID
@@ -33,6 +33,7 @@ from job_os.services.resume_engine import (
     revise_resume,
     validate_json_resume_document,
 )
+from job_os.services.tailor import TailorBullet, TailorFact, run_tailor
 
 
 def _now() -> str:
@@ -660,6 +661,196 @@ async def _review_resume(
     return {"version": version, "review": report.model_dump(mode="json")}
 
 
+def _to_date(value: Any) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
+    """Run the LangGraph tailoring agent (shared with the FastAPI backend) using
+    the caller's Appwrite-stored master resume + verified facts, then persist an
+    unapproved draft ResumeVersion. The JD is passed in by the browser because
+    job postings still live in Postgres, not Appwrite."""
+    resume_id = str(payload["resume_id"])
+    jd_parsed = payload.get("jd_parsed") or {}
+    jd_clean = str(payload.get("jd_clean") or "")
+    spawned_from_job_id = payload.get("spawned_from_job_id")
+
+    # Target resume must belong to the caller.
+    workspace.owned_row(workspace.resumes_table, resume_id)
+
+    # Baseline is always the master resume's latest version, never a previously
+    # tailored variant, so every run starts from a clean no-hallucination base.
+    master_rows = workspace.tables.list_rows(
+        workspace.database_id,
+        workspace.resumes_table,
+        [
+            Query.equal("owner_id", workspace.user_id),
+            Query.equal("is_master", True),
+            Query.equal("archived", False),
+            Query.limit(1),
+        ],
+        total=False,
+    ).rows
+    if not master_rows:
+        raise ValueError(
+            "No master resume found. Import your master resume on the Profile page first."
+        )
+    master_id = str(_snapshot(master_rows[0])["id"])
+
+    version_rows = workspace.tables.list_rows(
+        workspace.database_id,
+        workspace.versions_table,
+        [
+            Query.equal("resume_id", master_id),
+            Query.equal("archived", False),
+            Query.limit(100),
+        ],
+        total=False,
+    ).rows
+    baselines = [_snapshot(row) for row in version_rows]
+    if not baselines:
+        raise ValueError(
+            "Master resume has no baseline version yet. Import a resume into the master first."
+        )
+    baselines.sort(key=lambda v: str(v.get("created_at") or ""), reverse=True)
+    master_json_resume = baselines[0]["json_resume"]
+
+    # Verified facts + bullets already live in Appwrite; adapt them into the
+    # backend-agnostic dataclasses the tailoring agent consumes.
+    facts: list[TailorFact] = []
+    bullets_by_fact: dict[UUID, list[TailorBullet]] = {}
+    for fact in workspace.verified_facts():
+        fact_id = UUID(str(fact["id"]))
+        facts.append(
+            TailorFact(
+                id=fact_id,
+                kind=str(fact["kind"]),
+                title=str(fact.get("title") or ""),
+                org=fact.get("org"),
+                start_date=_to_date(fact.get("start_date")),
+                end_date=_to_date(fact.get("end_date")),
+                location=fact.get("location"),
+                source_url=fact.get("source_url"),
+                payload=fact.get("payload") or {},
+            )
+        )
+        bullets_by_fact[fact_id] = [
+            TailorBullet(
+                id=UUID(str(bullet["id"])),
+                fact_id=fact_id,
+                text=str(bullet.get("text") or ""),
+                target_role=bullet.get("target_role"),
+            )
+            for bullet in (fact.get("bullets") or [])
+            if bullet.get("id")
+        ]
+
+    (
+        json_resume,
+        provenance,
+        gap_questions,
+        ats_score,
+        ats_report,
+        agent_note,
+    ) = await run_tailor(
+        facts=facts,
+        bullets_by_fact=bullets_by_fact,
+        master_json_resume=master_json_resume,
+        jd_parsed=jd_parsed,
+        jd_clean=jd_clean,
+    )
+
+    now = _now()
+    version_id = str(uuid4())
+    status = "draft"
+    review_score: str | None = None
+    review_report: dict[str, Any] | None = None
+    latex_source: str | None = None
+    pdf_file_id: str | None = None
+
+    # Independent quality pass, mirroring the FastAPI path. Non-fatal: a render
+    # failure still yields a usable draft the user can review manually.
+    try:
+        review, pdf_bytes = await review_resume(json_resume)
+        review_score = str(review.score)
+        review_report = review.model_dump(mode="json")
+        status = "reviewed" if review.passed else "needs_changes"
+        latex_source = generate_latex_source(json_resume)
+        pdf_file_id = ID.unique()
+        workspace.storage.create_file(
+            workspace.files_bucket,
+            pdf_file_id,
+            InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
+            permissions=workspace.permissions,
+        )
+    except Exception as exc:  # noqa: BLE001 - review is best-effort
+        status = "needs_changes"
+        review_score = None
+        review_report = {
+            "passed": False,
+            "score": 0,
+            "page_count": 0,
+            "text_selectable": False,
+            "issues": [
+                {
+                    "severity": "blocking",
+                    "code": "review_unavailable",
+                    "message": (
+                        "The independent quality review could not complete. "
+                        "Run Review in the resume editor before finalizing."
+                    ),
+                }
+            ],
+            "strengths": [],
+            "github_projects_checked": [],
+            "model_summary": str(exc)[:500],
+        }
+
+    version = {
+        "id": version_id,
+        "resume_id": resume_id,
+        "json_resume": json_resume,
+        "provenance": [p.model_dump(mode="json") for p in provenance],
+        "ats_score": str(ats_score),
+        "ats_report": ats_report,
+        "approved_by_user": False,
+        "pdf_r2_key": None,
+        "docx_r2_key": None,
+        "spawned_from_job_id": str(spawned_from_job_id) if spawned_from_job_id else None,
+        "status": status,
+        "review_score": review_score,
+        "review_report": review_report,
+        "parent_version_id": None,
+        "source_filename": None,
+        "revision_note": agent_note,
+        "latex_source": latex_source,
+        "finalized_at": None,
+        "archived_at": None,
+        "created_at": now,
+        "updated_at": now,
+        "source_file_id": None,
+        "pdf_file_id": pdf_file_id,
+        "gap_questions": [g.model_dump(mode="json") for g in gap_questions],
+        "agent_note": agent_note,
+    }
+    workspace.create_snapshot(
+        workspace.versions_table,
+        row_id=version_id,
+        snapshot=version,
+        fields={
+            "resume_id": resume_id,
+            "status": status,
+            "archived": False,
+        },
+    )
+    return version
+
+
 async def _dispatch(workspace: Workspace, path: str, payload: dict[str, Any]) -> dict[str, Any]:
     if path == "/resume/import":
         return await _import_resume(workspace, payload)
@@ -671,6 +862,8 @@ async def _dispatch(workspace: Workspace, path: str, payload: dict[str, Any]) ->
         return await _review_resume(workspace, payload, finalize=False)
     if path == "/resume/finalize":
         return await _review_resume(workspace, payload, finalize=True)
+    if path == "/resume/tailor":
+        return await _tailor_resume(workspace, payload)
     raise ValueError(f"Unsupported agent path: {path}")
 
 

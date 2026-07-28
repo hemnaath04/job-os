@@ -157,6 +157,7 @@ const legacyApi = {
     request<void>(`/applications/${id}`, { method: "DELETE" }),
 
   listJobs: () => request<Job[]>("/jobs"),
+  getJob: (id: string) => request<Job>(`/jobs/${id}`),
   jobFromUrl: (url: string) =>
     request<Job>("/jobs/from-url", { method: "POST", body: JSON.stringify({ url }) }),
 
@@ -574,6 +575,25 @@ export const api = {
       review: ResumeReviewResult;
     }>(job);
     return output.version;
+  },
+
+  async tailorResume(resumeId: string, jobId: string): Promise<TailorResponse> {
+    if (!isAppwriteWorkspaceEnabled) {
+      return legacyApi.tailorResume(resumeId, jobId);
+    }
+    // Job postings still live in Postgres, so fetch the JD here and hand it to
+    // the Appwrite tailor agent, which has the resume + verified facts but not
+    // the job posting.
+    const job = await legacyApi.getJob(jobId);
+    const agentJob = await appwriteWorkspace.tailorResume(
+      resumeId,
+      jobId,
+      (job.jd_parsed ?? {}) as Record<string, unknown>,
+      "",
+    );
+    const version = await waitForAgentJob<TailorResponse>(agentJob);
+    appwriteWorkspace.registerVersionFile(version);
+    return version;
   },
 
   downloadVersionUrl: (resumeId: string, versionId: string) =>

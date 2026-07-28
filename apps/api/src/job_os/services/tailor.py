@@ -19,19 +19,17 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
-from typing import Any, TypedDict
+from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 import anthropic
 import structlog
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from job_os.db.models import FactBullet, Job, ProfileFact, Resume, ResumeVersion, User
 from job_os.schemas.resumes import (
     GapQuestion,
     ProvenanceEntry,
@@ -42,7 +40,41 @@ from job_os.services.career_ops_rules import CAREER_OPS_RULES
 from job_os.services.jd_parse import _strip_json_fence
 from job_os.settings import get_settings
 
+# SQLAlchemy + ORM models are only needed by the Postgres-backed `tailor_resume`
+# adapter. They are imported lazily (below, inside the loaders) so the pure
+# `run_tailor` core — and this whole module — imports cleanly inside the
+# Appwrite Function runtime, which has neither SQLAlchemy nor the DB models.
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from job_os.db.models import FactBullet, Job, ProfileFact, Resume, ResumeVersion, User
+
 log = structlog.get_logger(__name__)
+
+
+@dataclass
+class TailorBullet:
+    """Backend-agnostic view of a verified fact bullet (Postgres or Appwrite)."""
+
+    id: UUID
+    fact_id: UUID
+    text: str
+    target_role: str | None = None
+
+
+@dataclass
+class TailorFact:
+    """Backend-agnostic view of a verified profile fact (Postgres or Appwrite)."""
+
+    id: UUID
+    kind: str
+    title: str
+    org: str | None = None
+    start_date: date | None = None
+    end_date: date | None = None
+    location: str | None = None
+    source_url: str | None = None
+    payload: dict[str, Any] = field(default_factory=dict)
 
 
 MAX_ITERATIONS = 3
@@ -161,17 +193,75 @@ async def tailor_resume(
     master_version: ResumeVersion,
     job: Job,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
-    """Run the tailoring agent. Returns the tuple to persist on a new ResumeVersion."""
+    """Postgres-backed entry point.
+
+    Loads verified facts/bullets from the DB, adapts them into backend-agnostic
+    dataclasses, and delegates to `run_tailor` — the LangGraph agent. Keeping the
+    agent flow in `run_tailor` lets the Appwrite Function reuse the exact same
+    graph with no database.
+    """
+    facts_orm = await _load_verified_facts(session, user.id)
+    bullets_orm = await _load_bullets(session, [f.id for f in facts_orm])
+    facts = [
+        TailorFact(
+            id=f.id,
+            kind=f.kind,
+            title=f.title,
+            org=f.org,
+            start_date=f.start_date,
+            end_date=f.end_date,
+            location=f.location,
+            source_url=f.source_url,
+            payload=f.payload or {},
+        )
+        for f in facts_orm
+    ]
+    bullets_by_fact: dict[UUID, list[TailorBullet]] = {
+        fact_id: [
+            TailorBullet(
+                id=b.id,
+                fact_id=b.fact_id,
+                text=b.text,
+                target_role=b.target_role,
+            )
+            for b in bullets
+        ]
+        for fact_id, bullets in bullets_orm.items()
+    }
+    return await run_tailor(
+        facts=facts,
+        bullets_by_fact=bullets_by_fact,
+        master_json_resume=master_json_resume,
+        jd_parsed=job.jd_parsed or {},
+        jd_clean=job.jd_clean or "",
+    )
+
+
+async def run_tailor(
+    *,
+    facts: list[TailorFact],
+    bullets_by_fact: dict[UUID, list[TailorBullet]],
+    master_json_resume: dict[str, Any],
+    jd_parsed: dict[str, Any],
+    jd_clean: str,
+) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
+    """Backend-agnostic tailoring agent.
+
+    Runs the draft -> score -> refine LangGraph, then assembles the JSON Resume
+    deterministically. No DB access, so both the FastAPI backend and the Appwrite
+    Function share this exact agent flow.
+    """
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot run the tailoring agent.")
 
-    facts = await _load_verified_facts(session, user.id)
-    bullets_by_fact = await _load_bullets(session, [f.id for f in facts])
     facts_payload = _build_facts_payload(facts, bullets_by_fact)
 
     user_prompt = _build_user_prompt(
-        job=job, master_json_resume=master_version.json_resume, facts_payload=facts_payload
+        jd_parsed=jd_parsed,
+        jd_clean=jd_clean,
+        master_json_resume=master_json_resume,
+        facts_payload=facts_payload,
     )
 
     client = anthropic.AsyncAnthropic(
@@ -298,12 +388,12 @@ async def tailor_resume(
     )
     summary_objective = _safe_summary(
         agent.summary_objective,
-        master_json_resume=master_version.json_resume,
+        master_json_resume=master_json_resume,
         facts_payload=facts_payload,
     )
 
     json_resume, provenance = _assemble_json_resume(
-        master_json_resume=master_version.json_resume,
+        master_json_resume=master_json_resume,
         all_facts=facts,
         selected_facts=selected_facts,
         selected_bullets=safe_bullets,
@@ -312,7 +402,7 @@ async def tailor_resume(
     )
 
     ats_score, ats_report = _compute_ats_from_document(
-        job=job,
+        jd_parsed=jd_parsed,
         json_resume=json_resume,
         fallback_matched=agent.ats_keywords_matched,
         fallback_missing=agent.ats_keywords_missing,
@@ -356,8 +446,8 @@ def _technology_terms(text: str) -> set[str]:
 def _sanitize_selected_bullets(
     selected: list[SelectedBullet],
     *,
-    bullets_by_id: dict[UUID, FactBullet],
-    facts_by_id: dict[UUID, ProfileFact],
+    bullets_by_id: dict[UUID, TailorBullet],
+    facts_by_id: dict[UUID, TailorFact],
 ) -> list[SelectedBullet]:
     """Fall back to verified source text when a rewrite adds risky claims."""
     section_for_kind = {
@@ -428,6 +518,13 @@ def _safe_summary(
 
 
 async def _load_verified_facts(session: AsyncSession, user_id: UUID) -> list[ProfileFact]:
+    # Imported locally so this module stays importable without SQLAlchemy /
+    # the DB models (e.g. inside the Appwrite Function, which only calls
+    # `run_tailor`).
+    from sqlalchemy import select
+
+    from job_os.db.models import ProfileFact
+
     result = await session.execute(
         select(ProfileFact)
         .where(ProfileFact.user_id == user_id, ProfileFact.verified.is_(True))
@@ -444,6 +541,10 @@ async def _load_bullets(
 ) -> dict[UUID, list[FactBullet]]:
     if not fact_ids:
         return {}
+    from sqlalchemy import select
+
+    from job_os.db.models import FactBullet
+
     result = await session.execute(
         select(FactBullet).where(FactBullet.fact_id.in_(fact_ids))
     )
@@ -457,7 +558,7 @@ async def _load_bullets(
 
 
 def _build_facts_payload(
-    facts: list[ProfileFact], bullets_by_fact: dict[UUID, list[FactBullet]]
+    facts: list[TailorFact], bullets_by_fact: dict[UUID, list[TailorBullet]]
 ) -> list[dict[str, Any]]:
     """Compact JSON the LLM sees — only verified facts + their bullets, no PII beyond resume."""
     out: list[dict[str, Any]] = []
@@ -483,13 +584,17 @@ def _build_facts_payload(
 
 
 def _build_user_prompt(
-    *, job: Job, master_json_resume: dict[str, Any], facts_payload: list[dict[str, Any]]
+    *,
+    jd_parsed: dict[str, Any],
+    jd_clean: str,
+    master_json_resume: dict[str, Any],
+    facts_payload: list[dict[str, Any]],
 ) -> str:
     return (
         "JOB DESCRIPTION (parsed):\n"
-        f"{json.dumps(job.jd_parsed or {}, indent=2)}\n\n"
+        f"{json.dumps(jd_parsed or {}, indent=2)}\n\n"
         "JOB DESCRIPTION (clean text, truncated):\n"
-        f"<jd>\n{(job.jd_clean or '')[:8000]}\n</jd>\n\n"
+        f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
         "CANDIDATE MASTER RESUME (JSON Resume):\n"
         f"{json.dumps(master_json_resume, indent=2)[:6000]}\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
@@ -516,10 +621,10 @@ _KIND_TO_SECTION = {
 def _assemble_json_resume(
     *,
     master_json_resume: dict[str, Any],
-    all_facts: list[ProfileFact],
-    selected_facts: list[ProfileFact],
+    all_facts: list[TailorFact],
+    selected_facts: list[TailorFact],
     selected_bullets: list[SelectedBullet],
-    bullets_by_fact: dict[UUID, list[FactBullet]],
+    bullets_by_fact: dict[UUID, list[TailorBullet]],
     summary_objective: str | None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
     """Build the tailored JSON Resume + provenance.
@@ -543,7 +648,7 @@ def _assemble_json_resume(
     if summary_objective:
         basics["summary"] = summary_objective
 
-    bullet_map: dict[UUID, FactBullet] = {
+    bullet_map: dict[UUID, TailorBullet] = {
         b.id: b for bs in bullets_by_fact.values() for b in bs
     }
     by_fact_selected: dict[UUID, list[SelectedBullet]] = {}
@@ -553,7 +658,7 @@ def _assemble_json_resume(
 
     selected_fact_ids = {f.id for f in selected_facts}
 
-    def _facts_of(kind: str, *, only_selected: bool = False) -> list[ProfileFact]:
+    def _facts_of(kind: str, *, only_selected: bool = False) -> list[TailorFact]:
         pool = (
             [f for f in all_facts if f.id in selected_fact_ids]
             if only_selected
@@ -566,7 +671,7 @@ def _assemble_json_resume(
         )
         return out
 
-    def _bullets_for(f: ProfileFact) -> tuple[list[str], list[SelectedBullet]]:
+    def _bullets_for(f: TailorFact) -> tuple[list[str], list[SelectedBullet]]:
         """Pick the bullet set to render for a fact.
 
         Prefer agent-selected (tailored) bullets if any exist for this fact.
@@ -758,13 +863,13 @@ def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, di
 
 def _compute_ats_from_document(
     *,
-    job: Job,
+    jd_parsed: dict[str, Any],
     json_resume: dict[str, Any],
     fallback_matched: list[str],
     fallback_missing: list[str],
 ) -> tuple[Decimal, dict[str, Any]]:
     """Score only JD terms that actually appear in the assembled resume."""
-    parsed = job.jd_parsed or {}
+    parsed = jd_parsed or {}
     candidates: list[str] = []
     for key in (
         "required_skills",
