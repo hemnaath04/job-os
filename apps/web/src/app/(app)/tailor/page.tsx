@@ -41,7 +41,16 @@ import type {
 const ACTIVE_TAILOR_KEY = "tailor:active";
 // After this long we give up re-attaching to a stored job and let the user retry.
 const TAILOR_MAX_AGE_MS = 20 * 60 * 1_000;
+// The function flips the job to "running" as its first act, so a job still
+// sitting at "queued" past this point never reached the runtime at all (bad
+// dispatch, build failure, cold-start crash). Generous enough to cover a cold
+// python runtime boot, short enough that the user is not stuck watching a
+// spinner for a run that is never coming.
+const TAILOR_QUEUED_GRACE_MS = 2 * 60 * 1_000;
 const TAILOR_POLL_MS = 1_500;
+// Fetching the JD and queueing the execution should be quick. Cap it so a cold
+// or unreachable jobs backend surfaces an error instead of spinning forever.
+const TAILOR_DISPATCH_TIMEOUT_MS = 45 * 1_000;
 
 type ActiveTailor = {
   jobId: string; // Appwrite agent job id
@@ -50,11 +59,22 @@ type ActiveTailor = {
   startedAt: string; // ISO timestamp
 };
 
+/** Age of a stored run in ms, or null when the timestamp is unusable. */
+function tailorAgeMs(active: ActiveTailor): number | null {
+  const startedAt = Date.parse(active.startedAt);
+  return Number.isFinite(startedAt) ? Date.now() - startedAt : null;
+}
+
 function loadActiveTailor(): ActiveTailor | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = localStorage.getItem(ACTIVE_TAILOR_KEY);
-    return raw ? (JSON.parse(raw) as ActiveTailor) : null;
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ActiveTailor>;
+    // A record missing its job id or timestamp can never be polled or aged
+    // out, so treat it as absent rather than re-attaching to nothing.
+    if (!parsed?.jobId || !parsed.startedAt) return null;
+    return parsed as ActiveTailor;
   } catch {
     return null;
   }
@@ -67,6 +87,29 @@ function saveActiveTailor(active: ActiveTailor) {
   } catch {
     /* quota or private mode: the run still works, it just will not survive nav */
   }
+}
+
+/**
+ * Reject with a readable message when `work` outruns the dispatch budget. The
+ * underlying request keeps going; this only stops the UI from waiting on it.
+ */
+function withTimeout<T>(work: Promise<T>, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = window.setTimeout(
+      () => reject(new Error(message)),
+      TAILOR_DISPATCH_TIMEOUT_MS,
+    );
+    work.then(
+      (value) => {
+        window.clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        window.clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function clearActiveTailor() {
@@ -114,7 +157,8 @@ function TailorInner() {
   useEffect(() => {
     const stored = loadActiveTailor();
     if (!stored) return;
-    if (Date.now() - Date.parse(stored.startedAt) > TAILOR_MAX_AGE_MS) {
+    const age = tailorAgeMs(stored);
+    if (age === null || age > TAILOR_MAX_AGE_MS) {
       clearActiveTailor();
       return;
     }
@@ -147,10 +191,16 @@ function TailorInner() {
       setProgress(null);
     };
 
+    const abandon = (message: string) => {
+      finish();
+      setError(message);
+      toast.error(message);
+    };
+
     const poll = async () => {
-      if (Date.now() - Date.parse(active.startedAt) > TAILOR_MAX_AGE_MS) {
-        finish();
-        setError("The previous tailoring run timed out. Try again.");
+      const age = tailorAgeMs(active);
+      if (age === null || age > TAILOR_MAX_AGE_MS) {
+        abandon("The previous tailoring run timed out. Try again.");
         return;
       }
       try {
@@ -165,23 +215,40 @@ function TailorInner() {
             appwriteWorkspace.registerVersionFile(current.output);
             setResult(current.output);
             toast.success("Tailored resume ready");
+          } else {
+            setError(
+              "The tailoring run finished without returning a resume. Try again.",
+            );
           }
           finish();
           return;
         }
         if (current.status === "failed") {
-          setError(current.error || "The tailoring agent failed.");
-          toast.error(current.error || "The tailoring agent failed.");
-          finish();
+          abandon(current.error || "The tailoring agent failed.");
+          return;
+        }
+        // Still "queued" well past a cold start means the agent never picked
+        // the job up, so stop waiting and let the user start a fresh run
+        // instead of leaving them on a spinner that can never resolve.
+        if (current.status === "queued" && age > TAILOR_QUEUED_GRACE_MS) {
+          abandon(
+            "The tailoring agent never started this run. Try again, and check the agent function if it keeps happening.",
+          );
           return;
         }
         timer = window.setTimeout(poll, TAILOR_POLL_MS);
-      } catch {
+      } catch (err) {
         if (cancelled) return;
+        // A missing job row is not a transient network blip, it is a run that
+        // cannot be recovered, so do not burn retries waiting on it.
+        const message = err instanceof Error ? err.message : "";
+        if (/404|could not be found|not found/i.test(message)) {
+          abandon("That tailoring run no longer exists. Start a new one.");
+          return;
+        }
         failures += 1;
         if (failures > 8) {
-          finish();
-          setError("Lost contact with the tailoring run. Refresh to retry.");
+          abandon("Lost contact with the tailoring run. Try again.");
           return;
         }
         timer = window.setTimeout(poll, TAILOR_POLL_MS);
@@ -206,12 +273,22 @@ function TailorInner() {
       }
       // Job postings still live in Postgres, so fetch the JD here and hand it to
       // the Appwrite tailor agent, which has the resume + facts but not the job.
-      const jobPosting = await api.getJob(jobId);
-      const agentJob = await appwriteWorkspace.tailorResume(
-        resumeId,
-        jobId,
-        (jobPosting.jd_parsed ?? {}) as Record<string, unknown>,
-        "",
+      // Both steps are raced against a timeout: a cold or unreachable jobs
+      // backend used to leave the button spinning with nothing queued and no
+      // error to explain it.
+      const jobPosting = await withTimeout(
+        api.getJob(jobId),
+        "Could not load the job description. The jobs backend may be waking up, try again in a moment.",
+      );
+      const jdParsed = (jobPosting.jd_parsed ?? {}) as Record<string, unknown>;
+      if (Object.keys(jdParsed).length === 0) {
+        throw new Error(
+          "This job has no parsed description yet, so there is nothing to tailor against. Re-import the job from its URL first.",
+        );
+      }
+      const agentJob = await withTimeout(
+        appwriteWorkspace.tailorResume(resumeId, jobId, jdParsed, ""),
+        "Could not queue the tailoring agent. Check your connection and try again.",
       );
       const record: ActiveTailor = {
         jobId: agentJob.id,
@@ -248,11 +325,15 @@ function TailorInner() {
   const running = !!active || start.isPending;
   const canRun = !!jobId && !!resumeId && hasMaster && !running;
 
-  if (result && targetResume) {
+  // Render a finished run even when the target resume is not in the list yet
+  // (still loading, or archived while the agent worked). Gating the result on
+  // the resume lookup used to drop a successful run on the floor and drop the
+  // user back on an empty form with nothing to show for it.
+  if (result) {
     return (
       <ResultView
         result={result}
-        resume={targetResume}
+        resumeName={targetResume?.name ?? "Tailored resume"}
         jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
         onReset={() => {
@@ -461,13 +542,13 @@ function TailorProgress({
 
 function ResultView({
   result,
-  resume,
+  resumeName,
   jobTitle,
   companyName,
   onReset,
 }: {
   result: TailorResponse;
-  resume: Resume;
+  resumeName: string;
   jobTitle: string;
   companyName: string | null;
   onReset: () => void;
@@ -511,7 +592,7 @@ function ResultView({
       <header className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-medium tracking-tight">
-            {resume.name}{" "}
+            {resumeName}{" "}
             <span className="text-[color:var(--color-text-dim)]">·</span>{" "}
             <span className="font-normal">{jobTitle}</span>
           </h1>
