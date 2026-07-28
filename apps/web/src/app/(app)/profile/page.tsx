@@ -9,12 +9,14 @@ import {
   FolderGit2,
   GraduationCap,
   Library,
+  Plus,
   ShieldCheck,
   Sparkles,
   Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
+import { AddFactDialog } from "@/components/add-fact-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import type { ProfileFact } from "@/lib/types";
@@ -47,6 +49,7 @@ const KIND_META: Record<
 };
 
 export default function ProfilePage() {
+  const [addOpen, setAddOpen] = useState(false);
   const { data: facts = [], isLoading, refetch } = useQuery({
     queryKey: ["facts"],
     queryFn: () => api.listFacts(),
@@ -60,12 +63,28 @@ export default function ProfilePage() {
 
   return (
     <div className="workspace-page max-w-6xl">
+      <AddFactDialog
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onCreated={() => refetch()}
+      />
       <PageIntro
         eyebrow="Verified evidence vault"
         title="Career profile"
         description="The source of truth behind every generated resume. Experience, projects, education, and skills remain traceable to evidence you control."
         icon={ShieldCheck}
-        action={<UploadResumeButton onDone={() => refetch()} />}
+        action={
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setAddOpen(true)}
+              className="kinetic-button kinetic-button-secondary"
+            >
+              <Plus className="size-3.5" />
+              Add fact
+            </button>
+            <UploadResumeButton onDone={() => refetch()} />
+          </div>
+        }
       >
         <InfoChip tone="sage">{verifiedCount} verified facts</InfoChip>
         <InfoChip>{Object.keys(grouped).length} evidence groups</InfoChip>
