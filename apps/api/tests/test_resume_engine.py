@@ -150,8 +150,9 @@ def test_role_reveal_resolves_extension_and_backend_evidence() -> None:
 
 
 def test_tailor_reverts_rewrite_that_adds_unverified_technology() -> None:
-    fact_id = uuid4()
-    bullet_id = uuid4()
+    # Ids are strings across the tailoring contract so Appwrite ids work too.
+    fact_id = str(uuid4())
+    bullet_id = str(uuid4())
     source = SimpleNamespace(
         id=bullet_id,
         fact_id=fact_id,

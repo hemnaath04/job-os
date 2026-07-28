@@ -55,10 +55,13 @@ log = structlog.get_logger(__name__)
 
 @dataclass
 class TailorBullet:
-    """Backend-agnostic view of a verified fact bullet (Postgres or Appwrite)."""
+    """Backend-agnostic view of a verified fact bullet (Postgres or Appwrite).
 
-    id: UUID
-    fact_id: UUID
+    Ids are strings because the two backends mint different shapes: Postgres
+    uses UUIDs, the Appwrite workspace uses Appwrite ids. Adapters stringify."""
+
+    id: str
+    fact_id: str
     text: str
     target_role: str | None = None
 
@@ -67,7 +70,7 @@ class TailorBullet:
 class TailorFact:
     """Backend-agnostic view of a verified profile fact (Postgres or Appwrite)."""
 
-    id: UUID
+    id: str
     kind: str
     title: str
     org: str | None = None
@@ -205,7 +208,7 @@ async def tailor_resume(
     bullets_orm = await _load_bullets(session, [f.id for f in facts_orm])
     facts = [
         TailorFact(
-            id=f.id,
+            id=str(f.id),
             kind=f.kind,
             title=f.title,
             org=f.org,
@@ -217,11 +220,11 @@ async def tailor_resume(
         )
         for f in facts_orm
     ]
-    bullets_by_fact: dict[UUID, list[TailorBullet]] = {
-        fact_id: [
+    bullets_by_fact: dict[str, list[TailorBullet]] = {
+        str(fact_id): [
             TailorBullet(
-                id=b.id,
-                fact_id=b.fact_id,
+                id=str(b.id),
+                fact_id=str(b.fact_id),
                 text=b.text,
                 target_role=b.target_role,
             )
@@ -232,7 +235,7 @@ async def tailor_resume(
     return await run_tailor(
         facts=facts,
         bullets_by_fact=bullets_by_fact,
-        master_json_resume=master_json_resume,
+        master_json_resume=master_version.json_resume,
         jd_parsed=job.jd_parsed or {},
         jd_clean=job.jd_clean or "",
     )
@@ -241,7 +244,7 @@ async def tailor_resume(
 async def run_tailor(
     *,
     facts: list[TailorFact],
-    bullets_by_fact: dict[UUID, list[TailorBullet]],
+    bullets_by_fact: dict[str, list[TailorBullet]],
     master_json_resume: dict[str, Any],
     jd_parsed: dict[str, Any],
     jd_clean: str,
@@ -287,7 +290,10 @@ async def run_tailor(
             on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
         msg = await client.messages.create(
             model=settings.anthropic_model_tailor,
-            max_tokens=4096,
+            # Generous ceiling on purpose: the output carries a rewritten line
+            # per selected bullet plus gap questions, and a response truncated
+            # mid-JSON fails schema validation and kills the whole run.
+            max_tokens=8192,
             system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
             messages=state["messages"],
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
@@ -374,7 +380,7 @@ async def run_tailor(
     agent = best_agent
 
     valid_fact_ids = {f.id for f in facts}
-    valid_bullet_ids: dict[UUID, UUID] = {
+    valid_bullet_ids: dict[str, str] = {
         b.id: b.fact_id for bs in bullets_by_fact.values() for b in bs
     }
 
@@ -468,8 +474,8 @@ def _technology_terms(text: str) -> set[str]:
 def _sanitize_selected_bullets(
     selected: list[SelectedBullet],
     *,
-    bullets_by_id: dict[UUID, TailorBullet],
-    facts_by_id: dict[UUID, TailorFact],
+    bullets_by_id: dict[str, TailorBullet],
+    facts_by_id: dict[str, TailorFact],
 ) -> list[SelectedBullet]:
     """Fall back to verified source text when a rewrite adds risky claims."""
     section_for_kind = {
@@ -479,8 +485,16 @@ def _sanitize_selected_bullets(
     }
     safe: list[SelectedBullet] = []
     for selected_bullet in selected:
-        source = bullets_by_id[selected_bullet.fact_bullet_id]
-        fact = facts_by_id[source.fact_id]
+        source = bullets_by_id.get(selected_bullet.fact_bullet_id)
+        fact = facts_by_id.get(source.fact_id) if source else None
+        if source is None or fact is None:
+            # Orphaned bullet (its parent fact is gone or unverified). Dropping
+            # it is the safe move: we cannot prove what it belongs to.
+            log.warning(
+                "tailor.orphan_bullet_dropped",
+                bullet_id=str(selected_bullet.fact_bullet_id),
+            )
+            continue
         expected_section = section_for_kind.get(fact.kind)
         source_context = source.text + "\n" + json.dumps(fact.payload or {}, ensure_ascii=False)
         added_numbers = set(NUMBER_RE.findall(selected_bullet.rewritten_text)) - set(
@@ -580,7 +594,7 @@ async def _load_bullets(
 
 
 def _build_facts_payload(
-    facts: list[TailorFact], bullets_by_fact: dict[UUID, list[TailorBullet]]
+    facts: list[TailorFact], bullets_by_fact: dict[str, list[TailorBullet]]
 ) -> list[dict[str, Any]]:
     """Compact JSON the LLM sees — only verified facts + their bullets, no PII beyond resume."""
     out: list[dict[str, Any]] = []
@@ -646,7 +660,7 @@ def _assemble_json_resume(
     all_facts: list[TailorFact],
     selected_facts: list[TailorFact],
     selected_bullets: list[SelectedBullet],
-    bullets_by_fact: dict[UUID, list[TailorBullet]],
+    bullets_by_fact: dict[str, list[TailorBullet]],
     summary_objective: str | None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
     """Build the tailored JSON Resume + provenance.
@@ -670,10 +684,10 @@ def _assemble_json_resume(
     if summary_objective:
         basics["summary"] = summary_objective
 
-    bullet_map: dict[UUID, TailorBullet] = {
+    bullet_map: dict[str, TailorBullet] = {
         b.id: b for bs in bullets_by_fact.values() for b in bs
     }
-    by_fact_selected: dict[UUID, list[SelectedBullet]] = {}
+    by_fact_selected: dict[str, list[SelectedBullet]] = {}
     for sb in selected_bullets:
         parent_fact = bullet_map[sb.fact_bullet_id].fact_id
         by_fact_selected.setdefault(parent_fact, []).append(sb)
@@ -868,6 +882,18 @@ def _agent_quick_score(agent: TailorAgentOutput) -> Decimal:
     ).quantize(Decimal("0.1"))
 
 
+# A term long enough to be a sentence is a requirement, not an ATS keyword.
+ATS_KEYWORD_MAX_WORDS = 5
+ATS_KEYWORD_MAX_CHARS = 48
+
+
+def _is_ats_keyword(term: str) -> bool:
+    cleaned = term.strip()
+    if not cleaned or len(cleaned) > ATS_KEYWORD_MAX_CHARS:
+        return False
+    return len(cleaned.split()) <= ATS_KEYWORD_MAX_WORDS
+
+
 def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, dict[str, Any]]:
     total = len(matched) + len(missing)
     if total == 0:
@@ -902,8 +928,17 @@ def _compute_ats_from_document(
         value = parsed.get(key, [])
         if isinstance(value, list):
             candidates.extend(str(item).strip() for item in value if str(item).strip())
-    if not candidates:
-        candidates = [*fallback_matched, *fallback_missing]
+
+    # Matching is a substring test, so only keyword-like terms can ever match.
+    # JD parsers routinely drop whole requirement sentences into
+    # `required_skills` ("Currently pursuing a bachelor's or master's in ..."),
+    # which never appear verbatim in a resume and would drag the score to near
+    # zero no matter how good the tailoring is. Prose requirements belong to the
+    # gap-question path, so keep them out of the keyword denominator and report
+    # them separately instead of hiding them.
+    keywords = [term for term in candidates if _is_ats_keyword(term)]
+    prose = [term for term in candidates if not _is_ats_keyword(term)]
+    candidates = keywords or [*fallback_matched, *fallback_missing]
 
     unique: dict[str, str] = {}
     for keyword in candidates:
@@ -923,4 +958,5 @@ def _compute_ats_from_document(
     report["scoring"] = "deterministic_final_document"
     report["model_reported_matched"] = fallback_matched
     report["model_reported_missing"] = fallback_missing
+    report["prose_requirements"] = prose
     return score, report

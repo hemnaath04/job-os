@@ -153,9 +153,14 @@ class ExportResult(ORMModel):
 # requirements become GapQuestions — never invented bullets.
 
 
+# Fact and bullet ids are strings, not UUIDs, across the tailoring contract.
+# Postgres mints real UUIDs, but the Appwrite workspace mints Appwrite ids
+# (`ID.unique()`, a 20-char token), so a UUID-typed field would reject every
+# fact the user adds from the browser. Strings accept both, and the frontend
+# has always treated these as opaque strings.
 class SelectedBullet(BaseModel):
     """Agent decision: include this FactBullet, optionally with a light edit."""
-    fact_bullet_id: UUID
+    fact_bullet_id: str
     rewritten_text: str
     target_section: BulletSection
 
@@ -164,12 +169,12 @@ class GapQuestion(BaseModel):
     """A JD requirement with no matching fact. Surfaced for the user to fill or dismiss."""
     requirement: str
     why_no_match: str
-    suggested_fact_ids: list[UUID] = Field(default_factory=list)
+    suggested_fact_ids: list[str] = Field(default_factory=list)
 
 
 class TailorAgentOutput(BaseModel):
     """Schema Claude returns verbatim. Pydantic-validated before assembly."""
-    selected_fact_ids: list[UUID] = Field(default_factory=list)
+    selected_fact_ids: list[str] = Field(default_factory=list)
     selected_bullets: list[SelectedBullet] = Field(default_factory=list)
     gap_questions: list[GapQuestion] = Field(default_factory=list)
     summary_objective: str | None = None
@@ -182,8 +187,8 @@ class ProvenanceEntry(BaseModel):
     """One row per bullet in the tailored json_resume — proves the no-hallucination contract."""
     section: BulletSection
     text: str
-    fact_bullet_id: UUID
-    fact_id: UUID
+    fact_bullet_id: str
+    fact_id: str
 
 
 class TailorRequest(ORMModel):
