@@ -90,7 +90,7 @@ async def extract_json_resume_from_pdf(pdf_bytes: bytes) -> dict[str, Any]:
                 ],
             }
         ],
-        extra_headers={"x-manifest-tier": s.manifest_tier_quality},
+        extra_headers={"x-manifest-tier": s.manifest_tier_fast},
     )
     text = "".join(b.text for b in msg.content if b.type == "text")
     return json.loads(_strip_json_fence(text))
@@ -130,7 +130,7 @@ async def extract_json_resume_from_text(text: str) -> dict[str, Any]:
         max_tokens=8192,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": USER_PROMPT_TEXT.format(text=text[:50000])}],
-        extra_headers={"x-manifest-tier": s.manifest_tier_quality},
+        extra_headers={"x-manifest-tier": s.manifest_tier_fast},
     )
     body = "".join(b.text for b in msg.content if b.type == "text")
     return json.loads(_strip_json_fence(body))
