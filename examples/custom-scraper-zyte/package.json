@@ -2,7 +2,7 @@
   "name": "custom-scraper-zyte",
   "version": "1.0.0",
   "private": true,
-  "description": "A job.os custom source backed by the Zyte API. Deploy to Vercel, point it at job listing pages, plug the URL into job.os.",
+  "description": "A job.os custom source: LinkedIn, Indeed and Google for Jobs spiders behind one Zyte-powered endpoint. Deploy to Vercel, plug the URL into job.os.",
   "type": "module",
   "license": "MIT",
   "engines": {
