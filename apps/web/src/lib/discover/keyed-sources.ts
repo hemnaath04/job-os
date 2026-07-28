@@ -98,7 +98,7 @@ function toIsoDate(value: unknown): string | null {
   return Number.isNaN(ms) ? null : new Date(ms).toISOString();
 }
 
-/** Both providers return plain text, so this only bounds the payload size. */
+/** Bound the payload size; the caller decides whether to strip markup first. */
 function plainText(value: unknown): string {
   const raw = typeof value === "string" ? value.trim() : "";
   if (raw.length <= MAX_DESCRIPTION_CHARS) return raw;
@@ -108,6 +108,27 @@ function plainText(value: unknown): string {
     ? cut.slice(0, lastSpace)
     : cut
   ).trimEnd();
+}
+
+/**
+ * Adzuna wraps the searched terms in <strong class="highlight"> in both the
+ * title and the description, so its text arrives as HTML. React would render
+ * those tags as literal characters, so drop them and decode the handful of
+ * entities the feed actually emits.
+ */
+function stripHtml(value: unknown): string {
+  const raw = typeof value === "string" ? value : "";
+  return raw
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&hellip;/g, "...")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /** JSearch is the only source here that hands us a company website. */
@@ -256,7 +277,7 @@ export async function fetchAdzuna(
       source_label: "Adzuna",
       source_id: String(job.id ?? job.redirect_url ?? ""),
       source_url: job.redirect_url ?? "",
-      title: (job.title ?? "").trim(),
+      title: stripHtml(job.title),
       company_name: nonEmpty(job.company?.display_name),
       // Adzuna publishes no website or logo for the hiring company.
       company_domain: null,
@@ -264,7 +285,7 @@ export async function fetchAdzuna(
       // The feed carries no country field: the country is the one we queried.
       country_code: country.toUpperCase(),
       posted_at: toIsoDate(job.created),
-      description: plainText(job.description),
+      description: plainText(stripHtml(job.description)),
       technologies: [],
       already_imported: false,
     } satisfies DiscoveryResult;
