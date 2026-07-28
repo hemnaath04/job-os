@@ -53,12 +53,49 @@ def _dump(value: Any) -> str:
 
 
 def _field(row: Any, key: str) -> Any:
+    """Read a column/field off an Appwrite row across SDK shapes.
+
+    The appwrite Python SDK (>=22) returns typed ``Row`` models, not dicts:
+    system fields ($id, $createdAt) are attributes, but user-defined columns
+    (owner_id, snapshot, status, ...) live under ``row.data``. Older/raw
+    shapes hand back a plain dict with columns at the top level. Support both,
+    so a single accessor works regardless of how a row was fetched."""
+    # Plain dict (raw REST payloads, snapshots): columns at top level, with a
+    # possible nested "data" bag as a fallback.
     if isinstance(row, dict):
-        return row[key]
-    value = getattr(row, key, None)
+        if key in row:
+            return row[key]
+        data = row.get("data")
+        if isinstance(data, dict) and key in data:
+            return data[key]
+        raise KeyError(key)
+
+    # Typed Row model: user columns live under .data.
+    data = getattr(row, "data", None)
+    if data is not None:
+        if isinstance(data, dict):
+            if key in data:
+                return data[key]
+        else:
+            value = getattr(data, key, None)
+            if value is not None:
+                return value
+
+    # System fields: attributes are un-prefixed ($id -> id).
+    attr = key[1:] if key.startswith("$") else key
+    value = getattr(row, attr, None)
     if value is not None:
         return value
-    return row.model_dump()[key]
+
+    # Last resort: model_dump nests user columns under "data".
+    dump = row.model_dump() if hasattr(row, "model_dump") else {}
+    if isinstance(dump, dict):
+        if key in dump:
+            return dump[key]
+        nested = dump.get("data")
+        if isinstance(nested, dict) and key in nested:
+            return nested[key]
+    raise KeyError(key)
 
 
 def _snapshot(row: Any) -> dict[str, Any]:
