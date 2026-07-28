@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -78,6 +78,24 @@ class Settings(BaseSettings):
 
     reactive_resume_base_url: str | None = None
     reactive_resume_api_key: str | None = None
+
+    @field_validator("anthropic_base_url")
+    @classmethod
+    def _normalize_anthropic_base_url(cls, value: str | None) -> str | None:
+        """Hand the Anthropic SDK an origin, not a versioned path.
+
+        The SDK appends `/v1/messages` itself, so a base URL that already ends
+        in `/v1` produces a request to `/v1/v1/messages` and every call 404s
+        with "Cannot POST /v1/v1/messages". Gateways are routinely documented
+        with the version included (Manifest publishes
+        `https://app.manifest.build/v1`), so accept either form and normalize.
+        """
+        if not value:
+            return None
+        trimmed = value.strip().rstrip("/")
+        if trimmed.endswith("/v1"):
+            trimmed = trimmed[: -len("/v1")]
+        return trimmed or None
 
     @property
     def is_dev(self) -> bool:
