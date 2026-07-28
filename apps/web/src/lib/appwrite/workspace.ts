@@ -82,6 +82,17 @@ export type AgentJobKind =
 
 export type AgentJobStatus = "queued" | "running" | "succeeded" | "failed";
 
+/**
+ * Coarse progress written onto a running agent job's snapshot by the Appwrite
+ * Function (currently only the tailor agent emits it). `pct` is a 0.0-1.0
+ * fraction. Optional because older snapshots and other agents omit it.
+ */
+export interface AgentJobProgress {
+  stage: string;
+  pct: number;
+  updated_at: string;
+}
+
 export interface AgentJob<T = unknown> {
   id: string;
   kind: AgentJobKind;
@@ -91,6 +102,7 @@ export interface AgentJob<T = unknown> {
   error: string | null;
   created_at: string;
   updated_at: string;
+  progress?: AgentJobProgress | null;
 }
 
 function parseSnapshot<T>(row: SnapshotRow): T {
