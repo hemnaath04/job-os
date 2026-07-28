@@ -71,6 +71,33 @@ def _header(req: Any, name: str) -> str:
     return str(headers.get(name) or headers.get(name.lower()) or "")
 
 
+def _read_payload(req: Any) -> dict[str, Any]:
+    """Read the JSON request payload defensively across runtime versions.
+
+    The open-runtimes ``body`` attribute is inconsistent: depending on the
+    runtime version, whether the execution is sync or async, and the inbound
+    content-type, it can arrive already parsed as a dict, as an empty dict, as
+    a raw JSON string, or as bytes. ``json.loads(req.body or "{}")`` silently
+    turns an empty/absent body into ``{}`` (dropping ``job_id``) or throws a
+    TypeError on a pre-parsed dict, so prefer an explicitly parsed body, fall
+    back to the raw string, and never hand ``json.loads`` a non-string."""
+    for attr in ("body_json", "bodyJson"):
+        value = getattr(req, attr, None)
+        if isinstance(value, dict) and value:
+            return value
+    for attr in ("body_raw", "bodyRaw", "body_text", "bodyText", "body"):
+        value = getattr(req, attr, None)
+        if isinstance(value, (bytes, bytearray)):
+            value = value.decode("utf-8")
+        if isinstance(value, dict):
+            if value:
+                return value
+            continue
+        if isinstance(value, str) and value.strip():
+            return json.loads(value)
+    return {}
+
+
 def _profile_fact_specs(document: dict[str, Any]) -> list[tuple[dict[str, Any], list[str]]]:
     """Conservatively map JSON Resume sections into verified profile facts."""
     specs: list[tuple[dict[str, Any], list[str]]] = []
@@ -915,8 +942,21 @@ async def _dispatch(
 async def main(context: Any) -> Any:
     try:
         workspace = Workspace(context.req)
-        payload = json.loads(context.req.body or "{}")
-        job_id = str(payload.pop("job_id"))
+        payload = _read_payload(context.req)
+        job_id = payload.pop("job_id", None)
+        if not job_id:
+            body_attrs = {
+                a: type(getattr(context.req, a, None)).__name__
+                for a in ("body", "body_raw", "body_json", "body_text")
+            }
+            context.error(
+                f"Missing job_id. body attr types={body_attrs} "
+                f"payload keys={list(payload.keys())}"
+            )
+            return context.res.json(
+                {"detail": "Missing job_id in request body."}, 400
+            )
+        job_id = str(job_id)
         workspace.update_job(job_id, status="running")
         try:
             result = await _dispatch(
@@ -924,12 +964,14 @@ async def main(context: Any) -> Any:
             )
         except Exception as exc:
             workspace.update_job(job_id, status="failed", error=str(exc)[:2000])
+            context.error(f"agent dispatch failed: {exc!r}")
             raise
         workspace.update_job(job_id, status="succeeded", output=result)
         return context.res.json({"job_id": job_id, "status": "succeeded"})
     except PermissionError as exc:
         return context.res.json({"detail": str(exc)}, 401)
     except (ValueError, KeyError, json.JSONDecodeError) as exc:
+        context.error(f"agent 400: {exc!r}")
         return context.res.json({"detail": str(exc)}, 400)
     except Exception as exc:
         context.error(str(exc))
