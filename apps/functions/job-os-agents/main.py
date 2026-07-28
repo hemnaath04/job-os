@@ -12,7 +12,7 @@ import os
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 from appwrite.client import Client
 from appwrite.id import ID
@@ -101,6 +101,19 @@ def _field(row: Any, key: str) -> Any:
 def _snapshot(row: Any) -> dict[str, Any]:
     raw = _field(row, "snapshot")
     return json.loads(raw)
+
+
+# The resume_versions.status column is a strict Appwrite enum, so writing any
+# other value fails the whole row with "Invalid document structure". The agent
+# has a richer vocabulary than the column does ("needs_changes" when the
+# quality/PDF pass could not clear the draft), and that detail lives in the
+# snapshot JSON, which the browser actually reads. Narrow only the column value.
+VERSION_STATUS_COLUMN_VALUES = frozenset({"draft", "reviewed", "final"})
+
+
+def _status_column(status: str) -> str:
+    """Coerce an agent status into the resume_versions.status enum."""
+    return status if status in VERSION_STATUS_COLUMN_VALUES else "draft"
 
 
 def _header(req: Any, name: str) -> str:
@@ -740,7 +753,7 @@ async def _review_resume(
         workspace.versions_table,
         version_id,
         version,
-        {"status": version["status"]},
+        {"status": _status_column(version["status"])},
     )
     return {"version": version, "review": report.model_dump(mode="json")}
 
@@ -822,9 +835,12 @@ async def _tailor_resume(
     # Verified facts + bullets already live in Appwrite; adapt them into the
     # backend-agnostic dataclasses the tailoring agent consumes.
     facts: list[TailorFact] = []
-    bullets_by_fact: dict[UUID, list[TailorBullet]] = {}
+    bullets_by_fact: dict[str, list[TailorBullet]] = {}
     for fact in workspace.verified_facts():
-        fact_id = UUID(str(fact["id"]))
+        # Appwrite ids are opaque strings, not UUIDs: facts written by this
+        # function are uuid4 strings, facts added from the browser are
+        # `ID.unique()` tokens. The tailoring core takes both as strings.
+        fact_id = str(fact["id"])
         facts.append(
             TailorFact(
                 id=fact_id,
@@ -840,7 +856,7 @@ async def _tailor_resume(
         )
         bullets_by_fact[fact_id] = [
             TailorBullet(
-                id=UUID(str(bullet["id"])),
+                id=str(bullet["id"]),
                 fact_id=fact_id,
                 text=str(bullet.get("text") or ""),
                 target_role=bullet.get("target_role"),
@@ -947,7 +963,7 @@ async def _tailor_resume(
         snapshot=version,
         fields={
             "resume_id": resume_id,
-            "status": status,
+            "status": _status_column(status),
             "archived": False,
         },
     )
