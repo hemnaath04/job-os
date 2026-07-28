@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -244,12 +245,18 @@ async def run_tailor(
     master_json_resume: dict[str, Any],
     jd_parsed: dict[str, Any],
     jd_clean: str,
+    on_progress: Callable[[str, float], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
 
     Runs the draft -> score -> refine LangGraph, then assembles the JSON Resume
     deterministically. No DB access, so both the FastAPI backend and the Appwrite
     Function share this exact agent flow.
+
+    `on_progress(stage, pct)` is an optional coarse progress hook. `pct` is a
+    0.0-1.0 fraction. The FastAPI Postgres path passes nothing, so it is a no-op
+    there; the Appwrite Function passes a callback that writes progress onto the
+    agent job row so the browser can poll it.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
@@ -263,6 +270,8 @@ async def run_tailor(
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
     )
+    if on_progress:
+        on_progress("Reading job and profile", 0.1)
 
     client = anthropic.AsyncAnthropic(
         auth_token=settings.anthropic_api_key,
@@ -273,6 +282,9 @@ async def run_tailor(
 
     async def draft_and_score(state: TailorGraphState) -> TailorGraphState:
         """One quality-model pass followed by deterministic Python scoring."""
+        iteration = len(state["iteration_scores"]) + 1
+        if on_progress:
+            on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
         msg = await client.messages.create(
             model=settings.anthropic_model_tailor,
             max_tokens=4096,
@@ -303,6 +315,8 @@ async def run_tailor(
             score=float(score),
             target=float(TARGET_ATS_SCORE),
         )
+        if on_progress:
+            on_progress(f"Scoring pass {iteration}", min(0.85, 0.26 + (iteration - 1) * 0.22))
 
         best_agent = state["best_agent"]
         best_score = state["best_score"]
@@ -313,6 +327,11 @@ async def run_tailor(
         done = score >= TARGET_ATS_SCORE or len(scores) >= MAX_ITERATIONS
         messages = state["messages"]
         if not done:
+            if on_progress:
+                on_progress(
+                    f"Refining pass {iteration + 1}",
+                    min(0.85, 0.3 + (iteration - 1) * 0.22),
+                )
             messages = [
                 *messages,
                 {"role": "assistant", "content": raw},
@@ -391,6 +410,9 @@ async def run_tailor(
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
     )
+
+    if on_progress:
+        on_progress("Assembling resume", 0.9)
 
     json_resume, provenance = _assemble_json_resume(
         master_json_resume=master_json_resume,

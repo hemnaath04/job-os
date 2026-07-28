@@ -315,6 +315,26 @@ class Workspace:
             {"status": status},
         )
 
+    def update_job_progress(self, job_id: str, *, stage: str, pct: float) -> None:
+        """Persist coarse progress onto the job snapshot without touching status.
+
+        Best-effort: a progress write must never abort the run, so any failure
+        here is swallowed. The browser polls the `progress` object off the job
+        snapshot; the terminal status/output write still happens in update_job.
+        """
+        try:
+            job = self.job(job_id)
+            job["progress"] = {
+                "stage": stage,
+                "pct": round(float(pct), 4),
+                "updated_at": _now(),
+            }
+            job["updated_at"] = _now()
+            # No status field passed, so the row's status column is left as-is.
+            self.update_snapshot(self.jobs_table, job_id, job)
+        except Exception:  # noqa: BLE001 - progress is advisory, never fatal
+            pass
+
     def verified_facts(self) -> list[dict[str, Any]]:
         facts = self.tables.list_rows(
             self.database_id,
@@ -670,7 +690,12 @@ def _to_date(value: Any) -> date | None:
         return None
 
 
-async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
+async def _tailor_resume(
+    workspace: Workspace,
+    payload: dict[str, Any],
+    *,
+    job_id: str | None = None,
+) -> dict[str, Any]:
     """Run the LangGraph tailoring agent (shared with the FastAPI backend) using
     the caller's Appwrite-stored master resume + verified facts, then persist an
     unapproved draft ResumeVersion. The JD is passed in by the browser because
@@ -679,6 +704,16 @@ async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
     jd_parsed = payload.get("jd_parsed") or {}
     jd_clean = str(payload.get("jd_clean") or "")
     spawned_from_job_id = payload.get("spawned_from_job_id")
+
+    def on_progress(stage: str, pct: float) -> None:
+        """Write live progress onto the agent job row so the browser can poll it.
+
+        Best-effort by way of update_job_progress, which swallows its own
+        errors, so a progress write can never break the tailoring run."""
+        if job_id:
+            workspace.update_job_progress(job_id, stage=stage, pct=pct)
+
+    on_progress("Reading your profile and job", 0.05)
 
     # Target resume must belong to the caller.
     workspace.owned_row(workspace.resumes_table, resume_id)
@@ -763,6 +798,7 @@ async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         master_json_resume=master_json_resume,
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
+        on_progress=on_progress,
     )
 
     now = _now()
@@ -776,10 +812,12 @@ async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
     # Independent quality pass, mirroring the FastAPI path. Non-fatal: a render
     # failure still yields a usable draft the user can review manually.
     try:
+        on_progress("Reviewing", 0.92)
         review, pdf_bytes = await review_resume(json_resume)
         review_score = str(review.score)
         review_report = review.model_dump(mode="json")
         status = "reviewed" if review.passed else "needs_changes"
+        on_progress("Rendering PDF", 0.97)
         latex_source = generate_latex_source(json_resume)
         pdf_file_id = ID.unique()
         workspace.storage.create_file(
@@ -838,6 +876,7 @@ async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         "gap_questions": [g.model_dump(mode="json") for g in gap_questions],
         "agent_note": agent_note,
     }
+    on_progress("Done", 1.0)
     workspace.create_snapshot(
         workspace.versions_table,
         row_id=version_id,
@@ -851,7 +890,13 @@ async def _tailor_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
     return version
 
 
-async def _dispatch(workspace: Workspace, path: str, payload: dict[str, Any]) -> dict[str, Any]:
+async def _dispatch(
+    workspace: Workspace,
+    path: str,
+    payload: dict[str, Any],
+    *,
+    job_id: str | None = None,
+) -> dict[str, Any]:
     if path == "/resume/import":
         return await _import_resume(workspace, payload)
     if path == "/profile/extract":
@@ -863,7 +908,7 @@ async def _dispatch(workspace: Workspace, path: str, payload: dict[str, Any]) ->
     if path == "/resume/finalize":
         return await _review_resume(workspace, payload, finalize=True)
     if path == "/resume/tailor":
-        return await _tailor_resume(workspace, payload)
+        return await _tailor_resume(workspace, payload, job_id=job_id)
     raise ValueError(f"Unsupported agent path: {path}")
 
 
@@ -874,7 +919,9 @@ async def main(context: Any) -> Any:
         job_id = str(payload.pop("job_id"))
         workspace.update_job(job_id, status="running")
         try:
-            result = await _dispatch(workspace, context.req.path, payload)
+            result = await _dispatch(
+                workspace, context.req.path, payload, job_id=job_id
+            )
         except Exception as exc:
             workspace.update_job(job_id, status="failed", error=str(exc)[:2000])
             raise
