@@ -160,6 +160,11 @@ const legacyApi = {
   getJob: (id: string) => request<Job>(`/jobs/${id}`),
   jobFromUrl: (url: string) =>
     request<Job>("/jobs/from-url", { method: "POST", body: JSON.stringify({ url }) }),
+  jobFromText: (jd_text: string, company_hint?: string) =>
+    request<Job>("/jobs/from-text", {
+      method: "POST",
+      body: JSON.stringify({ jd_text, company_hint }),
+    }),
 
   listFacts: (kind?: string) => {
     const qs = new URLSearchParams();
