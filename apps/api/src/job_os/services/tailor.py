@@ -38,7 +38,11 @@ from job_os.schemas.resumes import (
     TailorAgentOutput,
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES
-from job_os.services.jd_parse import _strip_json_fence
+from job_os.services.llm_json import (
+    JSON_ONLY_RETRY,
+    parse_model_json,
+    response_text,
+)
 from job_os.settings import get_settings
 
 # SQLAlchemy + ORM models are only needed by the Postgres-backed `tailor_resume`
@@ -298,10 +302,9 @@ async def run_tailor(
             messages=state["messages"],
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
-        text = "".join(b.text for b in msg.content if b.type == "text")
-        raw = _strip_json_fence(text)
+        raw = response_text(msg)
         try:
-            attempt = TailorAgentOutput.model_validate_json(raw)
+            attempt = parse_model_json(TailorAgentOutput, raw)
         except ValidationError as e:
             log.warning(
                 "tailor.invalid_json",
@@ -311,7 +314,29 @@ async def run_tailor(
             )
             if state["best_agent"] is not None:
                 return {**state, "done": True}
-            raise RuntimeError("Tailoring agent returned an invalid response.") from e
+            # No good pass yet, so a chatty or truncated reply would sink the
+            # whole run. Show the model its own output and ask once for the
+            # object alone before giving up.
+            retry = await client.messages.create(
+                model=settings.anthropic_model_tailor,
+                max_tokens=8192,
+                system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
+                messages=[
+                    *state["messages"],
+                    {"role": "assistant", "content": raw[:4000] or "(empty)"},
+                    {"role": "user", "content": JSON_ONLY_RETRY},
+                ],
+                extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            )
+            retry_raw = response_text(retry)
+            try:
+                attempt = parse_model_json(TailorAgentOutput, retry_raw)
+            except ValidationError as retry_error:
+                log.warning("tailor.invalid_json_after_retry", preview=retry_raw[:400])
+                raise RuntimeError(
+                    "Tailoring agent returned an invalid response."
+                ) from retry_error
+            raw = retry_raw
 
         score = _agent_quick_score(attempt)
         scores = [*state["iteration_scores"], float(score)]

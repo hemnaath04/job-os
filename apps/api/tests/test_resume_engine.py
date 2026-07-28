@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import io
+import json
 from types import SimpleNamespace
+from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -176,3 +178,117 @@ def test_tailor_reverts_rewrite_that_adds_unverified_technology() -> None:
     )
 
     assert result[0].rewritten_text == source.text
+
+
+def _fake_revision_client(replies: list[str], calls: list[Any]) -> Any:
+    """Anthropic stand-in that returns `replies` in order and records requests."""
+
+    class FakeMessages:
+        async def create(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            body = replies[min(len(calls) - 1, len(replies) - 1)]
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=body)]
+            )
+
+    return SimpleNamespace(messages=FakeMessages())
+
+
+_MINIMAL_RESUME = {
+    "basics": {"name": "A", "email": "a@b.c", "phone": "1"},
+    "work": [],
+}
+
+
+@pytest.mark.asyncio
+async def test_revision_recovers_when_the_model_answers_with_prose(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The shape that 400'd in production must now retry and succeed."""
+    from job_os.services import resume_engine
+
+    good = json.dumps(
+        {
+            "assistant_message": "Trimmed the summary.",
+            "suggestions": [],
+            "json_resume": _MINIMAL_RESUME,
+        }
+    )
+    prose = '**Assistant message:**\nSure, I will run the "Review" action myself'
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        resume_engine, "_client", lambda: _fake_revision_client([prose, good], calls)
+    )
+
+    async def no_github(*_a: Any, **_k: Any) -> Any:
+        return {}, [], []
+
+    monkeypatch.setattr(resume_engine, "load_github_context", no_github)
+
+    output = await resume_engine.revise_resume(
+        _MINIMAL_RESUME, message="shorten the summary", verified_facts=[]
+    )
+
+    assert output.assistant_message == "Trimmed the summary."
+    # One corrective retry, and it showed the model its own bad reply.
+    assert len(calls) == 2
+    retry_messages = calls[1]["messages"]
+    assert retry_messages[-2]["role"] == "assistant"
+    assert "Review" in retry_messages[-2]["content"]
+    assert "not valid JSON" in retry_messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_revision_accepts_json_wrapped_in_prose_without_retrying(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from job_os.services import resume_engine
+
+    chatty = "Here you go:\n```json\n" + json.dumps(
+        {
+            "assistant_message": "Done.",
+            "suggestions": ["tighten bullets"],
+            "json_resume": _MINIMAL_RESUME,
+        }
+    ) + "\n```\nLet me know."
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        resume_engine, "_client", lambda: _fake_revision_client([chatty], calls)
+    )
+
+    async def no_github(*_a: Any, **_k: Any) -> Any:
+        return {}, [], []
+
+    monkeypatch.setattr(resume_engine, "load_github_context", no_github)
+
+    output = await resume_engine.revise_resume(
+        _MINIMAL_RESUME, message="tidy it", verified_facts=[]
+    )
+
+    assert output.assistant_message == "Done."
+    assert len(calls) == 1  # extraction handled it, no retry needed
+
+
+@pytest.mark.asyncio
+async def test_revision_raises_a_readable_error_when_retry_also_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from job_os.services import resume_engine
+
+    calls: list[Any] = []
+    monkeypatch.setattr(
+        resume_engine,
+        "_client",
+        lambda: _fake_revision_client(["nope", "still nope"], calls),
+    )
+
+    async def no_github(*_a: Any, **_k: Any) -> Any:
+        return {}, [], []
+
+    monkeypatch.setattr(resume_engine, "load_github_context", no_github)
+
+    with pytest.raises(ValueError, match="could not produce a usable revision"):
+        await resume_engine.revise_resume(
+            _MINIMAL_RESUME, message="x", verified_facts=[]
+        )
+    assert len(calls) == 2

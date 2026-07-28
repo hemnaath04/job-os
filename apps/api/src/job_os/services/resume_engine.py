@@ -22,7 +22,11 @@ from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
-from job_os.services.jd_parse import _strip_json_fence
+from job_os.services.llm_json import (
+    JSON_ONLY_RETRY,
+    parse_model_json,
+    response_text,
+)
 from job_os.services.pdf_render import render_resume_pdf
 from job_os.settings import get_settings
 
@@ -375,8 +379,7 @@ async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]
             ],
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
-        raw = "".join(block.text for block in response.content if block.type == "text")
-        model_review = ModelReview.model_validate_json(_strip_json_fence(raw))
+        model_review = parse_model_json(ModelReview, response_text(response))
     except (ValidationError, json.JSONDecodeError, anthropic.APIError, RuntimeError) as exc:
         log.warning("resume.review_model_failed", error=str(exc))
         rule_issues.append(
@@ -452,17 +455,49 @@ async def revise_resume(
         f"VERIFIED FACTS:\n{json.dumps(verified_facts, ensure_ascii=False)[:18000]}\n\n"
         f"GITHUB README EVIDENCE:\n{json.dumps(github_context, ensure_ascii=False)[:20000]}\n\n"
         f"UNAVAILABLE GITHUB EVIDENCE:\n{json.dumps(missing_repos)}\n\n"
+        # The request reads like a chat turn, so say plainly that the reply is
+        # not one. Without this the model sometimes answers conversationally
+        # ("**Assistant message:** ... I'll run the Review action myself"),
+        # which is not JSON and used to 400 the whole revision.
+        "Reply with one raw JSON object matching the schema below and nothing "
+        "else: no prose before or after it, no markdown fences. Anything you "
+        "want to say to the user belongs in the assistant_message field.\n\n"
         f"OUTPUT SCHEMA:\n{json.dumps(RevisionOutput.model_json_schema())}"
     )
-    response = await _client().messages.create(
-        model=settings.anthropic_model_tailor,
-        max_tokens=7000,
-        system=CAREER_OPS_RULES,
-        messages=[{"role": "user", "content": prompt}],
-        extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
-    )
-    raw = "".join(block.text for block in response.content if block.type == "text")
-    output = RevisionOutput.model_validate_json(_strip_json_fence(raw))
+    client = _client()
+    messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
+
+    async def ask() -> str:
+        response = await client.messages.create(
+            model=settings.anthropic_model_tailor,
+            max_tokens=7000,
+            system=CAREER_OPS_RULES,
+            messages=messages,
+            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+        )
+        return response_text(response)
+
+    raw = await ask()
+    try:
+        output = parse_model_json(RevisionOutput, raw)
+    except ValidationError:
+        # A chatty reply is recoverable, so show the model its own output and
+        # ask once more for the object alone rather than failing the edit.
+        log.warning("resume.revision_not_json", preview=raw[:300])
+        messages = [
+            *messages,
+            {"role": "assistant", "content": raw[:4000] or "(empty)"},
+            {"role": "user", "content": JSON_ONLY_RETRY},
+        ]
+        retried = await ask()
+        try:
+            output = parse_model_json(RevisionOutput, retried)
+        except ValidationError as exc:
+            log.warning("resume.revision_not_json_after_retry", preview=retried[:300])
+            raise ValueError(
+                "The editor could not produce a usable revision. Try rephrasing "
+                "the request, or use the Review action directly."
+            ) from exc
     validate_json_resume_document(output.json_resume)
 
     # Defense in depth: new metrics must already exist in verified facts or
