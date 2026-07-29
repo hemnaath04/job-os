@@ -8,6 +8,7 @@ import pytest
 
 from job_os.services import template_generate
 from job_os.services.pdf_render import render_resume_html, resume_context
+from _fake_llm import StreamingFakeMessages
 from job_os.services.template_generate import (
     SAMPLE_RESUME,
     TemplateGenerationError,
@@ -40,7 +41,7 @@ def _stub(
 ) -> list[Any]:
     calls: list[Any] = []
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             body = replies[min(len(calls) - 1, len(replies) - 1)]

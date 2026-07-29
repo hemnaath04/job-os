@@ -20,6 +20,8 @@ from job_os.services.resume_engine import (
 )
 from job_os.services.tailor import _sanitize_selected_bullets
 
+from _fake_llm import StreamingFakeMessages
+
 
 def _blank_pdf(pages: int = 1) -> bytes:
     writer = PdfWriter()
@@ -190,7 +192,7 @@ def test_tailor_reverts_rewrite_that_adds_unverified_technology() -> None:
 def _fake_revision_client(replies: list[str], calls: list[Any]) -> Any:
     """Anthropic stand-in that returns `replies` in order and records requests."""
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             body = replies[min(len(calls) - 1, len(replies) - 1)]

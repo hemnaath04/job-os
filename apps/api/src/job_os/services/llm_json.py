@@ -43,6 +43,23 @@ EMPTY_REPLY_RETRY = (
 )
 
 
+async def create_message(client: Any, **kwargs: Any) -> Any:
+    """Send one request and return the assembled Message, streaming it.
+
+    Streaming rather than a plain create, because `max_tokens` has to be large
+    enough to hold an extended-thinking block AND the JSON answer, and the SDK
+    refuses a non-streaming request whose budget implies more than ten minutes:
+    anything over 21333 tokens raises "Streaming is required for operations that
+    may take longer than 10 minutes" before the request is even sent. Raising the
+    ceiling without switching to streaming took every tailoring call down.
+
+    The caller gets the same object `messages.create` would have returned, so
+    `response_text` and `response_diagnostics` work unchanged.
+    """
+    async with client.messages.stream(**kwargs) as stream:
+        return await stream.get_final_message()
+
+
 def response_text(message: Any) -> str:
     """Concatenate the text blocks of an Anthropic message response."""
     return "".join(

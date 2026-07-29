@@ -16,6 +16,8 @@ os.environ.setdefault(
 
 from job_os.services import tailor  # noqa: E402
 
+from _fake_llm import StreamingFakeMessages
+
 
 @pytest.mark.asyncio
 async def test_tailor_langgraph_refines_until_target(
@@ -35,7 +37,7 @@ async def test_tailor_langgraph_refines_until_target(
     ]
     calls: list[dict[str, Any]] = []
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             payload = responses[len(calls) - 1]
@@ -118,7 +120,7 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
     ]
     calls: list[dict[str, Any]] = []
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             payload = responses[min(len(calls) - 1, len(responses) - 1)]

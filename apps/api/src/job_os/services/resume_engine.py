@@ -26,6 +26,7 @@ from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPO
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
+    create_message,
     parse_model_json,
     response_diagnostics,
     response_text,
@@ -53,8 +54,8 @@ PASS_SCORE = Decimal("75")
 # that could see the verified facts, and so had more to check, came back with no
 # text at all; the tailor loop then hit the same wall at 16000 with the whole
 # budget spent on thinking.
-REVIEW_MAX_TOKENS = 12000
-REVIEW_RETRY_MAX_TOKENS = 16000
+REVIEW_MAX_TOKENS = 24000
+REVIEW_RETRY_MAX_TOKENS = 32000
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -498,7 +499,8 @@ async def review_resume(
     messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
 
     async def ask(*, max_tokens: int = REVIEW_MAX_TOKENS) -> tuple[str, Any]:
-        response = await _client().messages.create(
+        response = await create_message(
+            _client(),
             model=settings.anthropic_model_verify,
             max_tokens=max_tokens,
             system=CAREER_OPS_RULES,
@@ -656,7 +658,8 @@ async def revise_resume(
     messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
 
     async def ask() -> str:
-        response = await client.messages.create(
+        response = await create_message(
+            client,
             model=settings.anthropic_model_tailor,
             max_tokens=7000,
             system=CAREER_OPS_RULES,

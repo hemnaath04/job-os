@@ -23,11 +23,13 @@ os.environ.setdefault(
 from job_os.services import tailor  # noqa: E402
 from job_os.services.llm_json import EMPTY_REPLY_RETRY  # noqa: E402
 
+from _fake_llm import StreamingFakeMessages
+
 
 def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str, Any]]:
     calls: list[dict[str, Any]] = []
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             body = replies[min(len(calls) - 1, len(replies) - 1)]

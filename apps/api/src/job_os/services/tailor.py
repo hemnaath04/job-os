@@ -42,6 +42,7 @@ from job_os.services.identity import identity_text as _identity_text
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
+    create_message,
     parse_model_json,
     response_diagnostics,
     response_text,
@@ -123,11 +124,11 @@ TARGET_ATS_SCORE = Decimal("80")
 # block_types ['thinking'], output_tokens 16000. Every pass after that point failed
 # the same way, which silently capped the loop at two or three passes however high
 # MAX_ITERATIONS was set. The budget has to hold the reasoning AND the answer.
-DRAFT_MAX_TOKENS = 16000
+DRAFT_MAX_TOKENS = 32000
 # More room again for the recovery attempt, since the reason it is happening is
 # that the answer did not fit. It must exceed what thinking already consumed, or
 # the retry reproduces the failure exactly.
-RETRY_MAX_TOKENS = 20000
+RETRY_MAX_TOKENS = 48000
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
@@ -471,7 +472,8 @@ async def run_tailor(
         iteration = len(state["iteration_scores"]) + 1
         if on_progress:
             on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
-        msg = await client.messages.create(
+        msg = await create_message(
+            client,
             model=settings.anthropic_model_tailor,
             max_tokens=DRAFT_MAX_TOKENS,
             system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
@@ -507,7 +509,8 @@ async def run_tailor(
                     {"role": "user", "content": JSON_ONLY_RETRY},
                 ]
             )
-            retry = await client.messages.create(
+            retry = await create_message(
+                client,
                 model=settings.anthropic_model_tailor,
                 max_tokens=RETRY_MAX_TOKENS if empty else DRAFT_MAX_TOKENS,
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",

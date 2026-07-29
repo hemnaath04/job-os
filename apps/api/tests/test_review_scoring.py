@@ -16,6 +16,8 @@ from job_os.services.resume_engine import (
     deterministic_review,
 )
 
+from _fake_llm import StreamingFakeMessages
+
 
 def _one_page_pdf() -> bytes:
     writer = PdfWriter()
@@ -95,7 +97,7 @@ def _stub_model(
     """
     calls: list[Any] = []
 
-    class FakeMessages:
+    class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
             body = replies[min(len(calls) - 1, len(replies) - 1)]
