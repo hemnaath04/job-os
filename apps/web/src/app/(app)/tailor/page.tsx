@@ -448,14 +448,16 @@ function TailorInner() {
   const start = useMutation({
     mutationFn: async () => {
       setError(null);
-      const posting = jobs.find((j) => j.id === jobId);
-      if (!posting) {
+      if (!jobId) {
         throw new Error("Pick a job to tailor against first.");
       }
       // Legacy FastAPI path: no pollable agent job, so keep the old wrapper
-      // behavior (wait in memory) and just return the finished version.
+      // behavior (wait in memory) and just return the finished version. The job
+      // is fetched rather than read off the picker list, which holds only the 50
+      // newest active postings, so a link from an older application still names
+      // its resume correctly instead of failing to find the job.
       if (!isAppwriteWorkspaceEnabled) {
-        const target = await resolveTargetResume(posting);
+        const target = await resolveTargetResume(await api.getJob(jobId));
         setResumeId(target.id);
         const version = await api.tailorResume(target.id, jobId);
         return { kind: "done" as const, version };
