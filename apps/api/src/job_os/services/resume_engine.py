@@ -145,6 +145,46 @@ def validate_json_resume_document(doc: dict[str, Any]) -> dict[str, Any]:
     return doc
 
 
+def _compact_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The evidence vault, small enough that none of it gets truncated away.
+
+    Sent whole, a profile is mostly skill facts carrying empty dates, locations,
+    source urls and bullet lists, and the payload overran the prompt budget. What
+    got cut was the tail, which is where the skills live, so the reviewer could
+    not see them and reported verified skills as invented technology claims:
+    "Qwen is named ... but no verified fact mentions Qwen", about a skill fact
+    literally titled "LLM integration (OpenAI, Anthropic, Qwen)".
+    """
+    compact: list[dict[str, Any]] = []
+    for fact in facts:
+        kind = str(fact.get("kind") or "")
+        if kind == "skill":
+            compact.append(
+                {
+                    "kind": "skill",
+                    "title": fact.get("title"),
+                    "category": (fact.get("payload") or {}).get("category")
+                    or fact.get("org"),
+                }
+            )
+            continue
+        entry = {
+            "kind": kind,
+            "title": fact.get("title"),
+            "org": fact.get("org"),
+            "start_date": fact.get("start_date"),
+            "end_date": fact.get("end_date"),
+            "location": fact.get("location"),
+            "source_url": fact.get("source_url"),
+            "payload": fact.get("payload") or {},
+            "bullets": [
+                str(bullet.get("text") or "") for bullet in (fact.get("bullets") or [])
+            ],
+        }
+        compact.append({key: value for key, value in entry.items() if value})
+    return compact
+
+
 def _client() -> anthropic.AsyncAnthropic:
     settings = get_settings()
     if not settings.anthropic_api_key:
@@ -443,8 +483,8 @@ async def review_resume(
         "Reply with the JSON object only: no prose around it, no markdown "
         "fences. Report at most 10 issues, the most important first.\n\n"
         f"RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
-        "VERIFIED FACTS (the evidence this resume was built from):\n"
-        f"{json.dumps(verified_facts or [], ensure_ascii=False)[:20000]}\n\n"
+        "VERIFIED FACTS (the evidence this resume was built from, complete):\n"
+        f"{json.dumps(_compact_facts(verified_facts or []), ensure_ascii=False)[:40000]}\n\n"
         "CURRENT GITHUB README EVIDENCE:\n"
         f"{json.dumps(github_context, ensure_ascii=False)[:22000]}\n\n"
         "DETERMINISTIC WRITING CHECKS ALREADY RUN (do not repeat these, they "

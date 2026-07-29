@@ -29,6 +29,20 @@ def test_shipped_is_refused_when_the_evidence_says_pending() -> None:
     assert upgrades_status("Launched an AI agent.", PENDING_FACT)
 
 
+def test_present_tense_counts_as_a_completion_claim() -> None:
+    """A summary reads in the present tense, which a past-tense pattern missed.
+
+    The real line: "ships production FastAPI systems and agentic AI workflows",
+    about work the evidence records as demoed and pending approval.
+    """
+    assert upgrades_status(
+        "Backend engineer who ships production FastAPI systems and agentic AI "
+        "workflows.",
+        PENDING_FACT,
+    )
+    assert upgrades_status("Delivers agentic test tooling.", PENDING_FACT)
+
+
 def test_carrying_the_qualifier_through_is_fine() -> None:
     assert not upgrades_status(
         "Built, with a team, an AI agent that generates test cases; demoed end to end.",

@@ -121,11 +121,21 @@ _FIRST_PERSON_RE = re.compile(
     r"\b(?:I|I'?m|I'?ve|[Mm]y|[Mm]e|[Mm]ine|[Ww]e|[Ww]e'?ve|[Oo]ur|[Oo]urs|us)\b"
 )
 
-# Wording that says a thing reached users or production.
+# Wording that says a thing reached users or production. Present tense included
+# on purpose: a summary reading "ships production FastAPI systems and agentic AI
+# workflows" makes exactly the claim a past-tense-only pattern let through.
 _COMPLETION_RE = re.compile(
-    r"\b(?:shipped|launched|released|delivered|rolled out|went live|"
-    r"in production|productionis|productioniz|adopted|"
-    r"deployed to production)\w*\b",
+    r"\b(?:"
+    r"ships?|shipped|shipping|"
+    r"launch(?:es|ed|ing)|"
+    r"releas(?:es|ed)|"
+    r"deliver(?:s|ed|ing)|"
+    r"roll(?:s|ed|ing) out|"
+    r"(?:go(?:es)?|going|went) live|"
+    r"in(?:to)? production|deployed to production|"
+    r"production(?:is|iz)\w*|"
+    r"adopt(?:s|ed)"
+    r")\b",
     re.I,
 )
 # Wording that says it did not. A fact carrying one of these has a status, and a
