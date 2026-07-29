@@ -26,6 +26,7 @@ import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import {
   CUSTOM_SOURCES_CHANGED_EVENT,
   hasAcceptedTerms,
@@ -342,7 +343,7 @@ export default function DiscoverPage() {
       if (data.results.length === 0)
         toast("No results", { description: "Try widening the filters." });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("run that search", err),
   });
 
   function currentQuery(): DiscoverySearchRequest {
@@ -383,7 +384,7 @@ export default function DiscoverPage() {
         page: 0,
       });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("read that sentence", err),
   });
 
   const saveSearch = useMutation({
@@ -403,7 +404,7 @@ export default function DiscoverPage() {
       toast.success("Search saved");
       qc.invalidateQueries({ queryKey: ["saved-searches"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("save that search", err),
   });
 
   const runSaved = useMutation({
@@ -457,7 +458,7 @@ export default function DiscoverPage() {
       if (data.results.length === 0)
         toast("No results", { description: "Saved query returned nothing today." });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("run that saved search", err),
   });
 
   const deleteSaved = useMutation({
@@ -466,7 +467,7 @@ export default function DiscoverPage() {
       forgetSavedNoKey(id);
       qc.invalidateQueries({ queryKey: ["saved-searches"] });
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("delete that saved search", err),
   });
 
   function applySaved(s: SavedSearch) {
@@ -1001,7 +1002,7 @@ function ResultCard({
       });
       onImported();
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("import that job", err),
   });
 
   const tailorJob = useMutation({
@@ -1019,7 +1020,7 @@ function ResultCard({
       onImported();
       onTailored(job.id);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("start tailoring for that job", err),
   });
 
   return (

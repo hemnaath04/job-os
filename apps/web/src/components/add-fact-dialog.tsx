@@ -4,6 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { reportFailure } from "@/lib/errors";
 import { api, type ProfileFactCreate } from "@/lib/api";
 
 type FactKind = "experience" | "project" | "skill" | "education" | "certification";
@@ -76,7 +77,7 @@ export function AddFactDialog({
       onOpenChange(false);
       onCreated();
     } catch (err) {
-      toast.error(`Couldn't add the fact: ${(err as Error).message}`);
+      reportFailure("add that fact", err);
     } finally {
       setLoading(false);
     }

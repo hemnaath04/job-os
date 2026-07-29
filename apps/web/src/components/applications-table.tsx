@@ -4,6 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import { ExternalLink, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
+import { reportFailure } from "@/lib/errors";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import type { Application } from "@/lib/types";
@@ -33,13 +34,13 @@ export function ApplicationsTable({
             try {
               await onRestore(a);
             } catch (err) {
-              toast.error(`Couldn't restore: ${(err as Error).message}`);
+              reportFailure("restore that application", err);
             }
           },
         },
       });
     } catch (err) {
-      toast.error(`Couldn't archive: ${(err as Error).message}`);
+      reportFailure("archive that application", err);
     }
   }
 

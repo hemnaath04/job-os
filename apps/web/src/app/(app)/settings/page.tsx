@@ -8,6 +8,7 @@ import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field, FieldGroup } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import type { Resume, UserSettings } from "@/lib/types";
 
 const THEMES: { value: UserSettings["theme"]; label: string }[] = [
@@ -76,7 +77,7 @@ export default function SettingsPage() {
       toast.success("Saved");
       qc.setQueryData(["settings"], data);
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("save your preferences", err),
   });
 
   function update<K extends keyof UserSettings>(key: K, value: UserSettings[K]) {

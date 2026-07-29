@@ -27,6 +27,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
@@ -116,7 +117,7 @@ function ResumesInner() {
       });
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("read that resume's design", error),
   });
   const buildFromUpload = useMutation({
     mutationFn: (file: File) => api.generateTemplateFromFile(file),
@@ -124,7 +125,7 @@ function ResumesInner() {
       toast.success(`Built the ${template.name} template`);
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("build a template from that file", error),
   });
   const removeTemplate = useMutation({
     mutationFn: (templateId: string) => api.archiveTemplate(templateId),
@@ -132,7 +133,7 @@ function ResumesInner() {
       toast.success("Template removed. No resume was affected.");
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("remove that template", error),
   });
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
@@ -155,7 +156,7 @@ function ResumesInner() {
       setName("");
       setBaseRole("");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("create that source resume", err),
   });
 
   const importFiles = useMutation({
@@ -206,7 +207,7 @@ function ResumesInner() {
       setImportResult(items);
       qc.invalidateQueries({ queryKey: ["resumes"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("import those resumes", error),
   });
 
   return (
@@ -705,7 +706,7 @@ function ResumeRow({
       });
       qc.invalidateQueries({ queryKey: ["resumes"] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("archive that resume", error),
   });
 
   const updated = format(
@@ -835,7 +836,7 @@ function VersionRow({
       });
       qc.invalidateQueries({ queryKey: ["versions", resumeId] });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("archive that version", error),
   });
   return (
     <div className="flex items-center justify-between py-3 pl-12 pr-5 hover:bg-[color:var(--color-surface-2)]">

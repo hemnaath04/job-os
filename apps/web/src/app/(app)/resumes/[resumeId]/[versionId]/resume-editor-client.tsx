@@ -25,6 +25,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import { downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
 import type {
@@ -77,7 +78,7 @@ export default function ResumeEditorClient({
       toast.success("New revision saved");
       router.replace(`/resumes/${resumeId}/${version.id}`);
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("save this revision", error),
   });
   const review = useMutation({
     mutationFn: () => api.reviewVersion(resumeId, versionId),
@@ -89,7 +90,7 @@ export default function ResumeEditorClient({
         queryKey: ["resume-version", resumeId, versionId],
       });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("run the review", error),
   });
   const finalize = useMutation({
     mutationFn: (force: boolean) =>
@@ -117,7 +118,8 @@ export default function ResumeEditorClient({
       );
       if (proceed) finalize.mutate(true);
     },
-    onError: (error: Error) => toast.error(parseFinalizeError(error.message)),
+    onError: (error: Error) =>
+      reportFailure("finalize this resume", error, parseFinalizeError(error.message)),
     onSettled: () => {
       queryClient.invalidateQueries({
         queryKey: ["resume-version", resumeId, versionId],
@@ -135,7 +137,7 @@ export default function ResumeEditorClient({
         queryKey: ["resume-messages", resumeId, versionId],
       });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("get suggestions", error),
   });
   const applyProposal = useMutation({
     mutationFn: (proposalId: string) =>
@@ -151,7 +153,7 @@ export default function ResumeEditorClient({
         router.replace(`/resumes/${resumeId}/${response.version.id}`);
       }
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: Error) => reportFailure("apply that revision", error),
   });
 
   const reviewResult = useMemo(

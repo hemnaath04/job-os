@@ -5,6 +5,7 @@ import { Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 
 type Mode = "url" | "text";
 
@@ -46,7 +47,7 @@ export function AddJobDialog({
       onOpenChange(false);
       onCreated();
     } catch (err) {
-      toast.error(`Couldn't add the job: ${(err as Error).message}`);
+      reportFailure("add that job", err);
     } finally {
       setLoading(false);
     }

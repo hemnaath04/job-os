@@ -19,6 +19,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import {
   appwriteWorkspace,
   type AgentJobProgress,
@@ -257,11 +258,7 @@ function TailorInner() {
             : "Quality review done. See the issues before finalizing.",
         );
       } catch (err) {
-        toast.error(
-          `Could not run the quality review: ${
-            err instanceof Error ? err.message : "unknown error"
-          }`,
-        );
+        reportFailure("run the quality review", err);
       } finally {
         setReviewing(false);
       }
@@ -514,7 +511,7 @@ function TailorInner() {
     },
     onError: (err: Error) => {
       setError(err.message);
-      toast.error(err.message);
+      reportFailure("start that tailoring run", err);
     },
   });
 
@@ -868,7 +865,7 @@ function ResultView({
       onFinalized(outcome.version);
       toast.success("Resume finalized and stored");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("finalize this resume", err),
   });
 
   return (
@@ -1270,7 +1267,7 @@ function GapRow({
       setOrg("");
       setBullet("");
     },
-    onError: (err: Error) => toast.error(err.message),
+    onError: (err: Error) => reportFailure("add that fact", err),
   });
 
   const supportsBullets = kind === "project" || kind === "experience";

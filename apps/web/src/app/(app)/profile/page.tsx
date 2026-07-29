@@ -19,6 +19,7 @@ import { toast } from "sonner";
 import { AddFactDialog } from "@/components/add-fact-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import type { ProfileFact } from "@/lib/types";
 
 const KIND_ORDER: ProfileFact["kind"][] = [
@@ -276,7 +277,7 @@ function UploadResumeButton({ onDone }: { onDone: () => void }) {
       );
       onDone();
     } catch (err) {
-      toast.error(`Upload failed: ${(err as Error).message}`);
+      reportFailure("import that resume", err);
     } finally {
       setBusy(false);
       if (ref.current) ref.current.value = "";

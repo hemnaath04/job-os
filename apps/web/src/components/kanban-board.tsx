@@ -18,6 +18,7 @@ import { ArrowDownRight, Calendar, ExternalLink, MapPin, Sparkles, Trash2 } from
 import Link from "next/link";
 import { useState } from "react";
 import { toast } from "sonner";
+import { reportFailure } from "@/lib/errors";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import type { Application, AppStatus } from "@/lib/types";
@@ -101,7 +102,7 @@ export function KanbanBoard({
       await onMove(appId, target);
       toast.success(`Moved to ${STATUS_LABELS[target]}`);
     } catch (err) {
-      toast.error(`Couldn't update: ${(err as Error).message}`);
+      reportFailure("move that application", err);
     }
   }
 
@@ -116,13 +117,13 @@ export function KanbanBoard({
             try {
               await onRestore(app);
             } catch (err) {
-              toast.error(`Couldn't restore: ${(err as Error).message}`);
+              reportFailure("restore that application", err);
             }
           },
         },
       });
     } catch (err) {
-      toast.error(`Couldn't archive: ${(err as Error).message}`);
+      reportFailure("archive that application", err);
     }
   }
 
