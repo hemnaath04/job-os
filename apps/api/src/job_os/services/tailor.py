@@ -911,12 +911,42 @@ def _agent_quick_score(agent: TailorAgentOutput) -> Decimal:
 ATS_KEYWORD_MAX_WORDS = 5
 ATS_KEYWORD_MAX_CHARS = 48
 
+# Terms that are not candidate skills and so do not belong in the score at all.
+# A JD lists these under "requirements", but no resume can keyword-match an
+# eligibility rule, a description of the employer, or soft-skill boilerplate.
+# Counting them as missing understates real coverage: a Point72 JD scored 30
+# partly on "Minimum 3.0 GPA", "proprietary trading firm" and "market
+# initiatives". Job-type words like "internship" are excluded from the other
+# direction, since matching them is not evidence of a relevant skill.
+# Word-boundary matched, so "firm" does not catch "firmware".
+_NON_SKILL_RE = re.compile(
+    r"\b(?:"
+    # Eligibility and enrollment
+    r"gpa|grade point|bachelors?|masters?|phd|degree|major|"
+    r"junior standing|senior standing|graduation date|currently pursuing|"
+    r"sponsorship|visa|citizenship|work authorization|clearance|"
+    # Availability
+    r"ability to start|able to start|willing to|must be able|start date|"
+    # The employer or the role, rather than a candidate skill
+    r"firm|company|employer|initiatives?|internships?|full[- ]time|part[- ]time|"
+    # Soft-skill boilerplate
+    r"work ethic|fast[- ]paced|team player|self[- ]starter|detail[- ]oriented|"
+    r"passion for|genuine interest|interest in|communication skills"
+    r")\b",
+    re.I,
+)
+
 
 def _is_ats_keyword(term: str) -> bool:
     cleaned = term.strip()
     if not cleaned or len(cleaned) > ATS_KEYWORD_MAX_CHARS:
         return False
     return len(cleaned.split()) <= ATS_KEYWORD_MAX_WORDS
+
+
+def _is_candidate_skill(term: str) -> bool:
+    """False for JD terms a resume could never legitimately match."""
+    return not _NON_SKILL_RE.search(term)
 
 
 def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, dict[str, Any]]:
@@ -961,12 +991,28 @@ def _compute_ats_from_document(
     # zero no matter how good the tailoring is. Prose requirements belong to the
     # gap-question path, so keep them out of the keyword denominator and report
     # them separately instead of hiding them.
-    keywords = [term for term in candidates if _is_ats_keyword(term)]
     prose = [term for term in candidates if not _is_ats_keyword(term)]
-    candidates = keywords or [*fallback_matched, *fallback_missing]
+
+    # The agent's own term list is a second source of JD keywords, and it is the
+    # one that recovers real skills buried inside a prose requirement: the
+    # sentence "computer science fundamentals: data structures, algorithms,
+    # systems" is dropped above, yet those three are genuine skills the resume
+    # may well cover. Union them in. Every term is still verified against the
+    # assembled document below, so this widens what gets checked without
+    # crediting anything the resume does not actually say.
+    keywords = [
+        term
+        for term in (*candidates, *fallback_matched, *fallback_missing)
+        if _is_ats_keyword(term) and _is_candidate_skill(term)
+    ]
+    excluded = [
+        term
+        for term in candidates
+        if _is_ats_keyword(term) and not _is_candidate_skill(term)
+    ]
 
     unique: dict[str, str] = {}
-    for keyword in candidates:
+    for keyword in keywords:
         unique.setdefault(keyword.casefold(), keyword)
     resume_text = json.dumps(json_resume, ensure_ascii=False).casefold()
     matched = [
@@ -984,4 +1030,5 @@ def _compute_ats_from_document(
     report["model_reported_matched"] = fallback_matched
     report["model_reported_missing"] = fallback_missing
     report["prose_requirements"] = prose
+    report["excluded_non_skills"] = excluded
     return score, report
