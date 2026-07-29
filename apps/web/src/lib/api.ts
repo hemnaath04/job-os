@@ -518,13 +518,6 @@ export const api = {
     return appwriteWorkspace.listTemplates();
   },
 
-  createTemplateFromResume: (resume: Resume) => {
-    if (!isAppwriteWorkspaceEnabled) {
-      throw new Error("Templates require the Appwrite workspace.");
-    }
-    return appwriteWorkspace.createTemplateFromResume(resume);
-  },
-
   archiveTemplate: (templateId: string) => {
     if (!isAppwriteWorkspaceEnabled) {
       throw new Error("Templates require the Appwrite workspace.");

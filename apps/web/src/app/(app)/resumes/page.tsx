@@ -84,19 +84,6 @@ function ResumesInner() {
     queryKey: ["templates"],
     queryFn: () => api.listTemplates(),
   });
-  // Dragging state lives here because a drop target has to know what is being
-  // dragged, and dragover events cannot read dataTransfer for security reasons.
-  const [dragging, setDragging] = useState<Resume | null>(null);
-  const saveAsTemplate = useMutation({
-    mutationFn: (resume: Resume) => api.createTemplateFromResume(resume),
-    onSuccess: (template) => {
-      toast.success(`Saved the ${template.name} look as a template`, {
-        description: "Your resume and its versions are untouched.",
-      });
-      qc.invalidateQueries({ queryKey: ["templates"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
   const removeTemplate = useMutation({
     mutationFn: (templateId: string) => api.archiveTemplate(templateId),
     onSuccess: () => {
@@ -367,27 +354,13 @@ function ResumesInner() {
 
           <TemplatesSection
             templates={templates}
-            accepts={!!dragging}
-            saving={saveAsTemplate.isPending}
-            onDropResume={() => dragging && saveAsTemplate.mutate(dragging)}
             onRemove={(id) => removeTemplate.mutate(id)}
             removingId={
               removeTemplate.isPending ? (removeTemplate.variables ?? null) : null
             }
           />
 
-          <SourceResumesSection
-            resumes={sorted}
-            openId={openId}
-            onDragStart={setDragging}
-            onDragEnd={() => setDragging(null)}
-            onSaveAsTemplate={(resume) => saveAsTemplate.mutate(resume)}
-            savingId={
-              saveAsTemplate.isPending
-                ? (saveAsTemplate.variables?.id ?? null)
-                : null
-            }
-          />
+          <SourceResumesSection resumes={sorted} openId={openId} />
         </>
       )}
     </div>
@@ -395,82 +368,40 @@ function ResumesInner() {
 }
 
 /**
- * Saved looks. A template holds Jinja and CSS only, never resume data, which is
- * why dropping a resume here cannot cost anything: it copies the look into a new
- * row and leaves the resume, its versions and its data exactly as they were.
- * Removing a template is the undo.
+ * Saved looks. A template holds Jinja and CSS only, never resume data.
+ *
+ * There is deliberately no way to create one from the library yet. Copying the
+ * one bundled look and naming it after a resume produced templates that were
+ * byte-identical to Default, which implied the app had captured that resume's
+ * design when it had captured nothing. Generating a real template from a
+ * document is the next piece of work.
  */
 function TemplatesSection({
   templates,
-  accepts,
-  saving,
-  onDropResume,
   onRemove,
   removingId,
 }: {
   templates: ResumeTemplate[];
-  accepts: boolean;
-  saving: boolean;
-  onDropResume: () => void;
   onRemove: (templateId: string) => void;
   removingId: string | null;
 }) {
-  const [over, setOver] = useState(false);
-  const active = accepts && over;
-
   return (
-    <section
-      className="mt-6"
-      onDragOver={(event) => {
-        if (!accepts) return;
-        // Marking the event handled is what makes this a valid drop target.
-        event.preventDefault();
-        setOver(true);
-      }}
-      onDragLeave={(event) => {
-        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
-        setOver(false);
-      }}
-      onDrop={(event) => {
-        if (!accepts) return;
-        event.preventDefault();
-        setOver(false);
-        onDropResume();
-      }}
-    >
+    <section className="mt-6">
       <div className="flex items-baseline gap-2">
         <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
         <h2 className="text-sm font-semibold">Templates</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {templates.length}
         </span>
-        {active && (
-          <span className="text-xs text-[color:var(--color-violet)]">
-            Drop to save this look as a template
-          </span>
-        )}
-        {saving && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
-            <Loader2 className="size-3 animate-spin" /> Saving
-          </span>
-        )}
       </div>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        The look, not the data. Drag a resume here to save its design. Tailoring
+        The look, not the data. Pick one when you tailor a resume. Tailoring
         borrows a look and never writes to the template.
       </p>
-      <div
-        className={`mt-3 rounded-[var(--radius-card)] transition ${
-          active
-            ? "ring-2 ring-[color:var(--color-violet)]/60"
-            : accepts
-              ? "ring-1 ring-dashed ring-[color:var(--color-border)]"
-              : ""
-        }`}
-      >
+      <div className="mt-3">
         {templates.length === 0 ? (
           <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-            No templates yet. Drag a resume up here to save its look.
+            No templates yet.
           </div>
         ) : (
           <div className="workspace-panel divide-y divide-[color:var(--color-border)] overflow-hidden">
@@ -519,17 +450,9 @@ function TemplatesSection({
 function SourceResumesSection({
   resumes,
   openId,
-  onDragStart,
-  onDragEnd,
-  onSaveAsTemplate,
-  savingId,
 }: {
   resumes: Resume[];
   openId: string | null;
-  onDragStart: (resume: Resume) => void;
-  onDragEnd: () => void;
-  onSaveAsTemplate: (resume: Resume) => void;
-  savingId: string | null;
 }) {
   return (
     <section className="mt-6">
@@ -551,15 +474,7 @@ function SourceResumesSection({
       ) : (
         <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
           {resumes.map((r) => (
-            <ResumeRow
-              key={r.id}
-              resume={r}
-              defaultOpen={r.id === openId}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-              onSaveAsTemplate={onSaveAsTemplate}
-              saving={savingId === r.id}
-            />
+            <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
           ))}
         </div>
       )}
@@ -570,17 +485,9 @@ function SourceResumesSection({
 function ResumeRow({
   resume,
   defaultOpen = false,
-  onDragStart,
-  onDragEnd,
-  onSaveAsTemplate,
-  saving,
 }: {
   resume: Resume;
   defaultOpen?: boolean;
-  onDragStart: (resume: Resume) => void;
-  onDragEnd: () => void;
-  onSaveAsTemplate: (resume: Resume) => void;
-  saving: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
@@ -609,19 +516,7 @@ function ResumeRow({
 
   return (
     <div>
-      <div
-        draggable
-        onDragStart={(event) => {
-          // Some browsers refuse the drag without payload, even unused.
-          event.dataTransfer.setData("text/plain", resume.id);
-          event.dataTransfer.effectAllowed = "move";
-          onDragStart(resume);
-        }}
-        onDragEnd={onDragEnd}
-        className={`flex cursor-grab items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)] active:cursor-grabbing ${
-          saving ? "opacity-50" : ""
-        }`}
-      >
+      <div className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]">
         <button
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
@@ -654,17 +549,6 @@ function ResumeRow({
         <div className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
           {updated}
         </div>
-        {/* Keyboard and touch equivalent of the drag gesture, which native
-            HTML5 drag-and-drop cannot offer. Available on every resume,
-            including Master: saving a look copies nothing but the design. */}
-        <button
-          onClick={() => onSaveAsTemplate(resume)}
-          disabled={saving}
-          title="Save this resume's look as a template"
-          className="shrink-0 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
-        >
-          {saving ? "Saving…" : "Use as template"}
-        </button>
         {!resume.is_master && (
           <button
             onClick={() => {
