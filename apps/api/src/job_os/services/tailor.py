@@ -123,11 +123,11 @@ TARGET_ATS_SCORE = Decimal("80")
 # block_types ['thinking'], output_tokens 16000. Every pass after that point failed
 # the same way, which silently capped the loop at two or three passes however high
 # MAX_ITERATIONS was set. The budget has to hold the reasoning AND the answer.
-DRAFT_MAX_TOKENS = 32000
+DRAFT_MAX_TOKENS = 16000
 # More room again for the recovery attempt, since the reason it is happening is
 # that the answer did not fit. It must exceed what thinking already consumed, or
 # the retry reproduces the failure exactly.
-RETRY_MAX_TOKENS = 48000
+RETRY_MAX_TOKENS = 20000
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
