@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import {
@@ -141,6 +141,46 @@ function TailorInner() {
   const [active, setActive] = useState<ActiveTailor | null>(null);
   const [progress, setProgress] = useState<AgentJobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reviewing, setReviewing] = useState(false);
+
+  /**
+   * Finish the quality pass on the FastAPI container.
+   *
+   * The Appwrite agent function cannot render PDFs (its runtime has no pango or
+   * cairo), so a fresh tailored version arrives with no PDF and a placeholder
+   * review, which leaves Finalize and Download dead. The container image has the
+   * render libs, so hand it the document, then persist the review and PDF onto
+   * the Appwrite version. Best effort and non-blocking: the tailored resume is
+   * already readable without it, so a failure here only costs the PDF.
+   */
+  const runReview = useCallback(async (version: TailorResponse) => {
+    if (!isAppwriteWorkspaceEnabled) return;
+    const stored = version as TailorResponse & { pdf_file_id?: string | null };
+    if (stored.pdf_file_id) return;
+    setReviewing(true);
+    try {
+      const rendered = await api.renderReviewDraft(version.json_resume);
+      const reviewed = await appwriteWorkspace.attachReview(version.id, rendered);
+      setResult((current) =>
+        current && current.id === version.id
+          ? ({ ...current, ...reviewed } as TailorResponse)
+          : current,
+      );
+      toast.success(
+        rendered.review.passed
+          ? "Quality review passed. You can finalize now."
+          : "Quality review done. See the issues before finalizing.",
+      );
+    } catch (err) {
+      toast.error(
+        `Could not run the quality review: ${
+          err instanceof Error ? err.message : "unknown error"
+        }`,
+      );
+    } finally {
+      setReviewing(false);
+    }
+  }, []);
 
   const { data: resumes = [], isLoading: resumesLoading } = useQuery({
     queryKey: ["resumes"],
@@ -215,6 +255,9 @@ function TailorInner() {
             appwriteWorkspace.registerVersionFile(current.output);
             setResult(current.output);
             toast.success("Tailored resume ready");
+            // Show the resume immediately, then finish the quality pass and
+            // the PDF in the background on the container.
+            void runReview(current.output);
           } else {
             setError(
               "The tailoring run finished without returning a resume. Try again.",
@@ -260,7 +303,7 @@ function TailorInner() {
       cancelled = true;
       if (timer) window.clearTimeout(timer);
     };
-  }, [active]);
+  }, [active, runReview]);
 
   const start = useMutation({
     mutationFn: async () => {
@@ -336,6 +379,8 @@ function TailorInner() {
         resumeName={targetResume?.name ?? "Tailored resume"}
         jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
+        reviewing={reviewing}
+        onRunReview={() => void runReview(result)}
         onReset={() => {
           setResult(null);
           setError(null);
@@ -540,17 +585,32 @@ function TailorProgress({
   );
 }
 
+/**
+ * True when the review never actually ran, as opposed to running and finding
+ * real problems. The agent function emits this marker when its render step could
+ * not load WeasyPrint's native libs, which is the normal outcome there.
+ */
+function reviewNeedsRetry(result: TailorResponse): boolean {
+  return (result.review_report?.issues ?? []).some(
+    (issue) => issue.code === "review_unavailable",
+  );
+}
+
 function ResultView({
   result,
   resumeName,
   jobTitle,
   companyName,
+  reviewing,
+  onRunReview,
   onReset,
 }: {
   result: TailorResponse;
   resumeName: string;
   jobTitle: string;
   companyName: string | null;
+  reviewing: boolean;
+  onRunReview: () => void;
   onReset: () => void;
 }) {
   const qc = useQueryClient();
@@ -616,7 +676,8 @@ function ResultView({
             onClick={() =>
               downloadPdf(downloadUrl, `resume_${result.id.slice(0, 8)}.pdf`)
             }
-            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
+            disabled={reviewing || !downloadUrl}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="size-3" /> Download PDF
           </button>
@@ -643,26 +704,54 @@ function ResultView({
 
       <div
         className={`mt-5 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-xs ${
-          result.review_report?.passed
-            ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-200"
-            : "border-amber-400/20 bg-amber-400/[0.05] text-amber-100"
+          reviewing
+            ? "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
+            : result.review_report?.passed
+              ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-200"
+              : "border-amber-400/20 bg-amber-400/[0.05] text-amber-100"
         }`}
       >
-        {result.review_report?.passed ? (
+        {reviewing ? (
+          <Loader2 className="size-4 animate-spin" />
+        ) : result.review_report?.passed ? (
           <CheckCircle2 className="size-4" />
         ) : (
           <AlertCircle className="size-4" />
         )}
-        <span className="font-semibold">
-          Quality review{" "}
-          {result.review_score !== null ? Math.round(Number(result.review_score)) : "pending"}
-          /100
-        </span>
-        <span className="text-[color:var(--color-text-dim)]">
-          {result.review_report?.passed
-            ? "Passed. You can finalize now."
-            : "Open Edit with AI to resolve the review suggestions before finalizing."}
-        </span>
+        {reviewing ? (
+          <>
+            <span className="font-semibold">Running quality review</span>
+            <span className="text-[color:var(--color-text-dim)]">
+              Rendering the PDF and scoring the draft. The resume below is ready
+              to read meanwhile.
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="font-semibold">
+              Quality review{" "}
+              {result.review_score !== null
+                ? Math.round(Number(result.review_score))
+                : "pending"}
+              /100
+            </span>
+            <span className="text-[color:var(--color-text-dim)]">
+              {result.review_report?.passed
+                ? "Passed. You can finalize now."
+                : reviewNeedsRetry(result)
+                  ? "The review could not complete. Run it again to enable Finalize and the PDF."
+                  : "Open Edit with AI to resolve the review suggestions before finalizing."}
+            </span>
+            {!result.review_report?.passed && (
+              <button
+                onClick={onRunReview}
+                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+              >
+                <RefreshCw className="size-3" /> Run review
+              </button>
+            )}
+          </>
+        )}
       </div>
 
       {result.agent_note && (

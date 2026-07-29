@@ -113,6 +113,28 @@ function now(): string {
   return new Date().toISOString();
 }
 
+/**
+ * The resume_versions.status column is an Appwrite enum of draft/reviewed/final.
+ * The agent vocabulary is wider ("needs_changes" when a review did not clear the
+ * draft), and writing a value outside the enum rejects the whole row. The
+ * snapshot JSON carries the precise status, which is what the UI reads, so only
+ * the column value is narrowed. Mirrors _status_column in the agent function.
+ */
+const VERSION_STATUS_COLUMN_VALUES = new Set(["draft", "reviewed", "final"]);
+
+function versionStatusColumn(status: string): string {
+  return VERSION_STATUS_COLUMN_VALUES.has(status) ? status : "draft";
+}
+
+/** Decode a base64 payload into bytes without pulling in a Buffer polyfill. */
+function decodeBase64(value: string): ArrayBuffer {
+  const binary = atob(value);
+  const buffer = new ArrayBuffer(binary.length);
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return buffer;
+}
+
 const versionFileIds = new Map<string, string>();
 
 function rememberVersionFile(version: ResumeVersion): ResumeVersion {
@@ -696,19 +718,11 @@ export const appwriteWorkspace = {
     });
   },
 
-  reviewResume(resumeId: string, versionId: string): Promise<AgentJob> {
-    return createAgentJob("resume_review", "/resume/review", {
-      resume_id: resumeId,
-      version_id: versionId,
-    });
-  },
-
-  finalizeResume(resumeId: string, versionId: string): Promise<AgentJob> {
-    return createAgentJob("resume_finalize", "/resume/finalize", {
-      resume_id: resumeId,
-      version_id: versionId,
-    });
-  },
+  // No reviewResume/finalizeResume here on purpose. The agent function renders
+  // the PDF before reviewing, and its runtime cannot load WeasyPrint's native
+  // libs, so those paths could never succeed. Review and finalize go through the
+  // container instead: see api.reviewVersion and api.finalizeVersion, which pair
+  // /resumes/render-review with attachReview below.
 
   tailorResume(
     resumeId: string,
@@ -727,6 +741,100 @@ export const appwriteWorkspace = {
   // Register a version's stored PDF so `downloadVersionUrl` resolves it right
   // after an agent job returns, without an extra fetch.
   registerVersionFile(version: ResumeVersion): ResumeVersion {
+    return rememberVersionFile(version);
+  },
+
+  /**
+   * Store a review and its rendered PDF against an existing version.
+   *
+   * The agent function can produce a tailored document but not a PDF, so the
+   * browser gets both from the FastAPI container and persists them here. Writes
+   * the PDF to the resume bucket, then patches the version snapshot so the
+   * editor, Download, and Finalize all see a fully reviewed version.
+   */
+  async attachReview(
+    versionId: string,
+    result: {
+      review: ResumeReviewResult;
+      latex_source: string;
+      pdf_base64: string;
+    },
+  ): Promise<ResumeVersion> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const { tables, storage } = getAppwriteServices();
+    const ownerId = getCurrentAppwriteUserId();
+
+    const row = await tables.getRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+    });
+
+    const pdfFileId = ID.unique();
+    await storage.createFile({
+      bucketId: config.resumeFilesBucketId,
+      fileId: pdfFileId,
+      file: new File([decodeBase64(result.pdf_base64)], `${versionId}.pdf`, {
+        type: "application/pdf",
+      }),
+      permissions: ownerPermissions(ownerId),
+    });
+
+    const status = result.review.passed ? "reviewed" : "needs_changes";
+    const version: ResumeVersion = {
+      ...parseSnapshot<ResumeVersion>(row),
+      status,
+      review_score: result.review.score,
+      review_report: result.review,
+      latex_source: result.latex_source,
+      updated_at: now(),
+    };
+    (version as StoredResumeVersion).pdf_file_id = pdfFileId;
+
+    await tables.updateRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+      data: {
+        // The status column is a strict enum without "needs_changes"; the
+        // snapshot above carries the precise status the UI reads.
+        status: versionStatusColumn(status),
+        source_updated_at: version.updated_at,
+        snapshot: JSON.stringify(version),
+      },
+    });
+    return rememberVersionFile(version);
+  },
+
+  /** Mark a reviewed version final. Call only after a review has passed. */
+  async markFinalized(versionId: string): Promise<ResumeVersion> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+    });
+    const timestamp = now();
+    const version: ResumeVersion = {
+      ...parseSnapshot<ResumeVersion>(row),
+      status: "final",
+      approved_by_user: true,
+      finalized_at: timestamp,
+      updated_at: timestamp,
+    };
+    await tables.updateRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+      data: {
+        status: versionStatusColumn("final"),
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(version),
+      },
+    });
     return rememberVersionFile(version);
   },
 

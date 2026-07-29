@@ -65,6 +65,13 @@ export type DiscoverNoKeyRequest = {
   }[];
 };
 
+/** Response from the container's stateless render + review endpoint. */
+export type RenderReviewResult = {
+  review: ResumeReviewResult;
+  latex_source: string;
+  pdf_base64: string;
+};
+
 export type ProfileFactCreate = {
   kind: string;
   title: string;
@@ -289,6 +296,22 @@ const legacyApi = {
       body: JSON.stringify({ job_id: jobId }),
     }),
 
+  /**
+   * Render and review an unsaved document on the FastAPI container.
+   *
+   * The Appwrite agent function cannot render PDFs: WeasyPrint needs native
+   * pango and cairo libs that the Appwrite python runtime does not ship, so a
+   * tailored version comes back with no PDF and no review score. The container
+   * image installs them, so the browser sends the document here and writes the
+   * result back to Appwrite itself. Stateless, so it works for versions that
+   * only exist in Appwrite and have no row in Postgres.
+   */
+  renderReviewDraft: (jsonResume: object) =>
+    request<RenderReviewResult>("/resumes/render-review", {
+      method: "POST",
+      body: JSON.stringify({ json_resume: jsonResume }),
+    }),
+
   listCalendar: (params?: { days?: number; include_past?: number }) => {
     const qs = new URLSearchParams();
     if (params?.days !== undefined) qs.set("days", String(params.days));
@@ -497,16 +520,22 @@ export const api = {
       ? appwriteWorkspace.archiveVersion(versionId)
       : legacyApi.deleteVersion(resumeId, versionId),
 
+  /**
+   * Review a stored Appwrite version on the FastAPI container.
+   *
+   * This used to queue the Appwrite agent function, which renders the PDF
+   * before reviewing and therefore always failed there: the runtime has no
+   * pango or cairo for WeasyPrint. The container has them, so send the document
+   * to the stateless endpoint and persist the review and PDF back to Appwrite.
+   */
   async reviewVersion(resumeId: string, versionId: string) {
     if (!isAppwriteWorkspaceEnabled) {
       return legacyApi.reviewVersion(resumeId, versionId);
     }
-    const job = await appwriteWorkspace.reviewResume(resumeId, versionId);
-    const output = await waitForAgentJob<{
-      version: ResumeVersion;
-      review: ResumeReviewResult;
-    }>(job);
-    return output.review;
+    const version = await appwriteWorkspace.getVersion(versionId);
+    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
+    await appwriteWorkspace.attachReview(versionId, rendered);
+    return rendered.review;
   },
 
   async chatEditVersion(
@@ -550,18 +579,19 @@ export const api = {
       messageId,
     );
     if (!proposal.version) return proposal;
-    const job = await appwriteWorkspace.reviewResume(
-      resumeId,
-      proposal.version.id,
+    // Review the new version on the container for the same reason as
+    // reviewVersion: the agent function cannot render a PDF.
+    const rendered = await legacyApi.renderReviewDraft(
+      proposal.version.json_resume,
     );
-    const output = await waitForAgentJob<{
-      version: ResumeVersion;
-      review: ResumeReviewResult;
-    }>(job);
+    const reviewed = await appwriteWorkspace.attachReview(
+      proposal.version.id,
+      rendered,
+    );
     return {
       ...proposal,
-      version: output.version,
-      review: output.review,
+      version: reviewed,
+      review: rendered.review,
     };
   },
 
@@ -570,16 +600,30 @@ export const api = {
       ? appwriteWorkspace.listMessages(versionId)
       : legacyApi.listRevisionMessages(resumeId, versionId),
 
+  /**
+   * Finalize a version: re-review it on the container, then mark it final only
+   * if that review passes. Same reason as reviewVersion for not using the agent
+   * function, which cannot render a PDF and so could never clear the gate.
+   */
   async finalizeVersion(resumeId: string, versionId: string) {
     if (!isAppwriteWorkspaceEnabled) {
       return legacyApi.finalizeVersion(resumeId, versionId);
     }
-    const job = await appwriteWorkspace.finalizeResume(resumeId, versionId);
-    const output = await waitForAgentJob<{
-      version: ResumeVersion;
-      review: ResumeReviewResult;
-    }>(job);
-    return output.version;
+    const version = await appwriteWorkspace.getVersion(versionId);
+    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
+    // Persist the review either way, so a rejection leaves the issues visible.
+    await appwriteWorkspace.attachReview(versionId, rendered);
+    if (!rendered.review.passed) {
+      const blocking = rendered.review.issues
+        .filter((issue) => issue.severity === "blocking")
+        .map((issue) => issue.message);
+      throw new Error(
+        blocking.length
+          ? `Resume did not pass the final quality gate: ${blocking.join(" ")}`
+          : "Resume did not pass the final quality gate.",
+      );
+    }
+    return appwriteWorkspace.markFinalized(versionId);
   },
 
   async tailorResume(resumeId: string, jobId: string): Promise<TailorResponse> {

@@ -1,3 +1,4 @@
+import base64
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -24,6 +25,8 @@ from job_os.schemas.resumes import (
     ResumePatch,
     ResumePreviewRequest,
     ResumeRead,
+    ResumeRenderReviewRequest,
+    ResumeRenderReviewResponse,
     ResumeReviewResult,
     ResumeVersionCreate,
     ResumeVersionRead,
@@ -253,6 +256,32 @@ async def preview_draft(
                 "img-src data: https:; base-uri 'none'; form-action 'none'"
             )
         },
+    )
+
+
+@router.post("/render-review", response_model=ResumeRenderReviewResponse)
+async def render_and_review_draft(
+    payload: ResumeRenderReviewRequest,
+    _user: User = Depends(get_current_user),
+) -> ResumeRenderReviewResponse:
+    """Render and review a document without storing or mutating anything.
+
+    The Appwrite agent function cannot do this: WeasyPrint needs the native pango
+    and cairo libraries, which the Appwrite python runtime does not ship, so a
+    tailored version comes back there with no PDF and no review score. This
+    container image installs those libs (see Dockerfile.vercel), so the browser
+    hands the tailored document here and writes the result back to Appwrite.
+
+    Stateless on purpose. Resumes tailored through the Appwrite workspace do not
+    exist in this database, so there is no row to look up.
+    """
+    from job_os.services.resume_engine import generate_latex_source, review_resume
+
+    review, pdf_bytes = await review_resume(payload.json_resume)
+    return ResumeRenderReviewResponse(
+        review=review,
+        latex_source=generate_latex_source(payload.json_resume),
+        pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
     )
 
 

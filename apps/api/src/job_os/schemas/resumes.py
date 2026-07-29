@@ -96,6 +96,23 @@ class ResumeReviewResult(BaseModel):
     model_summary: str = ""
 
 
+class ResumeRenderReviewRequest(ORMModel):
+    json_resume: dict[str, Any]
+
+
+class ResumeRenderReviewResponse(BaseModel):
+    """Review of a document this service never stores, plus the PDF it rendered.
+
+    Lets a caller that cannot render PDFs itself (the Appwrite agent function,
+    whose runtime has no pango or cairo) obtain a real review and a real PDF and
+    persist them in its own store.
+    """
+
+    review: ResumeReviewResult
+    latex_source: str
+    pdf_base64: str
+
+
 class ResumeChatRequest(ORMModel):
     message: str = Field(min_length=2, max_length=4000)
     apply: bool = True
