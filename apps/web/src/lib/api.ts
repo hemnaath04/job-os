@@ -30,6 +30,7 @@ import {
   type AgentJob,
 } from "./appwrite/workspace";
 import { renderResumePreview } from "./resume-preview";
+import { withTimeout } from "./async";
 
 /** Body accepted by the /api/discover route handler. */
 export type DiscoverNoKeyRequest = {
@@ -71,6 +72,15 @@ export type RenderReviewResult = {
   latex_source: string;
   pdf_base64: string;
 };
+
+/**
+ * Result of a finalize attempt. `blocked` is an ordinary outcome, not an error:
+ * the review found issues and the caller should show them and offer to proceed
+ * anyway, since the review advises rather than gates.
+ */
+export type FinalizeOutcome =
+  | { status: "finalized"; version: ResumeVersion }
+  | { status: "blocked"; review: ResumeReviewResult; version: ResumeVersion };
 
 export type ProfileFactCreate = {
   kind: string;
@@ -124,9 +134,44 @@ async function localRequest<T>(path: string, init?: RequestInit): Promise<T> {
 
 const AGENT_POLL_MS = 1_200;
 const AGENT_TIMEOUT_MS = 15 * 60 * 1_000;
+/**
+ * Ceiling for a container round trip that renders a PDF: a cold start plus a
+ * WeasyPrint render plus a quality-model pass. Generous, but bounded, so a
+ * wedged request surfaces as an error the user can retry instead of a spinner
+ * that never resolves.
+ */
+const RENDER_TIMEOUT_MS = 2 * 60 * 1_000;
+/** A single conversational edit is one Claude call, not a batch job. */
+const REVISE_TIMEOUT_MS = 4 * 60 * 1_000;
+const WARM_TIMEOUT_MS = 12 * 1_000;
 
-async function waitForAgentJob<T>(job: AgentJob): Promise<T> {
-  const deadline = Date.now() + AGENT_TIMEOUT_MS;
+/**
+ * Wake the API container before a call that would otherwise pay for the cold
+ * start while the user watches a spinner.
+ *
+ * The keep-warm workflow asks for a ping every five minutes, but GitHub
+ * throttles scheduled runs hard: observed gaps are 25 to 55 minutes, so the
+ * container is regularly scaled to zero when a review starts. /health is
+ * token-free and cheap. Failures are swallowed, since this is only an
+ * optimisation and the real call reports its own errors.
+ */
+async function warmBackend(): Promise<void> {
+  try {
+    await withTimeout(
+      fetch("/api/backend/health", { cache: "no-store" }),
+      WARM_TIMEOUT_MS,
+      "warm-up timed out",
+    );
+  } catch {
+    /* the real request follows and will surface anything that matters */
+  }
+}
+
+async function waitForAgentJob<T>(
+  job: AgentJob,
+  { timeoutMs = AGENT_TIMEOUT_MS }: { timeoutMs?: number } = {},
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const current = await appwriteWorkspace.getAgentJob<T>(job.id);
     if (current.status === "succeeded") {
@@ -306,11 +351,17 @@ const legacyApi = {
    * result back to Appwrite itself. Stateless, so it works for versions that
    * only exist in Appwrite and have no row in Postgres.
    */
-  renderReviewDraft: (jsonResume: object) =>
-    request<RenderReviewResult>("/resumes/render-review", {
-      method: "POST",
-      body: JSON.stringify({ json_resume: jsonResume }),
-    }),
+  renderReviewDraft: async (jsonResume: object) => {
+    await warmBackend();
+    return withTimeout(
+      request<RenderReviewResult>("/resumes/render-review", {
+        method: "POST",
+        body: JSON.stringify({ json_resume: jsonResume }),
+      }),
+      RENDER_TIMEOUT_MS,
+      "The quality review timed out. The API container may be waking up, try again in a moment.",
+    );
+  },
 
   listCalendar: (params?: { days?: number; include_past?: number }) => {
     const qs = new URLSearchParams();
@@ -552,12 +603,14 @@ export const api = {
       versionId,
       message,
     );
+    // A single conversational edit is one Claude call. Waiting the full
+    // fifteen-minute batch budget on it is indistinguishable from a hang.
     const output = await waitForAgentJob<{
       message: string;
       suggestions: string[];
       proposal_id: string;
       proposed_json_resume: import("./types").JsonResume;
-    }>(job);
+    }>(job, { timeoutMs: REVISE_TIMEOUT_MS });
     return {
       ...output,
       version: null,
@@ -601,29 +654,47 @@ export const api = {
       : legacyApi.listRevisionMessages(resumeId, versionId),
 
   /**
-   * Finalize a version: re-review it on the container, then mark it final only
-   * if that review passes. Same reason as reviewVersion for not using the agent
-   * function, which cannot render a PDF and so could never clear the gate.
+   * Finalize a version: re-review it on the container, then mark it final.
+   *
+   * The review is advisory, not a gate. This is the user's own resume tool, and
+   * an honest resume routinely scores in the seventies, so refusing to finalize
+   * anything short of a pass meant the user could never finalize at all. A
+   * failing review comes back as `blocked` with the score and issues so the
+   * caller can show them and offer to proceed; calling again with `force` marks
+   * it final regardless. The PDF and review are written either way.
    */
-  async finalizeVersion(resumeId: string, versionId: string) {
+  async finalizeVersion(
+    resumeId: string,
+    versionId: string,
+    { force = false }: { force?: boolean } = {},
+  ): Promise<FinalizeOutcome> {
     if (!isAppwriteWorkspaceEnabled) {
-      return legacyApi.finalizeVersion(resumeId, versionId);
+      return {
+        status: "finalized",
+        version: await legacyApi.finalizeVersion(resumeId, versionId),
+      };
     }
     const version = await appwriteWorkspace.getVersion(versionId);
-    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
-    // Persist the review either way, so a rejection leaves the issues visible.
-    await appwriteWorkspace.attachReview(versionId, rendered);
-    if (!rendered.review.passed) {
-      const blocking = rendered.review.issues
-        .filter((issue) => issue.severity === "blocking")
-        .map((issue) => issue.message);
-      throw new Error(
-        blocking.length
-          ? `Resume did not pass the final quality gate: ${blocking.join(" ")}`
-          : "Resume did not pass the final quality gate.",
-      );
+    const stored = version as ResumeVersion & { pdf_file_id?: string | null };
+    // A forced finalize follows a blocked one, which already rendered and
+    // attached the PDF, so do not make the user sit through a second render
+    // just to confirm a decision they already made.
+    if (force && stored.pdf_file_id) {
+      return {
+        status: "finalized",
+        version: await appwriteWorkspace.markFinalized(versionId),
+      };
     }
-    return appwriteWorkspace.markFinalized(versionId);
+    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
+    // Persist the review either way, so the issues stay visible afterwards.
+    const reviewed = await appwriteWorkspace.attachReview(versionId, rendered);
+    if (!rendered.review.passed && !force) {
+      return { status: "blocked", review: rendered.review, version: reviewed };
+    }
+    return {
+      status: "finalized",
+      version: await appwriteWorkspace.markFinalized(versionId),
+    };
   },
 
   async tailorResume(resumeId: string, jobId: string): Promise<TailorResponse> {

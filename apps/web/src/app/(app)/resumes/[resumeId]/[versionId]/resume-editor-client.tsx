@@ -91,12 +91,30 @@ export default function ResumeEditorClient({
     onError: (error: Error) => toast.error(error.message),
   });
   const finalize = useMutation({
-    mutationFn: () => api.finalizeVersion(resumeId, versionId),
-    onSuccess: () => {
-      toast.success("Resume finalized and stored");
+    mutationFn: (force: boolean) =>
+      api.finalizeVersion(resumeId, versionId, { force }),
+    onSuccess: (outcome) => {
       queryClient.invalidateQueries({
         queryKey: ["resume-version", resumeId, versionId],
       });
+      if (outcome.status !== "blocked") {
+        toast.success("Resume finalized and stored");
+        return;
+      }
+      // The review advises, it does not gate: an honest resume scores in the
+      // seventies and the user must still be able to finalize it. Show what it
+      // found and let them decide.
+      const issues = outcome.review.issues
+        .slice(0, 8)
+        .map((issue) => `- ${issue.message}`)
+        .join("\n");
+      const proceed = window.confirm(
+        `The review scored this ${Math.round(Number(outcome.review.score))}/100 ` +
+          `and flagged ${outcome.review.issues.length} issue` +
+          `${outcome.review.issues.length === 1 ? "" : "s"}:\n\n${issues}\n\n` +
+          "Finalize anyway?",
+      );
+      if (proceed) finalize.mutate(true);
     },
     onError: (error: Error) => toast.error(parseFinalizeError(error.message)),
     onSettled: () => {
@@ -217,7 +235,7 @@ export default function ResumeEditorClient({
             className="product-button product-button-secondary disabled:opacity-50"
           >
             {review.isPending ? <Loader2 className="size-4 animate-spin" /> : <ShieldCheck className="size-4" />}
-            Review
+            {review.isPending ? "Reviewing…" : "Review"}
           </button>
           <button
             onClick={() => save.mutate()}
@@ -228,14 +246,21 @@ export default function ResumeEditorClient({
             Save revision
           </button>
           <button
-            onClick={() => finalize.mutate()}
+            onClick={() => finalize.mutate(false)}
             disabled={finalize.isPending || isDirty}
             className="product-button product-button-primary disabled:opacity-50"
           >
             {finalize.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}
-            Finalize
+            {finalize.isPending ? "Finalizing…" : "Finalize"}
           </button>
-          {version.status === "final" && (
+          {(review.isPending || finalize.isPending) && (
+            <span className="text-xs text-[color:var(--color-text-dim)]">
+              Rendering the PDF and scoring the draft, up to a minute.
+            </span>
+          )}
+          {/* A reviewed version has a rendered PDF even before it is final, so
+              offer the download as soon as one exists. */}
+          {!!downloadUrl && (
             <button
               onClick={() =>
                 downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf")
@@ -817,8 +842,14 @@ function QualityPanel({
           ) : (
             <Sparkles className="size-4" />
           )}
-          Propose review fixes
+          {improving ? "Drafting suggestions…" : "Propose review fixes"}
         </button>
+      )}
+      {improving && (
+        <p className="mt-2 text-xs text-[color:var(--color-text-dim)]">
+          The editor is rewriting against your verified facts. This usually takes
+          under a minute, and it reports an error rather than waiting forever.
+        </p>
       )}
     </section>
   );

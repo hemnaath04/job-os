@@ -18,7 +18,8 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
@@ -42,7 +43,19 @@ const RESUME_SORT_OPTIONS: { value: ResumeSort; label: string }[] = [
 ];
 
 export default function ResumesPage() {
+  // useSearchParams needs a Suspense boundary in a client component.
+  return (
+    <Suspense fallback={<div className="workspace-page max-w-6xl" />}>
+      <ResumesInner />
+    </Suspense>
+  );
+}
+
+function ResumesInner() {
   const qc = useQueryClient();
+  // /resumes?open={resumeId} lands from the tailor result so the resume holding
+  // the version the user just generated is already expanded.
+  const openId = useSearchParams().get("open");
   const { data: resumes = [], isLoading } = useQuery({
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
@@ -318,7 +331,7 @@ export default function ResumesPage() {
 
           <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
             {sorted.map((r) => (
-              <ResumeRow key={r.id} resume={r} />
+              <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
             ))}
           </div>
         </>
@@ -327,9 +340,15 @@ export default function ResumesPage() {
   );
 }
 
-function ResumeRow({ resume }: { resume: Resume }) {
+function ResumeRow({
+  resume,
+  defaultOpen = false,
+}: {
+  resume: Resume;
+  defaultOpen?: boolean;
+}) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   // Versions load on expand, not on mount. A library of 30+ resumes would
   // otherwise fire one request per row the moment the page opens.
   const { data: versions = [], isLoading } = useQuery({

@@ -7,6 +7,7 @@ import {
   Building2,
   CheckCircle2,
   Download,
+  LibraryBig,
   Loader2,
   Plus,
   RefreshCw,
@@ -23,6 +24,7 @@ import {
   type AgentJobProgress,
 } from "@/lib/appwrite/workspace";
 import { isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
+import { withTimeout } from "@/lib/async";
 import { downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Select } from "@/components/ui/select";
@@ -32,6 +34,8 @@ import type {
   ProfileFact,
   ProvenanceEntry,
   Resume,
+  ResumeReviewResult,
+  ResumeVersion,
   TailorResponse,
 } from "@/lib/types";
 
@@ -39,6 +43,13 @@ import type {
 // pointer to the in-flight job in localStorage so navigating away and back (or a
 // reload) re-attaches to it instead of losing the run. Cleared on finish/fail.
 const ACTIVE_TAILOR_KEY = "tailor:active";
+// The finished run, so leaving for Applications and coming back does not lose
+// the result. Only a pointer: the version itself is already saved in Appwrite
+// under its resume, and is re-fetched from there on return.
+const LAST_TAILOR_KEY = "tailor:last";
+// Long enough to survive a detour through the rest of the app, short enough
+// that a week-old run does not ambush the next visit.
+const LAST_TAILOR_MAX_AGE_MS = 12 * 60 * 60 * 1_000;
 // After this long we give up re-attaching to a stored job and let the user retry.
 const TAILOR_MAX_AGE_MS = 20 * 60 * 1_000;
 // The function flips the job to "running" as its first act, so a job still
@@ -89,33 +100,53 @@ function saveActiveTailor(active: ActiveTailor) {
   }
 }
 
-/**
- * Reject with a readable message when `work` outruns the dispatch budget. The
- * underlying request keeps going; this only stops the UI from waiting on it.
- */
-function withTimeout<T>(work: Promise<T>, message: string): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(
-      () => reject(new Error(message)),
-      TAILOR_DISPATCH_TIMEOUT_MS,
-    );
-    work.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        window.clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 function clearActiveTailor() {
   if (typeof window === "undefined") return;
   try {
     localStorage.removeItem(ACTIVE_TAILOR_KEY);
+  } catch {
+    /* non-critical */
+  }
+}
+
+type LastTailor = {
+  resumeId: string;
+  versionId: string;
+  jobPostingId: string;
+  savedAt: string;
+};
+
+function loadLastTailor(): LastTailor | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(LAST_TAILOR_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<LastTailor>;
+    if (!parsed?.versionId || !parsed.resumeId || !parsed.savedAt) return null;
+    const age = Date.now() - Date.parse(parsed.savedAt);
+    if (!Number.isFinite(age) || age > LAST_TAILOR_MAX_AGE_MS) {
+      localStorage.removeItem(LAST_TAILOR_KEY);
+      return null;
+    }
+    return parsed as LastTailor;
+  } catch {
+    return null;
+  }
+}
+
+function saveLastTailor(last: LastTailor) {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.setItem(LAST_TAILOR_KEY, JSON.stringify(last));
+  } catch {
+    /* quota or private mode: the version is still saved server-side */
+  }
+}
+
+function clearLastTailor() {
+  if (typeof window === "undefined") return;
+  try {
+    localStorage.removeItem(LAST_TAILOR_KEY);
   } catch {
     /* non-critical */
   }
@@ -207,6 +238,32 @@ function TailorInner() {
     setJobId(stored.jobPostingId);
   }, []);
 
+  // Nothing in flight, but a recent run finished: re-fetch that version from
+  // Appwrite and show it again. Without this, visiting Applications and coming
+  // back left the user with no way to reach the resume they just generated.
+  useEffect(() => {
+    if (!isAppwriteWorkspaceEnabled) return;
+    const last = loadLastTailor();
+    if (!last || loadActiveTailor()) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const version = await appwriteWorkspace.getVersion(last.versionId);
+        if (cancelled) return;
+        appwriteWorkspace.registerVersionFile(version);
+        setResult(version as TailorResponse);
+        setResumeId(last.resumeId);
+        setJobId(last.jobPostingId);
+      } catch {
+        // Archived or otherwise gone. Drop the pointer rather than nagging.
+        clearLastTailor();
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-pick first non-master resume when none chosen. Lives in an effect
   // (not render-phase setState) so React doesn't schedule extra renders that
   // would clobber focus / click handling on the surrounding form controls.
@@ -254,6 +311,12 @@ function TailorInner() {
           if (current.output) {
             appwriteWorkspace.registerVersionFile(current.output);
             setResult(current.output);
+            saveLastTailor({
+              resumeId: current.output.resume_id,
+              versionId: current.output.id,
+              jobPostingId: active.jobPostingId,
+              savedAt: new Date().toISOString(),
+            });
             toast.success("Tailored resume ready");
             // Show the resume immediately, then finish the quality pass and
             // the PDF in the background on the container.
@@ -321,6 +384,7 @@ function TailorInner() {
       // error to explain it.
       const jobPosting = await withTimeout(
         api.getJob(jobId),
+        TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not load the job description. The jobs backend may be waking up, try again in a moment.",
       );
       const jdParsed = (jobPosting.jd_parsed ?? {}) as Record<string, unknown>;
@@ -331,6 +395,7 @@ function TailorInner() {
       }
       const agentJob = await withTimeout(
         appwriteWorkspace.tailorResume(resumeId, jobId, jdParsed, ""),
+        TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not queue the tailoring agent. Check your connection and try again.",
       );
       const record: ActiveTailor = {
@@ -381,9 +446,15 @@ function TailorInner() {
         companyName={job?.company?.name ?? null}
         reviewing={reviewing}
         onRunReview={() => void runReview(result)}
+        onFinalized={(version) =>
+          setResult((current) =>
+            current ? ({ ...current, ...version } as TailorResponse) : current,
+          )
+        }
         onReset={() => {
           setResult(null);
           setError(null);
+          clearLastTailor();
         }}
       />
     );
@@ -603,6 +674,7 @@ function ResultView({
   companyName,
   reviewing,
   onRunReview,
+  onFinalized,
   onReset,
 }: {
   result: TailorResponse;
@@ -611,6 +683,7 @@ function ResultView({
   companyName: string | null;
   reviewing: boolean;
   onRunReview: () => void;
+  onFinalized: (version: ResumeVersion) => void;
   onReset: () => void;
 }) {
   const qc = useQueryClient();
@@ -631,11 +704,25 @@ function ResultView({
     return map;
   }, [facts]);
 
+  // Issues the review raised, held so the user can read them and decide. The
+  // review advises; it does not gate. An honest resume scores in the seventies,
+  // so refusing anything short of a pass meant never being able to finalize.
+  const [blockedReview, setBlockedReview] = useState<ResumeReviewResult | null>(
+    null,
+  );
   const approve = useMutation({
-    mutationFn: () => api.finalizeVersion(result.resume_id, result.id),
-    onSuccess: () => {
-      toast.success("Resume finalized and stored");
+    mutationFn: (force: boolean) =>
+      api.finalizeVersion(result.resume_id, result.id, { force }),
+    onSuccess: (outcome) => {
       qc.invalidateQueries({ queryKey: ["versions", result.resume_id] });
+      if (outcome.status === "blocked") {
+        setBlockedReview(outcome.review);
+        toast.warning("Review found issues. Read them, then finalize anyway.");
+        return;
+      }
+      setBlockedReview(null);
+      onFinalized(outcome.version);
+      toast.success("Resume finalized and stored");
     },
     onError: (err: Error) => toast.error(err.message),
   });
@@ -687,20 +774,82 @@ function ResultView({
           >
             <Sparkles className="size-3" /> Edit with AI
           </Link>
+          {/* This version is already saved under its resume, so give the user a
+              way back to it that does not depend on this page's state. */}
+          <Link
+            href={`/resumes?open=${result.resume_id}`}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
+          >
+            <LibraryBig className="size-3" /> In library
+          </Link>
           <button
-            onClick={() => approve.mutate()}
-            disabled={
-              result.approved_by_user ||
-              approve.isPending ||
-              !result.review_report?.passed
-            }
+            onClick={() => approve.mutate(false)}
+            // Only a finished version or an in-flight request disables this.
+            // A failing review does not: it is advice, and the user decides.
+            disabled={result.approved_by_user || approve.isPending || reviewing}
             className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
-            <CheckCircle2 className="size-3" />
-            {result.approved_by_user ? "Final" : approve.isPending ? "…" : "Finalize"}
+            {approve.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : (
+              <CheckCircle2 className="size-3" />
+            )}
+            {result.approved_by_user
+              ? "Final"
+              : approve.isPending
+                ? "Finalizing…"
+                : "Finalize"}
           </button>
         </div>
       </header>
+
+      {blockedReview && !result.approved_by_user && (
+        <div className="mt-5 rounded-xl border border-amber-400/25 bg-amber-400/[0.05] p-4 text-xs text-amber-100">
+          <div className="flex items-center gap-2">
+            <AlertCircle className="size-4 shrink-0" />
+            <span className="font-semibold">
+              The review scored this {Math.round(Number(blockedReview.score))}/100
+              and flagged {blockedReview.issues.length} issue
+              {blockedReview.issues.length === 1 ? "" : "s"}
+            </span>
+          </div>
+          <p className="mt-1.5 text-[color:var(--color-text-dim)]">
+            This is advice, not a gate. Fix what you agree with in Edit with AI,
+            or finalize as is.
+          </p>
+          <ul className="mt-2.5 space-y-1">
+            {blockedReview.issues.slice(0, 6).map((issue, index) => (
+              <li key={index} className="flex gap-2">
+                <span className="shrink-0 font-mono text-[10px] uppercase opacity-60">
+                  {issue.severity}
+                </span>
+                <span>{issue.message}</span>
+              </li>
+            ))}
+          </ul>
+          {blockedReview.issues.length > 6 && (
+            <div className="mt-1 text-[color:var(--color-text-dim)]">
+              and {blockedReview.issues.length - 6} more
+            </div>
+          )}
+          <div className="mt-3 flex items-center gap-2">
+            <button
+              onClick={() => approve.mutate(true)}
+              disabled={approve.isPending}
+              className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-3 py-1.5 text-[11px] font-semibold text-[color:var(--color-on-accent)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
+            >
+              <CheckCircle2 className="size-3" />
+              {approve.isPending ? "Finalizing…" : "Finalize anyway"}
+            </button>
+            <button
+              onClick={() => setBlockedReview(null)}
+              className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-[11px] text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+            >
+              Not yet
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         className={`mt-5 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-xs ${
