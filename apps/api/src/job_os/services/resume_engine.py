@@ -24,8 +24,10 @@ from pypdf import PdfReader
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
 from job_os.services.llm_json import (
+    EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
     parse_model_json,
+    response_diagnostics,
     response_text,
 )
 from job_os.services.pdf_render import render_resume_pdf
@@ -44,6 +46,12 @@ log = structlog.get_logger(__name__)
 # permanently at needs_changes. Blocking issues still fail regardless of score,
 # so this threshold governs polish, not correctness.
 PASS_SCORE = Decimal("75")
+
+# Room for a full issue list. At 3000 a thorough review ran out of tokens mid-JSON
+# and silently cost the model half of the score; at 6000, a review that could see
+# the verified facts, and so had more to check, came back with no text at all.
+REVIEW_MAX_TOKENS = 12000
+REVIEW_RETRY_MAX_TOKENS = 16000
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -446,34 +454,54 @@ async def review_resume(
     )
     messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
 
-    async def ask() -> str:
+    async def ask(*, max_tokens: int = REVIEW_MAX_TOKENS) -> tuple[str, Any]:
         response = await _client().messages.create(
             model=settings.anthropic_model_verify,
-            # Room for a full issue list. At 3000 a thorough review ran out of
-            # tokens mid-JSON, which failed validation and silently cost the
-            # whole model half of the score.
-            max_tokens=6000,
+            max_tokens=max_tokens,
             system=CAREER_OPS_RULES,
             messages=messages,
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
-        return response_text(response)
+        return response_text(response), response
 
     # None means the review genuinely could not run, which is scored differently
     # from a review that ran and found problems. See below.
     model_review: ModelReview | None = None
     try:
-        raw = await ask()
+        raw, response = await ask()
         try:
             model_review = parse_model_json(ModelReview, raw)
         except ValidationError:
-            log.warning("resume.review_not_json", preview=raw[:300])
-            messages = [
-                *messages,
-                {"role": "assistant", "content": raw[:4000] or "(empty)"},
-                {"role": "user", "content": JSON_ONLY_RETRY},
-            ]
-            model_review = parse_model_json(ModelReview, await ask())
+            log.warning(
+                "resume.review_not_json",
+                preview=raw[:300],
+                **response_diagnostics(response),
+            )
+            # Same distinction the tailor makes: a reply with no text at all ran
+            # out of output room, and re-asking with the same ceiling plus a
+            # "that was not valid JSON" note reproduces it. Giving the reviewer
+            # the verified facts made it more thorough, which is what pushed a
+            # thorough review past the old ceiling and returned nothing.
+            if raw.strip():
+                messages = [
+                    *messages,
+                    {"role": "assistant", "content": raw[:4000]},
+                    {"role": "user", "content": JSON_ONLY_RETRY},
+                ]
+                retry_tokens = REVIEW_MAX_TOKENS
+            else:
+                messages = [*messages, {"role": "user", "content": EMPTY_REPLY_RETRY}]
+                retry_tokens = REVIEW_RETRY_MAX_TOKENS
+            retry_raw, retry_response = await ask(max_tokens=retry_tokens)
+            try:
+                model_review = parse_model_json(ModelReview, retry_raw)
+            except ValidationError:
+                log.warning(
+                    "resume.review_not_json_after_retry",
+                    preview=retry_raw[:300],
+                    **response_diagnostics(retry_response),
+                )
+                raise
     except (ValidationError, json.JSONDecodeError, anthropic.APIError, RuntimeError) as exc:
         log.warning("resume.review_model_failed", error=str(exc))
         rule_issues.append(
@@ -519,7 +547,17 @@ async def review_resume(
         if model_review is not None
         else rule_score
     ).quantize(Decimal("0.1"))
-    passed = score >= PASS_SCORE and not any(issue.severity == "blocking" for issue in issues)
+    # An unavailable review is an unknown, and an unknown is not a pass. The
+    # deterministic checks alone scored a resume 95 and reported passed=True on a
+    # run where the model review never returned a single token, which hands the
+    # user a green light from a check that did not happen. The score still says
+    # what was verified; only the verdict waits. Re-running the review is one
+    # click, and the retry path above makes it likely to succeed.
+    passed = (
+        model_review is not None
+        and score >= PASS_SCORE
+        and not any(issue.severity == "blocking" for issue in issues)
+    )
     return (
         ResumeReviewResult(
             score=score,

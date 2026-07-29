@@ -160,7 +160,11 @@ async def test_unavailable_model_review_does_not_invent_a_mediocre_score(
     # Two warnings, so 90. Production produced 70 from a review that never ran,
     # and 70 could never clear the old pass mark of 90.
     assert result.score == 90
-    assert result.passed
+    # The score reports what was verified. The verdict does not: a real run scored
+    # a resume 95 and reported passed=True on a review that returned no tokens at
+    # all, which is a green light from a check that did not happen. An unknown is
+    # not a pass, and re-running the review is one click.
+    assert not result.passed
     assert "did not run" in result.model_summary
 
 
