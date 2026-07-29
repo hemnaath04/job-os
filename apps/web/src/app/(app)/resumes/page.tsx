@@ -27,7 +27,19 @@ import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
-import type { Resume, ResumeImportItem, ResumeVersionSummary } from "@/lib/types";
+import type {
+  Resume,
+  ResumeCategory,
+  ResumeImportItem,
+  ResumeVersionSummary,
+} from "@/lib/types";
+
+/** Which half of the library a resume sits in. Master is always a source. */
+function resumeCategory(resume: Resume): ResumeCategory {
+  return resume.category === "template" && !resume.is_master
+    ? "template"
+    : "source";
+}
 
 /** Most recent activity on a resume, for sorting. Falls back to creation. */
 function resumeTimestamp(resume: Resume): number {
@@ -82,6 +94,34 @@ function ResumesInner() {
     () => sorted.filter((r) => r.category !== "template" || r.is_master),
     [sorted],
   );
+  // Dragging state lives here because a drop target has to know what is being
+  // dragged, and dragover events cannot read dataTransfer for security reasons.
+  const [dragging, setDragging] = useState<Resume | null>(null);
+  const move = useMutation({
+    mutationFn: ({
+      resume,
+      category,
+    }: {
+      resume: Resume;
+      category: ResumeCategory;
+    }) => api.setResumeCategory(resume.id, category),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.category === "template"
+          ? `${updated.name} is now a template`
+          : `${updated.name} moved to source resumes`,
+      );
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  /** Can this resume be dropped into that section? */
+  const canDrop = (resume: Resume | null, category: ResumeCategory): boolean => {
+    if (!resume) return false;
+    // Master holds the verified data tailoring starts from, so it stays a source.
+    if (resume.is_master) return false;
+    return resumeCategory(resume) !== category;
+  };
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [baseRole, setBaseRole] = useState("");
@@ -344,20 +384,38 @@ function ResumesInner() {
 
           <LibrarySection
             title="Templates"
-            description="The look. Tailoring never writes to a template, it only borrows the design."
+            description="The look. Drag a resume here to use its design. Tailoring never writes to a template, it only borrows the look."
             icon={LayoutTemplate}
+            category="template"
             resumes={templates}
             openId={openId}
-            emptyHint="No templates yet. Pick a resume below and choose Use as template to borrow its look."
+            emptyHint="No templates yet. Drag a source resume up here, or use its Use as template button."
+            accepts={canDrop(dragging, "template")}
+            onDropResume={() =>
+              dragging && move.mutate({ resume: dragging, category: "template" })
+            }
+            onDragStart={setDragging}
+            onDragEnd={() => setDragging(null)}
+            onMove={(resume) => move.mutate({ resume, category: "source" })}
+            movingId={move.isPending ? (move.variables?.resume.id ?? null) : null}
           />
 
           <LibrarySection
             title="Source resumes"
             description="The data. Tailored versions are saved here, under the resume they came from."
             icon={FolderOpen}
+            category="source"
             resumes={sources}
             openId={openId}
             emptyHint="No source resumes yet."
+            accepts={canDrop(dragging, "source")}
+            onDropResume={() =>
+              dragging && move.mutate({ resume: dragging, category: "source" })
+            }
+            onDragStart={setDragging}
+            onDragEnd={() => setDragging(null)}
+            onMove={(resume) => move.mutate({ resume, category: "template" })}
+            movingId={move.isPending ? (move.variables?.resume.id ?? null) : null}
           />
         </>
       )}
@@ -369,40 +427,102 @@ function LibrarySection({
   title,
   description,
   icon: Icon,
+  category,
   resumes,
   openId,
   emptyHint,
+  accepts,
+  onDropResume,
+  onDragStart,
+  onDragEnd,
+  onMove,
+  movingId,
 }: {
   title: string;
   description: string;
   icon: typeof FolderOpen;
+  category: ResumeCategory;
   resumes: Resume[];
   openId: string | null;
   emptyHint: string;
+  accepts: boolean;
+  onDropResume: () => void;
+  onDragStart: (resume: Resume) => void;
+  onDragEnd: () => void;
+  onMove: (resume: Resume) => void;
+  movingId: string | null;
 }) {
+  const [over, setOver] = useState(false);
+  const active = accepts && over;
+
   return (
-    <section className="mt-6">
+    <section
+      className="mt-6"
+      // Dropping is how the user asked to do this. preventDefault on dragover
+      // is what makes an element a valid drop target at all.
+      onDragOver={(event) => {
+        if (!accepts) return;
+        event.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        // Ignore the events fired while moving between this section's children.
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!accepts) return;
+        event.preventDefault();
+        setOver(false);
+        onDropResume();
+      }}
+    >
       <div className="flex items-baseline gap-2">
         <Icon className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
         <h2 className="text-sm font-semibold">{title}</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {resumes.length}
         </span>
+        {active && (
+          <span className="text-xs text-[color:var(--color-violet)]">
+            Drop to move here
+          </span>
+        )}
       </div>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
         {description}
       </p>
-      {resumes.length === 0 ? (
-        <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-          {emptyHint}
-        </div>
-      ) : (
-        <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
-          {resumes.map((r) => (
-            <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
-          ))}
-        </div>
-      )}
+      <div
+        className={`mt-3 rounded-[var(--radius-card)] transition ${
+          active
+            ? "ring-2 ring-[color:var(--color-violet)]/60"
+            : accepts
+              ? "ring-1 ring-dashed ring-[color:var(--color-border)]"
+              : ""
+        }`}
+      >
+        {resumes.length === 0 ? (
+          <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
+            {accepts ? "Drop a resume here, or " : ""}
+            {accepts ? emptyHint[0].toLowerCase() + emptyHint.slice(1) : emptyHint}
+          </div>
+        ) : (
+          <div className="workspace-panel divide-y divide-[color:var(--color-border)] overflow-hidden">
+            {resumes.map((r) => (
+              <ResumeRow
+                key={r.id}
+                resume={r}
+                defaultOpen={r.id === openId}
+                category={category}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
+                onMove={onMove}
+                moving={movingId === r.id}
+              />
+            ))}
+          </div>
+        )}
+      </div>
     </section>
   );
 }
@@ -410,26 +530,24 @@ function LibrarySection({
 function ResumeRow({
   resume,
   defaultOpen = false,
+  category,
+  onDragStart,
+  onDragEnd,
+  onMove,
+  moving,
 }: {
   resume: Resume;
   defaultOpen?: boolean;
+  category: ResumeCategory;
+  onDragStart: (resume: Resume) => void;
+  onDragEnd: () => void;
+  onMove: (resume: Resume) => void;
+  moving: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
-  const isTemplate = resume.category === "template" && !resume.is_master;
-  const moveCategory = useMutation({
-    mutationFn: () =>
-      api.setResumeCategory(resume.id, isTemplate ? "source" : "template"),
-    onSuccess: (updated) => {
-      toast.success(
-        updated.category === "template"
-          ? `${updated.name} is now a template`
-          : `${updated.name} moved to source resumes`,
-      );
-      qc.invalidateQueries({ queryKey: ["resumes"] });
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
+  const isTemplate = category === "template";
+  const draggable = !resume.is_master;
   // Versions load on expand, not on mount. A library of 30+ resumes would
   // otherwise fire one request per row the moment the page opens.
   const { data: versions = [], isLoading } = useQuery({
@@ -455,7 +573,20 @@ function ResumeRow({
 
   return (
     <div>
-      <div className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]">
+      <div
+        draggable={draggable}
+        onDragStart={(event) => {
+          if (!draggable) return;
+          // Some browsers refuse the drag without payload, even unused.
+          event.dataTransfer.setData("text/plain", resume.id);
+          event.dataTransfer.effectAllowed = "move";
+          onDragStart(resume);
+        }}
+        onDragEnd={onDragEnd}
+        className={`flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)] ${
+          draggable ? "cursor-grab active:cursor-grabbing" : ""
+        } ${moving ? "opacity-50" : ""}`}
+      >
         <button
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
@@ -488,12 +619,13 @@ function ResumeRow({
         <div className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
           {updated}
         </div>
-        {/* Master holds the verified data that tailoring starts from, so it
-            cannot become a template. */}
+        {/* Keyboard and touch equivalent of the drag gesture, which native
+            HTML5 drag-and-drop cannot offer. Master holds the verified data
+            tailoring starts from, so it can never become a template. */}
         {!resume.is_master && (
           <button
-            onClick={() => moveCategory.mutate()}
-            disabled={moveCategory.isPending}
+            onClick={() => onMove(resume)}
+            disabled={moving}
             title={
               isTemplate
                 ? "Move back to source resumes"
@@ -501,7 +633,7 @@ function ResumeRow({
             }
             className="shrink-0 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
           >
-            {moveCategory.isPending
+            {moving
               ? "Moving…"
               : isTemplate
                 ? "Move to source"
