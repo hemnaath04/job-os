@@ -37,7 +37,7 @@ from job_os.schemas.resumes import (
     SelectedBullet,
     TailorAgentOutput,
 )
-from job_os.services.career_ops_rules import CAREER_OPS_RULES
+from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text as _identity_text
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
@@ -143,10 +143,14 @@ HARD CONSTRAINTS — these are non-negotiable:
    verified belongs in `gap_questions`; emphasize verified backend, APIs,
    agents, pipelines, testing, concurrency, and infrastructure work instead.
 4. `selected_fact_ids` decides only the sections that are genuinely optional:
-   projects and volunteering. List ids for those. Education, work experience,
-   skills, certifications, publications and awards are always rendered, so
-   listing their ids changes nothing and only costs you output length. Order
-   doesn't matter (Python sorts by date / section).
+   projects, volunteering and certifications. List ids for those. Education, work
+   experience, skills, publications and awards are always rendered, so listing
+   their ids changes nothing and only costs you output length. Order doesn't
+   matter (Python sorts by date / section).
+   On certifications, be selective. A certificate earns its line when it is
+   evidence for THIS role; a generic or dated course certificate does not, and the
+   space is worth more as another project bullet. Leaving all of them out is a
+   normal outcome.
 5. `summary_objective` is a 1-2 sentence tailored summary line for the
    resume's basics.summary, or null to keep the master's summary. It prints at
    the top of the page, so keep it under 45 words and do not restate a JD
@@ -1338,7 +1342,12 @@ def _assemble_json_resume(
         skills_by_category.setdefault(category, []).append(f.title)
 
     certificates: list[dict[str, Any]] = []
-    for f in _facts_of("certification"):
+    # Selection-filtered, not always-included. Three undated MOOC certificates
+    # printed on every tailored resume regardless of the role, and the independent
+    # review called them low signal for an MS CS candidate on four separate runs
+    # while asking for the page space to go to a project instead. A credential the
+    # agent judges relevant still appears; one it does not is simply left off.
+    for f in _facts_of("certification", only_selected=True):
         certificates.append(
             {
                 "name": f.title,
@@ -1480,6 +1489,12 @@ def _consolidate_skills(
         for keyword in bucket["keywords"]:
             folded = _identity_text(keyword)
             if not folded:
+                continue
+            if folded in UNPRINTABLE_SKILLS:
+                # The fact stays in the vault; it just does not reach the page.
+                # The playbook fixes the Languages row, and a skill the candidate
+                # cannot defend in an interview costs more than it adds.
+                log.info("tailor.skill_withheld_from_page", skill=keyword)
                 continue
             aliases = _skill_aliases(keyword)
             existing = next(

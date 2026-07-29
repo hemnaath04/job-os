@@ -26,6 +26,18 @@ KNOWN_GITHUB_REPOS: dict[str, tuple[tuple[str, str], ...]] = {
     "role reveal backend": (("hemnaath04", "rolereveal-backend"),),
 }
 
+# Skills that must never be printed as a personal skill, whatever the vault says.
+# The career-ops playbook fixes the Languages row at Python, Java, Go, SQL and
+# Bash, and the user does not write JavaScript or TypeScript, so listing either as
+# their own skill misrepresents them in the one direction an interview exposes
+# immediately. R is excluded by the same rule.
+#
+# These facts stay in the vault. This list governs what reaches the page, not what
+# the user is allowed to have recorded about themselves.
+UNPRINTABLE_SKILLS = frozenset(
+    {"r", "javascript", "js", "typescript", "ts", "react", "next js", "nextjs"}
+)
+
 CAREER_OPS_RULES = """\
 You are the resume quality gate for Hemnaath Balasubramani. The editable JSON
 Resume and verified Profile facts are the source of truth. The constraints
