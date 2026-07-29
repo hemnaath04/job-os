@@ -101,3 +101,27 @@ export const clerkAppearance = {
     formFieldErrorText: "text-[color:var(--color-rose-ink)]",
   },
 } as const;
+
+/**
+ * The widget was greeting people with "Sign in to My Application", which is
+ * Clerk's placeholder application name showing through.
+ *
+ * The real fix is one field in the Clerk dashboard, since `{{applicationName}}`
+ * feeds every other surface Clerk renders too, including its emails. This only
+ * covers the two headings a visitor actually reads on the way in, so the
+ * dashboard field is still worth setting.
+ */
+export const clerkLocalization = {
+  signIn: {
+    start: {
+      title: "Sign in to job.os",
+      subtitle: "Pick up where you left off.",
+    },
+  },
+  signUp: {
+    start: {
+      title: "Create your job.os account",
+      subtitle: "Bring a resume and the evidence behind it.",
+    },
+  },
+};

@@ -1,6 +1,7 @@
 import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
+import { clerkLocalization } from "@/components/auth-shell";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -21,6 +22,7 @@ const themeInit = `try{if(localStorage.getItem('theme')==='dark'){document.docum
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <ClerkProvider
+      localization={clerkLocalization}
       appearance={{
         variables: {
           colorPrimary: "#8A6D12",
