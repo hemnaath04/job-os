@@ -1587,6 +1587,45 @@ def _is_ats_keyword(term: str) -> bool:
     return len(cleaned.split()) <= ATS_KEYWORD_MAX_WORDS
 
 
+# Where a prose requirement hides a list of real skills: after a colon, and
+# between commas, semicolons, slashes, "and" and "or".
+_PROSE_SPLIT_RE = re.compile(r"[,;/]| and | or |\bincluding\b|\bsuch as\b", re.I)
+# A fragment that opens with one of these is a clause, not a skill name.
+_CLAUSE_OPENER_RE = re.compile(
+    r"^(?:how|what|why|which|who|where|when|that|with|for|in|on|to|of|at|by|"
+    r"from|using|via|about|a|an|the|able|ability|comfortable|experience|"
+    r"strong|solid|genuine|currently|at least|minimum|must|willing)\b",
+    re.I,
+)
+# Pronouns give away a clause that survived the opener check.
+_PRONOUN_RE = re.compile(r"\b(?:them|they|it|its|you|your|we|our|us|he|she)\b", re.I)
+
+
+def _skills_inside_prose(requirement: str) -> list[str]:
+    """The skill names buried in a requirement sentence.
+
+    A JD parser routinely drops a whole sentence into `required_skills`, and the
+    real skills sit inside it: "A solid grasp of computer science fundamentals:
+    data structures, algorithms, systems" holds three. Recovering them from the
+    JD text rather than from the model's own term list is what makes the score
+    reproducible. Reading them off the model meant the denominator changed with
+    however many keywords that pass happened to enumerate, and the same JD scored
+    20.0 on one run and 42.9 on the next.
+    """
+    tail = requirement.split(":", 1)[-1] if ":" in requirement else requirement
+    found: list[str] = []
+    for raw in _PROSE_SPLIT_RE.split(tail):
+        fragment = raw.strip(" .’'\"()")
+        if not fragment or not any(char.isalpha() for char in fragment):
+            continue
+        if not _is_ats_keyword(fragment) or not _is_candidate_skill(fragment):
+            continue
+        if _CLAUSE_OPENER_RE.match(fragment) or _PRONOUN_RE.search(fragment):
+            continue
+        found.append(fragment)
+    return found
+
+
 def _is_candidate_skill(term: str) -> bool:
     """False for JD terms a resume could never legitimately match."""
     return not _NON_SKILL_RE.search(term) and not _is_date_term(term)
@@ -1663,16 +1702,23 @@ def _compute_ats_from_document(
     # them separately instead of hiding them.
     prose = [term for term in candidates if not _is_ats_keyword(term)]
 
-    # The agent's own term list is a second source of JD keywords, and it is the
-    # one that recovers real skills buried inside a prose requirement: the
-    # sentence "computer science fundamentals: data structures, algorithms,
-    # systems" is dropped above, yet those three are genuine skills the resume
-    # may well cover. Union them in. Every term is still verified against the
-    # assembled document below, so this widens what gets checked without
-    # crediting anything the resume does not actually say.
+    # Skills buried inside those prose requirements are still real skills the
+    # resume may well cover, so recover them from the JD text: "computer science
+    # fundamentals: data structures, algorithms, systems" yields three terms.
+    #
+    # This used to read them off the model's own matched/missing lists instead,
+    # which made the denominator depend on however many keywords a given pass
+    # chose to enumerate. The same JD scored 20.0 on one run and 42.9 on the next
+    # with a comparable resume, and a number that moves like that tells the user
+    # nothing. The JD is fixed, so the keyword set is now fixed too, and the score
+    # is comparable across passes and across runs. The model's lists are still
+    # reported, as its account of its own work, but they no longer move the score.
+    recovered: list[str] = []
+    for requirement in prose:
+        recovered.extend(_skills_inside_prose(requirement))
     keywords = [
         term
-        for term in (*candidates, *fallback_matched, *fallback_missing)
+        for term in (*candidates, *recovered)
         if _is_ats_keyword(term) and _is_candidate_skill(term)
     ]
     excluded = [

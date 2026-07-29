@@ -96,7 +96,14 @@ def test_genuinely_absent_skills_still_count_against_the_score() -> None:
 
 
 def test_a_term_the_model_claims_is_not_credited_unless_the_resume_says_it() -> None:
-    """No inflation: every term is verified against the assembled document."""
+    """No inflation: every scored term comes from the JD and is checked on the page.
+
+    The model's own lists no longer reach the denominator either. Reading them
+    meant the keyword set changed with however many terms a pass chose to
+    enumerate, so the same JD scored 20.0 on one run and 42.9 on the next. The JD
+    is fixed, so the score is now fixed too. Kubernetes is absent below because
+    the JD never asked for it, whoever claimed it.
+    """
     score, report = _compute_ats_from_document(
         jd_parsed={"technologies": ["Rust"]},
         json_resume={"basics": {"summary": "Python only."}},
@@ -104,7 +111,9 @@ def test_a_term_the_model_claims_is_not_credited_unless_the_resume_says_it() -> 
         fallback_missing=[],
     )
     assert report["matched"] == []
-    assert {term.casefold() for term in report["missing"]} == {"rust", "kubernetes"}
+    assert {term.casefold() for term in report["missing"]} == {"rust"}
+    # Still reported, as the model's account of its own work.
+    assert report["model_reported_matched"] == ["Rust", "Kubernetes"]
     assert score == 0
 
 
@@ -119,3 +128,35 @@ def test_is_candidate_skill_boundaries() -> None:
         assert _is_candidate_skill(term), term
     for term in ("Minimum 3.0 GPA", "a proprietary trading firm", "internship"):
         assert not _is_candidate_skill(term), term
+
+
+def test_the_same_jd_scores_the_same_however_the_model_reports_itself() -> None:
+    """The number shown to the user must not depend on the model's own bookkeeping."""
+    modest, _ = _compute_ats_from_document(
+        jd_parsed=JD,
+        json_resume=RESUME,
+        fallback_matched=["Python"],
+        fallback_missing=["C++"],
+    )
+    verbose, _ = _compute_ats_from_document(
+        jd_parsed=JD,
+        json_resume=RESUME,
+        fallback_matched=MODEL_MATCHED,
+        fallback_missing=[*MODEL_MISSING, "Kubernetes", "Rust", "Terraform"],
+    )
+    assert modest == verbose
+
+
+def test_a_prose_requirement_yields_its_skills_and_not_its_clauses() -> None:
+    from job_os.services.tailor import _skills_inside_prose
+
+    assert _skills_inside_prose(
+        "A solid grasp of computer science fundamentals: data structures, "
+        "algorithms, systems"
+    ) == ["data structures", "algorithms", "systems"]
+    # A clause is not a skill, and neither is an eligibility rule or a date.
+    assert _skills_inside_prose("Genuine interest in markets and how software supports them") == []
+    assert _skills_inside_prose("Ability to start the internship on June 1, 2027") == []
+    assert _skills_inside_prose(
+        "A strong work ethic and ability to adapt quickly in a fast-paced environment"
+    ) == []
