@@ -186,6 +186,9 @@ export function KanbanBoard({
           return (
             <motion.div
               key={status}
+              // The grid item, not the Column inside it, is what a wide card
+              // would otherwise stretch, so min-w-0 has to sit out here too.
+              className="min-w-0"
               initial={{ opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: idx * 0.03, duration: 0.25 }}
