@@ -241,9 +241,9 @@ function ServerKeyCard() {
       </div>
 
       <p className="mt-4 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
-        This one is configured on the API service rather than in your browser,
-        so there is no key to paste here. It charges credits per result, which
-        is why it stays switched off until you ask for it.
+        TheirStack runs on the server, so there is no key to enter here. It
+        uses paid credits per result, which is why it stays off until you turn
+        it on.
       </p>
 
       {meta.keySteps && meta.keySteps.length > 0 && (

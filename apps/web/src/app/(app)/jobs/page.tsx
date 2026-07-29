@@ -1411,13 +1411,10 @@ function prettyError(source: DiscoverySource | string, msg: string): string {
   }
   if (source === "theirstack") {
     if (lower.includes("not configured") || lower.includes("api_key")) {
-      return (
-        "API key is not configured on the server. Add THEIRSTACK_API_KEY in " +
-        "the Render dashboard for the job-os-api service."
-      );
+      return "TheirStack is not enabled on the server yet.";
     }
     if (lower.includes("401") || lower.includes("unauthorized")) {
-      return "Server rejected the TheirStack key (401). Rotate it in TheirStack and update Render.";
+      return "TheirStack rejected the request (401). The server key needs to be refreshed.";
     }
     if (lower.includes("402") || lower.includes("credit")) {
       return "Out of TheirStack credits. Top up the account or fall back to GitHub.";

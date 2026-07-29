@@ -103,12 +103,6 @@ export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
     needsKey: true,
     credential: "server",
     keyUrl: "https://theirstack.com",
-    keySteps: [
-      "Create an account at theirstack.com and open Settings, then API keys.",
-      "Copy the key. The free tier includes a starting credit balance.",
-      "In the Render dashboard, open the job-os-api service and add an environment variable named THEIRSTACK_API_KEY.",
-      "Redeploy the service. TheirStack charges one credit per result it returns.",
-    ],
   },
   jsearch: {
     label: "JSearch",
