@@ -116,15 +116,18 @@ IMPROVEMENT_PATIENCE = 2
 MIN_IMPROVEMENT = Decimal("0.5")
 TARGET_ATS_SCORE = Decimal("80")
 
-# Generous ceiling on purpose: the output carries a rewritten line per selected
-# bullet plus gap questions, and a response truncated mid-JSON fails schema
-# validation and kills the whole run. A strong-match JD, where the agent has
-# something to say about nearly every fact, hit the old 8192 ceiling and came
-# back completely empty, twice.
-DRAFT_MAX_TOKENS = 16000
+# Generous ceiling on purpose, and larger than the output alone needs, because the
+# gateway routes to a model with extended thinking and `max_tokens` covers the
+# thinking block too. A refine pass on a long conversation spent the entire 16000
+# on thinking and returned zero text blocks: stop_reason max_tokens,
+# block_types ['thinking'], output_tokens 16000. Every pass after that point failed
+# the same way, which silently capped the loop at two or three passes however high
+# MAX_ITERATIONS was set. The budget has to hold the reasoning AND the answer.
+DRAFT_MAX_TOKENS = 32000
 # More room again for the recovery attempt, since the reason it is happening is
-# that the answer did not fit.
-RETRY_MAX_TOKENS = 20000
+# that the answer did not fit. It must exceed what thinking already consumed, or
+# the retry reproduces the failure exactly.
+RETRY_MAX_TOKENS = 48000
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,

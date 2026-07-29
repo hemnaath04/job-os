@@ -47,11 +47,14 @@ log = structlog.get_logger(__name__)
 # so this threshold governs polish, not correctness.
 PASS_SCORE = Decimal("75")
 
-# Room for a full issue list. At 3000 a thorough review ran out of tokens mid-JSON
-# and silently cost the model half of the score; at 6000, a review that could see
-# the verified facts, and so had more to check, came back with no text at all.
-REVIEW_MAX_TOKENS = 12000
-REVIEW_RETRY_MAX_TOKENS = 16000
+# Room for a full issue list, and for the thinking block the gateway's model emits
+# before it, since max_tokens covers both. At 3000 a thorough review ran out of
+# tokens mid-JSON and silently cost the model half of the score; at 6000, a review
+# that could see the verified facts, and so had more to check, came back with no
+# text at all; the tailor loop then hit the same wall at 16000 with the whole
+# budget spent on thinking.
+REVIEW_MAX_TOKENS = 24000
+REVIEW_RETRY_MAX_TOKENS = 32000
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
