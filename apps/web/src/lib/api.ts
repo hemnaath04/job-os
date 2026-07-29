@@ -351,12 +351,24 @@ const legacyApi = {
    * result back to Appwrite itself. Stateless, so it works for versions that
    * only exist in Appwrite and have no row in Postgres.
    */
-  renderReviewDraft: async (jsonResume: object) => {
+  renderReviewDraft: async (
+    jsonResume: object,
+    { templateId }: { templateId?: string | null } = {},
+  ) => {
+    // A template supplies the look only. Fetched here rather than held in page
+    // state so the render always uses what is actually stored.
+    const look = templateId
+      ? await appwriteWorkspace.getTemplateSource(templateId)
+      : null;
     await warmBackend();
     return withTimeout(
       request<RenderReviewResult>("/resumes/render-review", {
         method: "POST",
-        body: JSON.stringify({ json_resume: jsonResume }),
+        body: JSON.stringify({
+          json_resume: jsonResume,
+          html_source: look?.html_source ?? null,
+          css_source: look?.css_source ?? null,
+        }),
       }),
       RENDER_TIMEOUT_MS,
       "The quality review timed out. The API container may be waking up, try again in a moment.",
@@ -603,12 +615,18 @@ export const api = {
    * pango or cairo for WeasyPrint. The container has them, so send the document
    * to the stateless endpoint and persist the review and PDF back to Appwrite.
    */
-  async reviewVersion(resumeId: string, versionId: string) {
+  async reviewVersion(
+    resumeId: string,
+    versionId: string,
+    { templateId }: { templateId?: string | null } = {},
+  ) {
     if (!isAppwriteWorkspaceEnabled) {
       return legacyApi.reviewVersion(resumeId, versionId);
     }
     const version = await appwriteWorkspace.getVersion(versionId);
-    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
+    const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
+      templateId,
+    });
     await appwriteWorkspace.attachReview(versionId, rendered);
     return rendered.review;
   },
@@ -690,7 +708,7 @@ export const api = {
   async finalizeVersion(
     resumeId: string,
     versionId: string,
-    { force = false }: { force?: boolean } = {},
+    { force = false, templateId }: { force?: boolean; templateId?: string | null } = {},
   ): Promise<FinalizeOutcome> {
     if (!isAppwriteWorkspaceEnabled) {
       return {
@@ -709,7 +727,9 @@ export const api = {
         version: await appwriteWorkspace.markFinalized(versionId),
       };
     }
-    const rendered = await legacyApi.renderReviewDraft(version.json_resume);
+    const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
+      templateId,
+    });
     // Persist the review either way, so the issues stay visible afterwards.
     const reviewed = await appwriteWorkspace.attachReview(versionId, rendered);
     if (!rendered.review.passed && !force) {

@@ -65,8 +65,9 @@ const TAILOR_DISPATCH_TIMEOUT_MS = 45 * 1_000;
 
 type ActiveTailor = {
   jobId: string; // Appwrite agent job id
-  resumeId: string; // target resume template
+  resumeId: string; // source resume the output is saved under
   jobPostingId: string; // JD job posting id (Postgres)
+  templateId?: string; // the look to render with, absent means the default
   startedAt: string; // ISO timestamp
 };
 
@@ -173,6 +174,13 @@ function TailorInner() {
   const [progress, setProgress] = useState<AgentJobProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  // The look to render with, separate from the source resume that receives the
+  // output. Empty means the bundled default.
+  const [templateId, setTemplateId] = useState<string>("");
+  const { data: availableTemplates = [] } = useQuery({
+    queryKey: ["templates"],
+    queryFn: () => api.listTemplates(),
+  });
 
   /**
    * Finish the quality pass on the FastAPI container.
@@ -184,34 +192,39 @@ function TailorInner() {
    * the Appwrite version. Best effort and non-blocking: the tailored resume is
    * already readable without it, so a failure here only costs the PDF.
    */
-  const runReview = useCallback(async (version: TailorResponse) => {
-    if (!isAppwriteWorkspaceEnabled) return;
-    const stored = version as TailorResponse & { pdf_file_id?: string | null };
-    if (stored.pdf_file_id) return;
-    setReviewing(true);
-    try {
-      const rendered = await api.renderReviewDraft(version.json_resume);
-      const reviewed = await appwriteWorkspace.attachReview(version.id, rendered);
-      setResult((current) =>
-        current && current.id === version.id
-          ? ({ ...current, ...reviewed } as TailorResponse)
-          : current,
-      );
-      toast.success(
-        rendered.review.passed
-          ? "Quality review passed. You can finalize now."
-          : "Quality review done. See the issues before finalizing.",
-      );
-    } catch (err) {
-      toast.error(
-        `Could not run the quality review: ${
-          err instanceof Error ? err.message : "unknown error"
-        }`,
-      );
-    } finally {
-      setReviewing(false);
-    }
-  }, []);
+  const runReview = useCallback(
+    async (version: TailorResponse, look?: string) => {
+      if (!isAppwriteWorkspaceEnabled) return;
+      const stored = version as TailorResponse & { pdf_file_id?: string | null };
+      if (stored.pdf_file_id) return;
+      setReviewing(true);
+      try {
+        const rendered = await api.renderReviewDraft(version.json_resume, {
+          templateId: look ?? null,
+        });
+        const reviewed = await appwriteWorkspace.attachReview(version.id, rendered);
+        setResult((current) =>
+          current && current.id === version.id
+            ? ({ ...current, ...reviewed } as TailorResponse)
+            : current,
+        );
+        toast.success(
+          rendered.review.passed
+            ? "Quality review passed. You can finalize now."
+            : "Quality review done. See the issues before finalizing.",
+        );
+      } catch (err) {
+        toast.error(
+          `Could not run the quality review: ${
+            err instanceof Error ? err.message : "unknown error"
+          }`,
+        );
+      } finally {
+        setReviewing(false);
+      }
+    },
+    [],
+  );
 
   const { data: resumes = [], isLoading: resumesLoading } = useQuery({
     queryKey: ["resumes"],
@@ -326,7 +339,7 @@ function TailorInner() {
             toast.success("Tailored resume ready");
             // Show the resume immediately, then finish the quality pass and
             // the PDF in the background on the container.
-            void runReview(current.output);
+            void runReview(current.output, active.templateId);
           } else {
             setError(
               "The tailoring run finished without returning a resume. Try again.",
@@ -408,6 +421,7 @@ function TailorInner() {
         jobId: agentJob.id,
         resumeId,
         jobPostingId: jobId,
+        templateId: templateId || undefined,
         startedAt: new Date().toISOString(),
       };
       saveActiveTailor(record);
@@ -451,7 +465,8 @@ function TailorInner() {
         jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
         reviewing={reviewing}
-        onRunReview={() => void runReview(result)}
+        templateId={templateId || null}
+        onRunReview={() => void runReview(result, templateId || undefined)}
         onFinalized={(version) =>
           setResult((current) =>
             current ? ({ ...current, ...version } as TailorResponse) : current,
@@ -545,6 +560,24 @@ function TailorInner() {
             onChange={setResumeId}
             candidates={candidateResumes}
             loading={resumesLoading}
+          />
+        </Field>
+
+        <Field
+          label="Template"
+          help="The look the PDF is rendered with. The template is only read, never written to, and the tailored version is still saved under the source resume above."
+        >
+          <Select
+            value={templateId}
+            onChange={setTemplateId}
+            aria-label="Template to render with"
+            options={[
+              { value: "", label: "Default look" },
+              ...availableTemplates.map((t) => ({
+                value: t.id,
+                label: t.name,
+              })),
+            ]}
           />
         </Field>
 
@@ -679,6 +712,7 @@ function ResultView({
   jobTitle,
   companyName,
   reviewing,
+  templateId,
   onRunReview,
   onFinalized,
   onReset,
@@ -688,6 +722,7 @@ function ResultView({
   jobTitle: string;
   companyName: string | null;
   reviewing: boolean;
+  templateId: string | null;
   onRunReview: () => void;
   onFinalized: (version: ResumeVersion) => void;
   onReset: () => void;
@@ -718,7 +753,9 @@ function ResultView({
   );
   const approve = useMutation({
     mutationFn: (force: boolean) =>
-      api.finalizeVersion(result.resume_id, result.id, { force }),
+      // Same look the review rendered with, so the finalized PDF matches what
+      // the user saw rather than silently reverting to the default.
+      api.finalizeVersion(result.resume_id, result.id, { force, templateId }),
     onSuccess: (outcome) => {
       qc.invalidateQueries({ queryKey: ["versions", result.resume_id] });
       if (outcome.status === "blocked") {
