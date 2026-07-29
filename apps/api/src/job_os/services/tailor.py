@@ -289,7 +289,10 @@ def _refine_prompt(
             "weak_opener means start with a real past-tense verb. first_person "
             "means remove I/my/we. upgraded_status means you claimed something "
             "shipped that the evidence records as pending or a prototype. dash "
-            "means replace an em dash with a comma or a colon.",
+            "means replace an em dash with a comma or a colon. thin_page means "
+            "the resume stops short of filling its one page: select another "
+            "relevant project, or another verified bullet on one you already "
+            "chose, up to 4 per role and 3 per project.",
         ]
     if missing:
         lines += [
@@ -536,7 +539,12 @@ async def run_tailor(
 
         best_agent = state["best_agent"]
         best_score = state["best_score"]
-        if score > best_score:
+        # `best_agent is None` rather than a numeric sentinel: a pass can now
+        # score below zero, since the writing penalty is subtracted from
+        # coverage, and a sentinel of -1 meant a heavily penalised first pass was
+        # never adopted at all. The run then ended with no agent and raised,
+        # failing outright on exactly the resumes that most needed the feedback.
+        if best_agent is None or score > best_score:
             best_agent = attempt
             best_score = score
 

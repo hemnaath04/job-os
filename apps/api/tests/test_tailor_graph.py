@@ -85,14 +85,16 @@ async def test_tailor_langgraph_refines_until_target(
     # assembled document is empty, so both passes score 0 and the second pass
     # ends the run by failing to improve on the first.
     assert score == 0
-    assert report["iterations"] == [0.0, 0.0]
+    # An empty document has no keywords to cover and cannot fill a page, so both
+    # passes come in at zero coverage minus the thin-page penalty.
+    assert report["iterations"] == [-3.0, -3.0]
     assert report["scoring"] == "deterministic_final_document"
-    assert report["writing_flags"] == {}
+    assert report["writing_flags"] == {"page": ["thin_page(0 bullets)"]}
     assert gaps == []
     # The refine pass did not beat the draft, so the draft is what ships. Keeping
     # the later pass regardless is how a padded rewrite used to win a tie.
     assert note == (
-        "first pass\n(Could not reach target ATS 80 after 2 passes (0 -> 0). "
+        "first pass\n(Could not reach target ATS 80 after 2 passes (-3 -> -3). "
         "Remaining gaps need new facts on your Profile.)"
     )
     # The refine turn must hand back measurements, not the model's own numbers.
@@ -145,4 +147,4 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
         jd_clean="Python agent role",
     )
     assert score == 0
-    assert report["iterations"] == [0.0, 0.0]
+    assert report["iterations"] == [-3.0, -3.0]

@@ -169,10 +169,55 @@ def test_a_clean_document_reports_nothing() -> None:
                 "highlights": [
                     "Migrated legacy suites to Cucumber and TestNG.",
                     "Wrote automated tests for a Go pricing engine.",
+                    "Investigated failing tests daily with developers.",
+                    "Trained new joiners on the internal tooling.",
                 ],
             }
         ],
-        "projects": [{"name": "One", "highlights": ["Shipped a scheduler."]}],
+        "projects": [
+            {
+                "name": "One",
+                "highlights": [
+                    "Shipped a scheduler.",
+                    "Tuned the cache eviction policy.",
+                    "Designed the retry semantics.",
+                ],
+            },
+            {
+                "name": "Two",
+                "highlights": ["Wrote the parser.", "Deployed behind nginx."],
+            },
+        ],
         "skills": [{"name": "Languages", "keywords": ["Python"]}],
     }
     assert document_quality_flags(document) == {}
+
+
+def test_a_resume_that_stops_short_of_the_page_is_flagged() -> None:
+    """Page fill varied run to run while it lived only in the prompt.
+
+    One pass selected three projects and eight bullets, the next two projects and
+    six, and the six-bullet resume ended a third of the way up the page.
+    """
+    thin = {
+        "work": [{"position": "Engineer", "highlights": ["Wrote the parser."]}],
+        "projects": [{"name": "One", "highlights": ["Shipped a scheduler."]}],
+    }
+    assert "page" in document_quality_flags(thin)
+    assert document_quality_flags(thin)["page"] == ["thin_page(2 bullets)"]
+
+
+def test_a_full_page_is_not_flagged_as_thin() -> None:
+    document = {
+        "work": [
+            {
+                "position": "Engineer",
+                "highlights": [f"Did distinct thing number {n}." for n in range(4)],
+            }
+        ],
+        "projects": [
+            {"name": "One", "highlights": [f"Built subsystem {n}." for n in range(3)]},
+            {"name": "Two", "highlights": ["Wrote the parser.", "Tuned the cache."]},
+        ],
+    }
+    assert "page" not in document_quality_flags(document)

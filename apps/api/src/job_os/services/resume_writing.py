@@ -33,6 +33,15 @@ MAX_PROJECT_BULLETS = 3
 # and starts being a paragraph the reader skips.
 SUMMARY_MAX_WORDS = 45
 
+# Bullets a full Letter page carries across roles and projects. Below this the
+# resume stops a third of the way up the page, which reads as a thin candidate
+# rather than a concise one. Asking for page fill in the prompt alone left it to
+# vary run to run: one pass selected three projects and eight bullets, the next
+# two projects and six. A resume cannot pad its way past this, because every
+# bullet has to come from a verified fact, so the only way to satisfy it is to
+# surface more real evidence.
+MIN_PAGE_BULLETS = 9
+
 # Distinct skill rows a one-page resume can carry before the block eats the
 # space that evidence should occupy. Six is what the real profile needs once
 # duplicate categories are folded together; capping lower than that would force a
@@ -389,4 +398,11 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
     groups = document.get("skills") or []
     if len(groups) > MAX_SKILL_GROUPS:
         found["skills"] = [f"too_many_groups({len(groups)})"]
+    rendered_bullets = sum(
+        len([h for h in (entry.get("highlights") or []) if h])
+        for section in ("work", "projects", "volunteer")
+        for entry in (document.get(section) or [])
+    )
+    if rendered_bullets < MIN_PAGE_BULLETS:
+        found["page"] = [f"thin_page({rendered_bullets} bullets)"]
     return found
