@@ -122,13 +122,20 @@ def test_json_resume_validation_rejects_malformed_sections() -> None:
         )
 
 
-def test_deterministic_review_blocks_unknown_employer_and_skills() -> None:
+def test_deterministic_review_does_not_police_employer_or_skills() -> None:
+    """The scorer checks the document, not the truth of the career history.
+
+    It used to emit blocking issues for any employer other than one hardcoded
+    name and for specific languages, which meant a new job or a newly learned
+    language permanently blocked finalizing. Grounding bullets in verified facts
+    is what enforces honesty; see career_ops_rules for the model's guardrail.
+    """
     issues, _, _ = deterministic_review(
         {
             "basics": {
-                "name": "Hemnaath Balasubramani",
-                "email": "balasubramani.h@northeastern.edu",
-                "phone": "+1 (857) 379-6762",
+                "name": "A Candidate",
+                "email": "a@b.com",
+                "phone": "+1 555 0100",
             },
             "work": [{"name": "Invented Corp"}],
             "projects": [{"name": "One"}, {"name": "Two"}],
@@ -137,8 +144,8 @@ def test_deterministic_review_blocks_unknown_employer_and_skills() -> None:
         _blank_pdf(),
     )
     codes = {issue.code for issue in issues}
-    assert "unsupported_employer" in codes
-    assert "unsupported_skill" in codes
+    assert "unsupported_employer" not in codes
+    assert "unsupported_skill" not in codes
 
 
 def test_role_reveal_resolves_extension_and_backend_evidence() -> None:

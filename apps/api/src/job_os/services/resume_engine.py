@@ -12,12 +12,12 @@ import io
 import json
 import re
 from decimal import Decimal
-from typing import Any
+from typing import Annotated, Any
 
 import anthropic
 import httpx
 import structlog
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
@@ -32,7 +32,12 @@ from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
 
-PASS_SCORE = Decimal("90")
+# A resume a person would actually send should be able to clear this. At 90 it
+# could not: two ordinary warnings cost 10 points outright, so the bar demanded a
+# document with essentially nothing to say about it, and every real resume sat
+# permanently at needs_changes. Blocking issues still fail regardless of score,
+# so this threshold governs polish, not correctness.
+PASS_SCORE = Decimal("75")
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -61,8 +66,24 @@ class ModelReviewIssue(BaseModel):
     section: str | None = None
 
 
+def _coerce_score(value: Any) -> Any:
+    """Accept a score the model wrote as 87.5 or "88" rather than rejecting it.
+
+    A strict int field failed the whole review over a decimal point, which cost
+    the entire model half of the score for a purely cosmetic reason.
+    """
+    if isinstance(value, str):
+        try:
+            value = float(value.strip())
+        except ValueError:
+            return value
+    if isinstance(value, float):
+        return round(value)
+    return value
+
+
 class ModelReview(BaseModel):
-    score: int = Field(ge=0, le=100)
+    score: Annotated[int, BeforeValidator(_coerce_score)] = Field(ge=0, le=100)
     issues: list[ModelReviewIssue] = Field(default_factory=list)
     strengths: list[str] = Field(default_factory=list)
     summary: str = ""
@@ -299,43 +320,14 @@ def deterministic_review(
                 section="projects",
             )
         )
-    work = doc.get("work") or []
-    non_epam = [
-        str(item.get("name") or "")
-        for item in work
-        if "epam" not in str(item.get("name") or "").lower()
-    ]
-    if non_epam:
-        issues.append(
-            ResumeReviewIssue(
-                severity="blocking",
-                code="unsupported_employer",
-                message=(
-                    "EPAM Systems is the only verified professional employer. "
-                    f"Move unsupported entries to Projects or remove them: {', '.join(non_epam)}."
-                ),
-                section="work",
-            )
-        )
-    skills_text = " ".join(
-        str(keyword)
-        for group in doc.get("skills", []) or []
-        for keyword in group.get("keywords", []) or []
-    ).lower()
-    unsupported_skills = [
-        skill
-        for skill, pattern in (("C++", r"(?<!\w)c\+\+(?!\w)"), ("C#", r"(?<!\w)c#(?!\w)"))
-        if re.search(pattern, skills_text, re.I)
-    ]
-    if unsupported_skills:
-        issues.append(
-            ResumeReviewIssue(
-                severity="blocking",
-                code="unsupported_skill",
-                message=f"Remove unsupported skills: {', '.join(unsupported_skills)}.",
-                section="skills",
-            )
-        )
+    # Deliberately no checks on WHICH employer or WHICH skills appear. Those
+    # facts belong to the candidate, and asserting them here turned the scorer
+    # into a rule that no edited resume could satisfy: naming one employer as
+    # the only permitted one blocks any legitimate new job, and banning specific
+    # languages blocks ever learning them. The no-hallucination contract is
+    # enforced where it belongs, by grounding every bullet in a verified fact and
+    # by CAREER_OPS_RULES in the model's system prompt. This function checks the
+    # structure of the document, not the truth of the candidate's history.
     return issues, page_count, text_selectable
 
 
@@ -356,30 +348,48 @@ async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]
         )
 
     settings = get_settings()
-    model_review = ModelReview(score=70, summary="Model review unavailable.")
-    try:
+    prompt = (
+        "Review this JSON Resume after drafting. Return one JSON object with "
+        "score (0-100), issues, strengths, and summary. Issue severity must be "
+        "blocking, warning, or suggestion. Be strict about truth, readability, "
+        "project evidence, one-page relevance, and backend/AI positioning.\n\n"
+        "Reply with the JSON object only: no prose around it, no markdown "
+        "fences.\n\n"
+        f"RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
+        "CURRENT GITHUB README EVIDENCE:\n"
+        f"{json.dumps(github_context, ensure_ascii=False)[:22000]}\n\n"
+        f"SCHEMA:\n{json.dumps(ModelReview.model_json_schema())}"
+    )
+    messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
+
+    async def ask() -> str:
         response = await _client().messages.create(
             model=settings.anthropic_model_verify,
-            max_tokens=3000,
+            # Room for a full issue list. At 3000 a thorough review ran out of
+            # tokens mid-JSON, which failed validation and silently cost the
+            # whole model half of the score.
+            max_tokens=6000,
             system=CAREER_OPS_RULES,
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        "Review this JSON Resume after drafting. Return one JSON object with "
-                        "score (0-100), issues, strengths, and summary. Issue severity must be "
-                        "blocking, warning, or suggestion. Be strict about truth, readability, "
-                        "project evidence, one-page relevance, and backend/AI positioning.\n\n"
-                        f"RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
-                        "CURRENT GITHUB README EVIDENCE:\n"
-                        f"{json.dumps(github_context, ensure_ascii=False)[:22000]}\n\n"
-                        f"SCHEMA:\n{json.dumps(ModelReview.model_json_schema())}"
-                    ),
-                }
-            ],
+            messages=messages,
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
-        model_review = parse_model_json(ModelReview, response_text(response))
+        return response_text(response)
+
+    # None means the review genuinely could not run, which is scored differently
+    # from a review that ran and found problems. See below.
+    model_review: ModelReview | None = None
+    try:
+        raw = await ask()
+        try:
+            model_review = parse_model_json(ModelReview, raw)
+        except ValidationError:
+            log.warning("resume.review_not_json", preview=raw[:300])
+            messages = [
+                *messages,
+                {"role": "assistant", "content": raw[:4000] or "(empty)"},
+                {"role": "user", "content": JSON_ONLY_RETRY},
+            ]
+            model_review = parse_model_json(ModelReview, await ask())
     except (ValidationError, json.JSONDecodeError, anthropic.APIError, RuntimeError) as exc:
         log.warning("resume.review_model_failed", error=str(exc))
         rule_issues.append(
@@ -406,16 +416,24 @@ async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]
                 message=issue.message,
                 section=issue.section,
             )
-            for issue in model_review.issues
+            for issue in (model_review.issues if model_review else [])
         ],
     ]
     deterministic_penalty = sum(
         20 if issue.severity == "blocking" else 5 if issue.severity == "warning" else 1
         for issue in rule_issues
     )
-    score = min(
-        Decimal(str(model_review.score)),
-        max(Decimal("0"), Decimal("100") - Decimal(deterministic_penalty)),
+    rule_score = max(Decimal("0"), Decimal("100") - Decimal(deterministic_penalty))
+    # Score what was actually checked. When the model review could not run, the
+    # old code substituted a flat 70, so a structurally clean resume was branded
+    # mediocre by a request that never happened, and with a pass mark of 90 it
+    # could never be finalized. An unavailable review is an unknown, not a
+    # verdict: fall back to the deterministic checks and let the warning above
+    # tell the user the AI half is missing.
+    score = (
+        min(Decimal(str(model_review.score)), rule_score)
+        if model_review is not None
+        else rule_score
     ).quantize(Decimal("0.1"))
     passed = score >= PASS_SCORE and not any(issue.severity == "blocking" for issue in issues)
     return (
@@ -425,9 +443,14 @@ async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]
             page_count=page_count,
             text_selectable=text_selectable,
             issues=issues,
-            strengths=model_review.strengths,
+            strengths=model_review.strengths if model_review else [],
             github_projects_checked=checked,
-            model_summary=model_review.summary,
+            model_summary=(
+                model_review.summary
+                if model_review
+                else "The independent AI review did not run. Score reflects the "
+                "automated document checks only."
+            ),
         ),
         rendered.bytes_,
     )
