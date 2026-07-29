@@ -52,6 +52,7 @@ from job_os.services.resume_writing import (
     dedupe_bullets,
     document_quality_flags,
     normalize_dashes,
+    upgrades_status,
 )
 from job_os.settings import get_settings
 
@@ -175,6 +176,11 @@ BULLET WRITING (this is what a human reader judges):
 - Do not overstate scope. Prefer "worked on" to "owned" or "led" when the
   candidate contributed to something they did not own. Accuracy beats a
   stronger-sounding verb.
+- Never upgrade a fact's STATUS. If the evidence says demoed, pending approval,
+  prototype, hackathon build, trial or mock, the resume cannot say shipped,
+  launched, released, delivered or in production, and the summary cannot either.
+  Carry the qualifier through instead: "demoed end to end, pending approval" is
+  a stronger line than a claim an interviewer can puncture in one question.
 - 30 words maximum per bullet, one idea each. Cutting a verified bullet down is
   always allowed and usually improves it. Growing one is how padding gets in.
 - No first person. No "I", "my", "we", "our".
@@ -833,6 +839,10 @@ def _sanitize_selected_bullets(
             )
             if flag.startswith(("jd_padding", "inflated_rewrite", "first_person"))
         ]
+        # A rewrite can invent no metric and no technology and still promote a
+        # demoed prototype into something that shipped.
+        if upgrades_status(selected_bullet.rewritten_text, source_context):
+            padding_flags.append("upgraded_status")
         if added_numbers or added_technologies or wrong_section or padding_flags:
             log.warning(
                 "tailor.unsafe_rewrite_reverted",
@@ -874,6 +884,20 @@ def _safe_summary(
     ):
         log.warning("tailor.unsafe_summary_reverted")
         return None
+    # The summary is one line about several facts, so it is the easiest place to
+    # promote a status. A real run wrote "has shipped ... an AI agent for
+    # automated test generation" about work the fact records as demoed and
+    # pending senior approval. Only the facts that the summary could plausibly be
+    # describing are checked, which is any fact whose own text says a thing is
+    # provisional.
+    for fact in facts_payload:
+        for bullet in fact.get("bullets") or []:
+            if upgrades_status(summary, str(bullet.get("text") or "")):
+                log.warning(
+                    "tailor.summary_upgraded_status_reverted",
+                    fact=str(fact.get("title") or "")[:80],
+                )
+                return None
     return summary
 
 
@@ -1447,8 +1471,11 @@ def _consolidate_skills(
 
 # Fields where "Name — Subtitle" is the idiom, so a colon reads better than the
 # comma used everywhere else. The user's own master resume writes these with a
-# colon already.
-_TITLE_FIELDS = frozenset({"name", "title", "position", "studyType", "label"})
+# colon already. `position` is deliberately absent: a job title carrying a client
+# tag already has a colon of its own, and normalising to a second one produced
+# "Software Test Automation Engineer: Client: leading global rideshare platform",
+# which the independent review read as an awkward heading.
+_TITLE_FIELDS = frozenset({"name", "title", "studyType", "label"})
 
 
 def _normalize_document_text(value: Any, *, field: str | None = None) -> Any:

@@ -95,6 +95,11 @@ PROJECT AND EVIDENCE RULES
 WRITING AND FORMAT
 - Never invent employers, titles, dates, metrics, technologies, grades,
   coursework, credentials, responsibilities, or outcomes.
+- Never upgrade the status of anything. Work the facts record as demoed, pending
+  approval, a prototype, a hackathon build, a trial or a mock is never described
+  as shipped, launched, released, delivered or running in production. The EPAM
+  AI test-case agent was demoed end to end and was pending senior approval when
+  he left; say that, in both bullets and any summary line.
 - Use short, engineer-like sentences with concrete decisions and constraints.
   The read-aloud test decides it: if he would not say the sentence in a standup,
   rewrite it.

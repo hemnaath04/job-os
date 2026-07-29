@@ -121,6 +121,41 @@ _FIRST_PERSON_RE = re.compile(
     r"\b(?:I|I'?m|I'?ve|[Mm]y|[Mm]e|[Mm]ine|[Ww]e|[Ww]e'?ve|[Oo]ur|[Oo]urs|us)\b"
 )
 
+# Wording that says a thing reached users or production.
+_COMPLETION_RE = re.compile(
+    r"\b(?:shipped|launched|released|delivered|rolled out|went live|"
+    r"in production|productionis|productioniz|adopted|"
+    r"deployed to production)\w*\b",
+    re.I,
+)
+# Wording that says it did not. A fact carrying one of these has a status, and a
+# rewrite is not allowed to quietly promote it: the verified EPAM AI agent was
+# "demoed end-to-end; pending senior approval at the time I left", which a
+# summary turned into "has shipped an AI agent".
+_PROVISIONAL_RE = re.compile(
+    r"\b(?:pending|awaiting|not yet|unapproved|prototype|proof of concept|"
+    r"poc|demoed|demo(?:ed|ing)?|hackathon|trial|mock|sandbox|"
+    r"in progress|work in progress|experimental|draft)\w*\b",
+    re.I,
+)
+
+
+def upgrades_status(text: str, source_text: str) -> bool:
+    """True when a rewrite claims completion the evidence does not support.
+
+    Not a hallucination in the metric-and-technology sense, which is why the
+    number and technology guards let it through. It is still the resume saying
+    something the fact does not, and it is the kind of overstatement an
+    interviewer catches.
+    """
+    if not _COMPLETION_RE.search(text):
+        return False
+    if _COMPLETION_RE.search(source_text):
+        # The evidence already claims it shipped, so the rewrite is not the one
+        # making the claim.
+        return False
+    return bool(_PROVISIONAL_RE.search(source_text))
+
 
 def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
     """Replace em dashes, en dashes and double hyphens with real punctuation.
