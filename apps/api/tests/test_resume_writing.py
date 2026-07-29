@@ -113,6 +113,35 @@ def test_three_bullets_opening_with_built_are_flagged() -> None:
     assert any(flag.startswith("repeated_opening_verb") for flag in flags)
 
 
+def test_two_bullets_closing_the_same_way_are_flagged() -> None:
+    """Neither is a duplicate of the other, but the shared clause reads as machine work.
+
+    The real pair: an EPAM role whose second and third bullets both ended
+    "adding regression coverage as pricing rules shipped".
+    """
+    flags = section_flags(
+        [
+            "Worked on the Fares team's Go test suite, triaging daily failures and "
+            "adding regression coverage as pricing rules shipped.",
+            "Migrated legacy suites to Cucumber and TestNG and tightened Jenkins "
+            "CI/CD, adding regression coverage as pricing rules shipped.",
+        ]
+    )
+    assert any(flag.startswith("repeated_phrase") for flag in flags)
+
+
+def test_bullets_that_merely_share_vocabulary_are_not_flagged() -> None:
+    assert not any(
+        flag.startswith("repeated_phrase")
+        for flag in section_flags(
+            [
+                "Wrote automated tests for a Go pricing engine.",
+                "Migrated legacy suites to Cucumber and TestNG.",
+            ]
+        )
+    )
+
+
 def test_a_role_with_seven_bullets_is_flagged_where_it_lives() -> None:
     document = {
         "work": [

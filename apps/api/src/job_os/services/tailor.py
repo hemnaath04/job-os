@@ -256,10 +256,13 @@ def _refine_prompt(
             "describe work done, so delete that clause. inflated_rewrite means "
             "your rewrite is longer than the verified bullet it came from. "
             "near_duplicate_bullets means you selected two bullets about the "
-            "same work, so keep only the better one. repeated_opening_verb "
-            "means vary the verb. weak_opener means start with a real "
-            "past-tense verb. first_person means remove I/my/we. dash means "
-            "replace an em dash with a comma or a colon.",
+            "same work, so keep only the better one. repeated_phrase means two "
+            "bullets in one entry share a clause word for word, so cut it from "
+            "the weaker bullet. repeated_opening_verb means vary the verb. "
+            "weak_opener means start with a real past-tense verb. first_person "
+            "means remove I/my/we. upgraded_status means you claimed something "
+            "shipped that the evidence records as pending or a prototype. dash "
+            "means replace an em dash with a comma or a colon.",
         ]
     if missing:
         lines += [

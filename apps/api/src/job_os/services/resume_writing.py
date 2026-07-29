@@ -296,6 +296,19 @@ def bullet_flags(text: str, *, source_text: str | None = None) -> list[str]:
     return flags
 
 
+def _phrases(text: str, length: int) -> set[str]:
+    words = _WORD_RE.findall(text.casefold())
+    return {
+        " ".join(words[i : i + length]) for i in range(max(0, len(words) - length + 1))
+    }
+
+
+# Long enough that two bullets sharing one is repetition rather than shared
+# vocabulary. Five words catches "adding regression coverage as pricing rules
+# shipped" appearing verbatim on two different bullets in the same role.
+REPEATED_PHRASE_WORDS = 5
+
+
 def section_flags(bullets: list[str]) -> list[str]:
     """Problems that only exist between bullets, not inside one."""
     flags: list[str] = []
@@ -310,6 +323,18 @@ def section_flags(bullets: list[str]) -> list[str]:
     repeated = {opener for opener in openers if opener and openers.count(opener) > 1}
     if repeated:
         flags.append(f"repeated_opening_verb({','.join(sorted(repeated))})")
+    # Two distinct bullets that end the same way read as machine-written even
+    # when neither is a duplicate of the other. The review caught a role whose
+    # second and third bullets both closed "adding regression coverage as pricing
+    # rules shipped".
+    shared: set[str] = set()
+    for index, bullet in enumerate(bullets):
+        for other in bullets[index + 1 :]:
+            shared |= _phrases(bullet, REPEATED_PHRASE_WORDS) & _phrases(
+                other, REPEATED_PHRASE_WORDS
+            )
+    if shared:
+        flags.append(f"repeated_phrase({sorted(shared)[0]})")
     return flags
 
 
