@@ -4,7 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   Archive,
+  ArrowDownWideNarrow,
   CheckCircle2,
+  ChevronRight,
   Crown,
   Download,
   FolderOpen,
@@ -16,13 +18,28 @@ import {
   Sparkles,
 } from "lucide-react";
 import Link from "next/link";
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
 import type { Resume, ResumeImportItem, ResumeVersionSummary } from "@/lib/types";
+
+/** Most recent activity on a resume, for sorting. Falls back to creation. */
+function resumeTimestamp(resume: Resume): number {
+  const parsed = Date.parse(resume.updated_at || resume.created_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+type ResumeSort = "newest" | "oldest" | "name";
+
+const RESUME_SORT_OPTIONS: { value: ResumeSort; label: string }[] = [
+  { value: "newest", label: "Newest first" },
+  { value: "oldest", label: "Oldest first" },
+  { value: "name", label: "Name A to Z" },
+];
 
 export default function ResumesPage() {
   const qc = useQueryClient();
@@ -30,6 +47,17 @@ export default function ResumesPage() {
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
   });
+  const [sort, setSort] = useState<ResumeSort>("newest");
+  const sorted = useMemo(() => {
+    const rows = [...resumes];
+    if (sort === "name") {
+      return rows.sort((left, right) => left.name.localeCompare(right.name));
+    }
+    const direction = sort === "newest" ? -1 : 1;
+    return rows.sort(
+      (left, right) => (resumeTimestamp(left) - resumeTimestamp(right)) * direction,
+    );
+  }, [resumes, sort]);
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [baseRole, setBaseRole] = useState("");
@@ -269,20 +297,45 @@ export default function ResumesPage() {
         />
       )}
 
-      <div className="mt-6 grid gap-4 xl:grid-cols-2">
-        {resumes.map((r) => (
-          <ResumeCard key={r.id} resume={r} />
-        ))}
-      </div>
+      {!isLoading && resumes.length > 0 && (
+        <>
+          <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
+            <div className="text-xs text-[color:var(--color-text-dim)]">
+              {resumes.length} resume{resumes.length === 1 ? "" : "s"}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
+              <ArrowDownWideNarrow className="size-3.5" />
+              <span>Sort</span>
+              <Select
+                value={sort}
+                onChange={(value) => setSort(value as ResumeSort)}
+                aria-label="Sort resumes"
+                className="w-40"
+                options={RESUME_SORT_OPTIONS}
+              />
+            </label>
+          </div>
+
+          <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
+            {sorted.map((r) => (
+              <ResumeRow key={r.id} resume={r} />
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
 
-function ResumeCard({ resume }: { resume: Resume }) {
+function ResumeRow({ resume }: { resume: Resume }) {
   const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  // Versions load on expand, not on mount. A library of 30+ resumes would
+  // otherwise fire one request per row the moment the page opens.
   const { data: versions = [], isLoading } = useQuery({
     queryKey: ["versions", resume.id],
     queryFn: () => api.listVersions(resume.id),
+    enabled: open,
   });
   const removeResume = useMutation({
     mutationFn: () => api.deleteResume(resume.id),
@@ -295,66 +348,78 @@ function ResumeCard({ resume }: { resume: Resume }) {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  const updated = format(
+    new Date(resume.updated_at || resume.created_at),
+    "MMM d, yyyy",
+  );
+
   return (
-    <div className="workspace-panel workspace-panel-interactive overflow-hidden">
-      <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-5 py-3.5">
-        <div className="flex items-center gap-2.5">
+    <div>
+      <div className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]">
+        <button
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+        >
+          <ChevronRight
+            className={`size-3.5 shrink-0 text-[color:var(--color-text-dim)] transition-transform ${
+              open ? "rotate-90" : ""
+            }`}
+          />
           {resume.is_master ? (
-            <Crown className="size-4 text-[color:var(--color-amber)]" />
+            <Crown className="size-4 shrink-0 text-[color:var(--color-amber)]" />
           ) : (
-            <Sparkles className="size-4 text-[color:var(--color-violet)]" />
+            <Sparkles className="size-4 shrink-0 text-[color:var(--color-violet)]" />
           )}
-          <div>
-            <div className="text-base font-semibold">
-              {resume.name}
-              {resume.is_master && (
-                <span className="ml-2 rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-amber)]">
-                  master
-                </span>
-              )}
-            </div>
-            {resume.base_role && (
-              <div className="text-xs text-[color:var(--color-text-muted)]">
-                {resume.base_role}
-              </div>
-            )}
-          </div>
-        </div>
-        <div className="flex items-center gap-3">
-          <div className="text-xs text-[color:var(--color-text-dim)]">
-            {versions.length} version{versions.length === 1 ? "" : "s"}
-          </div>
-          {!resume.is_master && (
-            <button
-              onClick={() => {
-                if (window.confirm(`Archive ${resume.name}? Its versions will remain stored.`)) {
-                  removeResume.mutate();
-                }
-              }}
-              className="rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
-              aria-label={`Archive ${resume.name}`}
-            >
-              <Archive className="size-3.5" />
-            </button>
+          <span className="min-w-0 truncate text-sm font-semibold">
+            {resume.name}
+          </span>
+          {resume.is_master && (
+            <span className="shrink-0 rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-amber)]">
+              master
+            </span>
           )}
+          {resume.base_role && (
+            <span className="hidden min-w-0 truncate text-xs text-[color:var(--color-text-muted)] sm:inline">
+              {resume.base_role}
+            </span>
+          )}
+        </button>
+        <div className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
+          {updated}
         </div>
+        {!resume.is_master && (
+          <button
+            onClick={() => {
+              if (window.confirm(`Archive ${resume.name}? Its versions will remain stored.`)) {
+                removeResume.mutate();
+              }
+            }}
+            className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+            aria-label={`Archive ${resume.name}`}
+          >
+            <Archive className="size-3.5" />
+          </button>
+        )}
       </div>
 
-      <div className="divide-y divide-[color:var(--color-border)]">
-        {isLoading && (
-          <div className="px-5 py-3 text-sm text-[color:var(--color-text-muted)]">
-            loading versions…
-          </div>
-        )}
-        {!isLoading && versions.length === 0 && (
-          <div className="px-5 py-3 text-sm text-[color:var(--color-text-muted)]">
-            no versions yet
-          </div>
-        )}
-        {versions.map((v) => (
-          <VersionRow key={v.id} version={v} resumeId={resume.id} />
-        ))}
-      </div>
+      {open && (
+        <div className="divide-y divide-[color:var(--color-border)] border-t border-[color:var(--color-border)] bg-[color:var(--color-surface-2)]/40">
+          {isLoading && (
+            <div className="px-5 py-3 pl-12 text-sm text-[color:var(--color-text-muted)]">
+              loading versions…
+            </div>
+          )}
+          {!isLoading && versions.length === 0 && (
+            <div className="px-5 py-3 pl-12 text-sm text-[color:var(--color-text-muted)]">
+              no versions yet
+            </div>
+          )}
+          {versions.map((v) => (
+            <VersionRow key={v.id} version={v} resumeId={resume.id} />
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -380,7 +445,7 @@ function VersionRow({
     onError: (error: Error) => toast.error(error.message),
   });
   return (
-    <div className="flex items-center justify-between px-5 py-3 hover:bg-[color:var(--color-surface-2)]">
+    <div className="flex items-center justify-between py-3 pl-12 pr-5 hover:bg-[color:var(--color-surface-2)]">
       <div className="flex items-center gap-3">
         <FileText className="size-4 text-[color:var(--color-text-muted)]" />
         <div>
