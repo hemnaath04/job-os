@@ -210,6 +210,9 @@ also the ceilings: Python cuts the surplus at 4 per role and 3 per project, so
 choose deliberately rather than listing everything. When a JD is a poor fit,
 lead with the closest honest evidence and still fill the page; do not shrink the
 resume to signal the mismatch, that is what gap_questions are for.
+A project that owns only ONE bullet still earns its place when it is relevant. A
+third relevant project with one dense bullet beats a page that stops early, and
+the reader has no way to know the profile held only one bullet for it.
 
 ATS:
 - `ats_keywords_matched`: JD keywords that appear in your selected bullets or
