@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import re
+from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
@@ -28,6 +29,10 @@ from job_os.services.llm_json import (
     response_text,
 )
 from job_os.services.pdf_render import render_resume_pdf
+from job_os.services.resume_writing import (
+    BANNED_WORDING,
+    document_quality_flags,
+)
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -43,22 +48,23 @@ NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
 )
-BANNED_PHRASES = {
-    "leveraged",
-    "utilized",
-    "spearheaded",
-    "cutting-edge",
-    "state-of-the-art",
-    "innovative solution",
-    "robust architecture",
-    "seamlessly",
-    "end-to-end solution",
-    "synergized",
-    "revolutionized",
-    "transformed",
-    "facilitated",
-    "enabled",
-}
+# The career-ops benchmark's ban list, kept in one place so the tailor prompt,
+# the rewrite guard and this review all police the same wording.
+BANNED_PHRASES = set(BANNED_WORDING)
+
+# Writing flags that cost the resume points rather than just earning a note. A
+# duplicated bullet, a padded one or one nobody can read in two lines is a defect
+# a reader will see; a repeated opening verb is a polish item.
+SUBSTANTIVE_WRITING_FLAGS = (
+    "near_duplicate_bullets",
+    "too_many_bullets",
+    "too_long",
+    "first_person",
+    "jd_padding",
+    "inflated_rewrite",
+    "banned_wording",
+    "dash",
+)
 class ModelReviewIssue(BaseModel):
     severity: str
     code: str
@@ -180,8 +186,16 @@ def _github_repositories(
             repos[f"{project_name or parsed[1]} [{parsed[1]}]"] = parsed
             continue
         normalized = re.sub(r"[^a-z0-9]+", " ", project_name.lower()).strip()
-        for known in KNOWN_GITHUB_REPOS.get(normalized, ()):
-            repos[f"{project_name or known[1]} [{known[1]}]"] = known
+        # Match on the words the project name contains, not on the whole string.
+        # A verified project is titled "BedRocked, Civic Sewer-Sequencing
+        # Platform", which never equalled the key "bedrocked", so an exact
+        # lookup loaded evidence for none of the real projects and the review
+        # graded every project claim with nothing to check it against.
+        for known_name, known_repos in KNOWN_GITHUB_REPOS.items():
+            if not re.search(rf"\b{re.escape(known_name)}\b", normalized):
+                continue
+            for known in known_repos:
+                repos[f"{project_name or known[1]} [{known[1]}]"] = known
 
     normalized_request = re.sub(r"[^a-z0-9]+", " ", requested_text.lower())
     for project_name, known_repos in KNOWN_GITHUB_REPOS.items():
@@ -329,6 +343,25 @@ def deterministic_review(
                 section="projects",
             )
         )
+    # Writing problems a rule can see: over-long bullets, two bullets about the
+    # same work, a repeated opening verb, first person, JD padding. These are the
+    # things a reader notices first, and naming them here means the score
+    # reflects them even when the model review is unavailable.
+    for where, flags in document_quality_flags(doc).items():
+        section = where.split(":", 1)[0]
+        # A repeated opening verb is worth mentioning; a role that says the same
+        # thing twice or pads a bullet with JD wording is worth points.
+        substantive = any(
+            flag.startswith(SUBSTANTIVE_WRITING_FLAGS) for flag in flags
+        )
+        issues.append(
+            ResumeReviewIssue(
+                severity="warning" if substantive else "suggestion",
+                code="bullet_writing",
+                message=f"{where}: {', '.join(flags)}.",
+                section=section,
+            )
+        )
     # Deliberately no checks on WHICH employer or WHICH skills appear. Those
     # facts belong to the candidate, and asserting them here turned the scorer
     # into a rule that no edited resume could satisfy: naming one employer as
@@ -345,12 +378,20 @@ async def review_resume(
     *,
     html_source: str | None = None,
     css_source: str | None = None,
+    verified_facts: list[dict[str, Any]] | None = None,
 ) -> tuple[ResumeReviewResult, bytes]:
     """Render, inspect, then run an independent quality-model review.
 
     `html_source`/`css_source` render a stored template's look instead of the
     bundled one. The review judges the document either way: a template changes
     how the resume looks, not what it claims.
+
+    `verified_facts` is the evidence the resume was built from. Without it the
+    reviewer has no way to tell a verified claim from an invented one, so it
+    treated anything absent from CAREER_OPS_RULES as fabricated and returned
+    blocking issues against the candidate's own history: a real job title, a
+    real client domain and real coursework were all called fabrications on the
+    same pass. Pass it wherever it is available.
     """
     validate_json_resume_document(doc)
     rendered = render_resume_pdf(doc, html_source=html_source, css_source=css_source)
@@ -367,16 +408,36 @@ async def review_resume(
         )
 
     settings = get_settings()
+    writing_flags = document_quality_flags(doc)
     prompt = (
         "Review this JSON Resume after drafting. Return one JSON object with "
         "score (0-100), issues, strengths, and summary. Issue severity must be "
         "blocking, warning, or suggestion. Be strict about truth, readability, "
         "project evidence, one-page relevance, and backend/AI positioning.\n\n"
+        f"TODAY'S DATE: {date.today().isoformat()}. A start date in the recent "
+        "past is ordinary. Do not call a date fabricated because it looks "
+        "future-dated to you.\n\n"
+        "WHAT COUNTS AS FABRICATION. The VERIFIED FACTS below are the "
+        "candidate's own evidence vault and they are the source of truth for "
+        "what is true about them. A claim is fabricated only when nothing in "
+        "the verified facts, the current resume, or the README evidence "
+        "supports it. A job title, employer, client, date, course, metric or "
+        "technology that appears in the verified facts is NOT fabricated, even "
+        "if the career-ops rules in your system prompt word it differently or "
+        "do not mention it at all. Those rules are a boundary on what may be "
+        "ADDED, not an inventory of everything the candidate has done. When the "
+        "two disagree about a detail, the verified facts win and there is no "
+        "issue to report.\n\n"
         "Reply with the JSON object only: no prose around it, no markdown "
-        "fences.\n\n"
+        "fences. Report at most 10 issues, the most important first.\n\n"
         f"RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
+        "VERIFIED FACTS (the evidence this resume was built from):\n"
+        f"{json.dumps(verified_facts or [], ensure_ascii=False)[:20000]}\n\n"
         "CURRENT GITHUB README EVIDENCE:\n"
         f"{json.dumps(github_context, ensure_ascii=False)[:22000]}\n\n"
+        "DETERMINISTIC WRITING CHECKS ALREADY RUN (do not repeat these, they "
+        "are reported separately; judge what they cannot see):\n"
+        f"{json.dumps(writing_flags, ensure_ascii=False)[:4000]}\n\n"
         f"SCHEMA:\n{json.dumps(ModelReview.model_json_schema())}"
     )
     messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]

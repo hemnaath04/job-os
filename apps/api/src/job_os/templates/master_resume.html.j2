@@ -31,6 +31,17 @@
   </div>
 </header>
 
+{# ---------- SUMMARY ----------
+   Only a tailored resume sets basics.summary. The master leaves it null, so the
+   master still renders summary-free while the tailoring agent's one tailored
+   line stops being computed, stored and then thrown away unseen.
+#}
+{% if basics.summary %}
+<section class="summary">
+  <p>{{ basics.summary }}</p>
+</section>
+{% endif %}
+
 {# ---------- EDUCATION ---------- #}
 {% if education %}
 <section>

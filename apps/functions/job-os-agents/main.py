@@ -777,7 +777,12 @@ async def _review_resume(
 ) -> dict[str, Any]:
     version_id = str(payload["version_id"])
     version = _snapshot(workspace.owned_row(workspace.versions_table, version_id))
-    report, pdf_bytes = await review_resume(version["json_resume"])
+    # The reviewer needs the evidence vault to tell a verified claim from an
+    # invented one. Without it, it graded the candidate's own job title and
+    # coursework as fabrications.
+    report, pdf_bytes = await review_resume(
+        version["json_resume"], verified_facts=workspace.verified_facts()
+    )
     now = _now()
     version.update(
         status="final" if finalize and report.passed else "reviewed",
@@ -878,7 +883,8 @@ async def _tailor_resume(
     # backend-agnostic dataclasses the tailoring agent consumes.
     facts: list[TailorFact] = []
     bullets_by_fact: dict[str, list[TailorBullet]] = {}
-    for fact in workspace.verified_facts():
+    verified = workspace.verified_facts()
+    for fact in verified:
         # Appwrite ids are opaque strings, not UUIDs: facts written by this
         # function are uuid4 strings, facts added from the browser are
         # `ID.unique()` tokens. The tailoring core takes both as strings.
@@ -935,7 +941,7 @@ async def _tailor_resume(
     # failure still yields a usable draft the user can review manually.
     try:
         on_progress("Reviewing", 0.92)
-        review, pdf_bytes = await review_resume(json_resume)
+        review, pdf_bytes = await review_resume(json_resume, verified_facts=verified)
         review_score = str(review.score)
         review_report = review.model_dump(mode="json")
         status = "reviewed" if review.passed else "needs_changes"

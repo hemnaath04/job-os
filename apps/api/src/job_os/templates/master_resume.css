@@ -57,6 +57,15 @@ a { color: var(--link); text-decoration: none; }
   color: var(--muted);
 }
 
+/* ---------- Tailored summary ----------
+   Two lines at most, no heading and no rule, so it reads as a lede rather than
+   as another section competing with Education for the reader's first glance. */
+section.summary { margin-top: 4pt; }
+section.summary p {
+  margin: 0;
+  text-align: justify;
+}
+
 /* ---------- Section headings ---------- */
 section { margin-top: 3pt; }
 section h2 {
