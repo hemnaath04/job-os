@@ -561,6 +561,21 @@
 @keyframes intro-rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes icon-settle { from { opacity: 0; transform: scale(.86) rotate(-8deg); } }
 @keyframes select-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
+@keyframes select-option-in { from { opacity: 0; transform: translateY(-3px); } }
+
+/* The select popover lifts in, then its options follow in sequence.
+   Deliberately CSS rather than a motion component wrapped around each option:
+   Radix owns the option collection, roving focus and typeahead, and wrapping
+   its items in another element to animate them risks all three. An index
+   custom property gets the same stagger with the markup untouched. */
+.select-panel {
+  animation: select-in var(--dur) var(--ease-out) both;
+}
+
+.select-option {
+  animation: select-option-in var(--dur-fast) var(--ease-out) both;
+  animation-delay: calc(var(--select-index, 0) * 20ms);
+}
 
 @media (max-width: 700px) {
   .page-intro { min-height: 0; flex-direction: column; }
@@ -576,6 +591,9 @@
   *::after {
     scroll-behavior: auto !important;
     animation-duration: 0.01ms !important;
+    /* Without this a staggered entrance still holds each item back, so the
+       list appears late and out of order even with the duration collapsed. */
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
   }
 
