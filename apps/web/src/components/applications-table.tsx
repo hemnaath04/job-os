@@ -48,7 +48,9 @@ export function ApplicationsTable({
     // Location, Updated, Next action and the row actions reachable, where
     // overflow-hidden simply cut them off with no way to get to them.
     <div className="workspace-panel overflow-x-auto">
-      <table className="w-full min-w-[52rem] text-sm">
+      {/* 44rem is the widest floor that still fits beside the sidebar at the
+          lg breakpoint, so a laptop never scrolls and a phone never crushes. */}
+      <table className="w-full min-w-[44rem] text-sm">
         <caption className="sr-only">
           Tracked applications, with status, location, and next action for each.
         </caption>
