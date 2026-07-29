@@ -29,6 +29,7 @@ import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { downloadPdf } from "@/lib/download";
+import { versionStatusLabel } from "@/lib/types";
 import type {
   Resume,
   ResumeImportItem,
@@ -568,7 +569,7 @@ function TemplatesSection({
                     }
                   }}
                   disabled={removingId === template.id}
-                  className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)] disabled:opacity-50"
+                  className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
                   aria-label={`Remove the ${template.name} template`}
                 >
                   <Archive className="size-3.5" />
@@ -748,7 +749,7 @@ function ResumeRow({
             {resume.name}
           </span>
           {resume.is_master && (
-            <span className="shrink-0 rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-amber)]">
+            <span className="shrink-0 rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-amber-ink)]">
               master
             </span>
           )}
@@ -787,7 +788,7 @@ function ResumeRow({
                 removeResume.mutate();
               }
             }}
-            className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+            className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
             aria-label={`Archive ${resume.name}`}
           >
             <Archive className="size-3.5" />
@@ -799,12 +800,12 @@ function ResumeRow({
         <div className="divide-y divide-[color:var(--color-border)] border-t border-[color:var(--color-border)] bg-[color:var(--color-surface-2)]/40">
           {isLoading && (
             <div className="px-5 py-3 pl-12 text-sm text-[color:var(--color-text-muted)]">
-              loading versions…
+              Loading versions…
             </div>
           )}
           {!isLoading && versions.length === 0 && (
             <div className="px-5 py-3 pl-12 text-sm text-[color:var(--color-text-muted)]">
-              no versions yet
+              No versions yet. Tailoring this resume for a job saves the first one.
             </div>
           )}
           {versions.map((v) => (
@@ -844,11 +845,11 @@ function VersionRow({
           <div className="text-sm font-medium">{created}</div>
           <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-dim)]">
             {version.status === "final" ? (
-              <span className="inline-flex items-center gap-1 text-[color:var(--color-mint)]">
-                <CheckCircle2 className="size-3" /> final
+              <span className="inline-flex items-center gap-1 text-[color:var(--color-mint-ink)]">
+                <CheckCircle2 className="size-3" /> Final
               </span>
             ) : (
-              <span>{version.status.replaceAll("_", " ")}</span>
+              <span>{versionStatusLabel(version.status)}</span>
             )}
             {version.ats_score !== null && version.ats_score !== undefined && (
               <>
@@ -865,7 +866,7 @@ function VersionRow({
             {version.spawned_from_job_id && (
               <>
                 <span>·</span>
-                <span>tailored</span>
+                <span>Tailored</span>
               </>
             )}
           </div>
@@ -894,7 +895,7 @@ function VersionRow({
               onClick={() => {
                 if (window.confirm("Archive this resume version? It remains stored in the database.")) removeVersion.mutate();
               }}
-          className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]"
+          className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
           aria-label="Archive resume version"
         >
           <Archive className="size-3.5" />

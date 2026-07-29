@@ -289,7 +289,7 @@ function Card({
   return (
     <div
       onDoubleClick={openJD}
-      title={sourceUrl ? "Double-click to open the original JD" : undefined}
+      title={sourceUrl ? "Double-click to open the original job description" : undefined}
       className={
         "cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-all " +
         (compact ? "p-3.5 " : "p-3 ") +
@@ -313,8 +313,8 @@ function Card({
                 onPointerDown={stopDrag}
                 onClick={stopDrag}
                 onDoubleClick={stopDrag}
-                title="Open original JD"
-                aria-label="Open original job description"
+                title="Open the original job description"
+                aria-label="Open the original job description"
                 className="shrink-0 text-[color:var(--color-text-dim)] transition hover:text-[color:var(--color-violet)]"
               >
                 <ExternalLink className="size-3" />

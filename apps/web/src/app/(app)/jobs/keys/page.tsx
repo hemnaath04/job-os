@@ -135,7 +135,7 @@ function ProviderCard({ source }: { source: ByoSource }) {
           </p>
         </div>
         {connected ? (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-mint)]">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-mint-ink)]">
             <CheckCircle2 className="size-3" /> Connected
           </span>
         ) : (
@@ -587,7 +587,7 @@ function CustomSourceManager({
                 className={
                   "rounded-full border px-3 py-1 text-[11px] transition " +
                   (source.enabled
-                    ? "border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint)]"
+                    ? "border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint-ink)]"
                     : "border-[color:var(--color-border)] text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]")
                 }
               >

@@ -46,7 +46,7 @@ export function AddJobDialog({
       onOpenChange(false);
       onCreated();
     } catch (err) {
-      toast.error(`Failed: ${(err as Error).message}`);
+      toast.error(`Couldn't add the job: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }

@@ -91,7 +91,7 @@ export default function SettingsPage() {
     <div className="workspace-page max-w-6xl">
       <PageIntro
         eyebrow="Personal operating system"
-        title="Preferences"
+        title="Settings"
         description="Set the defaults that shape discovery and tailoring. Everything here stays attached to your private user record."
         icon={SlidersHorizontal}
         action={

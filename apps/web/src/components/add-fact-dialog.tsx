@@ -76,7 +76,7 @@ export function AddFactDialog({
       onOpenChange(false);
       onCreated();
     } catch (err) {
-      toast.error(`Failed: ${(err as Error).message}`);
+      toast.error(`Couldn't add the fact: ${(err as Error).message}`);
     } finally {
       setLoading(false);
     }

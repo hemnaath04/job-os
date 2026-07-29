@@ -13,6 +13,23 @@ export type AppStatus =
   | "withdrawn"
   | "ghosted";
 
+/**
+ * What a resume version's state is called on screen. Without this the raw
+ * column value was printed with its underscores swapped for spaces, so the UI
+ * said "needs changes" in lower case beside properly cased copy.
+ */
+export const VERSION_STATUS_LABELS: Record<string, string> = {
+  draft: "Draft",
+  reviewed: "Reviewed",
+  needs_changes: "Needs changes",
+  final: "Final",
+};
+
+/** Falls back to the raw value so an unknown state still shows something. */
+export function versionStatusLabel(status: string): string {
+  return VERSION_STATUS_LABELS[status] ?? status.replaceAll("_", " ");
+}
+
 export const STATUS_LABELS: Record<AppStatus, string> = {
   wishlist: "Wishlist",
   ready_to_apply: "Ready",

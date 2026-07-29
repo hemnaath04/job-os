@@ -26,6 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { downloadPdf } from "@/lib/download";
+import { versionStatusLabel } from "@/lib/types";
 import type {
   JsonResume,
   ResumeChatResponse,
@@ -933,7 +934,7 @@ function TextArea({ label, value, onChange }: { label: string; value: string; on
 
 function RemoveButton({ label, onClick }: { label: string; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose)]" aria-label={label}>
+    <button onClick={onClick} className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]" aria-label={label}>
       <Trash2 className="size-4" />
     </button>
   );
@@ -951,8 +952,8 @@ function ModeButton({ active, onClick, icon: Icon, children }: { active: boolean
 function StatusBadge({ status }: { status: string }) {
   const final = status === "final";
   return (
-    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${final ? "border-[color:var(--color-mint)]/20 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint)]" : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)]"}`}>
-      {status.replaceAll("_", " ")}
+    <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${final ? "border-[color:var(--color-mint)]/35 bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint-ink)]" : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)]"}`}>
+      {versionStatusLabel(status)}
     </span>
   );
 }

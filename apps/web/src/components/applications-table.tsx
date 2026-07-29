@@ -70,7 +70,7 @@ export function ApplicationsTable({
             <tr
               key={a.id}
               onDoubleClick={() => openJD(a.job.source_url)}
-              title={a.job.source_url ? "Double-click to open the original JD" : undefined}
+              title={a.job.source_url ? "Double-click to open the original job description" : undefined}
               className="cursor-default border-t border-[color:var(--color-border)] text-[color:var(--color-text)] transition hover:bg-[color:var(--color-surface-2)]"
             >
               <Td>
@@ -89,9 +89,9 @@ export function ApplicationsTable({
                       rel="noopener noreferrer"
                       onClick={(e) => e.stopPropagation()}
                       onDoubleClick={(e) => e.stopPropagation()}
-                      title="Open original JD"
+                      title="Open the original job description"
                       className="text-[color:var(--color-text-dim)] transition hover:text-[color:var(--color-violet)]"
-                      aria-label="Open original job description"
+                      aria-label="Open the original job description"
                     >
                       <ExternalLink className="size-3.5" />
                     </a>

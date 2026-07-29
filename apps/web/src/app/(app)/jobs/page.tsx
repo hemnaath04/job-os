@@ -921,7 +921,8 @@ export default function DiscoverPage() {
 
           {sortedResults.length === 0 ? (
             <div className="mt-4 text-sm text-[color:var(--color-text-muted)]">
-              No results.
+              No roles matched these filters. Widen the title keywords, raise the
+              max age, or clear the country code to search globally.
             </div>
           ) : (
             <div className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -1093,7 +1094,7 @@ function ResultCard({
 
       <div className="mt-auto flex items-center justify-between gap-2 pt-3">
         {result.already_imported ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1 text-[11px] text-[color:var(--color-mint)]">
+          <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1 text-[11px] text-[color:var(--color-mint-ink)]">
             <CheckCircle2 className="size-3" /> In Applications
           </span>
         ) : (
@@ -1248,7 +1249,7 @@ function ByoSourceToggle({
       <span className="flex w-full items-center gap-1.5">
         <span className="text-sm font-medium">{label}</span>
         {connected ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-mint)]">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-mint-ink)]">
             <span className="size-1 rounded-full bg-[color:var(--color-mint)]" />
             connected
           </span>
