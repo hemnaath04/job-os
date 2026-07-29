@@ -676,7 +676,7 @@ function TailorInner() {
         <button
           onClick={() => start.mutate()}
           disabled={!canRun}
-          className="kinetic-button kinetic-button-primary disabled:cursor-not-allowed disabled:opacity-40"
+          className="kinetic-button product-button-gradient disabled:cursor-not-allowed disabled:opacity-40"
         >
           {running ? (
             <>

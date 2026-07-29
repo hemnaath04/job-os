@@ -307,6 +307,37 @@
   box-shadow: 0 14px 30px -14px rgba(233, 198, 74, 0.8);
 }
 
+/* A gradient skin for the single most important action on a surface, meant to
+   sit on top of the primary variant rather than replace it. Geometry, press,
+   focus ring and disabled state all still come from .product-button, so the
+   one interaction the app standardised on is untouched and only the fill
+   changes.
+   Deliberately narrow: one of these per surface, two at the very most. The
+   whole point of a gradient here is that it is rarer than the flat fill.
+   Stops run deep gold to jasmine to cream, extending bg-gradient-brand rather
+   than introducing a second gradient language. They are literal because
+   --color-on-accent is #221F0E in both themes, so the same fill carries the
+   same dark text either way: 9.95:1 at the darkest stop, past AAA. */
+.product-button-gradient {
+  color: var(--color-on-accent);
+  border: 1px solid var(--color-accent-border);
+  background-image: linear-gradient(120deg, #E9C64A 0%, #FFE787 52%, #EBF8B8 100%);
+  background-size: 180% 100%;
+  background-position: 0% 50%;
+  box-shadow: var(--shadow-brand-glow);
+  transition:
+    background-position var(--dur-slow) var(--ease-out),
+    box-shadow var(--dur) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+/* The gradient slides rather than the button changing colour, so hover reads
+   as light moving across it. */
+.product-button-gradient:hover {
+  background-position: 100% 50%;
+  box-shadow: 0 14px 30px -14px rgba(233, 198, 74, 0.85);
+}
+
 .product-button-secondary,
 .kinetic-button-secondary {
   color: var(--color-text);
@@ -672,6 +703,7 @@
   }
 
   .product-button,
+  .product-button-gradient,
   .kinetic-button,
   .product-metric,
   .product-row,

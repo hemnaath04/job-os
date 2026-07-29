@@ -92,7 +92,7 @@ export const clerkAppearance = {
     formFieldInput:
       "field-control placeholder:text-[color:var(--color-text-dim)]",
     formButtonPrimary:
-      "product-button product-button-primary w-full normal-case tracking-normal",
+      "product-button product-button-gradient w-full normal-case tracking-normal",
     footerActionText: "text-[color:var(--color-text-muted)]",
     footerActionLink:
       "text-[color:var(--color-accent-ink)] underline decoration-from-font underline-offset-2",
