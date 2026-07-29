@@ -27,6 +27,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { downloadPdf } from "@/lib/download";
 import type {
   Resume,
@@ -83,6 +84,46 @@ function ResumesInner() {
   const { data: templates = [] } = useQuery({
     queryKey: ["templates"],
     queryFn: () => api.listTemplates(),
+  });
+  // Only resumes with a stored original document can yield a design, so ask once
+  // and gate the gesture on the answer rather than promising and then failing.
+  const { data: originals = {} } = useQuery({
+    queryKey: ["resume-originals", resumes.map((r) => r.id).join(",")],
+    enabled: resumes.length > 0,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        resumes.map(
+          async (r) =>
+            [r.id, !!(await appwriteWorkspace.findResumeOriginalDocument(r.id))] as const,
+        ),
+      );
+      return Object.fromEntries(entries) as Record<string, boolean>;
+    },
+  });
+  const [dragging, setDragging] = useState<Resume | null>(null);
+  const buildFromResume = useMutation({
+    mutationFn: (resume: Resume) => api.generateTemplateFromResume(resume),
+    onSuccess: (template, resume) => {
+      if (!template) {
+        toast.error(
+          `${resume.name} has no original document stored, so there is no design to read.`,
+        );
+        return;
+      }
+      toast.success(`Built the ${template.name} template from ${resume.name}`, {
+        description: "Your resume and its versions are untouched.",
+      });
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+  const buildFromUpload = useMutation({
+    mutationFn: (file: File) => api.generateTemplateFromFile(file),
+    onSuccess: (template) => {
+      toast.success(`Built the ${template.name} template`);
+      qc.invalidateQueries({ queryKey: ["templates"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
   const removeTemplate = useMutation({
     mutationFn: (templateId: string) => api.archiveTemplate(templateId),
@@ -358,9 +399,26 @@ function ResumesInner() {
             removingId={
               removeTemplate.isPending ? (removeTemplate.variables ?? null) : null
             }
+            onUpload={(file) => buildFromUpload.mutate(file)}
+            uploading={buildFromUpload.isPending}
+            accepts={!!dragging && (originals[dragging.id] ?? false)}
+            onDropResume={() => dragging && buildFromResume.mutate(dragging)}
+            building={buildFromResume.isPending}
           />
 
-          <SourceResumesSection resumes={sorted} openId={openId} />
+          <SourceResumesSection
+            resumes={sorted}
+            openId={openId}
+            originals={originals}
+            onDragStart={setDragging}
+            onDragEnd={() => setDragging(null)}
+            onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
+            buildingId={
+              buildFromResume.isPending
+                ? (buildFromResume.variables?.id ?? null)
+                : null
+            }
+          />
         </>
       )}
     </div>
@@ -380,28 +438,98 @@ function TemplatesSection({
   templates,
   onRemove,
   removingId,
+  onUpload,
+  uploading,
+  accepts,
+  onDropResume,
+  building,
 }: {
   templates: ResumeTemplate[];
   onRemove: (templateId: string) => void;
   removingId: string | null;
+  onUpload: (file: File) => void;
+  uploading: boolean;
+  accepts: boolean;
+  onDropResume: () => void;
+  building: boolean;
 }) {
+  const [over, setOver] = useState(false);
+  const uploadInput = useRef<HTMLInputElement>(null);
+  const active = accepts && over;
+  const busy = uploading || building;
+
   return (
-    <section className="mt-6">
-      <div className="flex items-baseline gap-2">
+    <section
+      className="mt-6"
+      onDragOver={(event) => {
+        if (!accepts) return;
+        // Marking the event handled is what makes this a valid drop target.
+        event.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node)) return;
+        setOver(false);
+      }}
+      onDrop={(event) => {
+        if (!accepts) return;
+        event.preventDefault();
+        setOver(false);
+        onDropResume();
+      }}
+    >
+      <div className="flex flex-wrap items-baseline gap-2">
         <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
         <h2 className="text-sm font-semibold">Templates</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {templates.length}
         </span>
+        {active && (
+          <span className="text-xs text-[color:var(--color-violet)]">
+            Drop to read this resume&apos;s design
+          </span>
+        )}
+        {busy && (
+          <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
+            <Loader2 className="size-3 animate-spin" />
+            Reading the design and checking it renders, up to a minute
+          </span>
+        )}
+        <input
+          ref={uploadInput}
+          type="file"
+          accept=".pdf,.docx,application/pdf"
+          className="hidden"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) onUpload(file);
+            event.target.value = "";
+          }}
+        />
+        <button
+          onClick={() => uploadInput.current?.click()}
+          disabled={busy}
+          className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+        >
+          <FileUp className="size-3" /> Add from a design
+        </button>
       </div>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        The look, not the data. Pick one when you tailor a resume. Tailoring
-        borrows a look and never writes to the template.
+        The look, not the data. Upload a resume whose design you like, or drag one
+        from below. Tailoring borrows a look and never writes to the template.
       </p>
-      <div className="mt-3">
+      <div
+        className={`mt-3 rounded-[var(--radius-card)] transition ${
+          active
+            ? "ring-2 ring-[color:var(--color-violet)]/60"
+            : accepts
+              ? "ring-1 ring-dashed ring-[color:var(--color-border)]"
+              : ""
+        }`}
+      >
         {templates.length === 0 ? (
           <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-            No templates yet.
+            No templates yet. Add one from a design, or drag a resume here.
           </div>
         ) : (
           <div className="workspace-panel divide-y divide-[color:var(--color-border)] overflow-hidden">
@@ -410,7 +538,7 @@ function TemplatesSection({
                 key={template.id}
                 className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]"
               >
-                <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-violet)]" />
+                <TemplateThumbnail template={template} />
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-sm font-semibold">
                     {template.name}
@@ -446,13 +574,56 @@ function TemplatesSection({
   );
 }
 
+/**
+ * A real preview of the look: the sample render, scaled down.
+ *
+ * The stored preview is HTML rather than an image because a browser cannot
+ * render Jinja and cannot thumbnail a PDF without a rasteriser, and the point of
+ * a thumbnail here is to show that two templates actually differ. Sandboxed with
+ * no allow flags, so it cannot script or navigate.
+ */
+function TemplateThumbnail({
+  template,
+}: {
+  template: ResumeTemplate & { preview_html?: string };
+}) {
+  if (!template.preview_html) {
+    return (
+      <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-violet)]" />
+    );
+  }
+  return (
+    <div className="h-16 w-12 shrink-0 overflow-hidden rounded border border-[color:var(--color-border)] bg-white">
+      <iframe
+        title={`${template.name} preview`}
+        srcDoc={template.preview_html}
+        sandbox=""
+        aria-hidden
+        tabIndex={-1}
+        className="pointer-events-none h-[816px] w-[624px] origin-top-left border-0"
+        style={{ transform: "scale(0.077)" }}
+      />
+    </div>
+  );
+}
+
 /** Every resume. Tailored versions are saved under the one they came from. */
 function SourceResumesSection({
   resumes,
   openId,
+  originals,
+  onDragStart,
+  onDragEnd,
+  onUseAsTemplate,
+  buildingId,
 }: {
   resumes: Resume[];
   openId: string | null;
+  originals: Record<string, boolean>;
+  onDragStart: (resume: Resume) => void;
+  onDragEnd: () => void;
+  onUseAsTemplate: (resume: Resume) => void;
+  buildingId: string | null;
 }) {
   return (
     <section className="mt-6">
@@ -465,7 +636,7 @@ function SourceResumesSection({
       </div>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
         The data. Tailored versions are saved here, under the resume they came
-        from.
+        from. Drag one up to Templates to reuse its design.
       </p>
       {resumes.length === 0 ? (
         <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
@@ -474,7 +645,16 @@ function SourceResumesSection({
       ) : (
         <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
           {resumes.map((r) => (
-            <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
+            <ResumeRow
+              key={r.id}
+              resume={r}
+              defaultOpen={r.id === openId}
+              hasOriginal={originals[r.id] ?? false}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              onUseAsTemplate={onUseAsTemplate}
+              building={buildingId === r.id}
+            />
           ))}
         </div>
       )}
@@ -485,9 +665,19 @@ function SourceResumesSection({
 function ResumeRow({
   resume,
   defaultOpen = false,
+  hasOriginal,
+  onDragStart,
+  onDragEnd,
+  onUseAsTemplate,
+  building,
 }: {
   resume: Resume;
   defaultOpen?: boolean;
+  hasOriginal: boolean;
+  onDragStart: (resume: Resume) => void;
+  onDragEnd: () => void;
+  onUseAsTemplate: (resume: Resume) => void;
+  building: boolean;
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
@@ -516,7 +706,21 @@ function ResumeRow({
 
   return (
     <div>
-      <div className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]">
+      <div
+        // Only a resume with a stored original document has a design to read, so
+        // the ones without are not draggable rather than dragging and failing.
+        draggable={hasOriginal}
+        onDragStart={(event) => {
+          if (!hasOriginal) return;
+          event.dataTransfer.setData("text/plain", resume.id);
+          event.dataTransfer.effectAllowed = "copy";
+          onDragStart(resume);
+        }}
+        onDragEnd={onDragEnd}
+        className={`flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)] ${
+          hasOriginal ? "cursor-grab active:cursor-grabbing" : ""
+        } ${building ? "opacity-50" : ""}`}
+      >
         <button
           onClick={() => setOpen((current) => !current)}
           aria-expanded={open}
@@ -549,6 +753,25 @@ function ResumeRow({
         <div className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
           {updated}
         </div>
+        {/* Keyboard and touch equivalent of the drag. Says why when there is no
+            original document, rather than offering something that cannot work. */}
+        {hasOriginal ? (
+          <button
+            onClick={() => onUseAsTemplate(resume)}
+            disabled={building}
+            title="Read this resume's design and save it as a template"
+            className="shrink-0 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+          >
+            {building ? "Reading…" : "Use as template"}
+          </button>
+        ) : (
+          <span
+            title="This resume has no original document stored, so there is no design to read."
+            className="shrink-0 text-[11px] text-[color:var(--color-text-dim)]"
+          >
+            No original
+          </span>
+        )}
         {!resume.is_master && (
           <button
             onClick={() => {

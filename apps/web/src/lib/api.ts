@@ -78,6 +78,16 @@ export type RenderReviewResult = {
  * the review found issues and the caller should show them and offer to proceed
  * anyway, since the review advises rather than gates.
  */
+/** What the container returns after recreating and validating a design. */
+export type GeneratedTemplate = {
+  name: string;
+  html_source: string;
+  css_source: string;
+  notes: string;
+  pdf_base64: string;
+  preview_html: string;
+};
+
 export type FinalizeOutcome =
   | { status: "finalized"; version: ResumeVersion }
   | { status: "blocked"; review: ResumeReviewResult; version: ResumeVersion };
@@ -144,6 +154,12 @@ const RENDER_TIMEOUT_MS = 2 * 60 * 1_000;
 /** A single conversational edit is one Claude call, not a batch job. */
 const REVISE_TIMEOUT_MS = 4 * 60 * 1_000;
 const WARM_TIMEOUT_MS = 12 * 1_000;
+/**
+ * Recreating a design is the slowest call in the app: a cold start, a
+ * vision-model pass over a PDF, a render to validate, and possibly a repair
+ * round. Generous, but still bounded.
+ */
+const TEMPLATE_TIMEOUT_MS = 4 * 60 * 1_000;
 
 /**
  * Wake the API container before a call that would otherwise pay for the cold
@@ -516,6 +532,74 @@ export const api = {
   listTemplates: () => {
     if (!isAppwriteWorkspaceEnabled) return Promise.resolve([]);
     return appwriteWorkspace.listTemplates();
+  },
+
+  /**
+   * Recreate an uploaded design as a template, then store it.
+   *
+   * Generation runs on the API container, which has the render libs needed to
+   * prove the template works before it is kept. A design that cannot be turned
+   * into a working template surfaces as an error and nothing is stored, so the
+   * user keeps whatever looks they already had.
+   */
+  async generateTemplateFromFile(
+    file: File,
+    { createdFromResumeId }: { createdFromResumeId?: string | null } = {},
+  ) {
+    if (!isAppwriteWorkspaceEnabled) {
+      throw new Error("Templates require the Appwrite workspace.");
+    }
+    const body = new FormData();
+    body.append("file", file);
+    await warmBackend();
+    const response = await withTimeout(
+      fetch(`${BASE}/resumes/generate-template`, {
+        method: "POST",
+        body,
+        cache: "no-store",
+      }),
+      TEMPLATE_TIMEOUT_MS,
+      "Building the template timed out. Try again, or try a simpler one-page design.",
+    );
+    if (!response.ok) {
+      let detail = `${response.status}`;
+      try {
+        const parsed = (await response.json()) as { detail?: string };
+        if (parsed.detail) detail = parsed.detail;
+      } catch {
+        /* keep the status code */
+      }
+      throw new Error(detail);
+    }
+    const generated = (await response.json()) as GeneratedTemplate;
+    return appwriteWorkspace.createTemplate({
+      name: generated.name,
+      html_source: generated.html_source,
+      css_source: generated.css_source,
+      notes: generated.notes,
+      preview_html: generated.preview_html,
+      created_from_resume_id: createdFromResumeId ?? null,
+    });
+  },
+
+  /**
+   * Build a template from the document a resume was originally imported from.
+   *
+   * The same extraction as an upload, pointed at a file already in the library.
+   * Returns null when that resume has no original document, so the caller can
+   * say why instead of quietly producing a copy of some other look.
+   */
+  async generateTemplateFromResume(resume: Resume) {
+    if (!isAppwriteWorkspaceEnabled) {
+      throw new Error("Templates require the Appwrite workspace.");
+    }
+    const original = await appwriteWorkspace.findResumeOriginalDocument(resume.id);
+    if (!original) return null;
+    const file = await appwriteWorkspace.downloadStoredFile(
+      original.fileId,
+      original.filename,
+    );
+    return api.generateTemplateFromFile(file, { createdFromResumeId: resume.id });
   },
 
   archiveTemplate: (templateId: string) => {

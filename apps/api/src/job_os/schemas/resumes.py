@@ -108,6 +108,7 @@ class GeneratedTemplateResponse(BaseModel):
     css_source: str
     notes: str
     pdf_base64: str
+    preview_html: str
 
 
 class ResumeRenderReviewRequest(ORMModel):

@@ -343,6 +343,122 @@ export const appwriteWorkspace = {
     return { html_source: row.html_source, css_source: row.css_source };
   },
 
+  /** Store a generated look. Creates a template row and nothing else. */
+  async createTemplate(input: {
+    name: string;
+    html_source: string;
+    css_source: string;
+    notes?: string;
+    preview_html?: string;
+    created_from_resume_id?: string | null;
+  }): Promise<ResumeTemplate> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const ownerId = getCurrentAppwriteUserId();
+    const timestamp = now();
+
+    // Names are how the user picks a look, so keep them unique rather than
+    // silently ending up with three entries called Two Column Serif.
+    const existing = await tables.listRows<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      queries: [Query.equal("archived", false), Query.limit(200)],
+      total: false,
+      ttl: 0,
+    });
+    const taken = new Set(existing.rows.map((row) => row.name));
+    let name = input.name.trim() || "Untitled look";
+    for (let suffix = 2; taken.has(name); suffix += 1) {
+      name = `${input.name.trim()} ${suffix}`;
+    }
+
+    const template: ResumeTemplate & { preview_html?: string } = {
+      id: ID.unique(),
+      name,
+      description: input.notes?.trim() || null,
+      created_from_resume_id: input.created_from_resume_id ?? null,
+      source_file_id: null,
+      preview_file_id: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+      preview_html: input.preview_html,
+    };
+    await tables.createRow<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      rowId: template.id,
+      data: {
+        owner_id: ownerId,
+        name,
+        archived: false,
+        html_source: input.html_source,
+        css_source: input.css_source,
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(template),
+      },
+      permissions: ownerPermissions(ownerId),
+    });
+    return template;
+  },
+
+  /**
+   * The original document a resume was imported from, if it still exists.
+   *
+   * Only some resumes have one, so callers must handle null rather than
+   * inventing a look. Read from the versions, newest first, since that is where
+   * the uploaded file is recorded.
+   */
+  async findResumeOriginalDocument(
+    resumeId: string,
+  ): Promise<{ fileId: string; filename: string } | null> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const result = await getAppwriteServices().tables.listRows<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      queries: [
+        Query.equal("resume_id", resumeId),
+        Query.equal("archived", false),
+        Query.orderDesc("source_updated_at"),
+        Query.limit(50),
+      ],
+      total: false,
+      ttl: 0,
+    });
+    for (const row of result.rows) {
+      const version = parseSnapshot<
+        ResumeVersion & {
+          pdf_file_id?: string | null;
+          source_file_id?: string | null;
+          source_filename?: string | null;
+        }
+      >(row);
+      const fileId = version.source_file_id || version.pdf_file_id;
+      if (fileId && version.source_filename) {
+        return { fileId, filename: version.source_filename };
+      }
+    }
+    return null;
+  },
+
+  /** Fetch a stored document so it can be sent for design extraction. */
+  async downloadStoredFile(fileId: string, filename: string): Promise<File> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const url = getAppwriteServices().storage.getFileDownload({
+      bucketId: config.resumeFilesBucketId,
+      fileId,
+    });
+    const response = await fetch(url, { credentials: "include" });
+    if (!response.ok) {
+      throw new Error(`Could not read the stored document (${response.status}).`);
+    }
+    return new File([await response.blob()], filename, {
+      type: "application/pdf",
+    });
+  },
+
   /** Archive a template. Look-only, so no resume or version is affected. */
   async archiveTemplate(templateId: string): Promise<void> {
     await ensureAppwriteSession();

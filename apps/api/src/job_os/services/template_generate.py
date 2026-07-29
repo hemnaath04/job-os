@@ -28,7 +28,11 @@ from job_os.services.llm_json import (
     parse_model_json,
     response_text,
 )
-from job_os.services.pdf_render import render_resume_pdf, resume_context
+from job_os.services.pdf_render import (
+    render_resume_html,
+    render_resume_pdf,
+    resume_context,
+)
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -56,6 +60,10 @@ class TemplateCandidate:
     css_source: str
     notes: str
     pdf_bytes: bytes
+    # The sample rendered as self-contained HTML. A browser cannot render Jinja
+    # and cannot thumbnail a PDF without a rasteriser, so this is what the
+    # library shows as a preview: the real output, scaled down.
+    preview_html: str
 
 
 # Exercises every section a template may reference, so one that crashes on a
@@ -296,6 +304,11 @@ async def generate_template_from_document(
             css_source=generated.css_source,
             notes=generated.notes.strip(),
             pdf_bytes=pdf_bytes,
+            preview_html=render_resume_html(
+                SAMPLE_RESUME,
+                html_source=generated.html_source,
+                css_source=generated.css_source,
+            ),
         )
 
     first = await ask()

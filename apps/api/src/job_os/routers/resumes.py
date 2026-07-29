@@ -326,6 +326,7 @@ async def generate_template(
         css_source=candidate.css_source,
         notes=candidate.notes,
         pdf_base64=base64.b64encode(candidate.pdf_bytes).decode("ascii"),
+        preview_html=candidate.preview_html,
     )
 
 
