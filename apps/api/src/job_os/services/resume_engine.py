@@ -162,12 +162,21 @@ def _repo_from_url(value: str | None) -> tuple[str, str] | None:
 def _github_repositories(
     doc: dict[str, Any], *, requested_text: str = ""
 ) -> dict[str, tuple[str, str]]:
-    """Resolve only Hemnaath's known or explicitly linked project repositories."""
+    """Resolve the repositories a resume's own projects link to.
+
+    A GitHub URL sitting on the candidate's verified project is theirs by
+    assertion, so it is the evidence to load. This used to accept a repository
+    only when its owner matched one hardcoded username, which meant changing
+    handle, or hosting a project under an organisation, silently stopped
+    evidence loading and cost the review points through
+    github_evidence_unavailable warnings. Projects with no URL still fall back
+    to the name lookup in KNOWN_GITHUB_REPOS.
+    """
     repos: dict[str, tuple[str, str]] = {}
     for project in doc.get("projects", []) or []:
         project_name = str(project.get("name") or "").strip()
         parsed = _repo_from_url(project.get("url"))
-        if parsed and parsed[0].lower() == "hemnaath04":
+        if parsed:
             repos[f"{project_name or parsed[1]} [{parsed[1]}]"] = parsed
             continue
         normalized = re.sub(r"[^a-z0-9]+", " ", project_name.lower()).strip()

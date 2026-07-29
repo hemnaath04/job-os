@@ -299,3 +299,31 @@ async def test_revision_raises_a_readable_error_when_retry_also_fails(
             _MINIMAL_RESUME, message="x", verified_facts=[]
         )
     assert len(calls) == 2
+
+
+def test_github_evidence_follows_the_resume_not_a_hardcoded_username() -> None:
+    """Any owner works: a handle change must not silently stop evidence loading.
+
+    This used to accept a repository only when the owner matched one hardcoded
+    username, so hosting a project under an organisation dropped its evidence
+    and cost the review points via github_evidence_unavailable.
+    """
+    repos = _github_repositories(
+        {
+            "projects": [
+                {"name": "Org Project", "url": "https://github.com/some-org/thing"},
+                {"name": "Personal", "url": "https://github.com/a-new-handle/other"},
+            ]
+        }
+    )
+    assert set(repos.values()) == {
+        ("some-org", "thing"),
+        ("a-new-handle", "other"),
+    }
+
+
+def test_non_github_project_urls_are_ignored() -> None:
+    repos = _github_repositories(
+        {"projects": [{"name": "Site", "url": "https://example.com/not-a-repo"}]}
+    )
+    assert repos == {}
