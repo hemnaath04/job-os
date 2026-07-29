@@ -160,7 +160,9 @@ export function Sidebar() {
         </button>
       </div>
     </motion.aside>
-    <nav className="fixed inset-x-3 bottom-3 z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
+    {/* Clear of the home indicator on a notched phone, where a flat 0.75rem
+        put the bar underneath it. */}
+    <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
       {NAV.slice(0, 5).map((item) => {
         const Icon = item.icon;
         const active = pathname === item.href || pathname.startsWith(item.href + "/");

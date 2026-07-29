@@ -159,7 +159,9 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
         {Object.entries(byCat).map(([cat, skills]) => (
           <div
             key={cat}
-            className="grid grid-cols-[10rem_1fr] gap-x-4 gap-y-1.5 border-b border-[color:var(--color-border)] py-2 last:border-b-0"
+            // The 10rem label column leaves too little for the chips on a
+            // phone, so the category stacks above them until there is room.
+            className="grid grid-cols-1 gap-y-1.5 border-b border-[color:var(--color-border)] py-2 last:border-b-0 sm:grid-cols-[10rem_1fr] sm:gap-x-4"
           >
             <div className="text-sm font-medium text-[color:var(--color-text)]">
               {cat}

@@ -28,7 +28,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         >
           Skip to content
         </a>
-        <div id="app-shell" className="flex min-h-[100dvh] pb-16 lg:pb-0">
+        {/* Room for the floating mobile nav, including the safe area it now
+            sits above, so the last row of a page is never trapped under it. */}
+        <div
+          id="app-shell"
+          className="flex min-h-[100dvh] pb-[calc(4.75rem+env(safe-area-inset-bottom))] lg:pb-0"
+        >
           <Sidebar />
           <main
             id="main-content"

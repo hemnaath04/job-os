@@ -160,6 +160,10 @@ export function KanbanBoard({
                 <motion.div
                   key={app.id}
                   layout
+                  // A grid item defaults to min-width:auto, so without this the
+                  // card's longest job title sets the column width and the whole
+                  // page scrolls sideways on a narrow screen.
+                  className="min-w-0"
                   initial={{ opacity: 0, scale: 0.98 }}
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.96 }}
@@ -255,7 +259,7 @@ function DraggableCard({
       ref={setNodeRef}
       {...attributes}
       {...listeners}
-      className={isDragging ? "opacity-30" : ""}
+      className={"min-w-0 " + (isDragging ? "opacity-30" : "")}
     >
       <Card app={app} onDelete={onDelete} compact={compact} />
     </div>
@@ -294,8 +298,10 @@ function Card({
       <div className="flex items-start gap-2.5">
         <CompanyAvatar name={company} domain={app.job.company?.domain} size={28} />
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1 truncate text-sm font-medium text-[color:var(--color-text)]">
-            <span className="truncate">{app.job.title}</span>
+          {/* truncate on a flex container does not ellipsize its children, so
+              the title itself truncates and is allowed to shrink. */}
+          <div className="flex min-w-0 items-center gap-1 text-sm font-medium text-[color:var(--color-text)]">
+            <span className="min-w-0 truncate">{app.job.title}</span>
             {sourceUrl && (
               <a
                 href={sourceUrl}

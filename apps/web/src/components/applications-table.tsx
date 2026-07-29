@@ -44,8 +44,11 @@ export function ApplicationsTable({
   }
 
   return (
-    <div className="workspace-panel overflow-hidden">
-      <table className="w-full text-sm">
+    // Seven columns do not fit a phone. Scrolling the table keeps Status,
+    // Location, Updated, Next action and the row actions reachable, where
+    // overflow-hidden simply cut them off with no way to get to them.
+    <div className="workspace-panel overflow-x-auto">
+      <table className="w-full min-w-[52rem] text-sm">
         <caption className="sr-only">
           Tracked applications, with status, location, and next action for each.
         </caption>
