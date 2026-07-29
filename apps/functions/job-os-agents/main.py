@@ -27,6 +27,7 @@ from job_os.services.profile_extract import (
     extract_json_resume_from_docx,
     extract_json_resume_from_pdf,
 )
+from job_os.services.identity import fact_identity
 from job_os.services.resume_engine import (
     generate_latex_source,
     review_resume,
@@ -266,12 +267,17 @@ def _profile_fact_specs(document: dict[str, Any]) -> list[tuple[dict[str, Any], 
     return specs
 
 
-def _profile_key(fact: dict[str, Any]) -> tuple[str, str, str]:
-    return (
-        str(fact["kind"]),
-        str(fact.get("org") or "").strip().lower(),
-        str(fact["title"]).strip().lower(),
-    )
+def _profile_key(fact: dict[str, Any]) -> tuple[str, ...]:
+    """Whether this fact already exists in the vault.
+
+    Delegates to the shared identity so importing and rendering agree on what
+    counts as the same job. The old key was an exact kind/org/title match, which
+    meant re-importing a resume with any rewording, or an institution spelled
+    with a dash instead of a comma, registered a brand new entity. That is how
+    the vault ended up with two EPAM experiences and two Northeastern degrees,
+    which then rendered on the resume twice.
+    """
+    return fact_identity(fact)
 
 
 class Workspace:

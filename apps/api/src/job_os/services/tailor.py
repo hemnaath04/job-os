@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import json
 import re
-import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -39,6 +38,7 @@ from job_os.schemas.resumes import (
     TailorAgentOutput,
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES
+from job_os.services.identity import identity_text as _identity_text
 from job_os.services.llm_json import (
     JSON_ONLY_RETRY,
     parse_model_json,
@@ -678,17 +678,6 @@ _KIND_TO_SECTION = {
     "publication": "publications",
     "award": "awards",
 }
-
-
-def _identity_text(value: Any) -> str:
-    """Fold a name down to what identifies it, ignoring how it was punctuated.
-
-    "Northeastern University - Khoury College" and "Northeastern University,
-    Khoury College" are the same institution, so strip accents, case, and every
-    non-alphanumeric run before comparing.
-    """
-    folded = unicodedata.normalize("NFKD", str(value or "")).casefold()
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", folded).split())
 
 
 def _work_identity(entry: dict[str, Any]) -> tuple[str, ...]:
