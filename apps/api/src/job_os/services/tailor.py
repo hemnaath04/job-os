@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -679,6 +680,106 @@ _KIND_TO_SECTION = {
 }
 
 
+def _identity_text(value: Any) -> str:
+    """Fold a name down to what identifies it, ignoring how it was punctuated.
+
+    "Northeastern University - Khoury College" and "Northeastern University,
+    Khoury College" are the same institution, so strip accents, case, and every
+    non-alphanumeric run before comparing.
+    """
+    folded = unicodedata.normalize("NFKD", str(value or "")).casefold()
+    return " ".join(re.sub(r"[^a-z0-9]+", " ", folded).split())
+
+
+def _work_identity(entry: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        _identity_text(entry.get("name")),
+        str(entry.get("startDate") or ""),
+        str(entry.get("endDate") or ""),
+    )
+
+
+def _education_identity(entry: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        _identity_text(entry.get("institution")),
+        _identity_text(f"{entry.get('studyType') or ''} {entry.get('area') or ''}"),
+    )
+
+
+def _project_identity(entry: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        _identity_text(entry.get("name")),
+        str(entry.get("startDate") or ""),
+        str(entry.get("endDate") or ""),
+    )
+
+
+def _volunteer_identity(entry: dict[str, Any]) -> tuple[str, ...]:
+    return (
+        _identity_text(entry.get("organization")),
+        _identity_text(entry.get("position")),
+    )
+
+
+def _merge_duplicate_group(
+    group: list[dict[str, Any]], *, list_fields: tuple[str, ...]
+) -> dict[str, Any]:
+    """Fold entries for the same real thing into one, losing nothing."""
+    # The richest variant sets the scalar fields: most evidence first, then the
+    # most specific wording, since "Junior Software Test Automation Engineer,
+    # Client: ..." says more than "Software Test Automation Engineer".
+    ranked = sorted(
+        group,
+        key=lambda entry: (
+            len(entry.get("highlights") or []),
+            len(str(entry.get("position") or entry.get("studyType") or "")),
+        ),
+        reverse=True,
+    )
+    merged = dict(ranked[0])
+    for other in ranked[1:]:
+        for key, value in other.items():
+            if key not in list_fields and not merged.get(key) and value:
+                merged[key] = value
+    # Union the lists so a bullet that only existed on the other variant of the
+    # same job still appears. Order preserved, exact duplicates collapsed.
+    for key in list_fields:
+        seen: dict[str, None] = {}
+        for entry in ranked:
+            for item in entry.get(key) or []:
+                seen.setdefault(str(item), None)
+        if seen:
+            merged[key] = list(seen)
+    return merged
+
+
+def _collapse_duplicate_entries(
+    entries: list[dict[str, Any]],
+    identity: Callable[[dict[str, Any]], tuple[str, ...]],
+    *,
+    list_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    """Emit one entry per real job, degree, or project.
+
+    Re-importing a resume that words a role slightly differently creates a
+    second verified fact for the same job, and spelling an institution with a
+    dash instead of a comma does the same for a degree. Both facts are
+    individually legitimate, so the fix belongs here rather than in the vault:
+    render the entity once, and keep every bullet from every variant.
+    """
+    grouped: dict[tuple[str, ...], list[dict[str, Any]]] = {}
+    for entry in entries:
+        grouped.setdefault(identity(entry), []).append(entry)
+    collapsed: list[dict[str, Any]] = []
+    for key, group in grouped.items():
+        if len(group) == 1:
+            collapsed.append(group[0])
+            continue
+        log.info("tailor.merged_duplicate_entries", identity=key, variants=len(group))
+        collapsed.append(_merge_duplicate_group(group, list_fields=list_fields))
+    return collapsed
+
+
 def _assemble_json_resume(
     *,
     master_json_resume: dict[str, Any],
@@ -863,6 +964,22 @@ def _assemble_json_resume(
             }
         )
 
+    # One entry per real entity. Duplicate verified facts for the same job or
+    # degree are the norm once a resume has been imported more than once, and
+    # rendering both put EPAM Systems and the Northeastern MS on the resume twice.
+    work = _collapse_duplicate_entries(
+        work, _work_identity, list_fields=("highlights", "keywords")
+    )
+    education = _collapse_duplicate_entries(
+        education, _education_identity, list_fields=("courses",)
+    )
+    projects = _collapse_duplicate_entries(
+        projects, _project_identity, list_fields=("highlights", "keywords", "roles")
+    )
+    volunteer = _collapse_duplicate_entries(
+        volunteer, _volunteer_identity, list_fields=("highlights",)
+    )
+
     json_resume: dict[str, Any] = {
         "basics": basics,
         "work": work,
@@ -870,7 +987,9 @@ def _assemble_json_resume(
         "volunteer": volunteer,
         "education": education,
         "skills": [
-            {"name": cat, "keywords": kws} for cat, kws in skills_by_category.items()
+            # Two identical skill facts would otherwise list the keyword twice.
+            {"name": cat, "keywords": list(dict.fromkeys(kws))}
+            for cat, kws in skills_by_category.items()
         ],
         "certificates": certificates,
         "publications": publications,

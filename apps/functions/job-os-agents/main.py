@@ -412,6 +412,27 @@ class Workspace:
         except Exception:  # noqa: BLE001 - progress is advisory, never fatal
             pass
 
+    def master_resume(self) -> Any | None:
+        """The caller's master resume row, or None if they have not set one.
+
+        Newest-updated first, so baseline selection for tailoring is
+        deterministic rather than arbitrary should a second master ever exist.
+        Scoped to owner_id, so other users' masters are never visible.
+        """
+        rows = self.tables.list_rows(
+            self.database_id,
+            self.resumes_table,
+            [
+                Query.equal("owner_id", self.user_id),
+                Query.equal("is_master", True),
+                Query.equal("archived", False),
+                Query.order_desc("source_updated_at"),
+                Query.limit(1),
+            ],
+            total=False,
+        ).rows
+        return rows[0] if rows else None
+
     def verified_facts(self) -> list[dict[str, Any]]:
         facts = self.tables.list_rows(
             self.database_id,
@@ -481,20 +502,31 @@ async def _import_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
     validate_json_resume_document(document)
 
     now = _now()
-    resume_id = str(uuid4())
     version_id = str(uuid4())
     is_master = bool(payload.get("is_master"))
-    resume = {
-        "id": resume_id,
-        "name": str(payload.get("name") or filename.rsplit(".", 1)[0]),
-        "base_role": None,
-        "is_master": is_master,
-        "source_kind": "upload",
-        "source_label": "Resume library",
-        "archived_at": None,
-        "created_at": now,
-        "updated_at": now,
-    }
+    # Setting the master again must update the one that already exists. Creating
+    # a second would make the tailoring baseline arbitrary, since a user has
+    # exactly one canonical master by definition.
+    existing_master = workspace.master_resume() if is_master else None
+    if existing_master is not None:
+        resume = _snapshot(existing_master)
+        resume_id = str(resume["id"])
+        resume["updated_at"] = now
+        resume["source_kind"] = "upload"
+        resume["source_label"] = "Resume library"
+    else:
+        resume_id = str(uuid4())
+        resume = {
+            "id": resume_id,
+            "name": str(payload.get("name") or filename.rsplit(".", 1)[0]),
+            "base_role": None,
+            "is_master": is_master,
+            "source_kind": "upload",
+            "source_label": "Resume library",
+            "archived_at": None,
+            "created_at": now,
+            "updated_at": now,
+        }
     version = {
         "id": version_id,
         "resume_id": resume_id,
@@ -520,16 +552,28 @@ async def _import_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         "source_file_id": file_id,
         "pdf_file_id": None,
     }
-    workspace.create_snapshot(
-        workspace.resumes_table,
-        row_id=resume_id,
-        snapshot=resume,
-        fields={
-            "name": resume["name"],
-            "is_master": is_master,
-            "archived": False,
-        },
-    )
+    if existing_master is not None:
+        workspace.update_snapshot(
+            workspace.resumes_table,
+            resume_id,
+            resume,
+            {
+                "name": str(resume.get("name") or "Master"),
+                "is_master": True,
+                "archived": False,
+            },
+        )
+    else:
+        workspace.create_snapshot(
+            workspace.resumes_table,
+            row_id=resume_id,
+            snapshot=resume,
+            fields={
+                "name": resume["name"],
+                "is_master": is_master,
+                "archived": False,
+            },
+        )
     workspace.create_snapshot(
         workspace.versions_table,
         row_id=version_id,
@@ -607,17 +651,7 @@ async def _extract_profile(workspace: Workspace, payload: dict[str, Any]) -> dic
             )
             bullets_created += 1
 
-    master_rows = workspace.tables.list_rows(
-        workspace.database_id,
-        workspace.resumes_table,
-        [
-            Query.equal("owner_id", workspace.user_id),
-            Query.equal("is_master", True),
-            Query.limit(1),
-        ],
-        total=False,
-    ).rows
-    if not master_rows:
+    if workspace.master_resume() is None:
         resume_id = str(uuid4())
         version_id = str(uuid4())
         resume = {
@@ -809,22 +843,12 @@ async def _tailor_resume(
 
     # Baseline is always the master resume's latest version, never a previously
     # tailored variant, so every run starts from a clean no-hallucination base.
-    master_rows = workspace.tables.list_rows(
-        workspace.database_id,
-        workspace.resumes_table,
-        [
-            Query.equal("owner_id", workspace.user_id),
-            Query.equal("is_master", True),
-            Query.equal("archived", False),
-            Query.limit(1),
-        ],
-        total=False,
-    ).rows
-    if not master_rows:
+    master_row = workspace.master_resume()
+    if master_row is None:
         raise ValueError(
             "No master resume found. Import your master resume on the Profile page first."
         )
-    master_id = str(_snapshot(master_rows[0])["id"])
+    master_id = str(_snapshot(master_row)["id"])
 
     version_rows = workspace.tables.list_rows(
         workspace.database_id,
