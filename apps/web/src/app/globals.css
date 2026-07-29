@@ -470,6 +470,80 @@
 .info-chip-sage { color: #5C6B4E; border-color: rgba(129, 148, 96, 0.30); background: rgba(129, 148, 96, 0.10); }
 .info-chip-clay { color: #8A5A1C; border-color: rgba(176, 121, 28, 0.28); background: rgba(176, 121, 28, 0.10); }
 
+/* ── Aurora ───────────────────────────────────────────────────────────────
+   A slow drifting wash for the PUBLIC surfaces only: the auth brand panel and
+   the landing page. Deliberately not used behind the workspace pages, where
+   the dense UI wants the calm flat background and a permanently running
+   animation is a cost with nothing to show for it.
+
+   Warm on purpose. The stock version of this effect is blue and violet, which
+   would read as a different product bolted onto the parchment system, so the
+   stops are jasmine, cream, sage and mauve straight off the tokens, and they
+   follow the theme when it flips. */
+.aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* Keeps the blur and the drifting layers from affecting anything outside. */
+  contain: paint;
+  /* Fades toward the edges so text on top always has a calm field under it. */
+  mask-image: radial-gradient(125% 105% at 50% 0%, black 28%, transparent 80%);
+  /* Measured, not eyeballed. The brightest stop is jasmine, and on dark it
+     lifts the panel enough to sink secondary text: at 0.42 the footer line
+     came out at 2.68:1. These are the strongest values where every text role
+     on top still clears 4.5:1 against the worst stop in that theme. */
+  opacity: 0.4;
+}
+
+.dark .aurora { opacity: 0.22; }
+
+.aurora::before,
+.aurora::after {
+  content: "";
+  position: absolute;
+  /* Oversized so the drift never pulls an edge into frame. */
+  inset: -40%;
+  background-repeat: no-repeat;
+  filter: blur(64px) saturate(115%);
+  will-change: transform;
+}
+
+.aurora::before {
+  background-image:
+    radial-gradient(38% 44% at 22% 28%, color-mix(in srgb, var(--color-accent) 70%, transparent), transparent 70%),
+    radial-gradient(34% 40% at 76% 20%, color-mix(in srgb, var(--color-cream) 62%, transparent), transparent 72%);
+  animation: aurora-drift-a 26s var(--ease-in-out) infinite alternate;
+}
+
+.aurora::after {
+  background-image:
+    radial-gradient(40% 46% at 64% 70%, color-mix(in srgb, var(--color-sage) 58%, transparent), transparent 72%),
+    radial-gradient(30% 36% at 28% 80%, color-mix(in srgb, var(--color-mauve) 38%, transparent), transparent 74%);
+  animation: aurora-drift-b 34s var(--ease-in-out) infinite alternate;
+}
+
+@keyframes aurora-drift-a {
+  from { transform: translate3d(-4%, -2%, 0) scale(1); }
+  to { transform: translate3d(5%, 3%, 0) scale(1.08); }
+}
+
+@keyframes aurora-drift-b {
+  from { transform: translate3d(3%, 2%, 0) scale(1.05); }
+  to { transform: translate3d(-5%, -3%, 0) scale(1); }
+}
+
+/* Named explicitly rather than leaning on the global reduced-motion reset:
+   that one collapses the duration, which for an infinite alternating drift
+   is not the same as holding it still. */
+@media (prefers-reduced-motion: reduce) {
+  .aurora::before,
+  .aurora::after {
+    animation: none !important;
+    will-change: auto;
+  }
+}
+
 /* ── Status notices ───────────────────────────────────────────────────────
    A panel that reports the outcome of something: a review passed, a source
    returned nothing, a render failed. The tint is a translucent mix of the

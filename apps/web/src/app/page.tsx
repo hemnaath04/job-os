@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AuroraBackground } from "@/components/aurora-background";
 import { BackendReadiness } from "@/components/backend-readiness";
 import { BrandMark } from "@/components/brand-mark";
 
@@ -10,7 +11,10 @@ export default async function Landing() {
   if (userId) redirect("/dashboard");
 
   return (
-    <main className="relative mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
+    <main className="relative isolate mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
+      {/* Fixed rather than absolute so the wash spans the viewport instead of
+          being clipped to the centred column. */}
+      <AuroraBackground className="fixed inset-0 -z-10" />
       <BackendReadiness />
       <header className="flex items-center justify-between">
         <div className="flex items-center gap-2.5">
