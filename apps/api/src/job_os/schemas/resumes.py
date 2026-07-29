@@ -96,6 +96,20 @@ class ResumeReviewResult(BaseModel):
     model_summary: str = ""
 
 
+class GeneratedTemplateResponse(BaseModel):
+    """A design recreated as a template, proven to render before it is returned.
+
+    `pdf_base64` is the sample render that validated it, which the caller stores
+    as the preview: acceptance and preview are the same act.
+    """
+
+    name: str
+    html_source: str
+    css_source: str
+    notes: str
+    pdf_base64: str
+
+
 class ResumeRenderReviewRequest(ORMModel):
     json_resume: dict[str, Any]
     # A stored template's look. Omit both to use the bundled default. Rendered

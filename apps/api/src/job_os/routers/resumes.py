@@ -16,6 +16,7 @@ from job_os.db.session import get_session
 from job_os.schemas.resumes import (
     ExportRequest,
     ExportResult,
+    GeneratedTemplateResponse,
     ResumeChatRequest,
     ResumeChatResponse,
     ResumeCreate,
@@ -286,6 +287,45 @@ async def render_and_review_draft(
         review=review,
         latex_source=generate_latex_source(payload.json_resume),
         pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+    )
+
+
+@router.post("/generate-template", response_model=GeneratedTemplateResponse)
+async def generate_template(
+    file: UploadFile = File(...),
+    _user: User = Depends(get_current_user),
+) -> GeneratedTemplateResponse:
+    """Recreate an uploaded resume's design as a reusable template.
+
+    Lives here rather than in the Appwrite agent function because accepting a
+    template means really rendering it, and that runtime has no pango or cairo.
+
+    A design that cannot be turned into a working template returns 422 with a
+    readable reason. The caller keeps the default look and says so, rather than
+    storing a template that does not render.
+    """
+    from job_os.services.template_generate import (
+        TemplateGenerationError,
+        generate_template_from_document,
+    )
+
+    raw = await file.read()
+    if len(raw) > 12 * 1024 * 1024:
+        raise HTTPException(400, "Design documents are limited to 12 MB.")
+    if not raw:
+        raise HTTPException(400, "That file is empty.")
+    try:
+        candidate = await generate_template_from_document(
+            raw, Path(file.filename or "design.pdf").name
+        )
+    except TemplateGenerationError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    return GeneratedTemplateResponse(
+        name=candidate.name,
+        html_source=candidate.html_source,
+        css_source=candidate.css_source,
+        notes=candidate.notes,
+        pdf_base64=base64.b64encode(candidate.pdf_bytes).decode("ascii"),
     )
 
 
