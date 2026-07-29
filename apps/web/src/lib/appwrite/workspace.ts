@@ -246,6 +246,7 @@ export const appwriteWorkspace = {
     name: string;
     base_role?: string | null;
     is_master?: boolean;
+    job_posting_id?: string | null;
   }): Promise<Resume> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
@@ -256,6 +257,7 @@ export const appwriteWorkspace = {
       name: input.name,
       base_role: input.base_role ?? null,
       is_master: input.is_master ?? false,
+      job_posting_id: input.job_posting_id ?? null,
       source_kind: "appwrite",
       source_label: null,
       archived_at: null,

@@ -502,14 +502,20 @@ export const api = {
       ? appwriteWorkspace.listResumes()
       : legacyApi.listResumes(),
 
-  createResume: (body: {
+  createResume: ({
+    job_posting_id,
+    ...body
+  }: {
     name: string;
     base_role?: string | null;
     is_master?: boolean;
+    job_posting_id?: string | null;
   }) =>
     isAppwriteWorkspaceEnabled
-      ? appwriteWorkspace.createResume(body)
-      : legacyApi.createResume(body),
+      ? appwriteWorkspace.createResume({ ...body, job_posting_id })
+      : // The Postgres resumes table has no job column, so the legacy path only
+        // gets the fields it knows and falls back to name matching for dedupe.
+        legacyApi.createResume(body),
 
   updateResume: (
     resumeId: string,

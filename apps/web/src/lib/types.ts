@@ -117,6 +117,13 @@ export interface Resume {
    * otherwise ignored. Every resume is a source resume.
    */
   category?: string;
+  /**
+   * The job posting this resume was created for, when Tailor made it. Lets a
+   * second run on the same job add a version to the same resume instead of
+   * creating a near-identical one. Absent on resumes made by hand or before
+   * tailoring started naming its output after the job.
+   */
+  job_posting_id?: string | null;
   source_kind: string | null;
   source_label: string | null;
   archived_at: string | null;

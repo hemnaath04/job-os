@@ -30,6 +30,7 @@ import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Select } from "@/components/ui/select";
 import type {
   GapQuestion,
+  Job,
   JsonResume,
   ProfileFact,
   ProvenanceEntry,
@@ -70,6 +71,44 @@ type ActiveTailor = {
   templateId?: string; // the look to render with, absent means the default
   startedAt: string; // ISO timestamp
 };
+
+/**
+ * What a tailored resume is called: the job it targets, not a company bucket the
+ * user had to pick. Hyphen separated, so the name reads the same in the library,
+ * in a filename, and in a PDF header.
+ */
+function jobResumeName(job: Job): string {
+  const company = job.company?.name?.trim();
+  const title = job.title?.trim();
+  return [company, title].filter(Boolean).join(" - ") || "Tailored resume";
+}
+
+/**
+ * The resume a run should save under, when one already exists for this job.
+ *
+ * Prefers the job posting id, which is what Tailor writes onto every resume it
+ * creates. Falls back to the name for resumes made before that (or on the legacy
+ * Postgres path, which has no job column), but only when they carry no job id of
+ * their own, so two postings that share a company and title never collide.
+ */
+function findJobResume(job: Job, resumes: Resume[]): Resume | undefined {
+  const byJob = resumes.find((r) => !r.is_master && r.job_posting_id === job.id);
+  if (byJob) return byJob;
+  const name = jobResumeName(job).toLowerCase();
+  return resumes.find(
+    (r) =>
+      !r.is_master && !r.job_posting_id && r.name.trim().toLowerCase() === name,
+  );
+}
+
+/** Suffix the name until it stops clashing with a resume that is not this job's. */
+function uniqueResumeName(desired: string, resumes: Resume[]): string {
+  const taken = new Set(resumes.map((r) => r.name.trim().toLowerCase()));
+  if (!taken.has(desired.toLowerCase())) return desired;
+  let suffix = 2;
+  while (taken.has(`${desired} (${suffix})`.toLowerCase())) suffix += 1;
+  return `${desired} (${suffix})`;
+}
 
 /** Age of a stored run in ms, or null when the timestamp is unusable. */
 function tailorAgeMs(active: ActiveTailor): number | null {
@@ -165,7 +204,10 @@ function TailorInner() {
   const params = useSearchParams();
   const initialJobId = params.get("job_id") ?? "";
 
+  const qc = useQueryClient();
   const [jobId, setJobId] = useState<string>(initialJobId);
+  // Not a choice the user makes. The run resolves or creates a resume named after
+  // the job, and this holds it so the progress and result views can label it.
   const [resumeId, setResumeId] = useState<string>("");
   const [result, setResult] = useState<TailorResponse | null>(null);
   // The in-flight agent job we are attached to (null when idle). Set both when
@@ -277,21 +319,13 @@ function TailorInner() {
     };
   }, []);
 
-  // Auto-pick first non-master resume when none chosen. Lives in an effect
-  // (not render-phase setState) so React doesn't schedule extra renders that
-  // would clobber focus / click handling on the surrounding form controls.
-  // Tailored output is saved under a source resume. Templates are their own
-  // look-only rows and never appear here. Master is the data baseline every run
-  // starts from, so it is not a target either.
+  // Every non-master resume is a source resume. Master is the data baseline every
+  // run starts from, and templates are their own look-only rows, so neither is
+  // ever a save target. Counted for the header chip only.
   const candidateResumes = useMemo(
     () => resumes.filter((r) => !r.is_master),
     [resumes],
   );
-  useEffect(() => {
-    if (!resumeId && candidateResumes.length > 0) {
-      setResumeId(candidateResumes[0].id);
-    }
-  }, [resumeId, candidateResumes]);
 
   // Poll the attached agent job until it finishes, surfacing live progress. The
   // agent keeps running server-side regardless, so this only reads state.
@@ -387,13 +421,43 @@ function TailorInner() {
     };
   }, [active, runReview]);
 
+  /**
+   * The resume this run saves under, created on the spot if the job has none.
+   *
+   * A tailored resume belongs to the job it was written for, so the target is
+   * derived from the picked job rather than chosen. Re-tailoring the same job
+   * adds a version to the resume already named after it. Resolved before dispatch
+   * because the agent needs a real, owned resume id to write to.
+   */
+  const resolveTargetResume = useCallback(
+    async (posting: Job): Promise<Resume> => {
+      const existing = findJobResume(posting, resumes);
+      if (existing) return existing;
+      const created = await api.createResume({
+        name: uniqueResumeName(jobResumeName(posting), resumes),
+        base_role: posting.title?.trim() || null,
+        is_master: false,
+        job_posting_id: posting.id,
+      });
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      return created;
+    },
+    [resumes, qc],
+  );
+
   const start = useMutation({
     mutationFn: async () => {
       setError(null);
+      const posting = jobs.find((j) => j.id === jobId);
+      if (!posting) {
+        throw new Error("Pick a job to tailor against first.");
+      }
       // Legacy FastAPI path: no pollable agent job, so keep the old wrapper
       // behavior (wait in memory) and just return the finished version.
       if (!isAppwriteWorkspaceEnabled) {
-        const version = await api.tailorResume(resumeId, jobId);
+        const target = await resolveTargetResume(posting);
+        setResumeId(target.id);
+        const version = await api.tailorResume(target.id, jobId);
         return { kind: "done" as const, version };
       }
       // Job postings still live in Postgres, so fetch the JD here and hand it to
@@ -412,14 +476,19 @@ function TailorInner() {
           "This job has no parsed description yet, so there is nothing to tailor against. Re-import the job from its URL first.",
         );
       }
+      // Resolved after the JD check so a job with nothing to tailor against does
+      // not leave an empty resume behind, and before dispatch because the agent
+      // writes its version under this id.
+      const target = await resolveTargetResume(jobPosting);
+      setResumeId(target.id);
       const agentJob = await withTimeout(
-        appwriteWorkspace.tailorResume(resumeId, jobId, jdParsed, ""),
+        appwriteWorkspace.tailorResume(target.id, jobId, jdParsed, ""),
         TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not queue the tailoring agent. Check your connection and try again.",
       );
       const record: ActiveTailor = {
         jobId: agentJob.id,
-        resumeId,
+        resumeId: target.id,
         jobPostingId: jobId,
         templateId: templateId || undefined,
         startedAt: new Date().toISOString(),
@@ -451,7 +520,17 @@ function TailorInner() {
   const masterResume = resumes.find((r) => r.is_master);
   const hasMaster = !!masterResume;
   const running = !!active || start.isPending;
-  const canRun = !!jobId && !!resumeId && hasMaster && !running;
+  const canRun = !!jobId && hasMaster && !running;
+  // What the run will save under, shown on the form so the outcome is not a
+  // surprise: an existing job resume gets another version, a new job gets a new
+  // resume named after it.
+  const plannedResume = job ? findJobResume(job, resumes) : undefined;
+  const plannedName = job
+    ? (plannedResume?.name ?? uniqueResumeName(jobResumeName(job), resumes))
+    : null;
+  // A run in flight is already saving under a known resume, so prefer that name
+  // over the plan for the job currently in the picker.
+  const runResumeName = targetResume?.name ?? plannedName;
 
   // Render a finished run even when the target resume is not in the list yet
   // (still loading, or archived while the agent worked). Gating the result on
@@ -461,7 +540,7 @@ function TailorInner() {
     return (
       <ResultView
         result={result}
-        resumeName={targetResume?.name ?? "Tailored resume"}
+        resumeName={runResumeName ?? "Tailored resume"}
         jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
         reviewing={reviewing}
@@ -487,7 +566,7 @@ function TailorInner() {
         stage={progress?.stage ?? "Starting"}
         pct={progress?.pct ?? 0.02}
         jobTitle={job?.title ?? "the selected role"}
-        resumeName={targetResume?.name ?? null}
+        resumeName={runResumeName}
         onCancel={() => {
           // Stop watching and return to the form. The server run cannot be
           // aborted mid-execution, so it may still finish and save a version;
@@ -534,7 +613,7 @@ function TailorInner() {
         <section className="workspace-panel space-y-6 p-6 sm:p-7">
         <Field
           label="Job"
-          help="The JD to tailor against. Add jobs from Applications."
+          help="The JD to tailor against, and the name the tailored resume takes. Add jobs from Applications."
         >
           <Select
             value={jobId}
@@ -549,23 +628,18 @@ function TailorInner() {
               })),
             ]}
           />
-        </Field>
-
-        <Field
-          label="Save the tailored version under"
-          help="The source resume the new tailored version is saved under. Not Master, and not a template."
-        >
-          <SourceResumePicker
-            value={resumeId}
-            onChange={setResumeId}
-            candidates={candidateResumes}
-            loading={resumesLoading}
-          />
+          {plannedName && (
+            <p className="mt-2 text-xs text-[color:var(--color-text-muted)]">
+              {plannedResume
+                ? `Adds a version to your existing "${plannedName}" resume.`
+                : `Saves as a new source resume, "${plannedName}".`}
+            </p>
+          )}
         </Field>
 
         <Field
           label="Template"
-          help="The look the PDF is rendered with. The template is only read, never written to, and the tailored version is still saved under the source resume above."
+          help="The look the PDF is rendered with. The template is only read, never written to."
         >
           <Select
             value={templateId}
@@ -978,118 +1052,6 @@ function ResultView({
 }
 
 // ---- Helper components ------------------------------------------------------
-
-function SourceResumePicker({
-  value,
-  onChange,
-  candidates,
-  loading,
-}: {
-  value: string;
-  onChange: (id: string) => void;
-  candidates: Resume[];
-  loading: boolean;
-}) {
-  const qc = useQueryClient();
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [baseRole, setBaseRole] = useState("");
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createResume({
-        name: name.trim(),
-        base_role: baseRole.trim() || null,
-        is_master: false,
-      }),
-    onSuccess: (resume) => {
-      toast.success(`Source resume "${resume.name}" created`);
-      qc.invalidateQueries({ queryKey: ["resumes"] });
-      onChange(resume.id);
-      setCreating(false);
-      setName("");
-      setBaseRole("");
-    },
-    onError: (err: Error) => toast.error(err.message),
-  });
-
-  // If no candidates, prefer to show the create form prominently.
-  const showCreateForm = creating || (candidates.length === 0 && !loading);
-
-  return (
-    <div className="space-y-2">
-      {candidates.length > 0 && (
-        <div className="flex gap-2">
-          <Select
-            value={value}
-            onChange={onChange}
-            disabled={loading}
-            className="flex-1"
-            aria-label="Target source resume"
-            options={[
-              { value: "", label: "Pick a source resume" },
-              ...candidates.map((r) => ({
-                value: r.id,
-                label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}`,
-              })),
-            ]}
-          />
-          <button
-            type="button"
-            onClick={() => setCreating((c) => !c)}
-            className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
-          >
-            <Plus className="size-3" /> New
-          </button>
-        </div>
-      )}
-
-      {showCreateForm && (
-        <div className="workspace-panel p-4">
-          {candidates.length === 0 && (
-            <p className="mb-2 text-xs text-[color:var(--color-text-muted)]">
-              You only have a Master resume. Create a role-specific source
-              resume here. Tailored versions will save under it.
-            </p>
-          )}
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <input
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Name (e.g. SWE, ML, AI)"
-              className="field-control flex-1"
-            />
-            <input
-              type="text"
-              value={baseRole}
-              onChange={(e) => setBaseRole(e.target.value)}
-              placeholder="Base role (optional)"
-              className="field-control sm:w-48"
-            />
-            <button
-              type="button"
-              onClick={() => create.mutate()}
-              disabled={create.isPending || !name.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-2 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
-            >
-              {create.isPending ? "Creating…" : "Create"}
-            </button>
-            {candidates.length > 0 && (
-              <button
-                type="button"
-                onClick={() => setCreating(false)}
-                className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-2 text-xs text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)]"
-              >
-                Cancel
-              </button>
-            )}
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 function PageShell({ loading = false }: { loading?: boolean }) {
   return (
