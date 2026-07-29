@@ -98,6 +98,10 @@ class ResumeReviewResult(BaseModel):
 
 class ResumeRenderReviewRequest(ORMModel):
     json_resume: dict[str, Any]
+    # A stored template's look. Omit both to use the bundled default. Rendered
+    # in a Jinja sandbox, since a template may have been written by a model.
+    html_source: str | None = None
+    css_source: str | None = None
 
 
 class ResumeRenderReviewResponse(BaseModel):

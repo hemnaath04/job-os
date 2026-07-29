@@ -340,10 +340,20 @@ def deterministic_review(
     return issues, page_count, text_selectable
 
 
-async def review_resume(doc: dict[str, Any]) -> tuple[ResumeReviewResult, bytes]:
-    """Render, inspect, then run an independent quality-model review."""
+async def review_resume(
+    doc: dict[str, Any],
+    *,
+    html_source: str | None = None,
+    css_source: str | None = None,
+) -> tuple[ResumeReviewResult, bytes]:
+    """Render, inspect, then run an independent quality-model review.
+
+    `html_source`/`css_source` render a stored template's look instead of the
+    bundled one. The review judges the document either way: a template changes
+    how the resume looks, not what it claims.
+    """
     validate_json_resume_document(doc)
-    rendered = render_resume_pdf(doc)
+    rendered = render_resume_pdf(doc, html_source=html_source, css_source=css_source)
     rule_issues, page_count, text_selectable = deterministic_review(doc, rendered.bytes_)
     github_context, checked, missing_repos = await load_github_context(doc)
     for slug in missing_repos:

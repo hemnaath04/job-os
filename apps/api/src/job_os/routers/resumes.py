@@ -277,7 +277,11 @@ async def render_and_review_draft(
     """
     from job_os.services.resume_engine import generate_latex_source, review_resume
 
-    review, pdf_bytes = await review_resume(payload.json_resume)
+    review, pdf_bytes = await review_resume(
+        payload.json_resume,
+        html_source=payload.html_source,
+        css_source=payload.css_source,
+    )
     return ResumeRenderReviewResponse(
         review=review,
         latex_source=generate_latex_source(payload.json_resume),

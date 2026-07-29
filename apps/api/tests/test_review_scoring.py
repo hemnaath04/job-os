@@ -107,7 +107,7 @@ def _stub_model(
     monkeypatch.setattr(
         resume_engine,
         "render_resume_pdf",
-        lambda doc: SimpleNamespace(bytes_=_one_page_pdf()),
+        lambda doc, **_kwargs: SimpleNamespace(bytes_=_one_page_pdf()),
     )
     monkeypatch.setattr(
         resume_engine,
