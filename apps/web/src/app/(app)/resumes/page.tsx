@@ -291,7 +291,7 @@ function ResumesInner() {
         <InfoChip tone="clay">AI quality gate</InfoChip>
       </PageIntro>
 
-      <p className="mt-3 text-xs leading-5 text-[color:var(--color-text-dim)]">
+      <p className="mt-3 max-w-prose text-xs leading-5 text-[color:var(--color-text-dim)]">
         Upload one canonical master or import an existing resume library. A
         file named Master becomes the protected source, originals stay on your
         device, and each imported copy becomes a recoverable revision.

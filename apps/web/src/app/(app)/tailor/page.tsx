@@ -1336,7 +1336,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-base outline-none sm:text-xs focus:border-[color:var(--color-accent-border)]"
           />
           {kind !== "skill" && (
             <>
@@ -1354,7 +1354,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-base outline-none sm:text-xs focus:border-[color:var(--color-accent-border)]"
             />
             </>
           )}
@@ -1369,7 +1369,7 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-base outline-none sm:text-xs focus:border-[color:var(--color-accent-border)]"
             />
             </>
           )}

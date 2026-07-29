@@ -62,7 +62,7 @@ export default function ConnectSourcesPage() {
         <InfoChip>Free tiers, no card</InfoChip>
       </PageIntro>
 
-      <p className="mt-6 text-sm leading-6 text-[color:var(--color-text-muted)]">
+      <p className="mt-6 max-w-prose text-sm leading-6 text-[color:var(--color-text-muted)]">
         Keys never leave your machine except to reach the provider you gave them
         to. They live in this browser&apos;s local storage, ride along with each
         search request, and are not written to the database or the server logs.
@@ -183,7 +183,7 @@ function ProviderCard({ source }: { source: ByoSource }) {
               placeholder={field.placeholder}
               autoComplete="off"
               spellCheck={false}
-              className="field-control mt-1.5 font-mono text-xs"
+              className="field-control mt-1.5 font-mono"
             />
           </div>
         ))}
@@ -325,13 +325,13 @@ function CustomSourcesSection() {
             <ShieldAlert className="size-4" /> You are responsible for custom
             sources
           </h3>
-          <p className="mt-2 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
+          <p className="mt-2 max-w-prose text-xs leading-relaxed text-[color:var(--color-text-muted)]">
             Custom sources connect a job feed that you build or control. job.os
             only fetches the endpoint you provide and shows what it returns; it
             never contacts the underlying job sites itself. Before you can add
             one, please read and accept these terms.
           </p>
-          <ul className="mt-3 list-disc space-y-2 pl-5 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
+          <ul className="mt-3 max-w-prose list-disc space-y-2 pl-5 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
             <li>
               You are solely responsible for the sources you connect, for any
               scraping or data collection they perform, and for complying with
@@ -481,7 +481,7 @@ function CustomSourceManager({
             onChange={(e) => setName(e.target.value)}
             placeholder="My scraper"
             autoComplete="off"
-            className="field-control mt-1.5 text-xs"
+            className="field-control mt-1.5"
           />
         </div>
         <div className="sm:col-span-2">
@@ -499,7 +499,7 @@ function CustomSourceManager({
             placeholder="https://my-scraper.vercel.app/api/jobs"
             autoComplete="off"
             spellCheck={false}
-            className="field-control mt-1.5 font-mono text-xs"
+            className="field-control mt-1.5 font-mono"
           />
           <p className="mt-1 text-[11px] text-[color:var(--color-text-dim)]">
             Must be a public https URL. job.os POSTs the search filters to it on
@@ -521,7 +521,7 @@ function CustomSourceManager({
             placeholder="x-custom-source-key"
             autoComplete="off"
             spellCheck={false}
-            className="field-control mt-1.5 font-mono text-xs"
+            className="field-control mt-1.5 font-mono"
           />
         </div>
         <div>
@@ -539,7 +539,7 @@ function CustomSourceManager({
             placeholder="your shared secret"
             autoComplete="off"
             spellCheck={false}
-            className="field-control mt-1.5 font-mono text-xs"
+            className="field-control mt-1.5 font-mono"
           />
         </div>
       </div>
@@ -636,7 +636,7 @@ function EndpointContract() {
       </button>
 
       {open && (
-        <div className="mt-3 space-y-3 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
+        <div className="mt-3 max-w-prose space-y-3 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
           <p>
             job.os sends a POST to your URL with a JSON body. If you set an auth
             header above, it is sent with the request. Nothing else is added.

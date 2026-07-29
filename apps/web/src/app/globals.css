@@ -519,9 +519,15 @@
   background: var(--color-surface-1);
   padding: .65rem .8rem;
   color: var(--color-text);
-  font-size: .875rem;
+  /* 16px on phones. Below that iOS Safari zooms the whole page the moment an
+     input takes focus, and every field in the app uses this class. */
+  font-size: 1rem;
   outline: none;
   transition: border-color var(--dur) var(--ease-out), box-shadow var(--dur) var(--ease-out), background-color var(--dur) var(--ease-out);
+}
+
+@media (min-width: 640px) {
+  .field-control { font-size: .875rem; }
 }
 .field-control::placeholder { color: var(--color-text-dim); }
 .field-control:focus {

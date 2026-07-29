@@ -240,7 +240,7 @@ function KpiCard({
           <ArrowUpRight className="size-3.5" />
         </span>
       </div>
-      <div className="mt-6 text-[2.4rem] font-extrabold leading-none tracking-[-0.045em]">{value}</div>
+      <div className="mt-6 text-[2.4rem] font-extrabold leading-none tracking-[-0.045em] tabular-nums">{value}</div>
       <div
         className={
           "mt-2.5 text-[0.8rem] font-semibold " +
@@ -327,7 +327,7 @@ function WeekdayBars({
     <div>
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <div className="text-2xl font-extrabold tracking-tight text-[color:var(--color-text)]">
+          <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[color:var(--color-text)]">
             {intelligence.last30}
           </div>
           <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">Applications added in 30 days</p>
@@ -422,7 +422,7 @@ function ProgressGauge({
           />
         </svg>
         <div className="absolute inset-x-0 bottom-0 flex flex-col items-center">
-          <span className="text-[2.1rem] font-extrabold leading-none tracking-[-0.04em] text-[color:var(--color-text)]">
+          <span className="text-[2.1rem] font-extrabold leading-none tracking-[-0.04em] tabular-nums text-[color:var(--color-text)]">
             {pct}%
           </span>
           <span className="mt-1 text-[11px] text-[color:var(--color-text-dim)]">Response rate</span>
@@ -431,7 +431,7 @@ function ProgressGauge({
       <div className="mt-6 grid w-full grid-cols-3 gap-2">
         {legend.map((l) => (
           <div key={l.label} className="flex flex-col items-center rounded-xl bg-[color:var(--color-surface-2)] py-2.5">
-            <span className="text-lg font-bold text-[color:var(--color-text)]">{l.value}</span>
+            <span className="text-lg font-bold tabular-nums text-[color:var(--color-text)]">{l.value}</span>
             <span className="mt-0.5 flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)]">
               <span className="size-1.5 rounded-full" style={{ backgroundColor: l.color }} />
               {l.label}
