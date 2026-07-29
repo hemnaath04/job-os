@@ -30,12 +30,41 @@ JSON_ONLY_RETRY = (
     "no explanation."
 )
 
+# An empty reply is a different problem from a chatty one, and telling a model
+# that produced nothing "that was not valid JSON" does not help it. The usual
+# cause is the answer running past the output ceiling, so ask for the same
+# decisions carried in less text.
+EMPTY_REPLY_RETRY = (
+    "That reply came back empty, most likely because the answer ran past the "
+    "output limit. Send the object again, complete but as compact as you can "
+    "make it: keep every selected bullet, and shorten the prose fields. At most "
+    "four gap_questions, one sentence each, and keep agent_note to two "
+    "sentences. Output one raw JSON object only, no fences, no prose."
+)
+
 
 def response_text(message: Any) -> str:
     """Concatenate the text blocks of an Anthropic message response."""
     return "".join(
         block.text for block in message.content if getattr(block, "type", "") == "text"
     )
+
+
+def response_diagnostics(message: Any) -> dict[str, Any]:
+    """Why a reply could not be used, in terms a log can act on.
+
+    A run died on two consecutive empty replies with nothing recorded but the
+    empty string, which said nothing about whether the model was truncated, spent
+    its budget on a thinking block, or came back with no content at all.
+    """
+    usage = getattr(message, "usage", None)
+    return {
+        "stop_reason": getattr(message, "stop_reason", None),
+        "block_types": [
+            getattr(block, "type", "?") for block in (getattr(message, "content", None) or [])
+        ],
+        "output_tokens": getattr(usage, "output_tokens", None),
+    }
 
 
 def extract_json_object(text: str) -> str:

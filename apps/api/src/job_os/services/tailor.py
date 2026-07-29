@@ -40,8 +40,10 @@ from job_os.schemas.resumes import (
 from job_os.services.career_ops_rules import CAREER_OPS_RULES
 from job_os.services.identity import identity_text as _identity_text
 from job_os.services.llm_json import (
+    EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
     parse_model_json,
+    response_diagnostics,
     response_text,
 )
 from job_os.services.resume_writing import (
@@ -98,6 +100,16 @@ class TailorFact:
 
 MAX_ITERATIONS = 3
 TARGET_ATS_SCORE = Decimal("80")
+
+# Generous ceiling on purpose: the output carries a rewritten line per selected
+# bullet plus gap questions, and a response truncated mid-JSON fails schema
+# validation and kills the whole run. A strong-match JD, where the agent has
+# something to say about nearly every fact, hit the old 8192 ceiling and came
+# back completely empty, twice.
+DRAFT_MAX_TOKENS = 16000
+# More room again for the recovery attempt, since the reason it is happening is
+# that the answer did not fit.
+RETRY_MAX_TOKENS = 20000
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
@@ -409,10 +421,7 @@ async def run_tailor(
             on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
         msg = await client.messages.create(
             model=settings.anthropic_model_tailor,
-            # Generous ceiling on purpose: the output carries a rewritten line
-            # per selected bullet plus gap questions, and a response truncated
-            # mid-JSON fails schema validation and kills the whole run.
-            max_tokens=8192,
+            max_tokens=DRAFT_MAX_TOKENS,
             system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
             messages=state["messages"],
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
@@ -426,28 +435,42 @@ async def run_tailor(
                 error=str(e),
                 preview=raw[:400],
                 iteration=len(state["iteration_scores"]) + 1,
+                **response_diagnostics(msg),
             )
             if state["best_agent"] is not None:
                 return {**state, "done": True}
             # No good pass yet, so a chatty or truncated reply would sink the
-            # whole run. Show the model its own output and ask once for the
-            # object alone before giving up.
+            # whole run. Ask once more before giving up, and treat an empty reply
+            # differently from a chatty one: a model that produced nothing at all
+            # ran out of output room, so telling it "that was not valid JSON" and
+            # handing it back "(empty)" as its own turn helps nobody. Ask for the
+            # same decisions in less text, with more room to land them.
+            empty = not raw.strip()
+            retry_messages: list[anthropic.types.MessageParam] = (
+                [*state["messages"], {"role": "user", "content": EMPTY_REPLY_RETRY}]
+                if empty
+                else [
+                    *state["messages"],
+                    {"role": "assistant", "content": raw[:4000]},
+                    {"role": "user", "content": JSON_ONLY_RETRY},
+                ]
+            )
             retry = await client.messages.create(
                 model=settings.anthropic_model_tailor,
-                max_tokens=8192,
+                max_tokens=RETRY_MAX_TOKENS if empty else DRAFT_MAX_TOKENS,
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
-                messages=[
-                    *state["messages"],
-                    {"role": "assistant", "content": raw[:4000] or "(empty)"},
-                    {"role": "user", "content": JSON_ONLY_RETRY},
-                ],
+                messages=retry_messages,
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
             )
             retry_raw = response_text(retry)
             try:
                 attempt = parse_model_json(TailorAgentOutput, retry_raw)
             except ValidationError as retry_error:
-                log.warning("tailor.invalid_json_after_retry", preview=retry_raw[:400])
+                log.warning(
+                    "tailor.invalid_json_after_retry",
+                    preview=retry_raw[:400],
+                    **response_diagnostics(retry),
+                )
                 raise RuntimeError(
                     "Tailoring agent returned an invalid response."
                 ) from retry_error
