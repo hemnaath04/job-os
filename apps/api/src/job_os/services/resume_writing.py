@@ -139,6 +139,16 @@ def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
+def has_banned_separator(text: str) -> bool:
+    """True when text carries a separator the rules keep off the page.
+
+    The tailor normalises these at assembly, but a conversational edit writes
+    straight into the document, so the review needs the same test rather than its
+    own narrower one.
+    """
+    return bool(_DASH_RE.search(text))
+
+
 def content_tokens(text: str) -> frozenset[str]:
     """The meaning-bearing words of a bullet, for similarity comparison.
 

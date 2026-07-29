@@ -32,6 +32,7 @@ from job_os.services.pdf_render import render_resume_pdf
 from job_os.services.resume_writing import (
     BANNED_WORDING,
     document_quality_flags,
+    has_banned_separator,
 )
 from job_os.settings import get_settings
 
@@ -307,12 +308,15 @@ def deterministic_review(
             )
 
     text = _resume_text(doc)
-    if "—" in text or "--" in text:
+    if has_banned_separator(text):
         issues.append(
             ResumeReviewIssue(
                 severity="warning",
                 code="prose_dash",
-                message="Replace em dashes or double hyphens in prose with simpler punctuation.",
+                message=(
+                    "Replace em dashes, en dashes, double hyphens or middle dots "
+                    "in prose with a comma, a colon or a period."
+                ),
             )
         )
     lowered = text.lower()
