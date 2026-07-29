@@ -19,6 +19,7 @@ import type {
   RevisionMessage,
 } from "@/lib/types";
 import {
+  appwriteFileAuthHeaders,
   ensureAppwriteSession,
   getAppwriteServices,
   getCurrentAppwriteUserId,
@@ -452,7 +453,13 @@ export const appwriteWorkspace = {
       bucketId: config.resumeFilesBucketId,
       fileId,
     });
-    const response = await fetch(url, { credentials: "include" });
+    // JWT rather than the session cookie: the cookie is third-party to this app
+    // and browsers that drop it turned an owned file into a 404. See
+    // appwriteFileAuthHeaders.
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: await appwriteFileAuthHeaders(),
+    });
     if (!response.ok) {
       throw new Error(`Could not read the stored document (${response.status}).`);
     }

@@ -82,6 +82,30 @@ export function getAppwriteServices() {
   return getServices();
 }
 
+/**
+ * Headers that authorize reading an Appwrite file URL with `fetch`.
+ *
+ * A file URL from the SDK is a plain link, so fetching it authenticates by the
+ * Appwrite session cookie. That cookie is third-party here, because the API is
+ * on another domain than the app, and Safari, Brave and increasingly Chrome
+ * refuse to send those. The request then arrives unauthenticated and a file
+ * permissioned to one user answers 404, which reads as a missing file rather
+ * than a blocked one. A JWT carries the same identity in a header, which no
+ * cookie policy can strip.
+ *
+ * Minted per call: a JWT lasts about 15 minutes, so caching one buys little and
+ * risks handing out an expired token.
+ */
+export async function appwriteFileAuthHeaders(): Promise<Record<string, string>> {
+  await ensureAppwriteSession();
+  const config = requirePublicAppwriteConfig();
+  const { jwt } = await getServices().account.createJWT();
+  return {
+    "X-Appwrite-Project": config.projectId,
+    "X-Appwrite-JWT": jwt,
+  };
+}
+
 export function getCurrentAppwriteUserId(): string {
   if (!currentUserId) throw new Error("Appwrite session has no user");
   return currentUserId;

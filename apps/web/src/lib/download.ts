@@ -1,6 +1,13 @@
 "use client";
 
 import { toast } from "sonner";
+import { appwriteFileAuthHeaders } from "@/lib/appwrite/client";
+import { appwriteConfig } from "@/lib/appwrite/config";
+
+/** Whether this URL is a file on Appwrite rather than on our own origin. */
+function isAppwriteFileUrl(url: string): boolean {
+  return !!appwriteConfig.endpoint && url.startsWith(appwriteConfig.endpoint);
+}
 
 /**
  * Fetch a backend URL, validate it's a real PDF, and trigger a browser download.
@@ -20,6 +27,12 @@ import { toast } from "sonner";
  *   - Inspect the response content-type before saving
  *   - Show a real toast error ("backend is warming up, try again") instead
  *     of letting the user open a broken file
+ *
+ * Which credential goes with the request follows from the URL, not from a
+ * feature flag, so the two can never drift apart. Our own origin takes the
+ * cookies it already has. A file on Appwrite takes a JWT, because that origin's
+ * session cookie is third-party and browsers drop it, which made an owned file
+ * answer 404. See appwriteFileAuthHeaders.
  */
 export async function downloadPdf(url: string, filename: string): Promise<void> {
   const toastId = toast.loading("Generating PDF…");
@@ -29,7 +42,9 @@ export async function downloadPdf(url: string, filename: string): Promise<void> 
     }
     const res = await fetch(url, {
       cache: "no-store",
-      credentials: "include",
+      ...(isAppwriteFileUrl(url)
+        ? { headers: await appwriteFileAuthHeaders() }
+        : { credentials: "include" as RequestCredentials }),
     });
     if (!res.ok) {
       throw new Error(`${res.status} ${res.statusText}`);
