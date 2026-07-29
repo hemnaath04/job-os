@@ -129,7 +129,11 @@ export default function ApplicationsPage() {
         className="mt-5 flex justify-end"
       >
         <div className="flex items-center gap-2">
-          <div className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
+          <div
+            role="group"
+            aria-label="Pipeline view"
+            className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5"
+          >
             <ViewToggle
               active={view === "kanban"}
               onClick={() => setView("kanban")}
@@ -191,6 +195,7 @@ function ViewToggle({
   return (
     <button
       onClick={onClick}
+      aria-pressed={active}
       className={
         "relative flex items-center gap-1.5 rounded-full px-3 py-1 text-xs transition " +
         (active

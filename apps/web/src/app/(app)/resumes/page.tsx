@@ -328,7 +328,11 @@ function ResumesInner() {
       {creating && (
         <div className="workspace-panel mt-5 p-5">
           <div className="flex flex-col gap-2 sm:flex-row">
+            <label htmlFor="new-source-name" className="sr-only">
+              Source name
+            </label>
             <input
+              id="new-source-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -336,7 +340,11 @@ function ResumesInner() {
               autoFocus
               className="field-control flex-1"
             />
+            <label htmlFor="new-source-role" className="sr-only">
+              Base role (optional)
+            </label>
             <input
+              id="new-source-role"
               type="text"
               value={baseRole}
               onChange={(e) => setBaseRole(e.target.value)}

@@ -313,7 +313,12 @@ function WeekdayBars({
   const now = Date.now();
   const last7 = intelligence.daily.slice(-7).map((day, i) => {
     const date = new Date(now - (6 - i) * DAY);
-    return { value: day.value, label: WEEKDAY[date.getDay()] };
+    return {
+      value: day.value,
+      label: WEEKDAY[date.getDay()],
+      // "S, M, T, W, T, F, S" is fine to look at and useless to listen to.
+      spokenLabel: date.toLocaleDateString(undefined, { weekday: "long" }),
+    };
   });
   const peak = Math.max(...last7.map((d) => d.value), 1);
   const busiest = last7.reduce((a, b) => (b.value >= a.value ? b : a), last7[0]);
@@ -332,7 +337,15 @@ function WeekdayBars({
           {intelligence.velocity} this week
         </div>
       </div>
-      <div className="mt-6 flex h-44 items-end gap-2.5">
+      {/* The bars carry the only per-day numbers on this panel, and only the
+          peak is labelled on screen, so state the series in one alternative. */}
+      <div
+        role="img"
+        aria-label={`Applications added per day over the last week: ${last7
+          .map((d) => `${d.spokenLabel} ${d.value}`)
+          .join(", ")}.`}
+        className="mt-6 flex h-44 items-end gap-2.5"
+      >
         {last7.map((d, i) => {
           const h = d.value > 0 ? Math.max((d.value / peak) * 100, 14) : 5;
           const isPeak = d.value === busiest.value && d.value > 0;
@@ -514,7 +527,7 @@ function FirstLaunch() {
 
 function DashboardSkeleton() {
   return (
-    <div className="workspace-page max-w-[1560px]" aria-label="Loading dashboard">
+    <div className="workspace-page max-w-[1560px]" role="status" aria-label="Loading dashboard">
       <div className="h-9 w-56 animate-pulse rounded-lg bg-[color:var(--color-surface-hover)]" />
       <div className="mt-3 h-4 w-[24rem] max-w-full animate-pulse rounded bg-[color:var(--color-surface-2)]" />
       <div className="mt-7 grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">

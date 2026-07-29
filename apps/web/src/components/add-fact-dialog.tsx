@@ -95,8 +95,11 @@ export function AddFactDialog({
                   Add a single piece of evidence to your profile without re-uploading a resume.
                 </Dialog.Description>
               </div>
-              <Dialog.Close className="rounded-md p-1 text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]">
-                <X className="size-4" />
+              <Dialog.Close
+                aria-label="Close"
+                className="grid size-8 place-items-center rounded-md text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+              >
+                <X className="size-4" aria-hidden="true" />
               </Dialog.Close>
             </div>
 

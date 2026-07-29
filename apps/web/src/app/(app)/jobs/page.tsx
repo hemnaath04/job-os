@@ -24,6 +24,7 @@ import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { Field } from "@/components/ui/field";
 import { api } from "@/lib/api";
 import {
   CUSTOM_SOURCES_CHANGED_EVENT,
@@ -555,14 +556,16 @@ export default function DiscoverPage() {
 
       {/* Smart search */}
       <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
-        <label className="flex items-center gap-1.5 text-sm font-medium">
-          <Wand2 className="size-3.5 text-[color:var(--color-violet)]" /> Smart search
+        <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
+          <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Smart search
         </label>
-        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
+        <p id="smart-search-help" className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
           Type a sentence. The fast agent extracts the filters and runs the search.
         </p>
         <div className="mt-2 flex gap-2">
           <input
+            id="smart-search"
+            aria-describedby="smart-search-help"
             type="text"
             value={smartQuery}
             onChange={(e) => setSmartQuery(e.target.value)}
@@ -619,8 +622,10 @@ export default function DiscoverPage() {
 
       {/* Manual filters form */}
       <div className="workspace-panel mt-5 grid grid-cols-1 gap-5 p-5 sm:p-6 md:grid-cols-2">
-        <div className="md:col-span-2">
-          <label className="text-sm font-medium">Sources</label>
+        {/* A set of toggles rather than one control, so the heading names a
+            group instead of pretending to be a <label> for a single input. */}
+        <div className="md:col-span-2" role="group" aria-labelledby="sources-label">
+          <span id="sources-label" className="block text-sm font-medium">Sources</span>
           <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
             Everything in the first group is fetched live on every search and
             costs nothing. Add a key only if you want the extra coverage.
@@ -723,55 +728,70 @@ export default function DiscoverPage() {
           )}
         </div>
         <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
-          <input
-            type="text"
-            value={titles}
-            onChange={(e) => setTitles(e.target.value)}
-            placeholder="software engineer intern"
-            className="field-control"
-          />
+          {(control) => (
+            <input
+              {...control}
+              type="text"
+              value={titles}
+              onChange={(e) => setTitles(e.target.value)}
+              placeholder="software engineer intern"
+              className="field-control"
+            />
+          )}
         </Field>
         <Field
           label="Technologies"
           help="Comma-separated slugs. TheirStack only; the free sources do not expose a tech filter."
         >
-          <input
-            type="text"
-            value={techs}
-            onChange={(e) => setTechs(e.target.value)}
-            placeholder="python, fastapi"
-            className="field-control"
-          />
+          {(control) => (
+            <input
+              {...control}
+              type="text"
+              value={techs}
+              onChange={(e) => setTechs(e.target.value)}
+              placeholder="python, fastapi"
+              className="field-control"
+            />
+          )}
         </Field>
         <Field label="Country code" help="ISO-3166 alpha-2. e.g. US, CA, GB. Blank = global.">
-          <input
-            type="text"
-            value={country}
-            maxLength={2}
-            onChange={(e) => setCountry(e.target.value.toUpperCase())}
-            className="field-control uppercase"
-          />
+          {(control) => (
+            <input
+              {...control}
+              type="text"
+              value={country}
+              maxLength={2}
+              onChange={(e) => setCountry(e.target.value.toUpperCase())}
+              className="field-control uppercase"
+            />
+          )}
         </Field>
         <div className="grid grid-cols-2 gap-3">
           <Field label="Max age (days)">
-            <input
-              type="number"
-              min={1}
-              max={180}
-              value={maxAgeDays}
-              onChange={(e) => setMaxAgeDays(Number(e.target.value) || 30)}
-              className="field-control"
-            />
+            {(control) => (
+              <input
+                {...control}
+                type="number"
+                min={1}
+                max={180}
+                value={maxAgeDays}
+                onChange={(e) => setMaxAgeDays(Number(e.target.value) || 30)}
+                className="field-control"
+              />
+            )}
           </Field>
           <Field label="Limit">
-            <input
-              type="number"
-              min={1}
-              max={50}
-              value={limit}
-              onChange={(e) => setLimit(Number(e.target.value) || 20)}
-              className="field-control"
-            />
+            {(control) => (
+              <input
+                {...control}
+                type="number"
+                min={1}
+                max={50}
+                value={limit}
+                onChange={(e) => setLimit(Number(e.target.value) || 20)}
+                className="field-control"
+              />
+            )}
           </Field>
         </div>
         <div className="md:col-span-2 flex flex-wrap items-center gap-2">
@@ -850,7 +870,8 @@ export default function DiscoverPage() {
       {sortedResults !== null && (
         <div className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="text-sm text-[color:var(--color-text-muted)]">
+            {/* A search replaces the list in place, so say how much came back. */}
+            <div role="status" className="text-sm text-[color:var(--color-text-muted)]">
               {sortedResults.length} result{sortedResults.length === 1 ? "" : "s"}
               {Object.keys(sourceCounts).length > 0 && (
                 <span className="ml-2 text-xs text-[color:var(--color-text-dim)]">
@@ -861,14 +882,22 @@ export default function DiscoverPage() {
               )}
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-[color:var(--color-text-dim)]">Sort by</span>
-              <div className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
+              <span id="sort-by-label" className="text-xs text-[color:var(--color-text-dim)]">Sort by</span>
+              <div
+                role="group"
+                aria-labelledby="sort-by-label"
+                className="flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5"
+              >
                 {(Object.keys(SORT_LABEL) as SortMode[]).map((m) => {
                   const disabled = m === "location" && !userLocation;
                   return (
                     <button
                       key={m}
                       onClick={() => !disabled && setSort(m)}
+                      aria-pressed={sort === m}
+                      // Kept focusable so the reason it cannot be used stays
+                      // reachable; the click is already guarded above.
+                      aria-disabled={disabled || undefined}
                       className={
                         "rounded-full px-3 py-1 text-xs transition " +
                         (sort === m
@@ -1011,9 +1040,10 @@ function ResultCard({
                 href={result.source_url}
                 target="_blank"
                 rel="noreferrer"
+                aria-label={`Open the ${result.title} posting`}
                 className="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
               >
-                <ExternalLink className="size-3.5" />
+                <ExternalLink className="size-3.5" aria-hidden="true" />
               </a>
             )}
           </div>
@@ -1091,26 +1121,6 @@ function ResultCard({
         </button>
       </div>
     </motion.div>
-  );
-}
-
-function Field({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="text-sm font-medium">{label}</label>
-      {help && (
-        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">{help}</p>
-      )}
-      <div className="mt-2">{children}</div>
-    </div>
   );
 }
 

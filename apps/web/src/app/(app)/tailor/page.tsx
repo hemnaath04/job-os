@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import {
@@ -27,6 +27,7 @@ import { isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import { withTimeout } from "@/lib/async";
 import { downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { Field } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 import type {
   GapQuestion,
@@ -617,25 +618,41 @@ function TailorInner() {
           label="Job"
           help="The JD to tailor against, and the name the tailored resume takes. Add jobs from Applications."
         >
-          <Select
-            value={jobId}
-            onChange={setJobId}
-            disabled={jobsLoading}
-            aria-label="Job to tailor against"
-            options={[
-              { value: "", label: "Pick a job" },
-              ...jobs.map((j) => ({
-                value: j.id,
-                label: `${j.title}${j.company?.name ? ` · ${j.company.name}` : ""}`,
-              })),
-            ]}
-          />
-          {plannedName && (
-            <p className="mt-2 text-xs text-[color:var(--color-text-muted)]">
-              {plannedResume
-                ? `Adds a version to your existing "${plannedName}" resume.`
-                : `Saves as a new source resume, "${plannedName}".`}
-            </p>
+          {(control) => (
+            <>
+              <Select
+                {...control}
+                // The preview below is the only signal about where the run
+                // lands, so describe the picker with it as well as the help.
+                aria-describedby={
+                  plannedName
+                    ? [control["aria-describedby"], "tailor-output-name"]
+                        .filter(Boolean)
+                        .join(" ")
+                    : control["aria-describedby"]
+                }
+                value={jobId}
+                onChange={setJobId}
+                disabled={jobsLoading}
+                options={[
+                  { value: "", label: "Pick a job" },
+                  ...jobs.map((j) => ({
+                    value: j.id,
+                    label: `${j.title}${j.company?.name ? ` · ${j.company.name}` : ""}`,
+                  })),
+                ]}
+              />
+              {plannedName && (
+                <p
+                  id="tailor-output-name"
+                  className="mt-2 text-xs text-[color:var(--color-text-muted)]"
+                >
+                  {plannedResume
+                    ? `Adds a version to your existing "${plannedName}" resume.`
+                    : `Saves as a new source resume, "${plannedName}".`}
+                </p>
+              )}
+            </>
           )}
         </Field>
 
@@ -643,18 +660,20 @@ function TailorInner() {
           label="Template"
           help="The look the PDF is rendered with. The template is only read, never written to."
         >
-          <Select
-            value={templateId}
-            onChange={setTemplateId}
-            aria-label="Template to render with"
-            options={[
-              { value: "", label: "Default look" },
-              ...availableTemplates.map((t) => ({
-                value: t.id,
-                label: t.name,
-              })),
-            ]}
-          />
+          {(control) => (
+            <Select
+              {...control}
+              value={templateId}
+              onChange={setTemplateId}
+              options={[
+                { value: "", label: "Default look" },
+                ...availableTemplates.map((t) => ({
+                  value: t.id,
+                  label: t.name,
+                })),
+              ]}
+            />
+          )}
         </Field>
 
         <button
@@ -733,8 +752,13 @@ function TailorProgress({
       </PageIntro>
 
       <section className="workspace-panel mt-6 space-y-5 p-6 sm:p-7">
-        <div className="flex items-center gap-3">
-          <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--color-violet)]" />
+        {/* The run takes minutes and the stage is the only signal it is moving,
+            so each new stage is announced rather than only redrawn. */}
+        <div role="status" className="flex items-center gap-3">
+          <Loader2
+            className="size-4 shrink-0 animate-spin text-[color:var(--color-violet)]"
+            aria-hidden="true"
+          />
           <div className="text-sm font-medium">{stage}</div>
           <div className="ml-auto text-sm tabular-nums text-[color:var(--color-text-muted)]">
             {percent}%
@@ -743,6 +767,7 @@ function TailorProgress({
         <div
           className="h-2 w-full overflow-hidden rounded-full bg-[color:var(--color-surface-2)]"
           role="progressbar"
+          aria-label="Tailoring progress"
           aria-valuenow={percent}
           aria-valuemin={0}
           aria-valuemax={100}
@@ -1063,26 +1088,6 @@ function PageShell({ loading = false }: { loading?: boolean }) {
   );
 }
 
-function Field({
-  label,
-  help,
-  children,
-}: {
-  label: string;
-  help?: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <label className="text-sm font-medium">{label}</label>
-      {help && (
-        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">{help}</p>
-      )}
-      <div className="mt-2">{children}</div>
-    </div>
-  );
-}
-
 function AtsBadge({ score }: { score: string | null }) {
   if (score === null || score === undefined) return null;
   const numeric = Number(score);
@@ -1243,6 +1248,8 @@ function GapRow({
   factById: Record<string, ProfileFact>;
 }) {
   const qc = useQueryClient();
+  // One row per gap, so the ids have to be unique per row.
+  const gapFormId = useId();
   const [open, setOpen] = useState(false);
   const [kind, setKind] = useState<GapKind>(_suggestKind(gap.requirement));
   const [title, setTitle] = useState(gap.requirement);
@@ -1309,11 +1316,12 @@ function GapRow({
 
       {open && (
         <div className="mt-3 space-y-2 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3">
-          <div className="flex flex-wrap gap-1.5">
+          <div role="group" aria-label="Kind of fact" className="flex flex-wrap gap-1.5">
             {GAP_KINDS.map((k) => (
               <button
                 key={k}
                 onClick={() => setKind(k)}
+                aria-pressed={kind === k}
                 className={`rounded-full border px-2 py-0.5 text-[11px] ${
                   kind === k
                     ? "border-[color:var(--color-purple)]/50 bg-gradient-brand text-[color:var(--color-on-accent)] opacity-90"
@@ -1324,14 +1332,23 @@ function GapRow({
               </button>
             ))}
           </div>
+          <label htmlFor={`${gapFormId}-title`} className="sr-only">
+            Title
+          </label>
           <input
+            id={`${gapFormId}-title`}
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
             className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
           />
           {kind !== "skill" && (
+            <>
+            <label htmlFor={`${gapFormId}-org`} className="sr-only">
+              Organization
+            </label>
             <input
+              id={`${gapFormId}-org`}
               value={org}
               onChange={(e) => setOrg(e.target.value)}
               placeholder={
@@ -1343,15 +1360,22 @@ function GapRow({
               }
               className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
             />
+            </>
           )}
           {supportsBullets && (
+            <>
+            <label htmlFor={`${gapFormId}-bullet`} className="sr-only">
+              Bullet
+            </label>
             <textarea
+              id={`${gapFormId}-bullet`}
               value={bullet}
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
               className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
             />
+            </>
           )}
           <div className="flex items-center gap-2">
             <button

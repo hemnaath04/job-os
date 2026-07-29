@@ -77,7 +77,7 @@ export function Sidebar() {
       </Link>
 
       {/* Nav */}
-      <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 text-sm">
+      <nav aria-label="Primary" className="flex flex-1 flex-col gap-3 overflow-y-auto px-3 pb-3 text-sm">
         {SECTIONS.map((section) => {
           const items = NAV.filter((n) => n.section === section);
           if (items.length === 0) return null;
@@ -128,8 +128,9 @@ export function Sidebar() {
               (collapsed ? "justify-center" : "")
             }
             title="Sign out"
+            aria-label="Sign out"
           >
-            <LogOut className="size-4 shrink-0" />
+            <LogOut className="size-4 shrink-0" aria-hidden="true" />
             {!collapsed && <span className="truncate">Sign out</span>}
           </button>
         </SignOutButton>
@@ -169,6 +170,7 @@ export function Sidebar() {
             href={item.href}
             className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${active ? "text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}
             aria-label={item.label}
+            aria-current={active ? "page" : undefined}
           >
             {active && <motion.span layoutId="mobile-nav-active" className="absolute inset-0 rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/12" transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }} />}
             <Icon className="relative size-[18px]" />
@@ -203,6 +205,10 @@ function NavLink({
         (collapsed ? " justify-center" : "")
       }
       title={collapsed ? item.label : undefined}
+      // Collapsed, the label is gone from the DOM, so name the link explicitly
+      // rather than leaning on `title` as a last-resort accessible name.
+      aria-label={collapsed ? item.label : undefined}
+      aria-current={active ? "page" : undefined}
     >
       {active && (
         <motion.span

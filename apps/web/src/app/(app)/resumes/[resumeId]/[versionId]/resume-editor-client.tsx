@@ -221,7 +221,11 @@ export default function ResumeEditorClient({
           </div>
         </div>
         <div className="flex flex-wrap gap-2">
-          <div className="flex rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5">
+          <div
+            role="group"
+            aria-label="Editor mode"
+            className="flex rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5"
+          >
             <ModeButton active={mode === "edit"} onClick={() => setMode("edit")} icon={Save}>
               Edit
             </ModeButton>
@@ -275,7 +279,9 @@ export default function ResumeEditorClient({
       </header>
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.55fr)]">
-        <main className="min-w-0">
+        {/* Not a <main>: the app shell already owns the page's main landmark,
+            and nesting a second one leaves the page with no single primary. */}
+        <div className="min-w-0">
           {mode === "preview" ? (
             <div className="product-panel min-h-[78dvh] overflow-hidden bg-[color:var(--color-surface-hover)]">
               {previewQuery.isLoading ? (
@@ -296,7 +302,7 @@ export default function ResumeEditorClient({
           ) : (
             <StructuredEditor value={draft} onChange={setDraft} />
           )}
-        </main>
+        </div>
 
         <aside className="space-y-3">
           <QualityPanel
@@ -314,7 +320,13 @@ export default function ResumeEditorClient({
                 Ask for a rewrite, reorder, removal, or project update. The result is checked against verified facts and GitHub before it is saved.
               </p>
             </div>
-            <div className="max-h-[42dvh] space-y-3 overflow-y-auto p-4">
+            {/* A log, so a reply that arrives after the request is announced
+                instead of appearing silently. */}
+            <div
+              role="log"
+              aria-label="Edit conversation"
+              className="max-h-[42dvh] space-y-3 overflow-y-auto p-4"
+            >
               {(messagesQuery.data ?? []).map((message) => (
                 <div
                   key={message.id}
@@ -355,7 +367,11 @@ export default function ResumeEditorClient({
               )}
             </div>
             <div className="border-t border-[color:var(--color-border)] p-3">
+              <label htmlFor="ai-edit-request" className="sr-only">
+                Describe the edit you want
+              </label>
               <textarea
+                id="ai-edit-request"
                 value={chat}
                 onChange={(event) => setChat(event.target.value)}
                 placeholder="Describe the edit you want…"
@@ -468,10 +484,11 @@ function StructuredEditor({
     <div className="space-y-3">
       <EditorSection title="Contact and summary" icon={UserRound}>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label="Name" value={basics.name ?? ""} onChange={(next) => updateBasics("name", next)} />
-          <Field label="Email" value={basics.email ?? ""} onChange={(next) => updateBasics("email", next)} />
-          <Field label="Phone" value={basics.phone ?? ""} onChange={(next) => updateBasics("phone", next)} />
-          <Field label="Portfolio" value={basics.url ?? ""} onChange={(next) => updateBasics("url", next)} />
+          {/* Right keyboard on a phone, and the browser can fill these. */}
+          <Field label="Name" autoComplete="name" value={basics.name ?? ""} onChange={(next) => updateBasics("name", next)} />
+          <Field label="Email" type="email" autoComplete="email" value={basics.email ?? ""} onChange={(next) => updateBasics("email", next)} />
+          <Field label="Phone" type="tel" autoComplete="tel" value={basics.phone ?? ""} onChange={(next) => updateBasics("phone", next)} />
+          <Field label="Portfolio" type="url" autoComplete="url" value={basics.url ?? ""} onChange={(next) => updateBasics("url", next)} />
           <Field
             label="City"
             value={location.city ?? ""}
@@ -878,11 +895,29 @@ function EditorSection({ title, icon: Icon, children }: { title: string; icon: t
   );
 }
 
-function Field({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
+function Field({
+  label,
+  value,
+  onChange,
+  type = "text",
+  autoComplete,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  type?: "text" | "email" | "tel" | "url";
+  autoComplete?: string;
+}) {
   return (
     <label className="block text-xs font-medium text-[color:var(--color-text-muted)]">
       {label}
-      <input className="field-control mt-1.5" value={value} onChange={(event) => onChange(event.target.value)} />
+      <input
+        className="field-control mt-1.5"
+        type={type}
+        autoComplete={autoComplete}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </label>
   );
 }
@@ -906,7 +941,7 @@ function RemoveButton({ label, onClick }: { label: string; onClick: () => void }
 
 function ModeButton({ active, onClick, icon: Icon, children }: { active: boolean; onClick: () => void; icon: typeof Save; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs transition ${active ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}>
+    <button onClick={onClick} aria-pressed={active} className={`inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-xs transition ${active ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}>
       <Icon className="size-3.5" />
       {children}
     </button>

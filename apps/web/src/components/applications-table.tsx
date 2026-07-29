@@ -46,6 +46,9 @@ export function ApplicationsTable({
   return (
     <div className="workspace-panel overflow-hidden">
       <table className="w-full text-sm">
+        <caption className="sr-only">
+          Tracked applications, with status, location, and next action for each.
+        </caption>
         <thead className="sticky top-0 z-10 bg-[color:var(--color-surface-1)]/80 text-left text-[10px] uppercase tracking-wider text-[color:var(--color-text-muted)] backdrop-blur-lg">
           <tr>
             <Th>Company</Th>
@@ -133,7 +136,11 @@ export function ApplicationsTable({
 }
 
 function Th({ children }: { children: React.ReactNode }) {
-  return <th className="px-4 py-2.5 font-medium">{children}</th>;
+  return (
+    <th scope="col" className="px-4 py-2.5 font-medium">
+      {children}
+    </th>
+  );
 }
 function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return <td className={`px-4 py-3 ${className}`}>{children}</td>;

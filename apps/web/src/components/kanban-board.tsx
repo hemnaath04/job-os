@@ -3,12 +3,15 @@
 import {
   DndContext,
   DragOverlay,
+  KeyboardSensor,
   PointerSensor,
   useDraggable,
   useDroppable,
   useSensor,
   useSensors,
+  type ClientRect,
   type DragEndEvent,
+  type KeyboardCoordinateGetter,
 } from "@dnd-kit/core";
 import { AnimatePresence, motion } from "framer-motion";
 import { ArrowDownRight, Calendar, ExternalLink, MapPin, Sparkles, Trash2 } from "lucide-react";
@@ -21,6 +24,43 @@ import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
 const BOARD_STATUSES: AppStatus[] = ["applied", "interview_scheduled", "rejected", "offer"];
+
+/**
+ * Keyboard dragging for a board of columns. The default getter nudges the card
+ * 25px per arrow press, which never reaches the next stage on a four-column
+ * board, so arrows step from column centre to column centre instead. Space
+ * lifts and drops, Escape cancels; both come from the sensor's defaults.
+ */
+const stageCoordinateGetter: KeyboardCoordinateGetter = (
+  event,
+  { currentCoordinates, context },
+) => {
+  const forward = event.code === "ArrowRight" || event.code === "ArrowDown";
+  const back = event.code === "ArrowLeft" || event.code === "ArrowUp";
+  if (!forward && !back) return;
+  event.preventDefault();
+
+  const columns = BOARD_STATUSES.map((status) => context.droppableRects.get(status))
+    .filter((rect): rect is ClientRect => Boolean(rect));
+  if (columns.length === 0) return currentCoordinates;
+
+  const centreX = (rect: ClientRect) => rect.left + rect.width / 2;
+  const current = columns.reduce(
+    (closest, rect, index) =>
+      Math.abs(centreX(rect) - currentCoordinates.x) <
+      Math.abs(centreX(columns[closest]) - currentCoordinates.x)
+        ? index
+        : closest,
+    0,
+  );
+  const target = columns[Math.min(Math.max(current + (forward ? 1 : -1), 0), columns.length - 1)];
+
+  return {
+    x: centreX(target),
+    // Near the top of the column, where a dropped card lands anyway.
+    y: target.top + Math.min(target.height / 2, 96),
+  };
+};
 
 function belongsToVisibleStage(status: AppStatus, visibleStage: "wishlist" | AppStatus) {
   if (visibleStage === "wishlist") return status === "wishlist" || status === "ready_to_apply";
@@ -41,7 +81,10 @@ export function KanbanBoard({
   onArchive: (id: string) => Promise<unknown>;
   onRestore: (application: Application) => Promise<unknown>;
 }) {
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: stageCoordinateGetter }),
+  );
   const [dragged, setDragged] = useState<Application | null>(null);
   const wishlist = applications.filter((app) => belongsToVisibleStage(app.status, "wishlist"));
 
@@ -241,7 +284,7 @@ function Card({
       onDoubleClick={openJD}
       title={sourceUrl ? "Double-click to open the original JD" : undefined}
       className={
-        "group cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-all " +
+        "cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-all " +
         (compact ? "p-3.5 " : "p-3 ") +
         (dragging
           ? "rotate-2 shadow-2xl"
@@ -283,8 +326,11 @@ function Card({
           <Calendar className="size-3" /> {app.next_action_label || "next action"}
         </div>
       )}
+      {/* Always present, like the wishlist cards. Revealing these on hover only
+          put Archive and Tailor out of reach of the keyboard and of touch, and
+          made the card change height under the pointer. */}
       {!dragging && (
-        <div className={`mt-2 items-center justify-end gap-2 ${compact ? "flex" : "hidden group-hover:flex"}`}>
+        <div className="mt-2 flex items-center justify-end gap-2">
           {onDelete && (
             <button
               onPointerDown={stopDrag}
@@ -300,14 +346,17 @@ function Card({
               <Trash2 className="size-3" />
             </button>
           )}
+          {/* Quiet by default. A filled jasmine pill on every card read as
+              clutter once the row stopped hiding itself, so the accent is
+              held back for hover and focus. */}
           <Link
             href={{ pathname: "/tailor", query: { job_id: app.job.id } }}
             onPointerDown={stopDrag}
             onClick={stopDrag}
             onDoubleClick={stopDrag}
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-2 py-0.5 text-[10px] font-semibold text-[color:var(--color-on-accent)] shadow-[0_10px_24px_-18px_rgba(233,198,74,.45)]"
+            className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-text-muted)] transition hover:border-[color:var(--color-accent-border)] hover:bg-[color:var(--color-accent-soft)] hover:text-[color:var(--color-accent-ink)]"
           >
-            <Sparkles className="size-2.5" /> Tailor
+            <Sparkles className="size-2.5" aria-hidden="true" /> Tailor
           </Link>
         </div>
       )}

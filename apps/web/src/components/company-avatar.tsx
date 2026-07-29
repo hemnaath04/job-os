@@ -56,7 +56,9 @@ export function CompanyAvatar({
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(d)}&sz=64`}
-          alt={`${name} logo`}
+          // Decorative: every caller prints the company name next to the mark,
+          // so naming the logo only repeats it.
+          alt=""
           width={size}
           height={size}
           loading="lazy"

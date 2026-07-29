@@ -65,17 +65,25 @@ export function AddJobDialog({
                   Import from a URL, or paste the description for postings behind a login.
                 </Dialog.Description>
               </div>
-              <Dialog.Close className="rounded-md p-1 text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]">
-                <X className="size-4" />
+              <Dialog.Close
+                aria-label="Close"
+                className="grid size-8 place-items-center rounded-md text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+              >
+                <X className="size-4" aria-hidden="true" />
               </Dialog.Close>
             </div>
 
-            <div className="mt-4 inline-flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5 text-xs">
+            <div
+              role="group"
+              aria-label="Import method"
+              className="mt-4 inline-flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5 text-xs"
+            >
               {(["url", "text"] as Mode[]).map((m) => (
                 <button
                   key={m}
                   type="button"
                   onClick={() => setMode(m)}
+                  aria-pressed={mode === m}
                   className={`rounded-full px-3 py-1.5 transition ${
                     mode === m
                       ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)] shadow-sm"

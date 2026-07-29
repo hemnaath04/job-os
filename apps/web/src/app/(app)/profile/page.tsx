@@ -192,7 +192,8 @@ function FactCard({ fact }: { fact: ProfileFact }) {
             {fact.verified && (
               <BadgeCheck
                 className="size-3.5 shrink-0 text-[color:var(--color-mint)]"
-                aria-label="verified"
+                role="img"
+                aria-label="Verified"
               />
             )}
           </div>

@@ -34,6 +34,20 @@ export function CommandPalette() {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
+  // The palette is a modal, so the rest of the app has to stop being reachable
+  // while it is up: `inert` takes the shell out of the tab order and the
+  // accessibility tree, and focus goes back to whatever opened the palette.
+  useEffect(() => {
+    if (!open) return;
+    const shell = document.getElementById("app-shell");
+    const opener = document.activeElement as HTMLElement | null;
+    shell?.setAttribute("inert", "");
+    return () => {
+      shell?.removeAttribute("inert");
+      opener?.focus?.();
+    };
+  }, [open]);
+
   function go(href: string) {
     setOpen(false);
     router.push(href);
@@ -56,6 +70,9 @@ export function CommandPalette() {
             exit={{ opacity: 0, y: -8, scale: 0.98 }}
             transition={{ duration: 0.18 }}
             onClick={(e) => e.stopPropagation()}
+            role="dialog"
+            aria-modal="true"
+            aria-label="Command palette"
             className="w-full max-w-xl overflow-hidden rounded-2xl border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface-1)]/95 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.6)] backdrop-blur-2xl"
           >
             <Command label="Global command palette" className="text-sm">
@@ -70,7 +87,7 @@ export function CommandPalette() {
                   ESC
                 </kbd>
               </div>
-              <Command.List className="max-h-80 overflow-y-auto p-2">
+              <Command.List className="max-h-80 overflow-y-auto overscroll-contain p-2">
                 <Command.Empty className="px-3 py-6 text-center text-xs text-[color:var(--color-text-dim)]">
                   No matches. Try another query.
                 </Command.Empty>
@@ -123,6 +140,7 @@ export function CommandPalette() {
 export function CommandPaletteTrigger() {
   return (
     <button
+      type="button"
       onClick={() => {
         const evt = new KeyboardEvent("keydown", {
           key: "k",
