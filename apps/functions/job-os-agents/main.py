@@ -899,6 +899,9 @@ async def _tailor_resume(
                 end_date=_to_date(fact.get("end_date")),
                 location=fact.get("location"),
                 source_url=fact.get("source_url"),
+                updated_at=(
+                    str(fact.get("updated_at") or "") or None
+                ),
                 payload=fact.get("payload") or {},
             )
         )

@@ -96,6 +96,11 @@ class TailorFact:
     location: str | None = None
     source_url: str | None = None
     payload: dict[str, Any] = field(default_factory=dict)
+    # When this fact was last written. Used only to decide, between two facts
+    # about the same job, which WORDING of the title the candidate is currently
+    # using. An ISO string rather than a datetime because the two backends store
+    # it differently and only the ordering matters.
+    updated_at: str | None = None
 
 
 MAX_ITERATIONS = 3
@@ -344,6 +349,7 @@ async def tailor_resume(
             location=f.location,
             source_url=f.source_url,
             payload=f.payload or {},
+            updated_at=f.updated_at.isoformat() if f.updated_at else None,
         )
         for f in facts_orm
     ]
@@ -749,6 +755,54 @@ def _fact_identity(fact: TailorFact) -> tuple[str, ...]:
     return (fact.kind, org, _identity_text(fact.title))
 
 
+_TITLE_QUALIFIER_RE = re.compile(r"\s*(?:·|—|–|\||,|:)\s+")
+
+
+def _merged_title(variants: list[TailorFact]) -> str:
+    """The title to print for one job described by several facts.
+
+    Ranking by evidence decides which fact survives, but it is the wrong signal
+    for the TITLE, because the wording a candidate is currently using is the one
+    they saved most recently, not the one attached to the most bullets. Re-importing
+    a resume a month later with the role reworded is how a person changes how they
+    describe it, and the older wording kept winning: a profile holding both
+    "Software Test Automation Engineer" and, from five weeks earlier, "Junior
+    Software Test Automation Engineer · Client: leading global rideshare platform
+    (Fares team)" printed the older one.
+
+    Detail the newer wording dropped is kept rather than lost, since both wordings
+    are verified: a trailing qualifier from an older variant whose role name
+    matches is appended. This mirrors the field-level merge below, where a field
+    only one variant carried is filled in rather than discarded.
+    """
+    titled = [v for v in variants if (v.title or "").strip()]
+    if not titled:
+        return variants[0].title
+    # Undated facts sort first so a dated one outranks them.
+    newest = max(titled, key=lambda v: v.updated_at or "")
+    base = newest.title.strip()
+    base_identity = _identity_text(base)
+    if not base_identity:
+        return base
+    for variant in titled:
+        if variant is newest:
+            continue
+        parts = _TITLE_QUALIFIER_RE.split(variant.title.strip(), 1)
+        if len(parts) < 2:
+            continue
+        role, qualifier = parts[0], parts[1].strip()
+        if not qualifier:
+            continue
+        # Only append a qualifier that belongs to this same role, judged by the
+        # newer wording appearing inside the older one's role name.
+        if base_identity not in _identity_text(role):
+            continue
+        if _identity_text(qualifier) in base_identity:
+            continue
+        return f"{base}, {qualifier}"
+    return base
+
+
 def _merge_duplicate_facts(
     facts: list[TailorFact], bullets_by_fact: dict[str, list[TailorBullet]]
 ) -> tuple[list[TailorFact], dict[str, list[TailorBullet]]]:
@@ -783,6 +837,7 @@ def _merge_duplicate_facts(
             reverse=True,
         )
         canonical = ranked[0]
+        title = _merged_title(ranked)
         payload: dict[str, Any] = {}
         for variant in reversed(ranked):
             for key, value in (variant.payload or {}).items():
@@ -791,7 +846,7 @@ def _merge_duplicate_facts(
         winner = TailorFact(
             id=canonical.id,
             kind=canonical.kind,
-            title=canonical.title,
+            title=title,
             org=canonical.org or next((f.org for f in ranked if f.org), None),
             start_date=canonical.start_date
             or next((f.start_date for f in ranked if f.start_date), None),
