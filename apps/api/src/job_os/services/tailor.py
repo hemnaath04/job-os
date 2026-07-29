@@ -189,10 +189,13 @@ BULLET WRITING (this is what a human reader judges):
   candidate contributed to something they did not own. Accuracy beats a
   stronger-sounding verb.
 - Never upgrade a fact's STATUS. If the evidence says demoed, pending approval,
-  prototype, hackathon build, trial or mock, the resume cannot say shipped,
-  launched, released, delivered or in production, and the summary cannot either.
-  Carry the qualifier through instead: "demoed end to end, pending approval" is
-  a stronger line than a claim an interviewer can puncture in one question.
+  prototype, hackathon build, trial or mock, the bullet cannot say shipped,
+  launched, released, delivered or in production, and neither can the summary.
+  Carry the qualifier through in the bullet instead: "demoed end to end, pending
+  approval" is a stronger line than a claim an interviewer punctures in one
+  question. The summary names capabilities and need not repeat every qualifier,
+  but it must not claim provisional work shipped, and it must not pluralise one
+  instance into several ("knowledge-distillation pipelines" when there is one).
 - 30 words maximum per bullet, one idea each. Cutting a verified bullet down is
   always allowed and usually improves it. Growing one is how padding gets in.
 - No first person. No "I", "my", "we", "our".

@@ -99,7 +99,12 @@ WRITING AND FORMAT
   approval, a prototype, a hackathon build, a trial or a mock is never described
   as shipped, launched, released, delivered or running in production. The EPAM
   AI test-case agent was demoed end to end and was pending senior approval when
-  he left; say that, in both bullets and any summary line.
+  he left, and the bullet describing it carries that qualifier.
+- A summary line names capabilities, so it is not required to repeat every
+  qualifier the bullets carry. It must not assert that provisional work shipped
+  or was delivered, and it must not pluralise a single instance into several.
+  "Builds agentic workflows" is fair when a bullet shows one; "shipped an AI
+  agent" is not, when the bullet says pending approval.
 - Use short, engineer-like sentences with concrete decisions and constraints.
   The read-aloud test decides it: if he would not say the sentence in a standup,
   rewrite it.
