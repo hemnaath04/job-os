@@ -81,21 +81,22 @@ def test_a_summary_that_upgrades_status_is_dropped() -> None:
         {"title": "Go", "kind": "skill", "bullets": []},
         {"title": "Python", "kind": "skill", "bullets": []},
     ]
-    assert (
-        _safe_summary(
-            "Backend engineer who has shipped an AI agent for automated test generation.",
-            master_json_resume={"basics": {}},
-            facts_payload=facts_payload,
-        )
-        is None
+    value, reason = _safe_summary(
+        "Backend engineer who has shipped an AI agent for automated test generation.",
+        master_json_resume={"basics": {}},
+        facts_payload=facts_payload,
     )
-    # An honest summary over the same evidence survives.
+    assert value is None
+    # The reason travels with the refusal, so the loop can tell the model instead
+    # of dropping the resume's lede without explanation and getting the same
+    # overstatement back on the next pass.
+    assert reason is not None
+    assert "provisional" in reason
+
+    # An honest summary over the same evidence survives, with nothing to report.
     honest = "Backend and test-automation engineer with Go and Python test suites."
-    assert (
-        _safe_summary(
-            honest,
-            master_json_resume={"basics": {}},
-            facts_payload=facts_payload,
-        )
-        == honest
-    )
+    assert _safe_summary(
+        honest,
+        master_json_resume={"basics": {}},
+        facts_payload=facts_payload,
+    ) == (honest, None)

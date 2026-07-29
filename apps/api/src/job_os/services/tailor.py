@@ -487,7 +487,7 @@ async def run_tailor(
         # trivially gamed by claiming more matches, and the loop duly learned to
         # paste JD phrases onto unrelated bullets to raise a number nobody
         # outside the loop ever saw.
-        document, _provenance, _selected = _build_document(
+        document, _provenance, summary_rejection = _build_document(
             attempt,
             facts=facts,
             bullets_by_fact=bullets_by_fact,
@@ -503,6 +503,10 @@ async def run_tailor(
             fallback_missing=frozen_terms["missing"],
         )
         quality = document_quality_flags(document)
+        if summary_rejection:
+            # A refused summary leaves the page without its lede, so it costs the
+            # pass points and the model is told why.
+            quality["basics.summary"] = [summary_rejection]
         penalty = _quality_penalty(quality)
         score = coverage - penalty
         scores = [*state["iteration_scores"], float(score)]
@@ -588,7 +592,7 @@ async def run_tailor(
     if on_progress:
         on_progress("Assembling resume", 0.9)
 
-    json_resume, provenance, _selected = _build_document(
+    json_resume, provenance, _summary_rejection = _build_document(
         agent,
         facts=facts,
         bullets_by_fact=bullets_by_fact,
@@ -650,8 +654,12 @@ def _build_document(
     bullets_by_fact: dict[str, list[TailorBullet]],
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
-) -> tuple[dict[str, Any], list[ProvenanceEntry], list[SelectedBullet]]:
+) -> tuple[dict[str, Any], list[ProvenanceEntry], str | None]:
     """Turn one agent pass into the resume it would actually ship.
+
+    Returns the document, its provenance, and the reason the tailored summary was
+    refused if it was, so the loop can tell the model rather than dropping the
+    line without explanation.
 
     Every safety check lives here, so the document the loop scores mid-run is
     byte-for-byte the document the user gets. Scoring a different, friendlier
@@ -690,7 +698,7 @@ def _build_document(
         bullets_by_id=bullets_by_id,
         facts_by_id=facts_by_id,
     )
-    summary_objective = _safe_summary(
+    summary_objective, summary_rejection = _safe_summary(
         agent.summary_objective,
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
@@ -703,7 +711,7 @@ def _build_document(
         bullets_by_fact=bullets_by_fact,
         summary_objective=summary_objective,
     )
-    return json_resume, provenance, safe_bullets
+    return json_resume, provenance, summary_rejection
 
 
 # What one flagged writing problem costs against keyword coverage. Three points
@@ -903,9 +911,16 @@ def _safe_summary(
     *,
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
-) -> str | None:
+) -> tuple[str | None, str | None]:
+    """The summary if it is safe to print, plus why it was refused if not.
+
+    The reason matters as much as the refusal. Dropping the line silently cost
+    the resume its lede and left the model with no idea it had been rejected, so
+    the next pass wrote the same overstatement again. Handing the reason back
+    turns a silent loss into something the loop can fix.
+    """
     if not summary:
-        return None
+        return None, None
     source = json.dumps(
         {"master": master_json_resume, "facts": facts_payload},
         ensure_ascii=False,
@@ -915,7 +930,7 @@ def _safe_summary(
         or _technology_terms(summary) - _technology_terms(source)
     ):
         log.warning("tailor.unsafe_summary_reverted")
-        return None
+        return None, "summary_rejected(introduced an unverified metric or technology)"
     # The summary is one line about several facts, so it is the easiest place to
     # promote a status. A real run wrote "has shipped ... an AI agent for
     # automated test generation" about work the fact records as demoed and
@@ -929,8 +944,13 @@ def _safe_summary(
                     "tailor.summary_upgraded_status_reverted",
                     fact=str(fact.get("title") or "")[:80],
                 )
-                return None
-    return summary
+                return None, (
+                    "summary_rejected(claimed completed or shipped work that "
+                    f"{str(fact.get('title') or 'a fact')[:40]} records as "
+                    "provisional; describe the capability without claiming it "
+                    "shipped, and do not pluralise one instance)"
+                )
+    return summary, None
 
 
 # ---- Loaders -----------------------------------------------------------------
