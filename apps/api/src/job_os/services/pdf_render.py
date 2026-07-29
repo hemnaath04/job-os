@@ -96,6 +96,12 @@ def _fmt_date(value: str | date | datetime | None) -> str | None:
     return d.strftime("%b %Y")
 
 
+# An en dash, the character a numeric range takes, and what LaTeX's "--" sets.
+# The em dash this used to print is banned everywhere on the page; the career-ops
+# playbook makes the date range the one place a range dash is still correct.
+RANGE_DASH = "–"
+
+
 def _fmt_range(
     start: str | date | datetime | None,
     end: str | date | datetime | None,
@@ -108,12 +114,12 @@ def _fmt_range(
     if not s and not e:
         return ""
     if not e:
-        return f"{s} — {present_label}"
+        return f"{s} {RANGE_DASH} {present_label}"
     if not s:
         return e or ""
     if ongoing_suffix and end and _is_future(end):
-        return f"{s} — {e} {ongoing_suffix}"
-    return f"{s} — {e}"
+        return f"{s} {RANGE_DASH} {e} {ongoing_suffix}"
+    return f"{s} {RANGE_DASH} {e}"
 
 
 def _is_future(value: str | date | datetime) -> bool:

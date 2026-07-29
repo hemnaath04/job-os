@@ -29,6 +29,10 @@ INFLATION_FLOOR_WORDS = 20
 MAX_WORK_BULLETS = 4
 MAX_PROJECT_BULLETS = 3
 
+# Two rendered lines of the tailored summary. Longer and it stops being a lede
+# and starts being a paragraph the reader skips.
+SUMMARY_MAX_WORDS = 45
+
 # Distinct skill rows a one-page resume can carry before the block eats the
 # space that evidence should occupy. Six is what the real profile needs once
 # duplicate categories are folded together; capping lower than that would force a
@@ -36,7 +40,11 @@ MAX_PROJECT_BULLETS = 3
 # worse than the extra line.
 MAX_SKILL_GROUPS = 6
 
-_DASH_RE = re.compile(r"\s*(?:—|–|--)\s*")
+# Separator characters that have no business on an ATS-parsed page: em dash, en
+# dash, double hyphen, and the middle dot and bullet that resume imports pick up
+# from a PDF's own layout glyphs. The independent review flagged the middle dot in
+# a job title as something an ATS parser can mangle.
+_DASH_RE = re.compile(r"\s*(?:—|–|--|·|•|‧|∙)\s*")
 _WORD_RE = re.compile(r"[a-z0-9+#.]+")
 
 # Words that carry no meaning for a similarity test, so two bullets about the
@@ -263,6 +271,21 @@ def section_flags(bullets: list[str]) -> list[str]:
 def document_quality_flags(document: dict) -> dict[str, list[str]]:
     """Every writing problem in an assembled resume, keyed by where it lives."""
     found: dict[str, list[str]] = {}
+    summary = str((document.get("basics") or {}).get("summary") or "").strip()
+    if summary:
+        # The summary is where JD parroting is most tempting, because a
+        # requirement can be restated there without touching a single bullet. A
+        # real run opened with the posting's own "a strong grasp of data
+        # structures, algorithms, and systems".
+        summary_flags = [
+            flag for flag in bullet_flags(summary) if not flag.startswith("weak_opener")
+        ]
+        words = len(summary.split())
+        if words > SUMMARY_MAX_WORDS:
+            summary_flags.append(f"summary_too_long({words}w)")
+        summary_flags = [f for f in summary_flags if not f.startswith("too_long")]
+        if summary_flags:
+            found["basics.summary"] = sorted(set(summary_flags))
     for section, label_keys in (
         ("work", ("position", "name")),
         ("projects", ("name",)),

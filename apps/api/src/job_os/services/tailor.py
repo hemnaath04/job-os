@@ -129,10 +129,16 @@ HARD CONSTRAINTS — these are non-negotiable:
    candidate as a frontend engineer. Frontend-heavy experience that is not
    verified belongs in `gap_questions`; emphasize verified backend, APIs,
    agents, pipelines, testing, concurrency, and infrastructure work instead.
-4. `selected_fact_ids` includes the facts to render in the resume. Order
+4. `selected_fact_ids` decides only the sections that are genuinely optional:
+   projects and volunteering. List ids for those. Education, work experience,
+   skills, certifications, publications and awards are always rendered, so
+   listing their ids changes nothing and only costs you output length. Order
    doesn't matter (Python sorts by date / section).
 5. `summary_objective` is a 1-2 sentence tailored summary line for the
-   resume's basics.summary, or null to keep the master's summary.
+   resume's basics.summary, or null to keep the master's summary. It prints at
+   the top of the page, so keep it under 45 words and do not restate a JD
+   requirement in the employer's own words ("a strong grasp of data structures,
+   algorithms, and systems"). Say what he has built, not what they asked for.
 
 SEMANTIC KEYWORD MATCHING (this is how you raise ATS coverage without
 inventing experience):
@@ -177,8 +183,15 @@ BULLET WRITING (this is what a human reader judges):
   machine-written.
 - Where two bullets in the profile describe the SAME work in different words,
   pick the single best wording. Never select both.
-- Do not select more than 4 bullets for one role or more than 3 for one
-  project. Python will cut the surplus, so choose deliberately.
+
+FILL THE PAGE, WITH EVIDENCE, NEVER WITH PADDING. The output is exactly one
+Letter page and a half-empty resume reads as a thin candidate. Aim for 3 to 4
+bullets on each role and 2 to 3 on each project, and select 3 to 4 projects
+whenever the profile holds that many that are defensibly relevant. Those are
+also the ceilings: Python cuts the surplus at 4 per role and 3 per project, so
+choose deliberately rather than listing everything. When a JD is a poor fit,
+lead with the closest honest evidence and still fill the page; do not shrink the
+resume to signal the mismatch, that is what gap_questions are for.
 
 ATS:
 - `ats_keywords_matched`: JD keywords that appear in your selected bullets or
@@ -371,6 +384,15 @@ async def run_tailor(
 
     graph = StateGraph(TailorGraphState)
 
+    # The keyword set has to be the same on every pass or the passes are not
+    # comparable. It is seeded from the JD and widened once, by the first pass's
+    # own term lists, which is how skills buried inside a prose requirement get
+    # recovered. After that it is frozen: a later pass that simply names more
+    # missing keywords was otherwise growing the denominator and scoring itself
+    # down, which made a genuine improvement look like a regression and ended the
+    # loop early. Real run: coverage 25.0 then 14.3 on a better draft.
+    frozen_terms: dict[str, list[str]] = {}
+
     async def draft_and_score(state: TailorGraphState) -> TailorGraphState:
         """One quality-model pass followed by deterministic Python scoring."""
         iteration = len(state["iteration_scores"]) + 1
@@ -434,11 +456,13 @@ async def run_tailor(
             master_json_resume=master_json_resume,
             facts_payload=facts_payload,
         )
+        frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
+        frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
         coverage, coverage_report = _compute_ats_from_document(
             jd_parsed=jd_parsed,
             json_resume=document,
-            fallback_matched=attempt.ats_keywords_matched,
-            fallback_missing=attempt.ats_keywords_missing,
+            fallback_matched=frozen_terms["matched"],
+            fallback_missing=frozen_terms["missing"],
         )
         quality = document_quality_flags(document)
         penalty = _quality_penalty(quality)
@@ -534,12 +558,18 @@ async def run_tailor(
         facts_payload=facts_payload,
     )
 
+    # Same frozen keyword set the loop used, so the score the user sees is the
+    # score the loop was working against rather than a differently scaled one.
     ats_score, ats_report = _compute_ats_from_document(
         jd_parsed=jd_parsed,
         json_resume=json_resume,
-        fallback_matched=agent.ats_keywords_matched,
-        fallback_missing=agent.ats_keywords_missing,
+        fallback_matched=frozen_terms.get("matched") or agent.ats_keywords_matched,
+        fallback_missing=frozen_terms.get("missing") or agent.ats_keywords_missing,
     )
+    # Display the winning pass's own account of its coverage, not the first
+    # pass's, which is all the frozen set is for.
+    ats_report["model_reported_matched"] = list(agent.ats_keywords_matched)
+    ats_report["model_reported_missing"] = list(agent.ats_keywords_missing)
 
     # Embed pass-by-pass scores into the report so the FE can show the trail
     # without changing the response schema.
@@ -896,6 +926,21 @@ def _build_facts_payload(
     """Compact JSON the LLM sees — only verified facts + their bullets, no PII beyond resume."""
     out: list[dict[str, Any]] = []
     for f in facts:
+        if f.kind == "skill":
+            # A skill fact is a category and a name. Spelling out its empty
+            # dates, location, source_url, payload and bullet list for each of
+            # sixty-odd of them crowded the real evidence out of the prompt
+            # window, and the ids are never selected against because the skills
+            # section is always rendered in full.
+            out.append(
+                {
+                    "id": str(f.id),
+                    "kind": "skill",
+                    "title": f.title,
+                    "category": (f.payload or {}).get("category") or f.org,
+                }
+            )
+            continue
         out.append(
             {
                 "id": str(f.id),
@@ -1304,6 +1349,33 @@ _GENERIC_SKILL_LABELS = frozenset(
     {"skills", "skill", "other", "others", "misc", "miscellaneous", "technical skills"}
 )
 _ADDITIONAL_SKILL_LABEL = "Additional"
+_PARENTHETICAL_RE = re.compile(r"\(([^)]*)\)")
+
+
+def _skill_aliases(keyword: str) -> set[str]:
+    """Every spelling that means the same skill as this one.
+
+    A skills row carried both "RAG" and "Retrieval-Augmented Generation (RAG)",
+    and both "LLM Integration" and "LLM integration (OpenAI, Anthropic, Qwen)".
+    A parenthetical is an expansion or an acronym of what precedes it, so those
+    are one skill written twice.
+
+    Deliberately narrow. Matching on token containment instead would fold "Async
+    Python" into "Python", which are two different claims that both belong.
+    """
+    aliases = {_identity_text(keyword)}
+    inner = _PARENTHETICAL_RE.findall(keyword)
+    base = _identity_text(_PARENTHETICAL_RE.sub(" ", keyword))
+    if base:
+        aliases.add(base)
+    for group in inner:
+        # Only a single term in parentheses is an alias for the whole. A list
+        # ("OpenAI, Anthropic, Qwen") names providers, not the skill.
+        if "," not in group:
+            folded = _identity_text(group)
+            if folded:
+                aliases.add(folded)
+    return {alias for alias in aliases if alias}
 
 
 def _consolidate_skills(
@@ -1324,15 +1396,31 @@ def _consolidate_skills(
         bucket["keywords"].extend(titles)
 
     groups: list[dict[str, Any]] = []
-    seen_keywords: set[str] = set()
+    # Keyed by every spelling a kept skill answers to, mapped to where it is
+    # listed, so a later, fuller spelling can replace a bare one in place.
+    seen_keywords: dict[str, tuple[list[str], int]] = {}
     for bucket in merged.values():
         unique: list[str] = []
         for keyword in bucket["keywords"]:
             folded = _identity_text(keyword)
-            if not folded or folded in seen_keywords:
+            if not folded:
                 continue
-            seen_keywords.add(folded)
+            aliases = _skill_aliases(keyword)
+            existing = next(
+                (seen_keywords[alias] for alias in aliases if alias in seen_keywords),
+                None,
+            )
+            if existing is not None:
+                target, index = existing
+                # "Retrieval-Augmented Generation (RAG)" says everything "RAG"
+                # says and more, so the fuller spelling wins the slot. The review
+                # read the pair as keyword stuffing, and it was right.
+                if len(keyword) > len(target[index]):
+                    target[index] = keyword
+                continue
             unique.append(keyword)
+            for alias in aliases:
+                seen_keywords[alias] = (unique, len(unique) - 1)
         if not unique:
             # Every keyword already appears in an earlier row, so this row would
             # print a heading over nothing.
