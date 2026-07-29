@@ -291,7 +291,10 @@ function Card({
       onDoubleClick={openJD}
       title={sourceUrl ? "Double-click to open the original job description" : undefined}
       className={
-        "cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-all " +
+        // Only the three properties hover actually changes. transition-all also
+        // animated anything else that moved, including the card's own size when
+        // its content changed.
+        "cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-[transform,border-color,box-shadow] duration-[var(--dur)] ease-[var(--ease-out)] " +
         (compact ? "p-3.5 " : "p-3 ") +
         (dragging
           ? "rotate-2 shadow-2xl"

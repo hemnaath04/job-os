@@ -360,7 +360,9 @@
   transition: background-color var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out);
 }
 .product-row:hover { background: var(--color-surface-hover); }
-.product-row:active { transform: scale(.995); }
+/* .995 was half a percent, which is no feedback at all. Matches the press on
+   the shared buttons now. */
+.product-row:active { transform: scale(.98); }
 
 .product-empty-state {
   display: grid;

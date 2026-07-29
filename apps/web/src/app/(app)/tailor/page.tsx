@@ -1377,7 +1377,7 @@ function GapRow({
             <button
               onClick={() => create.mutate()}
               disabled={create.isPending || !title.trim()}
-              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.05] disabled:opacity-50"
+              className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
             >
               {create.isPending ? "Saving…" : "Save fact"}
             </button>
