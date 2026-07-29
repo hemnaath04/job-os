@@ -126,7 +126,7 @@ export function ApplicationsTable({
                     onDoubleClick={(e) => e.stopPropagation()}
                     title="Archive application"
                     aria-label="Archive application"
-                    className="inline-flex items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1 text-[color:var(--color-text-muted)] transition hover:bg-rose-400/15 hover:text-rose-300"
+                    className="inline-flex items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1 text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-rose)]/12 hover:text-[color:var(--color-rose-ink)]"
                   >
                     <Trash2 className="size-3" />
                   </button>

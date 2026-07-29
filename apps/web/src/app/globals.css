@@ -64,6 +64,15 @@
   --color-emerald: #4E8A5F;
   --color-sky: #3F6FA6;
 
+  /* Readable ink for each status, the same idea as `accent-ink`: the fill
+     colours above are mid-tone and miss AA as small text on a pale tint, so
+     status TEXT uses these and status FILLS use the ones above. Measured at
+     4.55:1 or better on a 10% tint of their own hue over page, surface-1 and
+     surface-2. On dark the fill colours are already legible, so they flip. */
+  --color-mint-ink: #3E6E4C;
+  --color-amber-ink: #865C15;
+  --color-rose-ink: #A14750;
+
   /* === Fonts === */
   --font-sans: var(--font-manrope), "Manrope", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "Geist Mono", ui-monospace, monospace;
@@ -447,6 +456,45 @@
 .info-chip-sage { color: #5C6B4E; border-color: rgba(129, 148, 96, 0.30); background: rgba(129, 148, 96, 0.10); }
 .info-chip-clay { color: #8A5A1C; border-color: rgba(176, 121, 28, 0.28); background: rgba(176, 121, 28, 0.10); }
 
+/* ── Status notices ───────────────────────────────────────────────────────
+   A panel that reports the outcome of something: a review passed, a source
+   returned nothing, a render failed. The tint is a translucent mix of the
+   status hue so it works on any surface, and the text uses the matching ink
+   token, so both themes stay legible when the tokens flip. */
+/* No padding here on purpose: these component classes are unlayered, so they
+   outrank Tailwind utilities, and a padding here would silently beat the p-4 or
+   p-5 a caller passed. Callers own their own spacing. */
+.notice {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  background: var(--color-surface-2);
+  color: var(--color-text-muted);
+}
+
+.notice-positive {
+  color: var(--color-mint-ink);
+  border-color: color-mix(in srgb, var(--color-mint) 35%, transparent);
+  background: color-mix(in srgb, var(--color-mint) 10%, transparent);
+}
+
+.notice-caution {
+  color: var(--color-amber-ink);
+  border-color: color-mix(in srgb, var(--color-amber) 35%, transparent);
+  background: color-mix(in srgb, var(--color-amber) 10%, transparent);
+}
+
+.notice-critical {
+  color: var(--color-rose-ink);
+  border-color: color-mix(in srgb, var(--color-rose) 35%, transparent);
+  background: color-mix(in srgb, var(--color-rose) 10%, transparent);
+}
+
+/* Secondary text inside a notice stays in the notice's own hue rather than
+   dropping to the page's muted grey, which reads as unrelated. */
+.notice-positive .notice-detail,
+.notice-caution .notice-detail,
+.notice-critical .notice-detail { color: inherit; opacity: .82; }
+
 .workspace-panel {
   border: 1px solid var(--color-border);
   border-radius: 1.25rem;
@@ -565,6 +613,9 @@
   --color-mint: #83B896;
   --color-amber: #E2B468;
   --color-rose: #E28A92;
+  --color-mint-ink: #83B896;
+  --color-amber-ink: #E2B468;
+  --color-rose-ink: #E28A92;
   --color-emerald: #83B896;
   --color-sky: #8FB2E0;
   --color-cyan: #8FB2E0;

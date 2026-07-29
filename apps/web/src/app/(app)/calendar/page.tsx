@@ -127,7 +127,7 @@ function EntryRow({
         </div>
         <div
           className={`shrink-0 text-right text-xs ${
-            overdue ? "text-rose-300" : "text-[color:var(--color-text-muted)]"
+            overdue ? "text-[color:var(--color-rose-ink)]" : "text-[color:var(--color-text-muted)]"
           }`}
         >
           <div>{format(when, "EEE, MMM d")}</div>

@@ -597,8 +597,8 @@ function TailorInner() {
       </PageIntro>
 
       {!hasMaster && !resumesLoading && (
-        <div className="workspace-panel mt-5 flex items-start gap-3 border-amber-400/25 p-5">
-          <AlertCircle className="mt-0.5 size-4 text-amber-400" />
+        <div className="notice notice-caution mt-5 flex items-start gap-3 p-5">
+          <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <div className="text-sm">
             <div className="font-medium">No master resume yet</div>
             <p className="text-[color:var(--color-text-muted)]">
@@ -699,7 +699,7 @@ function TailorInner() {
         )}
 
         {error && !running && (
-          <div className="flex items-start gap-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.05] px-4 py-3 text-xs text-rose-200">
+          <div className="notice notice-critical flex items-start gap-2 px-4 py-3 text-xs">
             <AlertCircle className="mt-0.5 size-3.5 shrink-0" />
             <span>{error}</span>
           </div>
@@ -715,7 +715,7 @@ function TailorInner() {
               ["04", "Verify", "Independent AI review and one-page PDF checks"],
             ].map(([number, title, copy]) => (
               <li key={number} className="flex gap-3">
-                <span className="grid size-8 shrink-0 place-items-center rounded-lg border border-[#8A6D12]/15 bg-[#8A6D12]/[.06] font-mono text-[10px] text-[#EAD98A]">{number}</span>
+                <span className="product-icon size-8 font-mono text-[10px]">{number}</span>
                 <div><div className="text-sm font-semibold">{title}</div><p className="mt-0.5 text-xs leading-5 text-[color:var(--color-text-dim)]">{copy}</p></div>
               </li>
             ))}
@@ -948,7 +948,7 @@ function ResultView({
       </header>
 
       {blockedReview && !result.approved_by_user && (
-        <div className="mt-5 rounded-xl border border-amber-400/25 bg-amber-400/[0.05] p-4 text-xs text-amber-100">
+        <div className="notice notice-caution mt-5 p-4 text-xs">
           <div className="flex items-center gap-2">
             <AlertCircle className="size-4 shrink-0" />
             <span className="font-semibold">
@@ -957,7 +957,7 @@ function ResultView({
               {blockedReview.issues.length === 1 ? "" : "s"}
             </span>
           </div>
-          <p className="mt-1.5 text-[color:var(--color-text-dim)]">
+          <p className="notice-detail mt-1.5">
             This is advice, not a gate. Fix what you agree with in Edit with AI,
             or finalize as is.
           </p>
@@ -972,7 +972,7 @@ function ResultView({
             ))}
           </ul>
           {blockedReview.issues.length > 6 && (
-            <div className="mt-1 text-[color:var(--color-text-dim)]">
+            <div className="notice-detail mt-1">
               and {blockedReview.issues.length - 6} more
             </div>
           )}
@@ -996,12 +996,8 @@ function ResultView({
       )}
 
       <div
-        className={`mt-5 flex flex-wrap items-center gap-3 rounded-xl border px-4 py-3 text-xs ${
-          reviewing
-            ? "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
-            : result.review_report?.passed
-              ? "border-emerald-400/20 bg-emerald-400/[0.05] text-emerald-200"
-              : "border-amber-400/20 bg-amber-400/[0.05] text-amber-100"
+        className={`notice mt-5 flex flex-wrap items-center gap-3 px-4 py-3 text-xs ${
+          reviewing ? "" : result.review_report?.passed ? "notice-positive" : "notice-caution"
         }`}
       >
         {reviewing ? (
@@ -1028,7 +1024,7 @@ function ResultView({
                 : "pending"}
               /100
             </span>
-            <span className="text-[color:var(--color-text-dim)]">
+            <span className="notice-detail">
               {result.review_report?.passed
                 ? "Passed. You can finalize now."
                 : reviewNeedsRetry(result)
@@ -1048,7 +1044,7 @@ function ResultView({
       </div>
 
       {result.agent_note && (
-        <div className="workspace-panel mt-6 border-[#8A6D12]/20 p-5">
+        <div className="workspace-panel mt-6 border-[color:var(--color-accent-border)] p-5">
           <div className="flex items-start gap-3">
             <Sparkles className="mt-0.5 size-4 text-[color:var(--color-violet)]" />
             <p className="text-sm leading-relaxed text-[color:var(--color-text-muted)]">
@@ -1164,8 +1160,8 @@ function KeywordGroup({
 }) {
   const colorClass =
     tone === "mint"
-      ? "bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint)]"
-      : "bg-rose-400/10 text-rose-300";
+      ? "bg-[color:var(--color-mint)]/10 text-[color:var(--color-mint-ink)]"
+      : "bg-[color:var(--color-rose)]/10 text-[color:var(--color-rose-ink)]";
   return (
     <div>
       <div className="text-xs text-[color:var(--color-text-muted)]">
@@ -1196,9 +1192,9 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
   }, [facts]);
 
   return (
-    <div className="workspace-panel border-amber-400/25 p-5">
+    <div className="notice notice-caution p-5">
       <div className="flex items-center gap-2">
-        <AlertCircle className="size-4 text-amber-400" />
+        <AlertCircle className="size-4 shrink-0" />
         <div className="text-sm font-medium">
           Gaps the agent surfaced: {gaps.length} requirement
           {gaps.length === 1 ? "" : "s"} the JD asks for that your profile
@@ -1340,7 +1336,7 @@ function GapRow({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="Title (e.g. 'GraphQL' or 'Real-time inference pipeline')"
-            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
+            className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
           />
           {kind !== "skill" && (
             <>
@@ -1358,7 +1354,7 @@ function GapRow({
                 kind === "award" ? "Awarder" :
                 "Organization (optional)"
               }
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
             />
             </>
           )}
@@ -1373,7 +1369,7 @@ function GapRow({
               onChange={(e) => setBullet(e.target.value)}
               placeholder="One verified bullet (optional). Keep metrics real."
               rows={2}
-              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[#8A6D12]/60"
+              className="glass w-full rounded-[var(--radius-input,10px)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-xs outline-none focus:border-[color:var(--color-accent-border)]"
             />
             </>
           )}

@@ -139,7 +139,7 @@ function ProviderCard({ source }: { source: ByoSource }) {
             <CheckCircle2 className="size-3" /> Connected
           </span>
         ) : (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-2.5 py-1 text-[11px] font-medium text-amber-300">
+          <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-2.5 py-1 text-[11px] font-medium text-[color:var(--color-amber-ink)]">
             Not connected
           </span>
         )}
@@ -208,7 +208,7 @@ function ProviderCard({ source }: { source: ByoSource }) {
           <button
             type="button"
             onClick={onRemove}
-            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1.5 text-xs text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-rose-300"
+            className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1.5 text-xs text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-rose-ink)]"
           >
             <Trash2 className="size-3.5" /> Remove
           </button>
@@ -320,8 +320,8 @@ function CustomSourcesSection() {
       </div>
 
       {acceptedAt === null ? (
-        <div className="mt-5 rounded-[var(--radius-card)] border border-amber-400/30 bg-amber-400/5 p-5">
-          <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-300">
+        <div className="notice notice-caution mt-5 p-5">
+          <h3 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldAlert className="size-4" /> You are responsible for custom
             sources
           </h3>
@@ -387,7 +387,7 @@ function CustomSourcesSection() {
             <button
               type="button"
               onClick={onRevoke}
-              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1.5 text-xs text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-rose-300"
+              className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1.5 text-xs text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-rose-ink)]"
             >
               <Trash2 className="size-3.5" /> Revoke
             </button>
@@ -603,7 +603,7 @@ function CustomSourceManager({
               <button
                 type="button"
                 onClick={() => onRemove(source)}
-                className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1 text-[11px] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-rose-300"
+                className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] px-3 py-1 text-[11px] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-rose-ink)]"
               >
                 <Trash2 className="size-3" /> Remove
               </button>

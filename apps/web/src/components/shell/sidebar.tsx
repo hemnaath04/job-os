@@ -162,7 +162,10 @@ export function Sidebar() {
     </motion.aside>
     {/* Clear of the home indicator on a notched phone, where a flat 0.75rem
         put the bar underneath it. */}
-    <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-black/80 px-1.5 shadow-[0_18px_60px_rgba(0,0,0,.65)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
+    {/* A token surface, not black. On the warm light theme a black bar was both
+        off-language and unreadable: the active icon uses --color-text, which
+        measured 1.13:1 against it. */}
+    <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/85 px-1.5 shadow-[var(--shadow-glass-hover)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
       {NAV.slice(0, 5).map((item) => {
         const Icon = item.icon;
         const active = pathname === item.href || pathname.startsWith(item.href + "/");

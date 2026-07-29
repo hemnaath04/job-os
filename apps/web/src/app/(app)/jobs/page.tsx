@@ -609,7 +609,7 @@ export default function DiscoverPage() {
                 </button>
                 <button
                   onClick={() => deleteSaved.mutate(s.id)}
-                  className="ml-0.5 rounded-full p-1 text-[color:var(--color-text-dim)] opacity-0 transition group-hover:opacity-100 hover:bg-[color:var(--color-surface-hover)] hover:text-rose-300"
+                  className="ml-0.5 rounded-full p-1 text-[color:var(--color-text-dim)] opacity-0 transition group-hover:opacity-100 hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-rose-ink)]"
                   aria-label={`Delete saved search ${s.name}`}
                 >
                   <X className="size-3" />
@@ -833,15 +833,15 @@ export default function DiscoverPage() {
           "only SimplifyJobs is showing" mystery state where one source silently
           fails. */}
       {sortedResults !== null && (sourceErrors.length > 0 || hasEmptySource(sources, sourceCounts)) && (
-        <div className="glass mt-4 rounded-[var(--radius-card)] border border-amber-400/30 p-3 text-xs">
+        <div className="notice notice-caution mt-4 p-3 text-xs">
           {sourceErrors.map((e) => (
             <div key={e.source} className="flex items-start gap-2">
-              <span className="text-amber-300">⚠</span>
+              <span className="opacity-70">⚠</span>
               <div>
-                <span className="font-semibold uppercase tracking-wider text-amber-300">
+                <span className="font-semibold uppercase tracking-wider">
                   {e.source}
                 </span>{" "}
-                <span className="text-[color:var(--color-text-muted)]">
+                <span className="notice-detail">
                   {prettyError(e.source, e.message)}
                 </span>
               </div>
@@ -852,12 +852,12 @@ export default function DiscoverPage() {
               .filter((s) => (sourceCounts[s] ?? 0) === 0 && !sourceErrors.find((e) => e.source === s))
               .map((s) => (
                 <div key={s} className="flex items-start gap-2">
-                  <span className="text-amber-300">·</span>
+                  <span className="opacity-70">·</span>
                   <div>
-                    <span className="font-semibold uppercase tracking-wider text-amber-300">
+                    <span className="font-semibold uppercase tracking-wider">
                       {s}
                     </span>{" "}
-                    <span className="text-[color:var(--color-text-muted)]">
+                    <span className="notice-detail">
                       returned 0 hits with these filters.
                     </span>
                   </div>
@@ -1163,7 +1163,7 @@ function SourceToggle({
         <span className="flex w-full items-center gap-1.5">
           <span className="text-sm font-medium">{label}</span>
           {badge && (
-            <span className="rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
+            <span className="rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-[color:var(--color-amber-ink)]">
               {badge}
             </span>
           )}
@@ -1253,7 +1253,7 @@ function ByoSourceToggle({
             connected
           </span>
         ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-amber-ink)]">
             <Lock className="size-2" /> add key
           </span>
         )}
@@ -1313,7 +1313,7 @@ function CustomSourceToggle({
           custom
         </span>
         {!accepted && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-amber-500/50 bg-amber-400/15 px-1.5 py-px text-[9px] uppercase tracking-wide text-amber-700 dark:border-amber-400/40 dark:text-amber-300">
+          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-amber-ink)]">
             <Lock className="size-2" /> accept terms
           </span>
         )}

@@ -287,7 +287,7 @@ export default function ResumeEditorClient({
               {previewQuery.isLoading ? (
                 <div className="loading-surface h-[78dvh]" />
               ) : previewQuery.isError ? (
-                <div className="p-6 text-sm text-red-700">
+                <div className="p-6 text-sm text-[color:var(--color-rose-ink)]">
                   The draft preview could not be rendered.
                 </div>
               ) : (
@@ -631,7 +631,7 @@ function EducationEditor({
           return (
             <div
               key={`${item.institution}-${index}`}
-              className="rounded-xl border border-[color:var(--color-border)] bg-black/10 p-4"
+              className="rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-4"
             >
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Institution" value={item.institution ?? ""} onChange={(next) => update("institution", next)} />
@@ -769,7 +769,7 @@ function EntryEditor({
             onChange(copy);
           };
           return (
-            <div key={`${String(item[nameKey])}-${index}`} className="rounded-xl border border-[color:var(--color-border)] bg-black/10 p-4">
+            <div key={`${String(item[nameKey])}-${index}`} className="rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-4">
               <div className="grid gap-3 sm:grid-cols-2">
                 <Field label="Organization or project" value={String(item[nameKey] ?? "")} onChange={(next) => update(nameKey, next)} />
                 <Field label="Role or description" value={String(item[roleKey] ?? "")} onChange={(next) => update(roleKey, next)} />

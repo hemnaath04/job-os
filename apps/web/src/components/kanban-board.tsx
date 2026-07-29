@@ -219,7 +219,7 @@ function Column({
       className={
         "workspace-panel flex min-h-[18rem] min-w-0 flex-col p-3.5 transition " +
         (isOver
-          ? "border-[#8A6D12]/40 bg-[#8A6D12]/[0.045] shadow-[0_18px_50px_-32px_rgba(233,198,74,.7)]"
+          ? "border-[color:var(--color-accent-ink)]/40 bg-[color:var(--color-accent-ink)]/[0.045] shadow-[0_18px_50px_-32px_rgba(233,198,74,.7)]"
           : "border-[color:var(--color-border)]")
       }
     >
@@ -350,7 +350,7 @@ function Card({
               onDoubleClick={stopDrag}
               title="Archive (move out of pipeline)"
               aria-label="Archive application"
-              className="inline-flex items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1 text-[color:var(--color-text-muted)] transition hover:bg-rose-400/15 hover:text-rose-300"
+              className="inline-flex items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1 text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-rose)]/12 hover:text-[color:var(--color-rose-ink)]"
             >
               <Trash2 className="size-3" />
             </button>
