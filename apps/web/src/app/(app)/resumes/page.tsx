@@ -12,6 +12,7 @@ import {
   FolderOpen,
   FileUp,
   FileText,
+  LayoutTemplate,
   LibraryBig,
   MessageSquareText,
   Plus,
@@ -71,6 +72,16 @@ function ResumesInner() {
       (left, right) => (resumeTimestamp(left) - resumeTimestamp(right)) * direction,
     );
   }, [resumes, sort]);
+  // Template carries the look, source carries the data. Rows written before the
+  // split have no category and read as source, so nothing needs backfilling.
+  const templates = useMemo(
+    () => sorted.filter((r) => r.category === "template" && !r.is_master),
+    [sorted],
+  );
+  const sources = useMemo(
+    () => sorted.filter((r) => r.category !== "template" || r.is_master),
+    [sorted],
+  );
   const [creating, setCreating] = useState(false);
   const [name, setName] = useState("");
   const [baseRole, setBaseRole] = useState("");
@@ -86,7 +97,7 @@ function ResumesInner() {
         is_master: false,
       }),
     onSuccess: () => {
-      toast.success("Template created");
+      toast.success("Source resume created");
       qc.invalidateQueries({ queryKey: ["resumes"] });
       setCreating(false);
       setName("");
@@ -151,7 +162,7 @@ function ResumesInner() {
       <PageIntro
         eyebrow="Document library"
         title="Resume studio"
-        description="One verified master, multiple role-specific templates, and a traceable history of every tailored version you generate."
+        description="Source resumes hold your data, templates hold the look. Tailoring combines the two and saves the result under a source, leaving the template untouched."
         icon={LibraryBig}
         action={
           <div className="flex flex-wrap gap-2">
@@ -218,12 +229,12 @@ function ResumesInner() {
               onClick={() => setCreating((current) => !current)}
               className="kinetic-button kinetic-button-primary"
             >
-              <Plus className="size-3.5" /> New template
+              <Plus className="size-3.5" /> New source
             </button>
           </div>
         }
       >
-        <InfoChip tone="sage">{resumes.length} templates</InfoChip>
+        <InfoChip tone="sage">{resumes.length} resumes</InfoChip>
         <InfoChip>Evidence-backed bullets</InfoChip>
         <InfoChip tone="clay">AI quality gate</InfoChip>
       </PageIntro>
@@ -270,7 +281,7 @@ function ResumesInner() {
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Template name (e.g. SWE, ML, AI)"
+              placeholder="Name (e.g. SWE, ML, AI)"
               autoFocus
               className="field-control flex-1"
             />
@@ -314,7 +325,9 @@ function ResumesInner() {
         <>
           <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-[color:var(--color-text-dim)]">
-              {resumes.length} resume{resumes.length === 1 ? "" : "s"}
+              {sources.length} source{sources.length === 1 ? "" : "s"}
+              {", "}
+              {templates.length} template{templates.length === 1 ? "" : "s"}
             </div>
             <label className="flex items-center gap-2 text-xs text-[color:var(--color-text-muted)]">
               <ArrowDownWideNarrow className="size-3.5" />
@@ -329,14 +342,68 @@ function ResumesInner() {
             </label>
           </div>
 
-          <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
-            {sorted.map((r) => (
-              <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
-            ))}
-          </div>
+          <LibrarySection
+            title="Templates"
+            description="The look. Tailoring never writes to a template, it only borrows the design."
+            icon={LayoutTemplate}
+            resumes={templates}
+            openId={openId}
+            emptyHint="No templates yet. Pick a resume below and choose Use as template to borrow its look."
+          />
+
+          <LibrarySection
+            title="Source resumes"
+            description="The data. Tailored versions are saved here, under the resume they came from."
+            icon={FolderOpen}
+            resumes={sources}
+            openId={openId}
+            emptyHint="No source resumes yet."
+          />
         </>
       )}
     </div>
+  );
+}
+
+function LibrarySection({
+  title,
+  description,
+  icon: Icon,
+  resumes,
+  openId,
+  emptyHint,
+}: {
+  title: string;
+  description: string;
+  icon: typeof FolderOpen;
+  resumes: Resume[];
+  openId: string | null;
+  emptyHint: string;
+}) {
+  return (
+    <section className="mt-6">
+      <div className="flex items-baseline gap-2">
+        <Icon className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <span className="text-xs text-[color:var(--color-text-dim)]">
+          {resumes.length}
+        </span>
+      </div>
+      <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
+        {description}
+      </p>
+      {resumes.length === 0 ? (
+        <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
+          {emptyHint}
+        </div>
+      ) : (
+        <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
+          {resumes.map((r) => (
+            <ResumeRow key={r.id} resume={r} defaultOpen={r.id === openId} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -349,6 +416,20 @@ function ResumeRow({
 }) {
   const qc = useQueryClient();
   const [open, setOpen] = useState(defaultOpen);
+  const isTemplate = resume.category === "template" && !resume.is_master;
+  const moveCategory = useMutation({
+    mutationFn: () =>
+      api.setResumeCategory(resume.id, isTemplate ? "source" : "template"),
+    onSuccess: (updated) => {
+      toast.success(
+        updated.category === "template"
+          ? `${updated.name} is now a template`
+          : `${updated.name} moved to source resumes`,
+      );
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
   // Versions load on expand, not on mount. A library of 30+ resumes would
   // otherwise fire one request per row the moment the page opens.
   const { data: versions = [], isLoading } = useQuery({
@@ -407,6 +488,26 @@ function ResumeRow({
         <div className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
           {updated}
         </div>
+        {/* Master holds the verified data that tailoring starts from, so it
+            cannot become a template. */}
+        {!resume.is_master && (
+          <button
+            onClick={() => moveCategory.mutate()}
+            disabled={moveCategory.isPending}
+            title={
+              isTemplate
+                ? "Move back to source resumes"
+                : "Use this resume's look as a template"
+            }
+            className="shrink-0 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+          >
+            {moveCategory.isPending
+              ? "Moving…"
+              : isTemplate
+                ? "Move to source"
+                : "Use as template"}
+          </button>
+        )}
         {!resume.is_master && (
           <button
             onClick={() => {

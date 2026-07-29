@@ -89,11 +89,22 @@ export interface ProfileFact {
   updated_at: string;
 }
 
+/**
+ * Which half of the library a resume belongs to.
+ *
+ * A template carries the LOOK and is never written to by tailoring. A source
+ * resume carries the DATA, and tailored output is saved under it as a new
+ * version. Master is always a source. Absent on older rows, which read as
+ * "source" so nothing has to be migrated.
+ */
+export type ResumeCategory = "template" | "source";
+
 export interface Resume {
   id: string;
   name: string;
   base_role: string | null;
   is_master: boolean;
+  category?: ResumeCategory;
   source_kind: string | null;
   source_label: string | null;
   archived_at: string | null;

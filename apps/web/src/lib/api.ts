@@ -10,6 +10,7 @@ import type {
   Resume,
   ResumeChatResponse,
   ResumeImportItem,
+  ResumeCategory,
   ResumeReviewResult,
   RevisionMessage,
   ResumeVersion,
@@ -495,6 +496,17 @@ export const api = {
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.archiveResume(resumeId)
       : legacyApi.deleteResume(resumeId),
+
+  /**
+   * Move a resume between Templates (the look) and Source resumes (the data).
+   * Appwrite only: the Postgres backend has no notion of the split.
+   */
+  setResumeCategory: (resumeId: string, category: ResumeCategory) => {
+    if (!isAppwriteWorkspaceEnabled) {
+      throw new Error("Templates require the Appwrite workspace.");
+    }
+    return appwriteWorkspace.setResumeCategory(resumeId, category);
+  },
 
   async importResumes(
     files: File[],

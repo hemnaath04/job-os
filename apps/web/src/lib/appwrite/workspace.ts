@@ -11,6 +11,7 @@ import type {
   JsonResume,
   ProfileFact,
   Resume,
+  ResumeCategory,
   ResumeChatResponse,
   ResumeReviewResult,
   ResumeVersion,
@@ -248,6 +249,8 @@ export const appwriteWorkspace = {
       name: input.name,
       base_role: input.base_role ?? null,
       is_master: input.is_master ?? false,
+      // New resumes hold data until the user says otherwise.
+      category: "source",
       source_kind: "appwrite",
       source_label: null,
       archived_at: null,
@@ -293,6 +296,45 @@ export const appwriteWorkspace = {
       rowId: resumeId,
       data: {
         name: resume.name,
+        source_updated_at: resume.updated_at,
+        snapshot: JSON.stringify(resume),
+      },
+    });
+    return resume;
+  },
+
+  /**
+   * Move a resume between the Templates and Source halves of the library.
+   *
+   * The category lives in the snapshot rather than its own column: the library
+   * is listed and partitioned client-side, so nothing queries on it, and this
+   * needs no schema change or backfill. Master is always a source, since
+   * tailoring has to have a data baseline to start from.
+   */
+  async setResumeCategory(
+    resumeId: string,
+    category: ResumeCategory,
+  ): Promise<Resume> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<ResumeRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumesTableId,
+      rowId: resumeId,
+    });
+    const current = parseSnapshot<Resume>(row);
+    if (current.is_master && category === "template") {
+      throw new Error(
+        "The master resume holds your verified data, so it cannot become a template.",
+      );
+    }
+    const resume: Resume = { ...current, category, updated_at: now() };
+    await tables.updateRow<ResumeRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumesTableId,
+      rowId: resumeId,
+      data: {
         source_updated_at: resume.updated_at,
         snapshot: JSON.stringify(resume),
       },

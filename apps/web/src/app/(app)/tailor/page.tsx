@@ -267,7 +267,14 @@ function TailorInner() {
   // Auto-pick first non-master resume when none chosen. Lives in an effect
   // (not render-phase setState) so React doesn't schedule extra renders that
   // would clobber focus / click handling on the surrounding form controls.
-  const candidateResumes = useMemo(() => resumes.filter((r) => !r.is_master), [resumes]);
+  // Tailored output is saved under a SOURCE resume. Templates carry the look
+  // and are never written to, so they are not valid targets. Master is the
+  // data baseline every run starts from, so it is not a target either.
+  const candidateResumes = useMemo(
+    () =>
+      resumes.filter((r) => !r.is_master && r.category !== "template"),
+    [resumes],
+  );
   useEffect(() => {
     if (!resumeId && candidateResumes.length > 0) {
       setResumeId(candidateResumes[0].id);
@@ -490,7 +497,7 @@ function TailorInner() {
       >
         <InfoChip tone="sage">No hallucinated claims</InfoChip>
         <InfoChip>{jobs.length} saved roles</InfoChip>
-        <InfoChip tone="clay">{candidateResumes.length} templates ready</InfoChip>
+        <InfoChip tone="clay">{candidateResumes.length} source resumes</InfoChip>
       </PageIntro>
 
       {!hasMaster && !resumesLoading && (
@@ -531,10 +538,10 @@ function TailorInner() {
         </Field>
 
         <Field
-          label="Target resume template"
-          help="Where the new tailored version gets saved. Pick a role-specific resume, not Master."
+          label="Save the tailored version under"
+          help="The source resume the new tailored version is saved under. Not Master, and not a template."
         >
-          <TemplatePicker
+          <SourceResumePicker
             value={resumeId}
             onChange={setResumeId}
             candidates={candidateResumes}
@@ -936,7 +943,7 @@ function ResultView({
 
 // ---- Helper components ------------------------------------------------------
 
-function TemplatePicker({
+function SourceResumePicker({
   value,
   onChange,
   candidates,
@@ -960,7 +967,7 @@ function TemplatePicker({
         is_master: false,
       }),
     onSuccess: (resume) => {
-      toast.success(`Template "${resume.name}" created`);
+      toast.success(`Source resume "${resume.name}" created`);
       qc.invalidateQueries({ queryKey: ["resumes"] });
       onChange(resume.id);
       setCreating(false);
@@ -982,9 +989,9 @@ function TemplatePicker({
             onChange={onChange}
             disabled={loading}
             className="flex-1"
-            aria-label="Target resume template"
+            aria-label="Target source resume"
             options={[
-              { value: "", label: "Pick a template" },
+              { value: "", label: "Pick a source resume" },
               ...candidates.map((r) => ({
                 value: r.id,
                 label: `${r.name}${r.base_role ? ` · ${r.base_role}` : ""}`,
@@ -1005,8 +1012,8 @@ function TemplatePicker({
         <div className="workspace-panel p-4">
           {candidates.length === 0 && (
             <p className="mb-2 text-xs text-[color:var(--color-text-muted)]">
-              You only have a Master resume. Create a role-specific template
-              here. Tailored versions will save under it.
+              You only have a Master resume. Create a role-specific source
+              resume here. Tailored versions will save under it.
             </p>
           )}
           <div className="flex flex-col gap-2 sm:flex-row">
@@ -1014,7 +1021,7 @@ function TemplatePicker({
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Template name (e.g. SWE, ML, AI)"
+              placeholder="Name (e.g. SWE, ML, AI)"
               className="field-control flex-1"
             />
             <input
