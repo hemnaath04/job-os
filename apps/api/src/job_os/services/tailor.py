@@ -103,7 +103,17 @@ class TailorFact:
     updated_at: str | None = None
 
 
-MAX_ITERATIONS = 3
+# The user's real complaint was that the first tailor comes out below what they
+# want, so they hand-edit it upward with the chat editor. Those hand-edits are
+# refinement, not new facts, which means the loop can do that work before the
+# resume is ever shown. It runs until the score stops improving rather than
+# stopping at a fixed three, so the ceiling is the evidence rather than the budget.
+MAX_ITERATIONS = 6
+# One flat pass is not a plateau: a pass sometimes trades a keyword for a writing
+# fix and lands level before improving again. Two in a row is a plateau.
+IMPROVEMENT_PATIENCE = 2
+# Below this the gain is not worth another call and a longer wait.
+MIN_IMPROVEMENT = Decimal("0.5")
 TARGET_ATS_SCORE = Decimal("80")
 
 # Generous ceiling on purpose: the output carries a rewritten line per selected
@@ -232,6 +242,23 @@ ATS:
 - `ats_keywords_missing`: JD keywords that do not appear and have no matching
   fact. These usually become gap_questions too.
 
+TREAT THIS PASS AS THE ONE THAT SHIPS. There is a refine loop behind you, but the
+user should never need it, and they should never need to hand-edit the result
+afterwards. Everything below is measured by Python the moment you answer, and a
+first pass that leaves any of it on the table is a first pass that wasted the
+user's time:
+- Every JD requirement you can honestly surface, surfaced, by renaming what was
+  actually built rather than by appending the JD's words.
+- Every bullet under 30 words, opening with a different concrete past-tense verb,
+  no first person, no em dashes, no two bullets about the same work, no clause
+  repeated between two bullets in the same entry.
+- Every number the verified bullet already carries, kept. A bullet that has a
+  metric and loses it in your rewrite is strictly worse than the original.
+- The page filled: 3 to 4 bullets per role, 2 to 3 per project, 3 to 4 projects.
+- A summary line that names capabilities without claiming provisional work
+  shipped.
+Work through that list before you answer, not after.
+
 Output: a single JSON object matching the provided schema. No prose, no fences.
 """
 
@@ -243,6 +270,9 @@ class TailorGraphState(TypedDict):
     best_agent: TailorAgentOutput | None
     best_score: Decimal
     iteration_scores: list[float]
+    # Consecutive passes that failed to beat the best score by a meaningful
+    # margin. The loop stops on a plateau rather than on a fixed pass count.
+    flat_passes: int
     done: bool
 
 
@@ -539,6 +569,7 @@ async def run_tailor(
 
         best_agent = state["best_agent"]
         best_score = state["best_score"]
+        best_score_before = best_score
         # `best_agent is None` rather than a numeric sentinel: a pass can now
         # score below zero, since the writing penalty is subtracted from
         # coverage, and a sentinel of -1 meant a heavily penalised first pass was
@@ -548,11 +579,22 @@ async def run_tailor(
             best_agent = attempt
             best_score = score
 
-        # Stop once the target is met, once the passes run out, or once a pass
-        # stops improving. A third call that cannot beat the second is pure
-        # latency and cost for the user watching a progress bar.
-        stalled = len(scores) > 1 and score <= Decimal(str(scores[-2]))
-        done = score >= TARGET_ATS_SCORE or len(scores) >= MAX_ITERATIONS or stalled
+        # Stop once the target is met, once the passes run out, or once the score
+        # has genuinely plateaued. Plateau means no meaningful gain over the best
+        # so far for IMPROVEMENT_PATIENCE consecutive passes: a single flat pass is
+        # not a plateau, because a pass sometimes spends itself fixing writing and
+        # lands level before improving again, and quitting on that left the first
+        # result short of what the evidence supported.
+        flat = state["flat_passes"]
+        if score > best_score_before + MIN_IMPROVEMENT:
+            flat = 0
+        else:
+            flat += 1
+        done = (
+            score >= TARGET_ATS_SCORE
+            or len(scores) >= MAX_ITERATIONS
+            or flat >= IMPROVEMENT_PATIENCE
+        )
         messages = state["messages"]
         if not done:
             if on_progress:
@@ -580,6 +622,7 @@ async def run_tailor(
             "best_agent": best_agent,
             "best_score": best_score,
             "iteration_scores": scores,
+            "flat_passes": flat,
             "done": done,
         }
 
@@ -596,6 +639,7 @@ async def run_tailor(
             "best_agent": None,
             "best_score": Decimal("-1"),
             "iteration_scores": [],
+            "flat_passes": 0,
             "done": False,
         }
     )
@@ -1652,7 +1696,13 @@ _NON_SKILL_RE = re.compile(
     r"firm|company|employer|initiatives?|internships?|full[- ]time|part[- ]time|"
     # Soft-skill boilerplate
     r"work ethic|fast[- ]paced|team player|self[- ]starter|detail[- ]oriented|"
-    r"passion for|genuine interest|interest in|communication skills"
+    r"passion for|genuine interest|interest in|communication skills|"
+    # Career stage and spoken languages, which a skills match cannot speak to.
+    # A real posting supplied "New grad or early-career engineer" and "English
+    # required, French a plus", and both were scored as missing skills.
+    r"new grad|early[- ]career|entry[- ]level|years? of experience|"
+    r"english|french|german|spanish|mandarin|fluent|native speaker|"
+    r"a plus|nice to have|preferred|coursework|thesis|law degree"
     r")\b",
     re.I,
 )
@@ -1686,17 +1736,61 @@ def _is_ats_keyword(term: str) -> bool:
 
 
 # Where a prose requirement hides a list of real skills: after a colon, and
-# between commas, semicolons, slashes, "and" and "or".
-_PROSE_SPLIT_RE = re.compile(r"[,;/]| and | or |\bincluding\b|\bsuch as\b", re.I)
+# between commas, semicolons, "and" and "or". Deliberately NOT on "/", which
+# joins compounds rather than separating items: splitting there turned "CI/CD
+# concepts" into "CI" plus "CD concepts" and "Pub/Sub" into "Pub" plus "Sub", and
+# scored all four as requirements.
+_PROSE_SPLIT_RE = re.compile(r"[,;()]| and | or |\bincluding\b|\bsuch as\b", re.I)
+# Nouns a JD hangs off the end of a skill without adding to it. Trimming them lets
+# "CI/CD concepts" match the resume's "CI/CD", which it plainly satisfies, instead
+# of being scored as a separate unmet requirement.
+_FILLER_TAIL_RE = re.compile(
+    r"\s+(?:concepts?|thinking|mindset|fundamentals|experience|knowledge|skills?|"
+    r"tooling|frameworks?|systems? design|hands[- ]on)$",
+    re.I,
+)
+# A recovered fragment longer than this is a clause someone wrote, not the name of
+# a skill. "failure modes" survives; "backend systems that other code calls" and
+# "ship production code daily" do not.
+_RECOVERED_MAX_WORDS = 3
+# A requirement that is about eligibility rather than capability. No resume
+# answers these with a skill, so the whole sentence is set aside instead of having
+# field names mined out of it: "Currently pursuing a bachelor's or master's in
+# Computer Science, Computer Engineering, or a similar technical field" was
+# yielding "Computer Engineering" and scoring it as a missing skill.
+_ELIGIBILITY_REQUIREMENT_RE = re.compile(
+    r"\b(?:currently pursuing|bachelors?|masters?|phd|degree|gpa|grade point|"
+    r"junior standing|senior standing|graduation|enrolled|"
+    r"work authorization|sponsorship|visa|citizenship|clearance|"
+    r"ability to start|able to start|start date|new grad|early[- ]career)\b",
+    re.I,
+)
 # A fragment that opens with one of these is a clause, not a skill name.
 _CLAUSE_OPENER_RE = re.compile(
     r"^(?:how|what|why|which|who|where|when|that|with|for|in|on|to|of|at|by|"
     r"from|using|via|about|a|an|the|able|ability|comfortable|experience|"
-    r"strong|solid|genuine|currently|at least|minimum|must|willing)\b",
+    r"strong|solid|genuine|currently|at least|minimum|must|willing|"
+    # A verb at the front means the sentence's own clause survived the split, not a
+    # skill name. "Built APIs" and "deploying code" were both being scored, and
+    # neither appears in a resume as written.
+    r"built|build|building|ship|ships|shipped|shipping|deploy|deploys|deployed|"
+    r"deploying|own|owns|owned|owning|manage|manages|managed|managing|"
+    r"work|works|worked|working|write|writes|wrote|writing)\b",
     re.I,
 )
 # Pronouns give away a clause that survived the opener check.
 _PRONOUN_RE = re.compile(r"\b(?:them|they|it|its|you|your|we|our|us|he|she)\b", re.I)
+# Splitting "one or more of C++, Python or TypeScript" on " or " leaves the
+# fragment "more of C++", which is not a skill and was being scored as one. Strip
+# the quantifier rather than dropping the fragment, or the skill goes with it.
+_QUANTIFIER_PREFIX_RE = re.compile(
+    r"^(?:at least\s+)?(?:one|two|more|either|both|any|all)\s+(?:of\s+)?|^of\s+", re.I
+)
+# A requirement offering alternatives is satisfied by any ONE of them. Counting
+# the others as misses is what pushed a genuine match down: the candidate writes
+# Python, so "one or more of C++, Python or TypeScript" is met, yet C++ and
+# TypeScript were each scored as a separate failure.
+_ALTERNATIVES_RE = re.compile(r"\bor\b", re.I)
 
 
 def _skills_inside_prose(requirement: str) -> list[str]:
@@ -1713,15 +1807,22 @@ def _skills_inside_prose(requirement: str) -> list[str]:
     tail = requirement.split(":", 1)[-1] if ":" in requirement else requirement
     found: list[str] = []
     for raw in _PROSE_SPLIT_RE.split(tail):
-        fragment = raw.strip(" .’'\"()")
-        if not fragment or not any(char.isalpha() for char in fragment):
-            continue
-        if not _is_ats_keyword(fragment) or not _is_candidate_skill(fragment):
-            continue
-        if _CLAUSE_OPENER_RE.match(fragment) or _PRONOUN_RE.search(fragment):
-            continue
-        found.append(fragment)
-    return found
+        fragment = _QUANTIFIER_PREFIX_RE.sub("", raw.strip(" .’'\"()")).strip()
+        fragment = _FILLER_TAIL_RE.sub("", fragment).strip()
+        if _is_recoverable_skill(fragment):
+            found.append(fragment)
+    return list(dict.fromkeys(found))
+
+
+def _is_recoverable_skill(fragment: str) -> bool:
+    """Whether a fragment pulled out of a sentence names a skill worth scoring."""
+    if not fragment or not any(char.isalpha() for char in fragment):
+        return False
+    if len(fragment.split()) > _RECOVERED_MAX_WORDS:
+        return False
+    if not _is_ats_keyword(fragment) or not _is_candidate_skill(fragment):
+        return False
+    return not (_CLAUSE_OPENER_RE.match(fragment) or _PRONOUN_RE.search(fragment))
 
 
 def _is_candidate_skill(term: str) -> bool:
@@ -1771,6 +1872,153 @@ def _ats_source_text(json_resume: dict[str, Any]) -> str:
     return " ".join(parts).casefold()
 
 
+def _mentions(haystack: str, term: str) -> bool:
+    """Whether `haystack` names `term` as a word, not merely as a substring.
+
+    A plain `in` test credits a resume for skills it never claims. "RAG" matches
+    inside "Cloud Storage", and "Go" matches inside "MongoDB", so a resume listing
+    MongoDB was credited with the Go language. Word boundaries are hand-rolled
+    rather than \\b because the terms include C++, CI/CD and .NET, where the edge
+    character is not a word character and \\b lands in the wrong place.
+    """
+    cleaned = term.strip()
+    if not cleaned:
+        return False
+    return bool(
+        re.search(rf"(?<!\w){re.escape(cleaned.casefold())}(?!\w)", haystack)
+    )
+
+
+@dataclass(frozen=True)
+class _Requirement:
+    """One thing the JD asks for, and every wording that would satisfy it.
+
+    A requirement rather than a keyword is the scored unit, because a JD asks for
+    things, not for strings. "Comfortable with one or more of C++, Python or
+    TypeScript" is ONE requirement that Python satisfies outright, and scoring its
+    three languages as three separate keywords marked a met requirement two-thirds
+    failed.
+    """
+
+    label: str
+    alternatives: tuple[str, ...]
+    preferred: bool
+
+    def covered_by(self, resume_text: str) -> bool:
+        return any(_mentions(resume_text, alt) for alt in self.alternatives)
+
+
+# JD sections that describe what the employer would LIKE, not what the role
+# demands. Missing a nice-to-have is not the same failure as missing a must-have,
+# and averaging the two together is what made a strong match read as a weak one.
+_PREFERRED_FIELDS = ("preferred_skills", "nice_to_have", "bonus_skills")
+# Fields where the employer said outright that they require the thing.
+_MUST_HAVE_FIELDS = ("required_skills", "qualifications")
+# Fields a parser fills with whatever it saw, with no marking either way. A term
+# here is a must-have unless the preferred section also names it.
+_UNLABELLED_FIELDS = ("technologies", "keywords")
+_REQUIRED_FIELDS = _MUST_HAVE_FIELDS + _UNLABELLED_FIELDS
+
+
+def _jd_requirements(
+    jd_parsed: dict[str, Any],
+) -> tuple[list[_Requirement], list[str], list[str]]:
+    """Turn a parsed JD into scored requirements, plus what was set aside.
+
+    Returns the requirements, the prose requirements reported separately, and the
+    terms excluded as things no resume can keyword-match.
+    """
+    parsed = jd_parsed or {}
+
+    def entries(keys: tuple[str, ...]) -> list[str]:
+        out: list[str] = []
+        for key in keys:
+            value = parsed.get(key, [])
+            if isinstance(value, list):
+                out.extend(str(item).strip() for item in value if str(item).strip())
+        return out
+
+    preferred_entries = entries(_PREFERRED_FIELDS)
+    required_entries = entries(_REQUIRED_FIELDS)
+    # Anything named anywhere in the preferred section is a nice-to-have, even
+    # when the parser also copied it into `technologies`. Real postings do exactly
+    # that: a "Nice to have" paragraph listing Weaviate and Terraform, and a flat
+    # technologies list that repeats them with no marking.
+    preferred_text = " ".join(preferred_entries).casefold()
+
+    requirements: list[_Requirement] = []
+    prose: list[str] = []
+    excluded: list[str] = []
+    seen: set[tuple[str, ...]] = set()
+
+    def add(label: str, alternatives: list[str], *, preferred: bool) -> None:
+        unique = list(dict.fromkeys(alt for alt in alternatives if alt.strip()))
+        if not unique:
+            return
+        key = tuple(sorted(alt.casefold() for alt in unique))
+        if key in seen:
+            return
+        seen.add(key)
+        requirements.append(
+            _Requirement(label=label, alternatives=tuple(unique), preferred=preferred)
+        )
+
+    # Terms the employer named as required are must-haves even when the preferred
+    # section mentions them too. A posting asking for FastAPI outright and again
+    # under "nice to have: production FastAPI systems" is still asking for FastAPI,
+    # and reading the preferred mention last demoted it to a bonus.
+    #
+    # Only the explicitly-required fields count here. Including `technologies` made
+    # every technology its own proof of being required, so Weaviate, Terraform and
+    # GCP were must-haves on a posting that listed all three under "Nice to have".
+    required_text = " ".join(entries(_MUST_HAVE_FIELDS)).casefold()
+
+    def is_bonus(term: str, *, section_is_preferred: bool) -> bool:
+        if not section_is_preferred and _mentions(required_text, term):
+            return False
+        return section_is_preferred or _mentions(preferred_text, term)
+
+    for entry, section_is_preferred in [
+        *((entry, False) for entry in required_entries),
+        *((entry, True) for entry in preferred_entries),
+    ]:
+        if _is_ats_keyword(entry):
+            if _is_candidate_skill(entry):
+                add(
+                    entry,
+                    [entry],
+                    preferred=is_bonus(entry, section_is_preferred=section_is_preferred),
+                )
+            else:
+                excluded.append(entry)
+            continue
+        # A whole requirement sentence never appears verbatim in a resume, so it
+        # is reported rather than scored, and the skills inside it are recovered.
+        prose.append(entry)
+        if _ELIGIBILITY_REQUIREMENT_RE.search(entry):
+            excluded.append(entry)
+            continue
+        recovered = _skills_inside_prose(entry)
+        if not recovered:
+            continue
+        if _ALTERNATIVES_RE.search(entry) and len(recovered) > 1:
+            # "X, Y or Z" is satisfied by any one of them, so it is one unit.
+            add(
+                entry,
+                recovered,
+                preferred=is_bonus(entry, section_is_preferred=section_is_preferred),
+            )
+        else:
+            for term in recovered:
+                add(
+                    term,
+                    [term],
+                    preferred=is_bonus(term, section_is_preferred=section_is_preferred),
+                )
+
+    return requirements, prose, excluded
+
+
 def _compute_ats_from_document(
     *,
     jd_parsed: dict[str, Any],
@@ -1778,71 +2026,48 @@ def _compute_ats_from_document(
     fallback_matched: list[str],
     fallback_missing: list[str],
 ) -> tuple[Decimal, dict[str, Any]]:
-    """Score only JD terms that actually appear in the assembled resume."""
-    parsed = jd_parsed or {}
-    candidates: list[str] = []
-    for key in (
-        "required_skills",
-        "preferred_skills",
-        "technologies",
-        "keywords",
-    ):
-        value = parsed.get(key, [])
-        if isinstance(value, list):
-            candidates.extend(str(item).strip() for item in value if str(item).strip())
+    """Score the JD's must-have requirements against the assembled resume.
 
-    # Matching is a substring test, so only keyword-like terms can ever match.
-    # JD parsers routinely drop whole requirement sentences into
-    # `required_skills` ("Currently pursuing a bachelor's or master's in ..."),
-    # which never appear verbatim in a resume and would drag the score to near
-    # zero no matter how good the tailoring is. Prose requirements belong to the
-    # gap-question path, so keep them out of the keyword denominator and report
-    # them separately instead of hiding them.
-    prose = [term for term in candidates if not _is_ats_keyword(term)]
-
-    # Skills buried inside those prose requirements are still real skills the
-    # resume may well cover, so recover them from the JD text: "computer science
-    # fundamentals: data structures, algorithms, systems" yields three terms.
-    #
-    # This used to read them off the model's own matched/missing lists instead,
-    # which made the denominator depend on however many keywords a given pass
-    # chose to enumerate. The same JD scored 20.0 on one run and 42.9 on the next
-    # with a comparable resume, and a number that moves like that tells the user
-    # nothing. The JD is fixed, so the keyword set is now fixed too, and the score
-    # is comparable across passes and across runs. The model's lists are still
-    # reported, as its account of its own work, but they no longer move the score.
-    recovered: list[str] = []
-    for requirement in prose:
-        recovered.extend(_skills_inside_prose(requirement))
-    keywords = [
-        term
-        for term in (*candidates, *recovered)
-        if _is_ats_keyword(term) and _is_candidate_skill(term)
-    ]
-    excluded = [
-        term
-        for term in candidates
-        if _is_ats_keyword(term) and not _is_candidate_skill(term)
-    ]
-
-    unique: dict[str, str] = {}
-    for keyword in keywords:
-        unique.setdefault(keyword.casefold(), keyword)
+    Must-haves set the headline number. Nice-to-haves are scored and reported
+    separately rather than averaged in, because a posting that lists five bonus
+    technologies would otherwise cap an otherwise-perfect match at half marks. On
+    a real AI-engineering posting the candidate genuinely fits, every one of the
+    absent terms came from a paragraph headed "Nice to have", and the score read
+    35 for it.
+    """
+    requirements, prose, excluded = _jd_requirements(jd_parsed)
     resume_text = _ats_source_text(json_resume)
-    matched = [
-        original
-        for normalized, original in unique.items()
-        if normalized in resume_text
-    ]
-    missing = [
-        original
-        for normalized, original in unique.items()
-        if normalized not in resume_text
-    ]
-    score, report = _compute_ats(matched=matched, missing=missing)
-    report["scoring"] = "deterministic_final_document"
+
+    core = [req for req in requirements if not req.preferred]
+    bonus = [req for req in requirements if req.preferred]
+    core_met = [req for req in core if req.covered_by(resume_text)]
+    core_gap = [req for req in core if not req.covered_by(resume_text)]
+    bonus_met = [req for req in bonus if req.covered_by(resume_text)]
+    bonus_gap = [req for req in bonus if not req.covered_by(resume_text)]
+
+    score, report = _compute_ats(
+        matched=[req.label for req in core_met],
+        missing=[req.label for req in core_gap],
+    )
+    report["scoring"] = "deterministic_required_requirements"
     report["model_reported_matched"] = fallback_matched
     report["model_reported_missing"] = fallback_missing
     report["prose_requirements"] = prose
     report["excluded_non_skills"] = excluded
+    # Reported so the score can be read as "met 6 of 9 must-haves" rather than as
+    # a bare percentage, and so a stretch role reads as a stretch rather than as a
+    # broken tool.
+    report["required_met"] = len(core_met)
+    report["required_total"] = len(core)
+    report["preferred_matched"] = [req.label for req in bonus_met]
+    report["preferred_missing"] = [req.label for req in bonus_gap]
+    report["preferred_coverage"] = (
+        float(
+            (Decimal(len(bonus_met)) / Decimal(len(bonus)) * Decimal("100")).quantize(
+                Decimal("0.1")
+            )
+        )
+        if bonus
+        else None
+    )
     return score, report

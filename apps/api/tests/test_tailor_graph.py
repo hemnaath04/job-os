@@ -88,7 +88,7 @@ async def test_tailor_langgraph_refines_until_target(
     # An empty document has no keywords to cover and cannot fill a page, so both
     # passes come in at zero coverage minus the thin-page penalty.
     assert report["iterations"] == [-3.0, -3.0]
-    assert report["scoring"] == "deterministic_final_document"
+    assert report["scoring"] == "deterministic_required_requirements"
     assert report["writing_flags"] == {"page": ["thin_page(0 bullets)"]}
     assert gaps == []
     # The refine pass did not beat the draft, so the draft is what ships. Keeping
