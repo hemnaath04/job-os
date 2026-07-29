@@ -294,7 +294,7 @@ function Card({
         // Only the three properties hover actually changes. transition-all also
         // animated anything else that moved, including the card's own size when
         // its content changed.
-        "cursor-grab rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-[transform,border-color,box-shadow] duration-[var(--dur)] ease-[var(--ease-out)] " +
+        "cursor-grab rounded-[var(--radius-nested)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-xs)] transition-[transform,border-color,box-shadow] duration-[var(--dur)] ease-[var(--ease-out)] " +
         (compact ? "p-3.5 " : "p-3 ") +
         (dragging
           ? "rotate-2 shadow-2xl"

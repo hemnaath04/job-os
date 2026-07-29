@@ -49,13 +49,15 @@ export function ThemeToggle() {
       title={dark ? "Light mode" : "Dark mode"}
       className="relative inline-flex size-9 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] text-[color:var(--color-text-muted)] transition-colors duration-150 hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-text)]"
     >
+      {/* Contextual icon swap: scale, opacity and blur, never toggled
+          visibility, and a spring with no bounce. */}
       <AnimatePresence mode="wait" initial={false}>
         <motion.span
           key={mounted ? (dark ? "sun" : "moon") : "placeholder"}
-          initial={reduce ? false : { rotate: -35, opacity: 0, scale: 0.8 }}
-          animate={{ rotate: 0, opacity: 1, scale: 1 }}
-          exit={reduce ? undefined : { rotate: 35, opacity: 0, scale: 0.8 }}
-          transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
+          initial={reduce ? false : { scale: 0.25, opacity: 0, filter: "blur(4px)" }}
+          animate={{ scale: 1, opacity: 1, filter: "blur(0px)" }}
+          exit={reduce ? undefined : { scale: 0.25, opacity: 0, filter: "blur(4px)" }}
+          transition={{ type: "spring", duration: 0.3, bounce: 0 }}
           className="inline-flex"
         >
           <Icon className="size-[18px]" />

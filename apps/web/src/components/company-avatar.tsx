@@ -49,7 +49,7 @@ export function CompanyAvatar({
   if (d && !failed) {
     return (
       <div
-        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg border border-[color:var(--color-border)] bg-white ${className}`}
+        className={`relative flex shrink-0 items-center justify-center overflow-hidden rounded-lg bg-white outline outline-1 -outline-offset-1 outline-[oklch(0_0_0_/_0.1)] dark:outline-[oklch(1_0_0_/_0.1)] ${className}`}
         style={{ width: size, height: size }}
       >
         {/* Plain img (not next/image) keeps external favicons config-free. */}

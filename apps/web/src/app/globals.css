@@ -83,6 +83,10 @@
   --radius-card: 1rem;
   --radius-card-lg: 1.25rem;
   --radius-pill: 999px;
+  /* For a surface sitting inside a padded panel. Concentric corners want
+     inner = outer - padding, and a panel at 1.25rem with .875rem of padding
+     leaves .375rem. A card at .75rem inside it reads pinched. */
+  --radius-nested: 0.375rem;
 
   /* === Motion (design the curve, not the default) === */
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -129,7 +133,15 @@
     color: #221F0E;
   }
 
-  .lucide { stroke-width: 1.75; }
+  /* An icon carries the optical weight of the text beside it: 1.5 next to
+     regular copy, 2 next to the semibold and bolder labels below. */
+  .lucide { stroke-width: 1.5; }
+
+  .product-button .lucide,
+  .kinetic-button .lucide,
+  .pill-status .lucide,
+  .info-chip .lucide,
+  .section-kicker .lucide { stroke-width: 2; }
 
   :focus-visible {
     outline: 2px solid var(--color-accent-ink);
@@ -279,7 +291,7 @@
 .product-button:hover,
 .kinetic-button:hover { transform: translateY(-1px); }
 .product-button:active,
-.kinetic-button:active { transform: scale(0.98); }
+.kinetic-button:active { transform: scale(0.96); }
 
 .product-button-primary,
 .kinetic-button-primary {
@@ -362,7 +374,7 @@
 .product-row:hover { background: var(--color-surface-hover); }
 /* .995 was half a percent, which is no feedback at all. Matches the press on
    the shared buttons now. */
-.product-row:active { transform: scale(.98); }
+.product-row:active { transform: scale(.96); }
 
 .product-empty-state {
   display: grid;
