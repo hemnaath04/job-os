@@ -11,9 +11,9 @@ import type {
   JsonResume,
   ProfileFact,
   Resume,
-  ResumeCategory,
   ResumeChatResponse,
   ResumeReviewResult,
+  ResumeTemplate,
   ResumeVersion,
   ResumeVersionSummary,
   RevisionMessage,
@@ -35,6 +35,13 @@ interface ResumeRow extends SnapshotRow {
   name: string;
   is_master: boolean;
   archived: boolean;
+}
+
+interface TemplateRow extends SnapshotRow {
+  name: string;
+  archived: boolean;
+  html_source: string;
+  css_source: string;
 }
 
 interface VersionRow extends SnapshotRow {
@@ -249,8 +256,6 @@ export const appwriteWorkspace = {
       name: input.name,
       base_role: input.base_role ?? null,
       is_master: input.is_master ?? false,
-      // New resumes hold data until the user says otherwise.
-      category: "source",
       source_kind: "appwrite",
       source_label: null,
       archived_at: null,
@@ -303,43 +308,129 @@ export const appwriteWorkspace = {
     return resume;
   },
 
+  async listTemplates(): Promise<ResumeTemplate[]> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const result = await getAppwriteServices().tables.listRows<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      queries: [
+        Query.equal("archived", false),
+        Query.orderDesc("source_updated_at"),
+        Query.limit(200),
+      ],
+      total: false,
+      ttl: 0,
+    });
+    return result.rows.map((row) => ({
+      ...parseSnapshot<ResumeTemplate>(row),
+      // The row is the authority on the name, the snapshot can lag a rename.
+      name: row.name,
+    }));
+  },
+
+  /** The Jinja and CSS a template renders with. Fetched only when rendering. */
+  async getTemplateSource(
+    templateId: string,
+  ): Promise<{ html_source: string; css_source: string }> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const row = await getAppwriteServices().tables.getRow<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      rowId: templateId,
+    });
+    return { html_source: row.html_source, css_source: row.css_source };
+  },
+
   /**
-   * Move a resume between the Templates and Source halves of the library.
+   * Save a resume's look as a template.
    *
-   * The category lives in the snapshot rather than its own column: the library
-   * is listed and partitioned client-side, so nothing queries on it, and this
-   * needs no schema change or backfill. Master is always a source, since
-   * tailoring has to have a data baseline to start from.
+   * Creates a new template row and touches nothing else. The resume, its
+   * versions and its data are left exactly as they were, so this is lossless by
+   * construction and reversing it is just archiving the template. Nothing is
+   * converted and no resume row is written to, let alone removed.
+   *
+   * Every resume currently renders with the one bundled look, so the new
+   * template copies that look and carries the resume's name. Distinct designs
+   * arrive when a template is generated from an uploaded document.
    */
-  async setResumeCategory(
-    resumeId: string,
-    category: ResumeCategory,
-  ): Promise<Resume> {
+  async createTemplateFromResume(resume: Resume): Promise<ResumeTemplate> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const { tables } = getAppwriteServices();
+    const ownerId = getCurrentAppwriteUserId();
+
+    const existing = await tables.listRows<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      queries: [Query.equal("archived", false), Query.limit(200)],
+      total: false,
+      ttl: 0,
+    });
+    const base = existing.rows.find((row) => row.name === "Default") ?? existing.rows[0];
+    if (!base) {
+      throw new Error(
+        "No base look to copy yet. The Default template is missing from this workspace.",
+      );
+    }
+    if (existing.rows.some((row) => row.name === resume.name)) {
+      throw new Error(`A template named ${resume.name} already exists.`);
+    }
+
+    const timestamp = now();
+    const template: ResumeTemplate = {
+      id: ID.unique(),
+      name: resume.name,
+      description: `Look saved from the ${resume.name} resume.`,
+      created_from_resume_id: resume.id,
+      source_file_id: null,
+      preview_file_id: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    await tables.createRow<TemplateRow>({
+      databaseId: config.databaseId,
+      tableId: config.templatesTableId,
+      rowId: template.id,
+      data: {
+        owner_id: ownerId,
+        name: template.name,
+        archived: false,
+        html_source: base.html_source,
+        css_source: base.css_source,
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(template),
+      },
+      permissions: ownerPermissions(ownerId),
+    });
+    return template;
+  },
+
+  /** Archive a template. Look-only, so no resume or version is affected. */
+  async archiveTemplate(templateId: string): Promise<void> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const tables = getAppwriteServices().tables;
-    const row = await tables.getRow<ResumeRow>({
+    const row = await tables.getRow<TemplateRow>({
       databaseId: config.databaseId,
-      tableId: config.resumesTableId,
-      rowId: resumeId,
+      tableId: config.templatesTableId,
+      rowId: templateId,
     });
-    const current = parseSnapshot<Resume>(row);
-    if (current.is_master && category === "template") {
-      throw new Error(
-        "The master resume holds your verified data, so it cannot become a template.",
-      );
-    }
-    const resume: Resume = { ...current, category, updated_at: now() };
-    await tables.updateRow<ResumeRow>({
+    const template = {
+      ...parseSnapshot<ResumeTemplate>(row),
+      updated_at: now(),
+    };
+    await tables.updateRow<TemplateRow>({
       databaseId: config.databaseId,
-      tableId: config.resumesTableId,
-      rowId: resumeId,
+      tableId: config.templatesTableId,
+      rowId: templateId,
       data: {
-        source_updated_at: resume.updated_at,
-        snapshot: JSON.stringify(resume),
+        archived: true,
+        source_updated_at: template.updated_at,
+        snapshot: JSON.stringify(template),
       },
     });
-    return resume;
   },
 
   async archiveResume(resumeId: string): Promise<void> {

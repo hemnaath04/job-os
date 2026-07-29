@@ -10,7 +10,6 @@ import type {
   Resume,
   ResumeChatResponse,
   ResumeImportItem,
-  ResumeCategory,
   ResumeReviewResult,
   RevisionMessage,
   ResumeVersion,
@@ -498,14 +497,27 @@ export const api = {
       : legacyApi.deleteResume(resumeId),
 
   /**
-   * Move a resume between Templates (the look) and Source resumes (the data).
-   * Appwrite only: the Postgres backend has no notion of the split.
+   * Templates are look-only rows. Saving a resume's look creates one and leaves
+   * the resume, its versions and its data completely untouched, so undoing it is
+   * just archiving the template. Appwrite only: Postgres has no templates.
    */
-  setResumeCategory: (resumeId: string, category: ResumeCategory) => {
+  listTemplates: () => {
+    if (!isAppwriteWorkspaceEnabled) return Promise.resolve([]);
+    return appwriteWorkspace.listTemplates();
+  },
+
+  createTemplateFromResume: (resume: Resume) => {
     if (!isAppwriteWorkspaceEnabled) {
       throw new Error("Templates require the Appwrite workspace.");
     }
-    return appwriteWorkspace.setResumeCategory(resumeId, category);
+    return appwriteWorkspace.createTemplateFromResume(resume);
+  },
+
+  archiveTemplate: (templateId: string) => {
+    if (!isAppwriteWorkspaceEnabled) {
+      throw new Error("Templates require the Appwrite workspace.");
+    }
+    return appwriteWorkspace.archiveTemplate(templateId);
   },
 
   async importResumes(

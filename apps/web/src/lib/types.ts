@@ -90,21 +90,33 @@ export interface ProfileFact {
 }
 
 /**
- * Which half of the library a resume belongs to.
- *
- * A template carries the LOOK and is never written to by tailoring. A source
- * resume carries the DATA, and tailored output is saved under it as a new
- * version. Master is always a source. Absent on older rows, which read as
- * "source" so nothing has to be migrated.
+ * A saved look: Jinja HTML plus CSS, rendered against the documented resume
+ * context. Templates are look-only and hold no resume data, so applying one
+ * never touches the resume it renders. `created_from_resume_id` is provenance
+ * only, a record of where the look came from, not a link that owns anything.
  */
-export type ResumeCategory = "template" | "source";
+export interface ResumeTemplate {
+  id: string;
+  name: string;
+  description: string | null;
+  created_from_resume_id: string | null;
+  source_file_id: string | null;
+  preview_file_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface Resume {
   id: string;
   name: string;
   base_role: string | null;
   is_master: boolean;
-  category?: ResumeCategory;
+  /**
+   * Legacy. An earlier iteration split the library by tagging resumes; looks now
+   * live as their own template rows, so this is read from old snapshots and
+   * otherwise ignored. Every resume is a source resume.
+   */
+  category?: string;
   source_kind: string | null;
   source_label: string | null;
   archived_at: string | null;

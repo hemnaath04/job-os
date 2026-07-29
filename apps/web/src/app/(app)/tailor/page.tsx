@@ -267,12 +267,11 @@ function TailorInner() {
   // Auto-pick first non-master resume when none chosen. Lives in an effect
   // (not render-phase setState) so React doesn't schedule extra renders that
   // would clobber focus / click handling on the surrounding form controls.
-  // Tailored output is saved under a SOURCE resume. Templates carry the look
-  // and are never written to, so they are not valid targets. Master is the
-  // data baseline every run starts from, so it is not a target either.
+  // Tailored output is saved under a source resume. Templates are their own
+  // look-only rows and never appear here. Master is the data baseline every run
+  // starts from, so it is not a target either.
   const candidateResumes = useMemo(
-    () =>
-      resumes.filter((r) => !r.is_master && r.category !== "template"),
+    () => resumes.filter((r) => !r.is_master),
     [resumes],
   );
   useEffect(() => {

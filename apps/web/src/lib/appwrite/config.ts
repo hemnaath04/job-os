@@ -16,6 +16,8 @@ export const appwriteConfig = {
     process.env.NEXT_PUBLIC_APPWRITE_FACT_BULLETS_TABLE_ID ?? "fact_bullets",
   agentJobsTableId:
     process.env.NEXT_PUBLIC_APPWRITE_AGENT_JOBS_TABLE_ID ?? "agent_jobs",
+  templatesTableId:
+    process.env.NEXT_PUBLIC_APPWRITE_TEMPLATES_TABLE_ID ?? "templates",
   resumeFilesBucketId:
     process.env.NEXT_PUBLIC_APPWRITE_RESUME_FILES_BUCKET_ID ?? "resume_files",
   agentFunctionId:
