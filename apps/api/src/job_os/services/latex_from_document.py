@@ -35,7 +35,12 @@ from job_os.services.latex_render import (
     compile_pdf,
     fill_template,
 )
-from job_os.services.llm_json import JSON_ONLY_RETRY, parse_model_json, response_text
+from job_os.services.llm_json import (
+    JSON_ONLY_RETRY,
+    create_message,
+    parse_model_json,
+    response_text,
+)
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -291,7 +296,11 @@ async def build_template_from_upload(
     repairs: list[str] = []
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        response = await client.messages.create(
+        # Streamed, like every other call in this codebase: max_tokens has to
+        # hold a thinking block as well as a whole resume template, and the SDK
+        # refuses a non-streaming request with a budget that large.
+        response = await create_message(
+            client,
             model=settings.anthropic_model_extract,
             max_tokens=MAX_TOKENS,
             system=CONTRACT,
