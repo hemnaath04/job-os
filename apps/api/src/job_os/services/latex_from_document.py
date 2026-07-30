@@ -323,11 +323,14 @@ async def build_template_from_upload(
             max_tokens=MAX_TOKENS,
             system=CONTRACT,
             messages=messages,
-            # The same tier tailoring and review use. Writing a whole LaTeX
-            # template from a page is the hardest single generation task in the
-            # app, and the tier this inherited from the retired HTML version is
-            # no longer used by anything else.
-            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            # Deliberately the quality tier and not the sonnet one tailoring
+            # uses. This call is synchronous: somebody is watching a spinner
+            # behind a proxy that gives up at 300 seconds. On the quality tier a
+            # PDF attempt takes around two minutes, so a draft plus one repair
+            # fits; on the sonnet tier a single attempt ran past seven minutes
+            # and the answer could never have been delivered. A better template
+            # nobody receives is worse than a good one that arrives.
+            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
         )
         reply = response_text(response)
         if not reply.strip():
