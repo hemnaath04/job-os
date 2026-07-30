@@ -325,11 +325,11 @@ async def build_template_from_upload(
             messages=messages,
             # Deliberately the quality tier and not the sonnet one tailoring
             # uses. This call is synchronous: somebody is watching a spinner
-            # behind a proxy that gives up at 300 seconds. On the quality tier a
-            # PDF attempt takes around two minutes, so a draft plus one repair
-            # fits; on the sonnet tier a single attempt ran past seven minutes
-            # and the answer could never have been delivered. A better template
-            # nobody receives is worse than a good one that arrives.
+            # behind a proxy that gives up at 300 seconds. Measured on the same
+            # PDF: quality took about two minutes per attempt, sonnet took four
+            # for the first attempt alone and nine and a half for the run, then
+            # failed on a truncated reply. A better template nobody receives is
+            # worse than a good one that arrives.
             extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
         )
         reply = response_text(response)
