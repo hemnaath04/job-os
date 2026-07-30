@@ -185,6 +185,34 @@ def test_a_template_key_cannot_walk_out_of_the_templates_tree() -> None:
             builtin_directory(key)
 
 
+# The least a resume can be and still be a resume. A template that only ever
+# saw the sample document passes every other test in here and then fails on a
+# real one: AltaCV did exactly that, because a resume with no headline left the
+# class with an undefined \@tagline and nothing compiled.
+SPARSE_RESUME = {
+    "basics": {"name": "A Candidate", "email": "a@example.com", "phone": "+1 555 0100"},
+    "work": [
+        {
+            "name": "One Employer",
+            "position": "Engineer",
+            "startDate": "2024-01",
+            "highlights": ["Did one thing that can be described in a sentence."],
+        }
+    ],
+}
+
+
+@needs_tectonic
+@pytest.mark.parametrize("key", [spec.key for spec in BUILTIN_TEMPLATES])
+def test_every_bundled_template_compiles_a_sparse_resume(key: str) -> None:
+    """No headline, no location, no links, no projects, no skills, no dates."""
+    pdf = compile_pdf(
+        fill_template(load_builtin_source(key), build_render_model(SPARSE_RESUME)),
+        assets_dir=builtin_directory(key),
+    )
+    assert pdf.startswith(b"%PDF")
+
+
 @needs_tectonic
 @pytest.mark.parametrize("key", [spec.key for spec in BUILTIN_TEMPLATES])
 def test_every_bundled_template_compiles(key: str) -> None:

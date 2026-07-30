@@ -44,9 +44,11 @@
 \begin{document}
 
 \name{<<name>>}
-<% if headline %>
+<# \makecvheader reads \@name, \@tagline and \@personalinfo unconditionally, and
+   the class gives none of them a default, so all three commands have to be
+   called even when there is nothing to put in them. A resume with no headline
+   otherwise failed to compile at \makecvheader with an undefined \@tagline. #>
 \tagline{<<headline>>}
-<% endif %>
 \personalinfo{%
 <% if email %>
   \email{<<email>>}
