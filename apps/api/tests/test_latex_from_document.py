@@ -220,6 +220,22 @@ async def test_an_empty_reply_is_retried_as_an_empty_reply(fake_gateway) -> None
     assert "Tectonic" not in messages.prompts[1]
 
 
+@pytest.mark.asyncio
+async def test_the_loop_stops_when_the_caller_can_no_longer_be_answered(
+    fake_gateway, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A template finished after the proxy gives up costs tokens for nothing."""
+    fake_gateway([_reply(BROKEN_TEMPLATE) for _ in range(lfd.MAX_ATTEMPTS)])
+    monkeypatch.setattr(lfd, "BUILD_BUDGET_SECONDS", 0)
+    monkeypatch.setattr(
+        lfd, "compile_pdf", lambda *a, **k: (_ for _ in ()).throw(
+            LatexRenderError("nope", log="! Undefined control sequence.")
+        )
+    )
+    with pytest.raises(lfd.TemplateBuildError, match="Ran out of time"):
+        await lfd.build_template_from_upload(b"x", "mine.tex")
+
+
 def test_a_compile_error_carries_the_log() -> None:
     """The repair prompt is only useful if the log survives the raise."""
     error = LatexRenderError("failed", log="! Undefined control sequence.")

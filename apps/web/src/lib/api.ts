@@ -163,10 +163,12 @@ const REVISE_TIMEOUT_MS = 4 * 60 * 1_000;
 const WARM_TIMEOUT_MS = 12 * 1_000;
 /**
  * Building a template is the slowest call in the app: a cold start, a model
- * pass over the upload, a compile to validate, and up to three repair rounds
- * when the first LaTeX does not compile. Generous, but still bounded.
+ * pass over the upload, a compile to validate, and repair rounds when the first
+ * LaTeX does not compile. Capped just under the proxy route's own maxDuration of
+ * 300s, so an overrun surfaces as the message below rather than as whatever the
+ * platform returns when it tears a function down mid-flight.
  */
-const TEMPLATE_TIMEOUT_MS = 4 * 60 * 1_000;
+const TEMPLATE_TIMEOUT_MS = 290 * 1_000;
 
 /**
  * Wake the API container before a call that would otherwise pay for the cold
@@ -580,7 +582,8 @@ export const api = {
         cache: "no-store",
       }),
       TEMPLATE_TIMEOUT_MS,
-      "Building the template timed out. Try again, or upload the .tex source if you have it.",
+      "Building the template ran out of time. A .tex upload is much faster than a " +
+        "PDF, and keeps the design exactly, so try that if you have the source.",
     );
     if (!response.ok) {
       let detail = `${response.status}`;

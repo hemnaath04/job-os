@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import base64
 import re
+import time
 from dataclasses import dataclass, field
 
 import anthropic
@@ -50,6 +51,12 @@ log = structlog.get_logger(__name__)
 # Four passes at most: the first draft plus three repairs. Past that the model is
 # usually rewriting rather than fixing, and the user is still waiting.
 MAX_ATTEMPTS = 4
+
+# The browser reaches this through a proxy route whose own ceiling is 300
+# seconds, so an answer produced after that cannot be delivered: the upload would
+# be built, validated, and then thrown away along with the tokens it cost. Stop
+# before that and say so instead.
+BUILD_BUDGET_SECONDS = 265
 
 # Big enough for a full resume template, which runs long once every section is
 # guarded, plus the reasoning the gateway's model emits before its answer.
@@ -298,8 +305,15 @@ async def build_template_from_upload(
         {"role": "user", "content": [*blocks, {"type": "text", "text": instruction}]}
     ]
     repairs: list[str] = []
+    started = time.monotonic()
 
     for attempt in range(1, MAX_ATTEMPTS + 1):
+        if attempt > 1 and time.monotonic() - started > BUILD_BUDGET_SECONDS:
+            raise TemplateBuildError(
+                "Ran out of time building a template from this upload after "
+                f"{attempt - 1} attempts. The last error was: "
+                f"{repairs[-1].split(': ', 1)[-1] if repairs else 'unknown'}"
+            )
         # Streamed, like every other call in this codebase: max_tokens has to
         # hold a thinking block as well as a whole resume template, and the SDK
         # refuses a non-streaming request with a budget that large.
@@ -309,7 +323,11 @@ async def build_template_from_upload(
             max_tokens=MAX_TOKENS,
             system=CONTRACT,
             messages=messages,
-            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
+            # The same tier tailoring and review use. Writing a whole LaTeX
+            # template from a page is the hardest single generation task in the
+            # app, and the tier this inherited from the retired HTML version is
+            # no longer used by anything else.
+            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
         )
         reply = response_text(response)
         if not reply.strip():
