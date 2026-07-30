@@ -236,6 +236,26 @@ async def test_the_loop_stops_when_the_caller_can_no_longer_be_answered(
         await lfd.build_template_from_upload(b"x", "mine.tex")
 
 
+@pytest.mark.asyncio
+async def test_a_truncated_reply_is_told_it_was_truncated(fake_gateway) -> None:
+    """A reply cut off mid-string is not a LaTeX bug to go hunting for."""
+    from job_os.services.latex_render import tectonic_binary
+
+    if tectonic_binary() is None:
+        pytest.skip("tectonic is not installed on this machine")
+
+    cut_off = SimpleNamespace(
+        content=[SimpleNamespace(type="text", text='{"name": "X", "latex_sou')],
+        stop_reason="max_tokens",
+        usage=SimpleNamespace(output_tokens=16000),
+    )
+    messages = fake_gateway([cut_off, _reply(GOOD_TEMPLATE)])
+    candidate = await lfd.build_template_from_upload(b"x", "mine.tex")
+    assert candidate.attempts == 2
+    assert "cut off" in messages.prompts[1]
+    assert "Tectonic" not in messages.prompts[1]
+
+
 def test_a_compile_error_carries_the_log() -> None:
     """The repair prompt is only useful if the log survives the raise."""
     error = LatexRenderError("failed", log="! Undefined control sequence.")

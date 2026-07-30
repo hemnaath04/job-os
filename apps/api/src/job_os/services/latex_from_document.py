@@ -362,11 +362,13 @@ async def build_template_from_upload(
             raise
         except Exception as error:  # noqa: BLE001 - anything can surface here
             note = _failure_note(error)
+            truncated = getattr(response, "stop_reason", None) == "max_tokens"
             log.warning(
                 "latex_template.attempt_failed",
                 attempt=attempt,
                 filename=filename,
                 error=note,
+                truncated=truncated,
             )
             if attempt == MAX_ATTEMPTS:
                 detail = (
@@ -376,14 +378,27 @@ async def build_template_from_upload(
                 raise TemplateBuildError(detail) from error
             repairs.append(f"Attempt {attempt}: {note}")
             compiler_log = getattr(error, "log", "") or ""
-            headline = (
-                f"Tectonic reported:\n\n{note}\n\nThe end of the log:\n\n{compiler_log[-2500:]}"
-                if compiler_log
-                else (
+            if truncated:
+                # Not a broken template: an answer that stopped mid-sentence
+                # because the budget went on thinking. Telling it to hunt for a
+                # LaTeX bug would send it looking for something that is not
+                # there, and produce another oversized reply.
+                headline = (
+                    "Your reply was cut off before it finished, so it could not "
+                    "be read at all. Send a shorter template: no comments, no "
+                    "explanation outside the JSON, and only the sections listed "
+                    "above."
+                )
+            elif compiler_log:
+                headline = (
+                    f"Tectonic reported:\n\n{note}\n\nThe end of the log:\n\n"
+                    f"{compiler_log[-2500:]}"
+                )
+            else:
+                headline = (
                     "It never reached the compiler. Filling the placeholders "
                     f"failed:\n\n{note}"
                 )
-            )
             messages = [
                 *messages,
                 {"role": "assistant", "content": reply[:8000] or "(empty)"},
