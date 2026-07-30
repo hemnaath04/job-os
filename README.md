@@ -36,7 +36,7 @@ data used by the Python service.
 | Job discovery    | TheirStack + SimplifyJobs GitHub data           |
 | Job-page import  | Firecrawl, with direct HTTP fallback             |
 | Resume engine    | JSON Resume, LangGraph, Claude review, GitHub evidence |
-| Resume render    | WeasyPrint + Jinja2, portable LaTeX source           |
+| Resume render    | Real LaTeX, compiled by Tectonic; six vendored templates |
 | Auth             | Clerk                                           |
 | Blob             | Cloudflare R2 (optional)                        |
 | Hosting          | Vercel (web) + Appwrite + Render (Python agents) |

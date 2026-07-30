@@ -34,6 +34,38 @@ editable JSON Resume + immutable version
               final stored resume
 ```
 
+## Rendering
+
+The resume JSON is the document; the PDF is real LaTeX, compiled by Tectonic in
+the API container.
+
+- Six templates ship with the app: Jake's Resume, sb2nov, Awesome-CV, AltaCV,
+  ModernCV and Deedy. Each is vendored with its upstream licence and an
+  `ATTRIBUTION.md` recording every change, under
+  `apps/api/src/job_os/latex_templates/`. Jake's is the default: single column,
+  no icon glyphs, most likely to survive a parser.
+- Every resume value is LaTeX-escaped once, in `build_render_model`, so a
+  template only ever receives escaped strings. Compiles run in a scratch
+  directory with `--untrusted` and a scrubbed environment, because a stored
+  template is untrusted input this process is about to execute.
+- The image compiles all six at build time, which bakes Tectonic's package cache
+  in and fails the build if a template stops compiling. Requests then render
+  offline with `--only-cached`.
+- A custom template comes from an upload: a `.tex` keeps the design exactly, a
+  `.pdf` is rebuilt as LaTeX and comes close rather than matching. Either way it
+  has to compile with sample data before it is stored, and a failure goes back
+  to the model with the compiler's own log, up to four attempts.
+- Previews are the render: each template's card shows the PDF produced from
+  clearly invented sample data, never the user's own history.
+- The Appwrite agent function has no LaTeX engine. It returns a review with no
+  page count rather than failing, and the browser gets the PDF from the
+  container.
+
+Seeding and migrating the template rows is
+`python -m job_os.scripts.seed_latex_templates`, which is idempotent and
+additive: it adds columns, and tags the two rows from the retired HTML renderer
+`legacy_html` instead of deleting them.
+
 ## Data preservation
 
 - The migration only adds columns and the revision-message table. Existing
