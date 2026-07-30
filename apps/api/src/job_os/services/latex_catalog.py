@@ -175,9 +175,6 @@ def builtin(key: str) -> BuiltinTemplate:
     return _BY_KEY[key]
 
 
-def is_builtin(key: str | None) -> bool:
-    return key in _BY_KEY
-
 
 # ---------------------------------------------------------------------------
 # Preview data

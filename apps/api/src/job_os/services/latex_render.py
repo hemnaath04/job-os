@@ -455,7 +455,6 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
         "email_url": _mailto(basics.get("email")),
         "contact": contact,
         "phone": latex_escape(basics.get("phone")),
-        "phone_raw": re.sub(r"[^0-9+]", "", str(basics.get("phone") or "")),
         "website": latex_escape_url(basics.get("url")),
         "website_label": link_label(basics.get("url")),
         "summary": latex_escape(basics.get("summary")),
