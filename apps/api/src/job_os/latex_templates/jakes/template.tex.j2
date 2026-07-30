@@ -49,6 +49,12 @@
 
 \raggedbottom
 \raggedright
+% CHANGED: no hyphenation. The page is set ragged right, so a line that will not
+% fit simply breaks earlier, and a resume full of proper nouns would otherwise
+% hyphenate them: a real render produced "Mon-goDB", which reads as a typo in
+% the one document where a typo costs the most.
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
 \setlength{\tabcolsep}{0in}
 
 % Sections formatting
@@ -68,19 +74,24 @@
   }
 }
 
+% CHANGED: tabularx with a wrapping X column, where upstream has tabular* with
+% \extracolsep{\fill}. A tabular* row cannot stretch when the left cell is
+% already too wide, so a long job title ran straight into its date with no gap,
+% and a long technology list pushed the date off the right edge entirely. Real
+% resumes have titles that long. Same layout, minus the collision.
 \newcommand{\resumeSubheading}[4]{
   \vspace{-2pt}\item
-    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+    \begin{tabularx}{0.97\textwidth}[t]{@{}X@{\hspace{1em}}r@{}}
       \textbf{#1} & #2 \\
       \textit{\small#3} & \textit{\small #4} \\
-    \end{tabular*}\vspace{-7pt}
+    \end{tabularx}\vspace{-7pt}
 }
 
 \newcommand{\resumeProjectHeading}[2]{
     \item
-    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+    \begin{tabularx}{0.97\textwidth}{@{}X@{\hspace{1em}}r@{}}
       \small#1 & #2 \\
-    \end{tabular*}\vspace{-7pt}
+    \end{tabularx}\vspace{-7pt}
 }
 
 \renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}

@@ -22,10 +22,9 @@ os.environ.setdefault(
 )
 os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 
+from _fake_llm import StreamingFakeMessages  # noqa: E402
 from job_os.services import latex_from_document as lfd  # noqa: E402
 from job_os.services.latex_render import LatexRenderError  # noqa: E402
-
-from _fake_llm import StreamingFakeMessages  # noqa: E402
 
 
 def _reply(latex_source: str, *, name: str = "Two Column Slate") -> Any:
@@ -161,8 +160,10 @@ async def test_a_failing_template_is_repaired_with_the_compiler_error(
     )
     assert candidate.attempts == 2
     assert candidate.repairs and "Undefined control sequence" in candidate.repairs[0]
-    # The model was shown the compiler's own words, not a paraphrase.
-    assert "did not compile" in messages.prompts[1]
+    # The model was shown the compiler's own words, not a paraphrase, and told
+    # which step failed: a template that never reached the compiler is a
+    # different bug from LaTeX that did.
+    assert "Tectonic reported" in messages.prompts[1]
     assert "thisCommandDoesNotExist" in messages.prompts[1]
 
 
@@ -198,6 +199,25 @@ def test_an_empty_render_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lfd, "compile_pdf", lambda *a, **k: b"%PDF-1.7 tiny")
     with pytest.raises(lfd.TemplateBuildError, match="essentially empty"):
         lfd.validate_template(GOOD_TEMPLATE)
+
+
+@pytest.mark.asyncio
+async def test_an_empty_reply_is_retried_as_an_empty_reply(fake_gateway) -> None:
+    """A spent thinking budget is its own failure with its own remedy."""
+    empty = SimpleNamespace(
+        content=[], stop_reason="max_tokens", usage=SimpleNamespace(output_tokens=16000)
+    )
+    messages = fake_gateway([empty, _reply(GOOD_TEMPLATE)])
+    from job_os.services.latex_render import tectonic_binary
+
+    if tectonic_binary() is None:
+        pytest.skip("tectonic is not installed on this machine")
+
+    candidate = await lfd.build_template_from_upload(b"x", "mine.tex")
+    assert candidate.attempts == 2
+    assert "no text" in candidate.repairs[0]
+    # Told to answer, not told to fix LaTeX it never wrote.
+    assert "Tectonic" not in messages.prompts[1]
 
 
 def test_a_compile_error_carries_the_log() -> None:

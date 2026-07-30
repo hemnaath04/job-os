@@ -36,9 +36,11 @@ from job_os.services.latex_render import (
     fill_template,
 )
 from job_os.services.llm_json import (
+    EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
     create_message,
     parse_model_json,
+    response_diagnostics,
     response_text,
 )
 from job_os.settings import get_settings
@@ -95,7 +97,8 @@ template language uses different delimiters:
   a block        <% if work %> ... <% endif %>,  <% for job in work %> ... <% endfor %>
   a comment      <# not rendered #>
 A LaTeX percent comment does NOT hide a placeholder. The template engine runs
-first and does not know what a LaTeX comment is.
+first and does not know what a LaTeX comment is. Block tags close with `%>` and
+never with `%}}`; getting that wrong leaves a stray brace in the LaTeX.
 
 AVAILABLE NAMES, and there are no others:
   {", ".join(_MODEL_KEYS)}
@@ -111,7 +114,8 @@ SHAPES:
 - work: list of .company, .position, .location, .dates, .summary, .url,
   .bullets (list of strings)
 - education: list of .institution, .degree, .study_type, .area, .location,
-  .dates, .score, .bullets
+  .dates, .score, .bullets. NOTE: .degree is .study_type and .area already
+  joined, so printing .degree AND .area repeats the subject twice
 - projects: list of .name, .description, .url, .url_label, .dates, .keywords,
   .keywords_line, .bullets
 - skills: list of .name, .level, .keywords, .keywords_line
@@ -308,6 +312,26 @@ async def build_template_from_upload(
             extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
         )
         reply = response_text(response)
+        if not reply.strip():
+            note = "The model returned no text."
+            log.warning(
+                "latex_template.empty_reply",
+                attempt=attempt,
+                filename=filename,
+                **response_diagnostics(response),
+            )
+            if attempt == MAX_ATTEMPTS:
+                raise TemplateBuildError(
+                    "The model never returned a template. Try again, or upload "
+                    "the .tex source if you have it."
+                )
+            repairs.append(f"Attempt {attempt}: {note}")
+            messages = [
+                *messages,
+                {"role": "assistant", "content": "(empty)"},
+                {"role": "user", "content": EMPTY_REPLY_RETRY},
+            ]
+            continue
         try:
             generated = parse_model_json(GeneratedLatexTemplate, reply)
             pdf_bytes = validate_template(generated.latex_source)
@@ -331,20 +355,26 @@ async def build_template_from_upload(
                 raise TemplateBuildError(detail) from error
             repairs.append(f"Attempt {attempt}: {note}")
             compiler_log = getattr(error, "log", "") or ""
+            headline = (
+                f"Tectonic reported:\n\n{note}\n\nThe end of the log:\n\n{compiler_log[-2500:]}"
+                if compiler_log
+                else (
+                    "It never reached the compiler. Filling the placeholders "
+                    f"failed:\n\n{note}"
+                )
+            )
             messages = [
                 *messages,
                 {"role": "assistant", "content": reply[:8000] or "(empty)"},
                 {
                     "role": "user",
                     "content": (
-                        "That did not compile. Tectonic reported:\n\n"
-                        f"{note}\n\n"
-                        "The end of the log:\n\n"
-                        f"{compiler_log[-2500:]}\n\n"
+                        f"That did not work. {headline}\n\n"
                         "Fix the cause and return the corrected template. Keep the "
                         "design. Remember: XeTeX only, TeX Live 2022 packages only, "
                         "no fontawesome6, fonts by file name, one self-contained "
-                        "file, every optional section guarded.\n\n" + JSON_ONLY_RETRY
+                        "file, every optional section guarded, and block tags that "
+                        "close with the right delimiter.\n\n" + JSON_ONLY_RETRY
                     ),
                 },
             ]
