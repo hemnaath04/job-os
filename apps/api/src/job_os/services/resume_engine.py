@@ -56,6 +56,12 @@ PASS_SCORE = Decimal("75")
 # budget spent on thinking.
 REVIEW_MAX_TOKENS = 24000
 REVIEW_RETRY_MAX_TOKENS = 32000
+
+# A conversational edit returns the WHOLE resume, not a patch, so the reply is a
+# full document plus the model's thinking. At 7000 it truncated, which forced a
+# second full call, and the two together are why an edit took two and a half
+# minutes to come back. One call that fits is the whole fix.
+REVISE_MAX_TOKENS = 32000
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -108,10 +114,27 @@ class ModelReview(BaseModel):
     summary: str = ""
 
 
+class BlockedClaim(BaseModel):
+    """One claim the edit tried to add that no verified fact supports.
+
+    Structured so the caller can name the exact number and the exact sentence it
+    appeared in, rather than showing a bare 400 the user reads as "broken".
+    """
+
+    metric: str
+    text: str
+    reason: str = "No verified Profile fact contains this number."
+    remedy: str = (
+        "Add it as a verified fact on your Profile, then ask for the edit again."
+    )
+
+
 class RevisionOutput(BaseModel):
     assistant_message: str
     suggestions: list[str] = Field(default_factory=list)
     json_resume: dict[str, Any]
+    # Filled by the server after the model answers, never by the model.
+    blocked_claims: list[BlockedClaim] = Field(default_factory=list)
 
 
 def validate_json_resume_document(doc: dict[str, Any]) -> dict[str, Any]:
@@ -694,7 +717,7 @@ async def revise_resume(
         response = await create_message(
             client,
             model=settings.anthropic_model_tailor,
-            max_tokens=7000,
+            max_tokens=REVISE_MAX_TOKENS,
             system=CAREER_OPS_RULES,
             messages=messages,
             extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
@@ -736,14 +759,100 @@ async def revise_resume(
         )
     )
     new_numbers = set(NUMBER_RE.findall(_resume_text(output.json_resume)))
-    unsupported = sorted(new_numbers - source_numbers)
-    if unsupported:
-        raise ValueError(
-            "The requested edit introduced unverified metrics: "
-            + ", ".join(unsupported)
-            + ". Add them as verified Profile facts first."
-        )
-    return output
+    unsupported = set(new_numbers - source_numbers)
+    if not unsupported:
+        return output
+
+    # The guard is unchanged: a number no verified fact supports never reaches the
+    # page. What changes is what happens to the rest of the edit. Rejecting the
+    # whole revision threw away every honest improvement in it and returned a 400
+    # the user reads as the feature being broken, after a two-minute wait. Now the
+    # honest parts apply and only the invented claims are dropped.
+    cleaned, blocked = _strip_unverified_numbers(
+        output.json_resume, original=doc, unsupported=unsupported
+    )
+    validate_json_resume_document(cleaned)
+    log.warning(
+        "resume.revision_claims_blocked",
+        metrics=sorted(unsupported),
+        dropped=len(blocked),
+    )
+    named = ", ".join(sorted(unsupported))
+    notice = (
+        f"I left out {len(blocked)} change"
+        f"{'' if len(blocked) == 1 else 's'} that introduced numbers your "
+        f"Profile does not have ({named}). Everything else in the edit is "
+        "applied. To use those numbers, add them as verified facts on your "
+        "Profile first, or ask again without them."
+    )
+    return RevisionOutput(
+        assistant_message=f"{notice}\n\n{output.assistant_message}".strip(),
+        suggestions=output.suggestions,
+        json_resume=cleaned,
+        blocked_claims=blocked,
+    )
+
+
+def _strip_unverified_numbers(
+    revised: dict[str, Any],
+    *,
+    original: dict[str, Any],
+    unsupported: set[str],
+) -> tuple[dict[str, Any], list[BlockedClaim]]:
+    """Drop the claims that invented a number, keep the rest of the edit.
+
+    A scalar field reverts to the wording it had before, since that wording was
+    already verified. A list item is dropped outright, because there is nothing to
+    revert an inserted bullet to. An entry left with no bullets at all gets its
+    original bullets back rather than rendering blank.
+    """
+    blocked: list[BlockedClaim] = []
+
+    def offending(text: str) -> set[str]:
+        return set(NUMBER_RE.findall(text)) & unsupported
+
+    def clean(new: Any, old: Any) -> Any:
+        if isinstance(new, str):
+            found = offending(new)
+            if not found:
+                return new
+            blocked.append(BlockedClaim(metric=", ".join(sorted(found)), text=new))
+            return old if isinstance(old, str) else None
+        if isinstance(new, dict):
+            base = old if isinstance(old, dict) else {}
+            return {key: clean(value, base.get(key)) for key, value in new.items()}
+        if isinstance(new, list):
+            base_list = old if isinstance(old, list) else []
+            out: list[Any] = []
+            for index, item in enumerate(new):
+                previous = base_list[index] if index < len(base_list) else None
+                if isinstance(item, str):
+                    found = offending(item)
+                    if found:
+                        blocked.append(
+                            BlockedClaim(metric=", ".join(sorted(found)), text=item)
+                        )
+                        continue
+                    out.append(item)
+                    continue
+                out.append(clean(item, previous))
+            return out
+        return new
+
+    cleaned = clean(revised, original)
+
+    # A role or project stripped down to nothing is worse than an untouched one.
+    for section in ("work", "projects", "volunteer"):
+        entries = cleaned.get(section) or []
+        originals = original.get(section) or []
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, dict) or entry.get("highlights"):
+                continue
+            if index < len(originals) and isinstance(originals[index], dict):
+                restored = originals[index].get("highlights")
+                if restored:
+                    entry["highlights"] = list(restored)
+    return cleaned, blocked
 
 
 def generate_latex_source(doc: dict[str, Any]) -> str:
