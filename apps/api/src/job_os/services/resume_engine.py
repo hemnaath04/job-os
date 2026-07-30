@@ -62,6 +62,11 @@ REVIEW_RETRY_MAX_TOKENS = 32000
 # second full call, and the two together are why an edit took two and a half
 # minutes to come back. One call that fits is the whole fix.
 REVISE_MAX_TOKENS = 32000
+
+# The bundled template that fits the most content on one page, named in the
+# page-count advice so the user has a concrete next step rather than just being
+# told the resume is too long.
+TIGHTEST_TEMPLATE_KEY = "sb2nov"
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -366,14 +371,22 @@ def deterministic_review(
     extracted = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
     text_selectable = len(extracted) >= 200
 
-    if page_count != 1:
+    if page_count > 1:
+        # Advice, not a veto. One page is the goal and the score still reflects
+        # missing it, but a resume that is a page and a bit is a real document the
+        # user may well want to send, and blocking it outright produced exactly the
+        # "why do I have to edit this again" loop that the false fabrication flags
+        # did. The renderer will not shrink margins or fonts to fake a fit, which is
+        # right, so the honest options are to trim or to pick a tighter template.
         issues.append(
             ResumeReviewIssue(
-                severity="blocking",
+                severity="warning",
                 code="page_count",
                 message=(
-                    f"Resume renders to {page_count} pages. "
-                    "Final resumes must be exactly one page."
+                    f"Renders to {page_count} pages. One page is the target: trim "
+                    "a bullet or a project, or switch to a tighter single-column "
+                    f"template. {TIGHTEST_TEMPLATE_KEY} fits the same content on "
+                    "one page."
                 ),
             )
         )

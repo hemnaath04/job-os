@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import io
 import json
+import os
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from pypdf import PdfWriter
+
+os.environ.setdefault(
+    "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
+)
 
 from job_os.schemas.resumes import ResumeReviewIssue
 from job_os.services import resume_engine
@@ -205,3 +210,34 @@ def test_model_score_tolerates_a_decimal_or_string() -> None:
     assert ModelReview.model_validate({"score": 87.5}).score == 88
     assert ModelReview.model_validate({"score": "88"}).score == 88
     assert ModelReview.model_validate({"score": 88}).score == 88
+
+
+@pytest.mark.asyncio
+async def test_a_two_page_resume_passes_with_advice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A page and a bit is a document the user may want to send.
+
+    The LaTeX renderer holds this content on one page in sb2nov and spills to two in
+    the other templates, and it correctly refuses to shrink margins or fonts to fake
+    a fit. So the review advises rather than vetoes: the score still reflects the
+    miss, but the resume is not sent back for another editing round over it.
+    """
+    _stub_model(
+        monkeypatch,
+        [json.dumps({"score": 92, "issues": [], "strengths": [], "summary": "solid"})],
+        rule_issues=[
+            ResumeReviewIssue(
+                severity="warning",
+                code="page_count",
+                message="Renders to 2 pages. One page is the target.",
+            )
+        ],
+    )
+    result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
+
+    assert result.passed, f"a two-page resume should pass, scored {result.score}"
+    # The advice is still on the record, and the warning still caps the rule score
+    # at 95, so missing one page is never free.
+    assert "page_count" in {issue.code for issue in result.issues}
+    assert result.score == 92  # min(model 92, rule cap 95)

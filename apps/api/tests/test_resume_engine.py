@@ -58,7 +58,15 @@ def test_generate_latex_source_keeps_json_resume_canonical() -> None:
     assert r"\section{Technical Skills}" in latex
 
 
-def test_deterministic_review_blocks_non_selectable_and_multi_page_pdf() -> None:
+def test_a_second_page_is_advice_and_unreadable_text_is_still_a_defect() -> None:
+    """Two pages is a judgement call; a PDF an ATS cannot read is not.
+
+    Blocking on page count alone sent a resume that is a page and a bit back for
+    another round of editing, which is the same over-blocking that the false
+    fabrication flags caused. The renderer will not shrink margins or fonts to fake
+    a one-page fit, so the honest options are to trim or to change template, and
+    the message names both.
+    """
     issues, page_count, text_selectable = deterministic_review(
         {"basics": {}, "work": []},
         _blank_pdf(2),
@@ -66,6 +74,11 @@ def test_deterministic_review_blocks_non_selectable_and_multi_page_pdf() -> None
 
     assert page_count == 2
     assert text_selectable is False
+    by_code = {issue.code: issue for issue in issues}
+    assert by_code["page_count"].severity == "warning"
+    assert "sb2nov" in by_code["page_count"].message
+    # Everything else keeps the severity it had.
+    assert by_code["selectable_text"].severity == "blocking"
     assert {issue.code for issue in issues} >= {
         "page_count",
         "selectable_text",
