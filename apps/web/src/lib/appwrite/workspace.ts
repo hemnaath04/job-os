@@ -41,6 +41,15 @@ interface ResumeRow extends SnapshotRow {
 interface TemplateRow extends SnapshotRow {
   name: string;
   archived: boolean;
+  kind?: string | null;
+  engine?: string | null;
+  builtin_key?: string | null;
+  latex_source?: string | null;
+  preview_file_id?: string | null;
+  preview_pdf_file_id?: string | null;
+  // The retired HTML renderer's columns. Still required by the table, and two
+  // rows still hold real content in them, so they are written empty rather than
+  // dropped. See seed_latex_templates.py.
   html_source: string;
   css_source: string;
 }
@@ -311,6 +320,14 @@ export const appwriteWorkspace = {
     return resume;
   },
 
+  /**
+   * The templates that can actually render: the six builtins plus this user's
+   * own. Rows from the retired HTML renderer are left out, because selecting one
+   * would produce a failed render rather than a different look.
+   *
+   * Builtins first, then the newest custom, which is the order somebody scanning
+   * a picker wants: the known-good set, then what they added.
+   */
   async listTemplates(): Promise<ResumeTemplate[]> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
@@ -325,17 +342,38 @@ export const appwriteWorkspace = {
       total: false,
       ttl: 0,
     });
-    return result.rows.map((row) => ({
-      ...parseSnapshot<ResumeTemplate>(row),
-      // The row is the authority on the name, the snapshot can lag a rename.
-      name: row.name,
-    }));
+    const templates = result.rows
+      .map((row) => ({
+        ...parseSnapshot<ResumeTemplate>(row),
+        // The row is the authority on these, the snapshot can lag a rename or a
+        // re-seeded preview.
+        name: row.name,
+        kind: (row.kind || "custom") as ResumeTemplate["kind"],
+        engine: row.engine || "tectonic",
+        builtin_key: row.builtin_key ?? null,
+        preview_file_id: row.preview_file_id ?? null,
+        preview_pdf_file_id: row.preview_pdf_file_id ?? null,
+      }))
+      .filter((template) => template.kind !== "legacy_html");
+    return templates.sort((left, right) => {
+      if (left.kind !== right.kind) return left.kind === "builtin" ? -1 : 1;
+      if (left.kind === "builtin") return left.name.localeCompare(right.name);
+      return right.updated_at.localeCompare(left.updated_at);
+    });
   },
 
-  /** The Jinja and CSS a template renders with. Fetched only when rendering. */
-  async getTemplateSource(
-    templateId: string,
-  ): Promise<{ html_source: string; css_source: string }> {
+  /**
+   * What to render a template with. Fetched only when rendering.
+   *
+   * A builtin returns its key and no source: the LaTeX, the class file and the
+   * fonts live in the API container, and a copy here would be a second version
+   * of them, free to drift from the one that renders. A custom returns the
+   * stored LaTeX, which is the only copy there is.
+   */
+  async getTemplateSource(templateId: string): Promise<{
+    template_key: string | null;
+    latex_source: string | null;
+  }> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const row = await getAppwriteServices().tables.getRow<TemplateRow>({
@@ -343,21 +381,29 @@ export const appwriteWorkspace = {
       tableId: config.templatesTableId,
       rowId: templateId,
     });
-    return { html_source: row.html_source, css_source: row.css_source };
+    if (row.kind === "builtin" && row.builtin_key) {
+      return { template_key: row.builtin_key, latex_source: null };
+    }
+    return { template_key: null, latex_source: row.latex_source || null };
   },
 
-  /** Store a generated look. Creates a template row and nothing else. */
-  async createTemplate(input: {
+  /**
+   * Store a template built from an upload, with the render that validated it.
+   *
+   * The PDF is the one the API compiled to prove the template works, so the
+   * preview is never a promise about a look nobody has produced.
+   */
+  async createLatexTemplate(input: {
     name: string;
-    html_source: string;
-    css_source: string;
+    latex_source: string;
     notes?: string;
-    preview_html?: string;
+    pdf_base64: string;
+    source_file_id?: string | null;
     created_from_resume_id?: string | null;
   }): Promise<ResumeTemplate> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
-    const tables = getAppwriteServices().tables;
+    const { tables, storage } = getAppwriteServices();
     const ownerId = getCurrentAppwriteUserId();
     const timestamp = now();
 
@@ -376,27 +422,50 @@ export const appwriteWorkspace = {
       name = `${input.name.trim()} ${suffix}`;
     }
 
-    const template: ResumeTemplate & { preview_html?: string } = {
-      id: ID.unique(),
+    const rowId = ID.unique();
+    const previewPdfFileId = ID.unique();
+    await storage.createFile({
+      bucketId: config.resumeFilesBucketId,
+      fileId: previewPdfFileId,
+      file: new File([decodeBase64(input.pdf_base64)], `${rowId}-preview.pdf`, {
+        type: "application/pdf",
+      }),
+      permissions: ownerPermissions(ownerId),
+    });
+
+    const template: ResumeTemplate = {
+      id: rowId,
       name,
       description: input.notes?.trim() || null,
       created_from_resume_id: input.created_from_resume_id ?? null,
-      source_file_id: null,
+      source_file_id: input.source_file_id ?? null,
+      // No PNG: rasterising needs a tool the browser does not have, so the
+      // custom template's preview is the PDF itself.
       preview_file_id: null,
+      preview_pdf_file_id: previewPdfFileId,
       created_at: timestamp,
       updated_at: timestamp,
-      preview_html: input.preview_html,
+      kind: "custom",
+      engine: "tectonic",
+      builtin_key: null,
+      notes: input.notes?.trim() || null,
     };
     await tables.createRow<TemplateRow>({
       databaseId: config.databaseId,
       tableId: config.templatesTableId,
-      rowId: template.id,
+      rowId,
       data: {
         owner_id: ownerId,
         name,
         archived: false,
-        html_source: input.html_source,
-        css_source: input.css_source,
+        kind: "custom",
+        engine: "tectonic",
+        builtin_key: null,
+        latex_source: input.latex_source,
+        preview_pdf_file_id: previewPdfFileId,
+        // Empty, not absent: both columns are still required by the table.
+        html_source: "",
+        css_source: "",
         source_updated_at: timestamp,
         snapshot: JSON.stringify(template),
       },
@@ -1051,5 +1120,30 @@ export const appwriteWorkspace = {
       bucketId: config.resumeFilesBucketId,
       fileId,
     });
+  },
+
+  /**
+   * A stored file as an object URL, for showing a template preview inline.
+   *
+   * Fetched rather than linked because Appwrite wants a JWT for a file read, and
+   * the session cookie is third party to this app: browsers that drop it turned
+   * an owned file into a 404. Callers must revoke the URL when they are done
+   * with it, or every re-render leaks a blob.
+   */
+  async storedFileObjectUrl(fileId: string): Promise<string> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const url = getAppwriteServices().storage.getFileView({
+      bucketId: config.resumeFilesBucketId,
+      fileId,
+    });
+    const response = await fetch(url, {
+      cache: "no-store",
+      headers: await appwriteFileAuthHeaders(),
+    });
+    if (!response.ok) {
+      throw new Error(`Could not read that file (${response.status}).`);
+    }
+    return URL.createObjectURL(await response.blob());
   },
 };

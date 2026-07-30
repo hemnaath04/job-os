@@ -118,9 +118,38 @@ export interface ResumeTemplate {
   description: string | null;
   created_from_resume_id: string | null;
   source_file_id: string | null;
+  /** First page of the sample render, as a PNG. What the picker shows. */
   preview_file_id: string | null;
+  /** The whole sample render, for anyone who wants to read the real thing. */
+  preview_pdf_file_id?: string | null;
   created_at: string;
   updated_at: string;
+  /**
+   * `builtin` ships with the app and its LaTeX lives in the API container.
+   * `custom` was built from the user's own upload and its LaTeX is stored on
+   * the row. `legacy_html` predates the LaTeX engine and can no longer render,
+   * so the picker leaves it out; the rows are kept rather than deleted.
+   */
+  kind?: "builtin" | "custom" | "legacy_html";
+  engine?: string;
+  /** Which vendored template directory a builtin names. */
+  builtin_key?: string | null;
+  columns?: number;
+  /**
+   * How this layout tends to fare in an applicant tracking system, in plain
+   * words. Shown next to the template: two of the six are two-column designs
+   * that some parsers read badly, and hiding that would cost somebody an
+   * interview.
+   */
+  ats_note?: string;
+  tags?: string[];
+  author?: string;
+  licence?: string;
+  upstream?: string;
+  /** What was changed from upstream to make it compile here. */
+  changes?: string;
+  /** For a custom template: what the model said it could not match. */
+  notes?: string | null;
 }
 
 export interface Resume {

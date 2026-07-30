@@ -78,14 +78,21 @@ export type RenderReviewResult = {
  * the review found issues and the caller should show them and offer to proceed
  * anyway, since the review advises rather than gates.
  */
-/** What the container returns after recreating and validating a design. */
+/**
+ * What the container returns after turning an upload into a LaTeX template.
+ *
+ * `attempts` and `repairs` are reported rather than hidden: a template that took
+ * three compile-and-repair rounds is worth knowing about, and claiming a clean
+ * first pass when there was not one would be a lie the user could not check.
+ */
 export type GeneratedTemplate = {
   name: string;
-  html_source: string;
-  css_source: string;
+  latex_source: string;
+  engine: string;
   notes: string;
   pdf_base64: string;
-  preview_html: string;
+  attempts: number;
+  repairs: string[];
 };
 
 export type FinalizeOutcome =
@@ -146,18 +153,18 @@ const AGENT_POLL_MS = 1_200;
 const AGENT_TIMEOUT_MS = 15 * 60 * 1_000;
 /**
  * Ceiling for a container round trip that renders a PDF: a cold start plus a
- * WeasyPrint render plus a quality-model pass. Generous, but bounded, so a
- * wedged request surfaces as an error the user can retry instead of a spinner
- * that never resolves.
+ * LaTeX compile plus a quality-model pass. Generous, but bounded, so a wedged
+ * request surfaces as an error the user can retry instead of a spinner that
+ * never resolves.
  */
 const RENDER_TIMEOUT_MS = 2 * 60 * 1_000;
 /** A single conversational edit is one Claude call, not a batch job. */
 const REVISE_TIMEOUT_MS = 4 * 60 * 1_000;
 const WARM_TIMEOUT_MS = 12 * 1_000;
 /**
- * Recreating a design is the slowest call in the app: a cold start, a
- * vision-model pass over a PDF, a render to validate, and possibly a repair
- * round. Generous, but still bounded.
+ * Building a template is the slowest call in the app: a cold start, a model
+ * pass over the upload, a compile to validate, and up to three repair rounds
+ * when the first LaTeX does not compile. Generous, but still bounded.
  */
 const TEMPLATE_TIMEOUT_MS = 4 * 60 * 1_000;
 
@@ -360,12 +367,12 @@ const legacyApi = {
   /**
    * Render and review an unsaved document on the FastAPI container.
    *
-   * The Appwrite agent function cannot render PDFs: WeasyPrint needs native
-   * pango and cairo libs that the Appwrite python runtime does not ship, so a
-   * tailored version comes back with no PDF and no review score. The container
-   * image installs them, so the browser sends the document here and writes the
-   * result back to Appwrite itself. Stateless, so it works for versions that
-   * only exist in Appwrite and have no row in Postgres.
+   * The Appwrite agent function cannot render PDFs: its python runtime has no
+   * LaTeX engine, so a tailored version comes back with no PDF and no page
+   * count. The container ships Tectonic and a warm package cache, so the browser
+   * sends the document here and writes the result back to Appwrite itself.
+   * Stateless, so it works for versions that only exist in Appwrite and have no
+   * row in Postgres.
    */
   renderReviewDraft: async (
     jsonResume: object,
@@ -382,8 +389,8 @@ const legacyApi = {
         method: "POST",
         body: JSON.stringify({
           json_resume: jsonResume,
-          html_source: look?.html_source ?? null,
-          css_source: look?.css_source ?? null,
+          template_key: look?.template_key ?? null,
+          latex_source: look?.latex_source ?? null,
         }),
       }),
       RENDER_TIMEOUT_MS,
@@ -541,31 +548,39 @@ export const api = {
   },
 
   /**
-   * Recreate an uploaded design as a template, then store it.
+   * Turn an uploaded .tex or .pdf into a template, then store it.
    *
-   * Generation runs on the API container, which has the render libs needed to
-   * prove the template works before it is kept. A design that cannot be turned
-   * into a working template surfaces as an error and nothing is stored, so the
-   * user keeps whatever looks they already had.
+   * The work runs on the API container, which has the LaTeX engine needed to
+   * prove the template compiles before it is kept. An upload that cannot be
+   * turned into a template that compiles surfaces as an error and nothing is
+   * stored, so the user keeps whatever templates they already had.
+   *
+   * A .tex keeps the design exactly. A .pdf is a reconstruction: the model reads
+   * the page and writes LaTeX aiming at the same design, which gets close and is
+   * not a copy.
    */
-  async generateTemplateFromFile(
+  async buildLatexTemplate(
     file: File,
-    { createdFromResumeId }: { createdFromResumeId?: string | null } = {},
+    {
+      name,
+      createdFromResumeId,
+    }: { name?: string; createdFromResumeId?: string | null } = {},
   ) {
     if (!isAppwriteWorkspaceEnabled) {
       throw new Error("Templates require the Appwrite workspace.");
     }
     const body = new FormData();
     body.append("file", file);
+    if (name) body.append("name", name);
     await warmBackend();
     const response = await withTimeout(
-      fetch(`${BASE}/resumes/generate-template`, {
+      fetch(`${BASE}/resumes/latex-template`, {
         method: "POST",
         body,
         cache: "no-store",
       }),
       TEMPLATE_TIMEOUT_MS,
-      "Building the template timed out. Try again, or try a simpler one-page design.",
+      "Building the template timed out. Try again, or upload the .tex source if you have it.",
     );
     if (!response.ok) {
       let detail = `${response.status}`;
@@ -578,24 +593,25 @@ export const api = {
       throw new Error(detail);
     }
     const generated = (await response.json()) as GeneratedTemplate;
-    return appwriteWorkspace.createTemplate({
+    const stored = await appwriteWorkspace.createLatexTemplate({
       name: generated.name,
-      html_source: generated.html_source,
-      css_source: generated.css_source,
+      latex_source: generated.latex_source,
       notes: generated.notes,
-      preview_html: generated.preview_html,
+      pdf_base64: generated.pdf_base64,
       created_from_resume_id: createdFromResumeId ?? null,
     });
+    return { template: stored, attempts: generated.attempts, repairs: generated.repairs };
   },
 
   /**
    * Build a template from the document a resume was originally imported from.
    *
-   * The same extraction as an upload, pointed at a file already in the library.
-   * Returns null when that resume has no original document, so the caller can
-   * say why instead of quietly producing a copy of some other look.
+   * The same path as an upload, pointed at a file already in the library. That
+   * file is a PDF, so this is the reconstruction path rather than the exact one.
+   * Returns null when the resume has no original document, so the caller can say
+   * why instead of quietly producing a copy of some other look.
    */
-  async generateTemplateFromResume(resume: Resume) {
+  async buildLatexTemplateFromResume(resume: Resume) {
     if (!isAppwriteWorkspaceEnabled) {
       throw new Error("Templates require the Appwrite workspace.");
     }
@@ -605,7 +621,7 @@ export const api = {
       original.fileId,
       original.filename,
     );
-    return api.generateTemplateFromFile(file, { createdFromResumeId: resume.id });
+    return api.buildLatexTemplate(file, { createdFromResumeId: resume.id });
   },
 
   archiveTemplate: (templateId: string) => {

@@ -25,6 +25,7 @@ import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { TemplatePicker } from "@/components/template-picker";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
@@ -104,25 +105,27 @@ function ResumesInner() {
   });
   const [dragging, setDragging] = useState<Resume | null>(null);
   const buildFromResume = useMutation({
-    mutationFn: (resume: Resume) => api.generateTemplateFromResume(resume),
-    onSuccess: (template, resume) => {
-      if (!template) {
+    mutationFn: (resume: Resume) => api.buildLatexTemplateFromResume(resume),
+    onSuccess: (built, resume) => {
+      if (!built) {
         toast.error(
           `${resume.name} has no original document stored, so there is no design to read.`,
         );
         return;
       }
-      toast.success(`Built the ${template.name} template from ${resume.name}`, {
-        description: "Your resume and its versions are untouched.",
+      toast.success(`Built the ${built.template.name} template from ${resume.name}`, {
+        description: buildDescription(built),
       });
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
     onError: (error: Error) => reportFailure("read that resume's design", error),
   });
   const buildFromUpload = useMutation({
-    mutationFn: (file: File) => api.generateTemplateFromFile(file),
-    onSuccess: (template) => {
-      toast.success(`Built the ${template.name} template`);
+    mutationFn: (file: File) => api.buildLatexTemplate(file),
+    onSuccess: (built) => {
+      toast.success(`Built the ${built.template.name} template`, {
+        description: buildDescription(built),
+      });
       qc.invalidateQueries({ queryKey: ["templates"] });
     },
     onError: (error: Error) => reportFailure("build a template from that file", error),
@@ -435,14 +438,21 @@ function ResumesInner() {
   );
 }
 
+/** What actually happened while building a template, said plainly. */
+function buildDescription(built: { attempts: number; repairs: string[] }): string {
+  if (built.attempts <= 1) return "Compiled on the first pass.";
+  return `Took ${built.attempts} passes: the first LaTeX did not compile and was repaired.`;
+}
+
 /**
- * Saved looks. A template holds Jinja and CSS only, never resume data.
+ * The looks available to render with: the six that ship with the app, plus any
+ * built from the user's own uploads. A template holds LaTeX only, never resume
+ * data.
  *
- * There is deliberately no way to create one from the library yet. Copying the
- * one bundled look and naming it after a resume produced templates that were
- * byte-identical to Default, which implied the app had captured that resume's
- * design when it had captured nothing. Generating a real template from a
- * document is the next piece of work.
+ * There is no selection here. This page is the library, and choosing a look
+ * belongs to the run that uses it, on the tailor page. What this offers is
+ * looking: every card is the real sample render, and Full size opens the PDF the
+ * renderer produced.
  */
 function TemplatesSection({
   templates,
@@ -467,6 +477,7 @@ function TemplatesSection({
   const uploadInput = useRef<HTMLInputElement>(null);
   const active = accepts && over;
   const busy = uploading || building;
+  const mine = templates.filter((template) => template.kind === "custom").length;
 
   return (
     <section
@@ -493,22 +504,23 @@ function TemplatesSection({
         <h2 className="text-sm font-semibold">Templates</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {templates.length}
+          {mine > 0 ? `, ${mine} yours` : ""}
         </span>
         {active && (
           <span className="text-xs text-[color:var(--color-violet)]">
-            Drop to read this resume&apos;s design
+            Drop to rebuild this resume&apos;s design as a template
           </span>
         )}
         {busy && (
           <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
             <Loader2 className="size-3 animate-spin" />
-            Reading the design and checking it renders, up to a minute
+            Writing the LaTeX and compiling it, up to a few minutes
           </span>
         )}
         <input
           ref={uploadInput}
           type="file"
-          accept=".pdf,.docx,application/pdf"
+          accept=".tex,.pdf,application/pdf,text/x-tex"
           className="hidden"
           onChange={(event) => {
             const file = event.target.files?.[0];
@@ -521,12 +533,14 @@ function TemplatesSection({
           disabled={busy}
           className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
         >
-          <FileUp className="size-3" /> Add from a design
+          <FileUp className="size-3" /> Add your own
         </button>
       </div>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        The look, not the data. Upload a resume whose design you like, or drag one
-        from below. Tailoring borrows a look and never writes to the template.
+        The look, not the data. Every preview is a real render of invented sample
+        data. Add your own by uploading a <strong>.tex</strong>, which keeps the
+        design exactly, or a <strong>.pdf</strong>, which gets rebuilt as LaTeX
+        and comes close rather than matching.
       </p>
       <div
         className={`mt-3 rounded-[var(--radius-card)] transition ${
@@ -537,83 +551,24 @@ function TemplatesSection({
               : ""
         }`}
       >
-        {templates.length === 0 ? (
-          <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-            No templates yet. Add one from a design, or drag a resume here.
-          </div>
-        ) : (
-          <div className="workspace-panel divide-y divide-[color:var(--color-border)] overflow-hidden">
-            {templates.map((template) => (
-              <div
-                key={template.id}
-                className="flex items-center gap-3 px-5 py-3 transition hover:bg-[color:var(--color-surface-2)]"
-              >
-                <TemplateThumbnail template={template} />
-                <div className="min-w-0 flex-1">
-                  <div className="truncate text-sm font-semibold">
-                    {template.name}
-                  </div>
-                  {template.description && (
-                    <div className="truncate text-xs text-[color:var(--color-text-dim)]">
-                      {template.description}
-                    </div>
-                  )}
-                </div>
-                <button
-                  onClick={() => {
-                    if (
-                      window.confirm(
-                        `Remove the ${template.name} template? This deletes the saved look only. No resume, version or PDF is touched.`,
-                      )
-                    ) {
-                      onRemove(template.id);
-                    }
-                  }}
-                  disabled={removingId === template.id}
-                  className="shrink-0 rounded-lg p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
-                  aria-label={`Remove the ${template.name} template`}
-                >
-                  <Archive className="size-3.5" />
-                </button>
-              </div>
-            ))}
-          </div>
-        )}
+        <TemplatePicker
+          templates={templates}
+          value=""
+          onChange={() => {}}
+          onRemove={(templateId) => {
+            const template = templates.find((item) => item.id === templateId);
+            if (
+              window.confirm(
+                `Remove the ${template?.name ?? "selected"} template? This deletes the saved look only. No resume, version or PDF is touched.`,
+              )
+            ) {
+              onRemove(templateId);
+            }
+          }}
+          removingId={removingId}
+        />
       </div>
     </section>
-  );
-}
-
-/**
- * A real preview of the look: the sample render, scaled down.
- *
- * The stored preview is HTML rather than an image because a browser cannot
- * render Jinja and cannot thumbnail a PDF without a rasteriser, and the point of
- * a thumbnail here is to show that two templates actually differ. Sandboxed with
- * no allow flags, so it cannot script or navigate.
- */
-function TemplateThumbnail({
-  template,
-}: {
-  template: ResumeTemplate & { preview_html?: string };
-}) {
-  if (!template.preview_html) {
-    return (
-      <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-violet)]" />
-    );
-  }
-  return (
-    <div className="h-16 w-12 shrink-0 overflow-hidden rounded border border-[color:var(--color-border)] bg-white">
-      <iframe
-        title={`${template.name} preview`}
-        srcDoc={template.preview_html}
-        sandbox=""
-        aria-hidden
-        tabIndex={-1}
-        className="pointer-events-none h-[816px] w-[624px] origin-top-left border-0"
-        style={{ transform: "scale(0.077)" }}
-      />
-    </div>
   );
 }
 

@@ -29,6 +29,7 @@ import { withTimeout } from "@/lib/async";
 import { downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
+import { TemplatePicker } from "@/components/template-picker";
 import { Select } from "@/components/ui/select";
 import type {
   GapQuestion,
@@ -229,11 +230,11 @@ function TailorInner() {
   /**
    * Finish the quality pass on the FastAPI container.
    *
-   * The Appwrite agent function cannot render PDFs (its runtime has no pango or
-   * cairo), so a fresh tailored version arrives with no PDF and a placeholder
-   * review, which leaves Finalize and Download dead. The container image has the
-   * render libs, so hand it the document, then persist the review and PDF onto
-   * the Appwrite version. Best effort and non-blocking: the tailored resume is
+   * The Appwrite agent function cannot render PDFs (its runtime has no LaTeX
+   * engine), so a fresh tailored version arrives with no PDF and a placeholder
+   * review, which leaves Finalize and Download dead. The container ships
+   * Tectonic, so hand it the document, then persist the review and PDF onto the
+   * Appwrite version. Best effort and non-blocking: the tailored resume is
    * already readable without it, so a failure here only costs the PDF.
    */
   const runReview = useCallback(
@@ -655,20 +656,13 @@ function TailorInner() {
 
         <Field
           label="Template"
-          help="The look the PDF is rendered with. The template is only read, never written to."
+          help="The look the PDF is rendered with, and nothing else: the template is read, never written to. Every preview is a real render of invented sample data. Nothing selected uses Jake's Resume, the single-column one that parses most reliably."
         >
-          {(control) => (
-            <Select
-              {...control}
+          {() => (
+            <TemplatePicker
+              templates={availableTemplates}
               value={templateId}
               onChange={setTemplateId}
-              options={[
-                { value: "", label: "Default look" },
-                ...availableTemplates.map((t) => ({
-                  value: t.id,
-                  label: t.name,
-                })),
-              ]}
             />
           )}
         </Field>
