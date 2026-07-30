@@ -193,6 +193,115 @@ def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
     return re.sub(r"\s{2,}", " ", cleaned).strip()
 
 
+def mentions_word(haystack: str, term: str) -> bool:
+    """Whether `haystack` names `term` as a word, not merely as a substring.
+
+    Word boundaries are hand-rolled rather than \\b because the terms this is used
+    on include C++, CI/CD and .NET, where the edge character is not a word
+    character and \\b lands in the wrong place.
+    """
+    cleaned = term.strip().casefold()
+    if not cleaned:
+        return False
+    return bool(re.search(rf"(?<!\w){re.escape(cleaned)}(?!\w)", haystack.casefold()))
+
+
+# Subject-matter domains a summary can claim, and every wording on the page that
+# would count as evidence for one. Deliberately a short, curated list: a word that
+# is not here can never trip the check, which is what keeps false positives bounded.
+# The evidence sets are deliberately WIDE, so a bullet that supports the domain in
+# different words still counts. "Claims" is evidenced by a bullet saying insurance,
+# and "geospatial" by one saying GIS or sewer segments.
+DOMAIN_EVIDENCE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {
+    # Bare "claim" and "claims" are deliberately NOT evidence. They are polysemous:
+    # a real resume evidenced insurance-claims experience with "atomic MongoDB worker
+    # claims", which is a concurrency primitive and nothing to do with insurance, and
+    # the guard let the overclaim through. Evidence has to be a word that only the
+    # domain uses.
+    "claims": (
+        ("claims", "claim data", "claims data", "claims processing"),
+        ("insurance", "insurer", "underwriting", "policyholder", "adjuster",
+         "reimbursement", "filed claim", "claim form", "claims processing"),
+    ),
+    "insurance": (
+        ("insurance", "insurtech"),
+        ("insurance", "insurer", "underwriting", "policyholder", "premium",
+         "filed claim"),
+    ),
+    "healthcare": (
+        ("healthcare", "health care", "clinical", "medical", "patient", "patients"),
+        ("health", "healthcare", "clinical", "medical", "patient", "hospital",
+         "diagnosis", "diagnostic", "cry", "infant", "hipaa", "ehr"),
+    ),
+    # "trade" is excluded for the same reason: "cost and latency trade-offs" is
+    # ordinary engineering prose and would evidence a trading-desk background.
+    "trading": (
+        ("trading", "capital markets", "securities", "market making"),
+        ("trading", "securities", "equities", "portfolio", "order book",
+         "market data", "brokerage"),
+    ),
+    "geospatial": (
+        ("geospatial", "geographic", "mapping data"),
+        ("geospatial", "gis", "geojson", "spatial", "map", "maps", "maplibre",
+         "sewer", "street", "segments", "basins", "coordinates", "latitude"),
+    ),
+    "legal": (
+        ("legal", "law", "antitrust", "litigation", "compliance data"),
+        ("legal", "law", "antitrust", "litigation", "contract", "regulatory",
+         "compliance"),
+    ),
+    "agriculture": (
+        ("agriculture", "agricultural", "agritech", "farming"),
+        ("agriculture", "agricultural", "farm", "farmer", "crop", "crops",
+         "harvest", "soil"),
+    ),
+    "hiring": (
+        ("hiring", "recruiting", "recruitment", "talent"),
+        ("hiring", "recruit", "recruiting", "job", "jobs", "posting", "postings",
+         "resume", "candidate", "applicant", "ats"),
+    ),
+    "cybersecurity": (
+        ("cybersecurity", "security research", "threat detection"),
+        ("security", "vulnerability", "threat", "malware", "intrusion",
+         "penetration", "encryption", "tls", "authentication"),
+    ),
+    "logistics": (
+        ("logistics", "supply chain", "fulfilment", "fulfillment"),
+        ("logistics", "supply chain", "warehouse", "shipment", "freight",
+         "inventory", "delivery", "routing"),
+    ),
+    "ecommerce": (
+        ("ecommerce", "e-commerce", "retail"),
+        ("ecommerce", "e-commerce", "retail", "checkout", "cart", "storefront",
+         "payments", "orders"),
+    ),
+}
+
+
+def unevidenced_domains(summary: str, evidence_text: str) -> list[str]:
+    """Subject-matter domains the summary claims that nothing else on the page shows.
+
+    A real tailored summary read "processes real-world geospatial and claims data"
+    while no claims project was selected. It invented no number, no technology and
+    no completion verb, so every existing guard passed it, yet it claimed a whole
+    domain of experience the resume could not back. The independent review caught it
+    on one run and missed it on another, which is exactly the kind of check that
+    belongs in a rule instead of a model.
+
+    `evidence_text` must exclude the summary itself, or the claim proves itself.
+    """
+    if not summary.strip():
+        return []
+    found: list[str] = []
+    for domain, (triggers, evidence) in DOMAIN_EVIDENCE.items():
+        if not any(mentions_word(summary, trigger) for trigger in triggers):
+            continue
+        if any(mentions_word(evidence_text, term) for term in evidence):
+            continue
+        found.append(domain)
+    return found
+
+
 def has_banned_separator(text: str) -> bool:
     """True when text carries a separator the rules keep off the page.
 
@@ -357,6 +466,33 @@ def section_flags(bullets: list[str]) -> list[str]:
     return flags
 
 
+def _evidence_text(document: dict) -> str:
+    """Everything the resume says apart from its summary line.
+
+    The summary is what is being judged, so including it would let any claim prove
+    itself.
+    """
+    parts: list[str] = []
+
+    def walk(value: object) -> None:
+        if isinstance(value, str):
+            parts.append(value)
+        elif isinstance(value, dict):
+            for item in value.values():
+                walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    for key, value in document.items():
+        if key == "basics":
+            basics = {k: v for k, v in (value or {}).items() if k != "summary"}
+            walk(basics)
+            continue
+        walk(value)
+    return " ".join(parts).casefold()
+
+
 def document_quality_flags(document: dict) -> dict[str, list[str]]:
     """Every writing problem in an assembled resume, keyed by where it lives."""
     found: dict[str, list[str]] = {}
@@ -373,6 +509,10 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
         if words > SUMMARY_MAX_WORDS:
             summary_flags.append(f"summary_too_long({words}w)")
         summary_flags = [f for f in summary_flags if not f.startswith("too_long")]
+        # Judged against the rest of the page, never against itself.
+        overclaimed = unevidenced_domains(summary, _evidence_text(document))
+        if overclaimed:
+            summary_flags.append(f"unevidenced_domain({','.join(overclaimed)})")
         if summary_flags:
             found["basics.summary"] = sorted(set(summary_flags))
     for section, label_keys in (

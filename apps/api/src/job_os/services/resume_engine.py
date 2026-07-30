@@ -92,6 +92,11 @@ SUBSTANTIVE_WRITING_FLAGS = (
     "inflated_rewrite",
     "banned_wording",
     "dash",
+    # A summary claiming a domain the page cannot back is an overclaim, so it costs
+    # points. It stays a warning rather than a block: the refine loop is told about
+    # it and rewrites the summary, and an honest resume going out beats another
+    # blocking verdict the user has to clear by hand.
+    "unevidenced_domain",
 )
 class ModelReviewIssue(BaseModel):
     severity: str
