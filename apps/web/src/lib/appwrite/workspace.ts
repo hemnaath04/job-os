@@ -343,6 +343,16 @@ export const appwriteWorkspace = {
       ttl: 0,
     });
     const templates = result.rows
+      .filter((row) => {
+        // Only rows that can actually render. A builtin needs the key naming its
+        // vendored directory, a custom needs its stored LaTeX. Anything else,
+        // including the two rows from the retired HTML renderer, would fall back
+        // to the default look while the picker showed it as selected, which is
+        // the wrong look without telling anybody.
+        if (row.kind === "builtin") return !!row.builtin_key;
+        if (row.kind === "legacy_html") return false;
+        return !!row.latex_source;
+      })
       .map((row) => ({
         ...parseSnapshot<ResumeTemplate>(row),
         // The row is the authority on these, the snapshot can lag a rename or a
@@ -353,8 +363,7 @@ export const appwriteWorkspace = {
         builtin_key: row.builtin_key ?? null,
         preview_file_id: row.preview_file_id ?? null,
         preview_pdf_file_id: row.preview_pdf_file_id ?? null,
-      }))
-      .filter((template) => template.kind !== "legacy_html");
+      }));
     return templates.sort((left, right) => {
       if (left.kind !== right.kind) return left.kind === "builtin" ? -1 : 1;
       if (left.kind === "builtin") return left.name.localeCompare(right.name);
