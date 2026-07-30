@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import anthropic
+import httpx
 import pytest
 
 os.environ.setdefault(
@@ -102,3 +103,102 @@ async def test_a_chatty_reply_is_still_shown_its_own_words(
         "role": "assistant",
         "content": "Sure! Here is the plan:",
     }
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real run reached 78.3 over three good passes and lost all of it to a 429.
+
+    A refine pass improves on something that already works, so a transient gateway
+    failure on one must ship the best pass so far rather than failing the call.
+    """
+    good = json.dumps({"ats_keywords_matched": ["python"], "ats_keywords_missing": []})
+    calls: list[dict[str, Any]] = []
+
+    class FakeMessages(StreamingFakeMessages):
+        async def create(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            if len(calls) >= 2:
+                raise anthropic.RateLimitError(
+                    "Rate limited by upstream provider",
+                    response=httpx.Response(
+                        429, request=httpx.Request("POST", "https://example.invalid")
+                    ),
+                    body=None,
+                )
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=good)],
+                stop_reason="end_turn",
+                usage=SimpleNamespace(output_tokens=200),
+            )
+
+    class FakeAnthropic:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(
+        tailor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            anthropic_api_key="test",
+            anthropic_base_url="https://example.invalid",
+            anthropic_model_tailor="manifest/auto",
+            manifest_tier_sonnet="job-os-sonnet",
+        ),
+    )
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+
+    document, _prov, _gaps, _score, report, _note = await tailor.run_tailor(
+        facts=[],
+        bullets_by_fact={},
+        master_json_resume={"basics": {"name": "A Candidate"}},
+        jd_parsed={"technologies": ["Python"]},
+        jd_clean="Python role",
+    )
+    # The run completed on the strength of pass one instead of raising.
+    assert len(report["iterations"]) == 1
+    assert document["basics"]["name"] == "A Candidate"
+
+
+@pytest.mark.asyncio
+async def test_a_rate_limit_on_the_very_first_pass_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With nothing to ship, the caller has to hear about it."""
+
+    class FakeMessages(StreamingFakeMessages):
+        async def create(self, **_kwargs: Any) -> Any:
+            raise anthropic.RateLimitError(
+                "Rate limited by upstream provider",
+                response=httpx.Response(
+                    429, request=httpx.Request("POST", "https://example.invalid")
+                ),
+                body=None,
+            )
+
+    class FakeAnthropic:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(
+        tailor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            anthropic_api_key="test",
+            anthropic_base_url="https://example.invalid",
+            anthropic_model_tailor="manifest/auto",
+            manifest_tier_sonnet="job-os-sonnet",
+        ),
+    )
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+
+    with pytest.raises(anthropic.RateLimitError):
+        await tailor.run_tailor(
+            facts=[],
+            bullets_by_fact={},
+            master_json_resume={"basics": {}},
+            jd_parsed={},
+            jd_clean="Python role",
+        )

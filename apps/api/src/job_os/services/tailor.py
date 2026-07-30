@@ -472,14 +472,31 @@ async def run_tailor(
         iteration = len(state["iteration_scores"]) + 1
         if on_progress:
             on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
-        msg = await create_message(
-            client,
-            model=settings.anthropic_model_tailor,
-            max_tokens=DRAFT_MAX_TOKENS,
-            system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
-            messages=state["messages"],
-            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
-        )
+        try:
+            msg = await create_message(
+                client,
+                model=settings.anthropic_model_tailor,
+                max_tokens=DRAFT_MAX_TOKENS,
+                system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
+                messages=state["messages"],
+                extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            )
+        except anthropic.APIError as exc:
+            # A refine pass is an improvement on something that already works, so a
+            # transient gateway failure on one must never throw away the passes that
+            # succeeded. A real run reached 78.3 over three good passes and then lost
+            # all of it to a 429 on the fourth, which is the opposite of the point:
+            # running the loop harder should not make the whole call more fragile.
+            log.warning(
+                "tailor.pass_failed_keeping_best",
+                iteration=iteration,
+                error=str(exc)[:200],
+                have_best=state["best_agent"] is not None,
+            )
+            if state["best_agent"] is not None:
+                return {**state, "done": True}
+            # Nothing to ship yet, so the caller has to hear about it.
+            raise
         raw = response_text(msg)
         try:
             attempt = parse_model_json(TailorAgentOutput, raw)
