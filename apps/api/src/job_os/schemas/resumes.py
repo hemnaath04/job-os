@@ -76,6 +76,7 @@ class ResumeDirectEditRequest(ORMModel):
 
 class ResumePreviewRequest(ORMModel):
     json_resume: dict[str, Any]
+    template_key: str | None = None
 
 
 class ResumeReviewIssue(BaseModel):
@@ -96,34 +97,58 @@ class ResumeReviewResult(BaseModel):
     model_summary: str = ""
 
 
+class BuiltinTemplateSummary(BaseModel):
+    """One of the templates that ship with the app.
+
+    `ats_note` is shown to the user next to the template. Two of the six are
+    two-column layouts that some applicant tracking systems parse badly, and a
+    picker that hides that is a picker that costs somebody an interview.
+    """
+
+    key: str
+    name: str
+    description: str
+    columns: int
+    ats_note: str
+    upstream: str
+    licence: str
+    author: str
+    tags: list[str] = Field(default_factory=list)
+
+
 class GeneratedTemplateResponse(BaseModel):
-    """A design recreated as a template, proven to render before it is returned.
+    """A design turned into a LaTeX template, proven to compile before returning.
 
     `pdf_base64` is the sample render that validated it, which the caller stores
-    as the preview: acceptance and preview are the same act.
+    as the preview: acceptance and preview are the same act. `attempts` and
+    `repairs` report how much fixing the compile took, so the UI can be honest
+    about a template that needed several passes.
     """
 
     name: str
-    html_source: str
-    css_source: str
+    latex_source: str
+    engine: Literal["tectonic"] = "tectonic"
     notes: str
     pdf_base64: str
-    preview_html: str
+    attempts: int = 1
+    repairs: list[str] = Field(default_factory=list)
 
 
 class ResumeRenderReviewRequest(ORMModel):
     json_resume: dict[str, Any]
-    # A stored template's look. Omit both to use the bundled default. Rendered
-    # in a Jinja sandbox, since a template may have been written by a model.
-    html_source: str | None = None
-    css_source: str | None = None
+    # Which look to render. `template_key` names a bundled template;
+    # `latex_source` supplies a stored custom one and wins if both are given.
+    # Neither falls back to the default. A stored template is untrusted input:
+    # it is filled in a Jinja sandbox and compiled with tectonic --untrusted.
+    template_key: str | None = None
+    latex_source: str | None = None
 
 
 class ResumeRenderReviewResponse(BaseModel):
     """Review of a document this service never stores, plus the PDF it rendered.
 
     Lets a caller that cannot render PDFs itself (the Appwrite agent function,
-    whose runtime has no pango or cairo) obtain a real review and a real PDF and
+    whose runtime has no LaTeX engine) obtain a real review and a real PDF and
     persist them in its own store.
     """
 

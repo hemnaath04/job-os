@@ -1,0 +1,128 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% moderncv, by Xavier Danaux and the moderncv maintainers. Licensed LPPL 1.3c.
+% Upstream: https://ctan.org/pkg/moderncv
+%
+% Nothing is vendored for this one: the class and its styles ship inside
+% Tectonic's own package bundle. See ATTRIBUTION.md.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[11pt,letterpaper,sans]{moderncv}
+
+\moderncvstyle{banking}
+\moderncvcolor{blue}
+% CHANGED FROM THE UPSTREAM TEMPLATE: the letter icon set rather than the Font
+% Awesome one. Under Tectonic the Font Awesome faces come out with no ToUnicode
+% map, so a parser reading the contact line got a run of junk characters where
+% the icons are. The letter icons are ordinary glyphs and extract as text.
+\moderncvicons{letters}
+
+\usepackage[scale=0.8,top=1.4cm,bottom=1.4cm]{geometry}
+\setlength{\hintscolumnwidth}{2.8cm}
+
+\name{<<first_name>>}{<<last_name>>}
+<% if headline %>
+\title{<<headline>>}
+<% endif %>
+<% if location %>
+\address{<<location>>}{}{}
+<% endif %>
+<% if phone %>
+\phone[mobile]{<<phone>>}
+<% endif %>
+<% if email %>
+\email{<<email>>}
+<% endif %>
+<% if website %>
+\homepage{<<website_label>>}
+<% endif %>
+<% if linkedin %>
+\social[linkedin]{<<linkedin.username or linkedin.label>>}
+<% endif %>
+<% if github %>
+\social[github]{<<github.username or github.label>>}
+<% endif %>
+
+\begin{document}
+
+\makecvtitle
+
+<% if summary %>
+\section{Summary}
+\cvitem{}{<<summary>>}
+<% endif %>
+
+<% if work %>
+\section{Experience}
+<% for job in work %>
+\cventry{<<job.dates>>}{<<job.position>>}{<<job.company>>}{<<job.location>>}{}{%
+<% if job.bullets %>
+\begin{itemize}%
+<% for bullet in job.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{itemize}%
+<% elif job.summary %>
+<<job.summary>>
+<% endif %>
+}
+<% endfor %>
+<% endif %>
+
+<% if projects %>
+\section{Projects}
+<% for project in projects %>
+<# In this style the third argument is the bold line and the second is the
+   italic one below it, so the project name goes third and the stack second. #>
+\cventry{<<project.dates>>}{<<project.keywords_line>>}{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}{}{}{%
+<% if project.bullets %>
+\begin{itemize}%
+<% if project.description %>
+\item <<project.description>>
+<% endif %>
+<% for bullet in project.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{itemize}%
+<% elif project.description %>
+<<project.description>>
+<% endif %>
+}
+<% endfor %>
+<% endif %>
+
+<% if education %>
+\section{Education}
+<% for school in education %>
+\cventry{<<school.dates>>}{<<school.degree>>}{<<school.institution>>}{<<school.location>>}{<% if school.score %>GPA <<school.score>><% endif %>}{<% if school.bullets %>Coursework: <<school.bullets | join(', ')>><% endif %>}
+<% endfor %>
+<% endif %>
+
+<% if skills %>
+\section{Skills}
+<% for group in skills %>
+\cvitem{<<group.name>>}{<<group.keywords_line>>}
+<% endfor %>
+<% endif %>
+
+<% if certificates %>
+\section{Certifications}
+<% for cert in certificates %>
+\cvitem{<<cert.date>>}{<<cert.name>><% if cert.issuer %>, <<cert.issuer>><% endif %>}
+<% endfor %>
+<% endif %>
+
+<% if awards %>
+\section{Honors}
+<% for award in awards %>
+\cvitem{}{<<award.title>><% if award.awarder %>, <<award.awarder>><% endif %>}
+<% endfor %>
+<% endif %>
+
+<% if languages %>
+\section{Languages}
+<% for language in languages %>
+\cvitemwithcomment{<<language.language>>}{<<language.fluency>>}{}
+<% endfor %>
+<% endif %>
+
+\end{document}

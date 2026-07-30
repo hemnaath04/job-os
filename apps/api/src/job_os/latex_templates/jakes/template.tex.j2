@@ -1,0 +1,202 @@
+%-------------------------
+% Resume in LaTeX
+% Author : Jake Gutierrez
+% Based off of: https://github.com/sb2nov/resume
+% License : MIT
+%
+% Turned into a job.os template: the layout, macros and spacing are Jake's, the
+% content comes from the resume's own JSON. Placeholder syntax is documented in
+% latex_render.py; note that a LaTeX comment does not hide one, so this comment
+% deliberately spells none of them out. See ATTRIBUTION.md for what changed.
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage{latexsym}
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{marvosym}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{verbatim}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{iftex}
+% CHANGED: glyphtounicode is a pdfTeX file and \pdfgentounicode a pdfTeX
+% primitive. Tectonic is XeTeX, where both are undefined; xdvipdfmx writes the
+% ToUnicode map itself. Guarded rather than deleted so the file still works
+% under pdflatex if it is exported.
+\ifPDFTeX
+  \input{glyphtounicode}
+\fi
+
+\pagestyle{fancy}
+\fancyhf{}
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\ifPDFTeX
+  \pdfgentounicode=1
+\fi
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-2pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small#3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\newcommand{\resumeProjectHeading}[2]{
+    \item
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \small#1 & #2 \\
+    \end{tabular*}\vspace{-7pt}
+}
+
+\renewcommand\labelitemii{$\vcenter{\hbox{\tiny$\bullet$}}$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=0.15in, label={}]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge \scshape <<name>>} \\ \vspace{1pt}
+    \small
+<# Each entry is boxed with its own trailing separator so that a contact line
+   long enough to wrap breaks after a bar rather than before one. #>
+<% for item in contact %>
+\mbox{<% if item.url %>\href{<<item.url>>}{\underline{<<item.text>>}}<% else %><<item.text>><% endif %><% if not loop.last %> $|$<% endif %>}
+<% endfor %>
+
+\end{center}
+
+<% if summary %>
+%-----------SUMMARY-----------
+\section{Summary}
+  \small{<<summary>>}
+  \vspace{-6pt}
+<% endif %>
+
+<% if education %>
+%-----------EDUCATION-----------
+\section{Education}
+  \resumeSubHeadingListStart
+<% for school in education %>
+    \resumeSubheading
+      {<<school.institution>>}{<<school.location>>}
+      {<<school.degree>><% if school.score %>, GPA: <<school.score>><% endif %>}{<<school.dates>>}
+<% if school.bullets %>
+      \resumeItemListStart
+        \resumeItem{Coursework: <<school.bullets | join(', ')>>}
+      \resumeItemListEnd
+<% endif %>
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if work %>
+%-----------EXPERIENCE-----------
+\section{Experience}
+  \resumeSubHeadingListStart
+<% for job in work %>
+    \resumeSubheading
+      {<<job.position>>}{<<job.dates>>}
+      {<<job.company>>}{<<job.location>>}
+<% if job.bullets %>
+      \resumeItemListStart
+<% for bullet in job.bullets %>
+        \resumeItem{<<bullet>>}
+<% endfor %>
+      \resumeItemListEnd
+<% elif job.summary %>
+      \resumeItemListStart
+        \resumeItem{<<job.summary>>}
+      \resumeItemListEnd
+<% endif %>
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if projects %>
+%-----------PROJECTS-----------
+\section{Projects}
+    \resumeSubHeadingListStart
+<% for project in projects %>
+      \resumeProjectHeading
+          {\textbf{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}<% if project.keywords_line %> $|$ \emph{<<project.keywords_line>>}<% endif %>}{<<project.dates>>}
+<% if project.bullets or project.description %>
+          \resumeItemListStart
+<% if project.description and not project.bullets %>
+            \resumeItem{<<project.description>>}
+<% endif %>
+<% for bullet in project.bullets %>
+            \resumeItem{<<bullet>>}
+<% endfor %>
+          \resumeItemListEnd
+<% endif %>
+<% endfor %>
+    \resumeSubHeadingListEnd
+<% endif %>
+
+<% if skills %>
+%-----------TECHNICAL SKILLS-----------
+\section{Technical Skills}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+<% for group in skills %>
+     \textbf{<<group.name>>}{: <<group.keywords_line>>}<% if not loop.last %> \\<% endif %>
+
+<% endfor %>
+    }}
+ \end{itemize}
+<% endif %>
+
+<% if certificates %>
+%-----------CERTIFICATIONS-----------
+\section{Certifications}
+ \begin{itemize}[leftmargin=0.15in, label={}]
+    \small{\item{
+<% for cert in certificates %>
+     \textbf{<<cert.name>>}<% if cert.issuer %>, <<cert.issuer>><% endif %><% if cert.date %> (<<cert.date>>)<% endif %><% if not loop.last %> \\<% endif %>
+
+<% endfor %>
+    }}
+ \end{itemize}
+<% endif %>
+
+\end{document}

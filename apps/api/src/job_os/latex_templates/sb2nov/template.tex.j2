@@ -1,0 +1,198 @@
+%-------------------------
+% Resume in LaTeX
+% Author : Sourabh Bajaj
+% License : MIT
+%
+% Turned into a job.os template: the layout, macros and spacing are Sourabh's,
+% the content comes from the resume's own JSON. See ATTRIBUTION.md for what
+% changed. Placeholder syntax is documented in latex_render.py, and is spelled
+% out nowhere here, because a LaTeX comment does not hide one.
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage[usenames,dvipsnames]{color}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{fancyhdr}
+\usepackage[english]{babel}
+\usepackage{tabularx}
+\usepackage{iftex}
+% CHANGED: glyphtounicode is a pdfTeX file and \pdfgentounicode a pdfTeX
+% primitive, neither of which exists under Tectonic's XeTeX engine, where
+% xdvipdfmx writes the ToUnicode map itself.
+\ifPDFTeX
+  \input{glyphtounicode}
+\fi
+
+\pagestyle{fancy}
+\fancyhf{} % Clear all header and footer fields
+\fancyfoot{}
+\renewcommand{\headrulewidth}{0pt}
+\renewcommand{\footrulewidth}{0pt}
+
+% Adjust margins
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+\setlength{\tabcolsep}{0in}
+
+% Sections formatting
+\titleformat{\section}{
+  \vspace{-4pt}\scshape\raggedright\large
+}{}{0em}{}[\color{black}\titlerule \vspace{-5pt}]
+
+\ifPDFTeX
+  \pdfgentounicode=1
+\fi
+
+%-------------------------
+% Custom commands
+\newcommand{\resumeItem}[2]{
+  \item\small{
+    \textbf{#1}{: #2 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubheading}[4]{
+  \vspace{-1pt}\item
+    \begin{tabular*}{0.97\textwidth}[t]{l@{\extracolsep{\fill}}r}
+      \textbf{#1} & #2 \\
+      \textit{\small #3} & \textit{\small #4} \\
+    \end{tabular*}\vspace{-5pt}
+}
+
+\newcommand{\resumeSubSubheading}[2]{
+    \begin{tabular*}{0.97\textwidth}{l@{\extracolsep{\fill}}r}
+      \textit{\small #1} & \textit{\small #2} \\
+    \end{tabular*}\vspace{-5pt}
+}
+
+\newcommand{\resumeItemPlain}[1]{
+  \item\small{
+    {#1 \vspace{-2pt}}
+  }
+}
+
+\newcommand{\resumeSubItem}[2]{\resumeItem{#1}{#2}\vspace{-4pt}}
+
+\renewcommand{\labelitemii}{$\circ$}
+
+\newcommand{\resumeSubHeadingListStart}{\begin{itemize}[leftmargin=*]}
+\newcommand{\resumeSubHeadingListEnd}{\end{itemize}}
+\newcommand{\resumeItemListStart}{\begin{itemize}}
+\newcommand{\resumeItemListEnd}{\end{itemize}\vspace{-5pt}}
+
+%-------------------------------------------
+\begin{document}
+
+%----------HEADING-----------------
+\begin{tabular*}{\textwidth}{l@{\extracolsep{\fill}}r}
+  \textbf{<% if website %>\href{<<website>>}{\Large <<name>>}<% else %>{\Large <<name>>}<% endif %>} & <% if email %>Email: \href{<<email_url>>}{<<email>>}<% endif %> \\
+  <% if website %>\href{<<website>>}{<<website_label>>}<% elif location %><<location>><% endif %> & <% if phone %>Mobile: <<phone>><% endif %> \\
+<% if profiles %>
+<% for profile in profiles %>
+<% if loop.first %>  <% else %> \textbar{} <% endif %>\mbox{<% if profile.url %>\href{<<profile.url>>}{<<profile.label>>}<% else %><<profile.label>><% endif %>}
+<% endfor %>
+  & <% if website and location %><<location>><% endif %> \\
+<% endif %>
+\end{tabular*}
+
+<% if summary %>
+%-----------SUMMARY-----------------
+\section{Summary}
+  \small{<<summary>>}
+  \vspace{-4pt}
+<% endif %>
+
+<% if education %>
+%-----------EDUCATION-----------------
+\section{Education}
+  \resumeSubHeadingListStart
+<% for school in education %>
+    \resumeSubheading
+      {<<school.institution>>}{<<school.location>>}
+      {<<school.degree>><% if school.score %>; GPA: <<school.score>><% endif %>}{<<school.dates>>}
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if work %>
+%-----------EXPERIENCE-----------------
+\section{Experience}
+  \resumeSubHeadingListStart
+<% for job in work %>
+    \resumeSubheading
+      {<<job.company>>}{<<job.location>>}
+      {<<job.position>>}{<<job.dates>>}
+<% if job.bullets %>
+      \resumeItemListStart
+<% for bullet in job.bullets %>
+        \resumeItemPlain{<<bullet>>}
+<% endfor %>
+      \resumeItemListEnd
+<% elif job.summary %>
+      \resumeItemListStart
+        \resumeItemPlain{<<job.summary>>}
+      \resumeItemListEnd
+<% endif %>
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if projects %>
+%-----------PROJECTS-----------------
+\section{Projects}
+  \resumeSubHeadingListStart
+<% for project in projects %>
+    \resumeSubheading
+      {<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}{<<project.dates>>}
+      {<% if project.keywords_line %><<project.keywords_line>><% elif project.description %><<project.description>><% endif %>}{}
+<% if project.bullets %>
+      \resumeItemListStart
+<% for bullet in project.bullets %>
+        \resumeItemPlain{<<bullet>>}
+<% endfor %>
+      \resumeItemListEnd
+<% elif project.description and project.keywords_line %>
+      \resumeItemListStart
+        \resumeItemPlain{<<project.description>>}
+      \resumeItemListEnd
+<% endif %>
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if skills %>
+%--------PROGRAMMING SKILLS------------
+\section{Skills Summary}
+  \resumeSubHeadingListStart
+<% for group in skills %>
+    \resumeSubItem{<<group.name>>}{<<group.keywords_line>>}
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+<% if certificates or awards %>
+%-------------------------------------
+\section{Certifications and Awards}
+  \resumeSubHeadingListStart
+<% for cert in certificates %>
+    \resumeItemPlain{<<cert.name>><% if cert.issuer %>, <<cert.issuer>><% endif %><% if cert.date %> (<<cert.date>>)<% endif %>}
+<% endfor %>
+<% for award in awards %>
+    \resumeItemPlain{<<award.title>><% if award.awarder %>, <<award.awarder>><% endif %>}
+<% endfor %>
+  \resumeSubHeadingListEnd
+<% endif %>
+
+\end{document}

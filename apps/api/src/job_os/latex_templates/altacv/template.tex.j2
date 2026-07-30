@@ -1,0 +1,179 @@
+%%%%%%%%%%%%%%%%%
+% AltaCV, by LianTze Lim. Class licensed LPPL 1.3 or later.
+% Upstream: https://github.com/liantze/AltaCV
+%
+% This document drives the vendored altacv-tectonic.cls. See ATTRIBUTION.md for
+% the one change made to the class and why.
+%%%%%%%%%%%%%%%%%
+
+\documentclass[10pt,letterpaper,ragged2e,withhyper]{altacv-tectonic}
+
+\geometry{left=1.25cm,right=1.25cm,top=1.5cm,bottom=1.5cm,columnsep=1.1cm}
+
+% The two-column body. Loaded by the document rather than the class, as upstream
+% does, because a one-column AltaCV is also a valid layout.
+\usepackage{paracol}
+
+% CHANGED FROM THE UPSTREAM SAMPLE: fonts are named by file. Tectonic resolves
+% a bare family name through the host's fonts only, and a container has none of
+% these installed; these four files ship inside Tectonic's own bundle.
+\setmainfont{RobotoSlab-Regular.otf}[BoldFont=RobotoSlab-Bold.otf]
+\setsansfont{Lato-Regular.ttf}[
+  BoldFont=Lato-Bold.ttf,
+  ItalicFont=Lato-Italic.ttf,
+  BoldItalicFont=Lato-BoldItalic.ttf,
+]
+\renewcommand{\familydefault}{\sfdefault}
+
+% Colour scheme, from the upstream sample.
+\definecolor{VividPurple}{HTML}{3E0097}
+\definecolor{SlateGrey}{HTML}{2E2E2E}
+\definecolor{LightGrey}{HTML}{666666}
+\colorlet{name}{black}
+\colorlet{tagline}{VividPurple}
+\colorlet{heading}{VividPurple}
+\colorlet{headingrule}{VividPurple}
+\colorlet{subheading}{VividPurple}
+\colorlet{accent}{VividPurple}
+\colorlet{emphasis}{SlateGrey}
+\colorlet{body}{LightGrey}
+
+\renewcommand{\itemmarker}{{\small\textbullet}}
+\renewcommand{\ratingmarker}{\faCircle}
+
+\begin{document}
+
+\name{<<name>>}
+<% if headline %>
+\tagline{<<headline>>}
+<% endif %>
+\personalinfo{%
+<% if email %>
+  \email{<<email>>}
+<% endif %>
+<% if phone %>
+  \phone{<<phone>>}
+<% endif %>
+<% if location %>
+  \location{<<location>>}
+<% endif %>
+<% if website %>
+  \printinfo{\faGlobe}{<<website_label>>}[<<website>>]
+<% endif %>
+<% if github %>
+  \printinfo{\faGithub}{<<github.label>>}[<<github.url>>]
+<% endif %>
+<% if linkedin %>
+  \printinfo{\faLinkedin}{<<linkedin.label>>}[<<linkedin.url>>]
+<% endif %>
+}
+
+\makecvheader
+
+%% Set the width of the left column. The sidebar holds the short, scannable
+%% material; the wide column holds the history.
+\columnratio{0.62}
+
+\begin{paracol}{2}
+
+<% if summary %>
+\cvsection{Summary}
+<<summary>>
+\medskip
+<% endif %>
+
+<% if work %>
+\cvsection{Experience}
+<% for job in work %>
+\cvevent{<<job.position>>}{<<job.company>>}{<<job.dates>>}{<<job.location>>}
+<% if job.bullets %>
+\begin{itemize}
+<% for bullet in job.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{itemize}
+<% elif job.summary %>
+<<job.summary>>
+<% endif %>
+<% if not loop.last %>
+\divider
+<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if projects %>
+\cvsection{Projects}
+<% for project in projects %>
+\cvevent{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}{<<project.keywords_line>>}{<<project.dates>>}{}
+<% if project.bullets %>
+\begin{itemize}
+<% if project.description %>
+\item <<project.description>>
+<% endif %>
+<% for bullet in project.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{itemize}
+<% elif project.description %>
+<<project.description>>
+<% endif %>
+<% if not loop.last %>
+\divider
+<% endif %>
+<% endfor %>
+<% endif %>
+
+\switchcolumn
+
+<% if skills %>
+\cvsection{Skills}
+<% for group in skills %>
+\cvsubsection{<<group.name>>}
+<% for keyword in group.keywords %>
+\cvtag{<<keyword>>}
+<% endfor %>
+\smallskip
+
+<% endfor %>
+<% endif %>
+
+<% if education %>
+\cvsection{Education}
+<% for school in education %>
+<# Date and location are two half-width boxes in \cvevent, which collide in a
+   sidebar this narrow. The location goes on its own line below instead. #>
+\cvevent{<<school.degree>>}{<<school.institution>>}{<<school.dates>>}{}
+<% if school.location or school.score %>
+{\small <<school.location>><% if school.location and school.score %>, <% endif %><% if school.score %>GPA <<school.score>><% endif %>\par}
+\smallskip
+<% endif %>
+<% if not loop.last %>
+\divider
+<% endif %>
+<% endfor %>
+<% endif %>
+
+<% if certificates %>
+\cvsection{Certifications}
+<% for cert in certificates %>
+\cvachievement{\faCertificate}{<<cert.name>>}{<<cert.issuer>><% if cert.date %>, <<cert.date>><% endif %>}
+<% endfor %>
+<% endif %>
+
+<% if awards %>
+\cvsection{Honors}
+<% for award in awards %>
+\cvachievement{\faTrophy}{<<award.title>>}{<<award.awarder>>}
+<% endfor %>
+<% endif %>
+
+<% if languages %>
+\cvsection{Languages}
+<% for language in languages %>
+\textbf{<<language.language>>}\hfill <<language.fluency>>\par
+<% endfor %>
+<% endif %>
+
+\end{paracol}
+
+\end{document}

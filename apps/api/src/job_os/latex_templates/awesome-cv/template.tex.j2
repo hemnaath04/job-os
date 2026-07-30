@@ -1,0 +1,169 @@
+%-------------------------------------------------------------------------------
+% Awesome-CV, by Claud D. Park (posquit0). Class licensed LPPL v1.3c.
+% Upstream: https://github.com/posquit0/Awesome-CV
+%
+% This document is written for job.os rather than derived from the upstream
+% examples, which carry CC BY-SA. It drives the vendored class only.
+% See ATTRIBUTION.md.
+%-------------------------------------------------------------------------------
+
+\documentclass[11pt,letterpaper]{awesome-cv-tectonic}
+
+\geometry{left=1.4cm, top=.8cm, right=1.4cm, bottom=1.2cm, footskip=.5cm}
+
+% The accent used for the name rule, section titles and the header icons.
+\colorlet{awesome}{awesome-darknight}
+
+\setbool{acvSectionColorHighlight}{true}
+
+\name{<<first_name>>}{<<last_name>>}
+<% if headline %>
+\position{<<headline>>}
+<% endif %>
+<% if location %>
+\address{<<location>>}
+<% endif %>
+<% if phone %>
+\mobile{<<phone>>}
+<% endif %>
+<% if email %>
+\email{<<email>>}
+<% endif %>
+<% if website %>
+\homepage{<<website>>}
+<% endif %>
+<% if github %>
+\github{<<github.username or github.label>>}
+<% endif %>
+<% if linkedin %>
+\linkedin{<<linkedin.username or linkedin.label>>}
+<% endif %>
+
+\begin{document}
+
+\makecvheader[C]
+
+<% if summary %>
+\cvsection{Summary}
+
+\begin{cvparagraph}
+<<summary>>
+\end{cvparagraph}
+<% endif %>
+
+<% if work %>
+\cvsection{Experience}
+\begin{cventries}
+<% for job in work %>
+  \cventry
+    {<<job.position>>}
+    {<<job.company>>}
+    {<<job.location>>}
+    {<<job.dates>>}
+<% if job.bullets %>
+    {
+      \begin{cvitems}
+<% for bullet in job.bullets %>
+        \item {<<bullet>>}
+<% endfor %>
+      \end{cvitems}
+    }
+<% else %>
+    {<<job.summary>>}
+<% endif %>
+<% endfor %>
+\end{cventries}
+<% endif %>
+
+<% if projects %>
+\cvsection{Projects}
+\begin{cventries}
+<% for project in projects %>
+  \cventry
+    {<<project.keywords_line>>}
+    {<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}
+    {}
+    {<<project.dates>>}
+<% if project.bullets %>
+    {
+      \begin{cvitems}
+<% if project.description %>
+        \item {<<project.description>>}
+<% endif %>
+<% for bullet in project.bullets %>
+        \item {<<bullet>>}
+<% endfor %>
+      \end{cvitems}
+    }
+<% else %>
+    {<<project.description>>}
+<% endif %>
+<% endfor %>
+\end{cventries}
+<% endif %>
+
+<% if education %>
+\cvsection{Education}
+\begin{cventries}
+<% for school in education %>
+  \cventry
+    {<<school.degree>><% if school.score %>, GPA <<school.score>><% endif %>}
+    {<<school.institution>>}
+    {<<school.location>>}
+    {<<school.dates>>}
+<% if school.bullets %>
+    {
+      \begin{cvitems}
+        \item {Coursework: <<school.bullets | join(', ')>>}
+      \end{cvitems}
+    }
+<% else %>
+    {}
+<% endif %>
+<% endfor %>
+\end{cventries}
+<% endif %>
+
+<% if skills %>
+\cvsection{Skills}
+\begin{cvskills}
+<% for group in skills %>
+  \cvskill
+    {<<group.name>>}
+    {<<group.keywords_line>>}
+<% endfor %>
+\end{cvskills}
+<% endif %>
+
+<% if certificates or awards %>
+\cvsection{Certifications and Honors}
+\begin{cvhonors}
+<% for cert in certificates %>
+  \cvhonor
+    {<<cert.name>>}
+    {}
+    {<<cert.issuer>>}
+    {<<cert.date>>}
+<% endfor %>
+<% for award in awards %>
+  \cvhonor
+    {<<award.title>>}
+    {}
+    {<<award.awarder>>}
+    {}
+<% endfor %>
+\end{cvhonors}
+<% endif %>
+
+<% if languages %>
+\cvsection{Languages}
+\begin{cvskills}
+<% for language in languages %>
+  \cvskill
+    {<<language.language>>}
+    {<<language.fluency>>}
+<% endfor %>
+\end{cvskills}
+<% endif %>
+
+\end{document}

@@ -14,6 +14,28 @@ RUN uv sync --frozen --no-install-project --no-dev
 COPY . ./
 RUN uv sync --frozen --no-dev
 
+# Tectonic, the LaTeX engine that renders resumes. The musl asset is a fully
+# static binary: no libssl, no libfontconfig, no TeX distribution to install,
+# about 26 MB. Pinned to 0.17.0 deliberately: 0.15.0 through 0.16.9 abort with
+# `free(): invalid pointer` while loading moderncv's Font Awesome helper.
+# Fetched with python because this image has python and does not have curl.
+# Note that the `@` in the release tag has to be percent-encoded.
+ARG TECTONIC_VERSION=0.17.0
+ARG TARGETARCH=amd64
+RUN set -eu; \
+    case "$TARGETARCH" in \
+      amd64) target=x86_64-unknown-linux-musl ;; \
+      arm64) target=aarch64-unknown-linux-musl ;; \
+      *) echo "unsupported architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac; \
+    url="https://github.com/tectonic-typesetting/tectonic/releases/download/tectonic%40${TECTONIC_VERSION}/tectonic-${TECTONIC_VERSION}-${target}.tar.gz"; \
+    python -c "import sys, urllib.request, tarfile, io; \
+data = urllib.request.urlopen(sys.argv[1], timeout=300).read(); \
+tarfile.open(fileobj=io.BytesIO(data)).extract('tectonic', '/usr/local/bin'); \
+print('tectonic archive:', len(data), 'bytes')" "$url"; \
+    chmod 0755 /usr/local/bin/tectonic; \
+    /usr/local/bin/tectonic --version
+
 
 FROM python:3.12-slim-bookworm
 
@@ -22,23 +44,40 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PATH="/app/.venv/bin:$PATH"
 
-# WeasyPrint needs these native libraries and fonts. Keeping the API as a
-# container lets Vercel run the same PDF stack used by Render.
+# libpq5 for psycopg, ca-certificates so the one-time bundle fetch below can
+# verify TLS. No pango, cairo or gdk-pixbuf any more: resumes render through
+# LaTeX now and WeasyPrint is gone. No font packages either, because every
+# template names its faces by file, from Tectonic's bundle or from the fonts
+# vendored beside it, rather than asking the OS for a family by name.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
-        libpango-1.0-0 \
-        libpangoft2-1.0-0 \
-        libharfbuzz0b \
-        libcairo2 \
-        libgdk-pixbuf-2.0-0 \
-        libffi8 \
-        fonts-inter \
-        fonts-noto-core \
         ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
+COPY --from=builder /usr/local/bin/tectonic /usr/local/bin/tectonic
+
 WORKDIR /app
 COPY --from=builder /app /app
+
+# Where Tectonic keeps the packages, fonts and format file it fetches. Set
+# explicitly rather than left to $HOME/.cache, so the cache warmed on the next
+# line is the one a request finds, whatever user the container ends up running
+# as. The render subprocess is given a scrubbed environment, and this is one of
+# the few variables passed through to it.
+ENV TECTONIC_CACHE_DIR=/opt/tectonic-cache
+
+# Compile all six templates once, while the network is still available, so their
+# packages and fonts are baked into the image. This also fails the build if a
+# template has stopped compiling, rather than shipping one that cannot render.
+RUN mkdir -p "$TECTONIC_CACHE_DIR" \
+    && /app/.venv/bin/python -m job_os.scripts.warm_latex_cache \
+    && chmod -R a+rX "$TECTONIC_CACHE_DIR" \
+    && du -sh "$TECTONIC_CACHE_DIR"
+
+# With the cache warm, renders run offline. Anything a template asks for that is
+# not cached now fails loudly, instead of quietly reaching out to the network on
+# a request a user is waiting for.
+ENV TECTONIC_ONLY_CACHED=1
 
 # Vercel supplies PORT (80 by default). Migrations intentionally do not run
 # here: autoscaling can start multiple instances concurrently. Run Alembic

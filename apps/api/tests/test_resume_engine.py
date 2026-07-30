@@ -10,7 +10,6 @@ import pytest
 from pypdf import PdfWriter
 
 from job_os.schemas.resumes import SelectedBullet
-from job_os.services.pdf_render import render_resume_html
 from job_os.services.resume_engine import (
     _github_repositories,
     _repo_from_url,
@@ -83,36 +82,6 @@ def test_repo_parser_accepts_project_urls() -> None:
         "claimfarm",
     )
     assert _repo_from_url("https://example.com/project") is None
-
-
-def test_preview_escapes_markup_and_rejects_javascript_links() -> None:
-    html = render_resume_html(
-        {
-            "basics": {
-                "name": '<script>alert("name")</script>',
-                "email": 'safe@example.com"><script>alert("email")</script>',
-                "profiles": [
-                    {
-                        "network": "GitHub",
-                        "username": "unsafe",
-                        "url": "javascript:alert(1)",
-                    }
-                ],
-            },
-            "projects": [
-                {
-                    "name": "Project",
-                    "description": "<img src=x onerror=alert(1)>",
-                    "url": "javascript:alert(2)",
-                }
-            ],
-        }
-    )
-
-    assert "<script>" not in html
-    assert "<img src=x" not in html
-    assert "href=\"javascript:" not in html
-    assert "&lt;script&gt;" in html
 
 
 def test_json_resume_validation_rejects_malformed_sections() -> None:

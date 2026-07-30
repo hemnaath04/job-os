@@ -27,8 +27,8 @@ dependencies = [
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0.0",
     "langchain-core>=0.3.0",
-    # pdf rendering (resume export)
-    "weasyprint>=63.0",
+    # resume rendering: LaTeX templates filled with jinja2, compiled by the
+    # tectonic binary the container installs (see Dockerfile.vercel)
     "jinja2>=3.1",
     "pypdf>=5.1",                # for inspecting uploaded PDFs (page count, text fallback)
     "python-docx>=1.1",          # for uploaded .docx → text extraction

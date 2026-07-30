@@ -14,6 +14,7 @@ from job_os.auth import get_current_user
 from job_os.db.models import Job, Resume, ResumeRevisionMessage, ResumeVersion, User
 from job_os.db.session import get_session
 from job_os.schemas.resumes import (
+    BuiltinTemplateSummary,
     ExportRequest,
     ExportResult,
     GeneratedTemplateResponse,
@@ -240,23 +241,57 @@ async def import_resume_files(
     return result
 
 
+@router.get("/templates/builtin", response_model=list[BuiltinTemplateSummary])
+async def list_builtin_templates(
+    _user: User = Depends(get_current_user),
+) -> list[BuiltinTemplateSummary]:
+    """The templates that ship with the app, with their real licences and caveats.
+
+    The catalogue lives in the container because that is where the LaTeX lives.
+    The seeding script writes the same records into Appwrite so the browser can
+    read them without a round trip here.
+    """
+    from job_os.services.latex_catalog import BUILTIN_TEMPLATES
+
+    return [
+        BuiltinTemplateSummary(
+            key=spec.key,
+            name=spec.name,
+            description=spec.description,
+            columns=spec.columns,
+            ats_note=spec.ats_note,
+            upstream=spec.upstream,
+            licence=spec.licence,
+            author=spec.author,
+            tags=list(spec.tags),
+        )
+        for spec in BUILTIN_TEMPLATES
+    ]
+
+
 @router.post("/preview")
 async def preview_draft(
     payload: ResumePreviewRequest,
     _user: User = Depends(get_current_user),
 ) -> Response:
-    """Render unsaved JSON Resume state without storing or mutating it."""
-    from job_os.services.pdf_render import render_resume_html
+    """Render unsaved JSON Resume state without storing or mutating it.
 
+    Returns a PDF rather than the HTML this used to return: the resume look is
+    LaTeX now, and an HTML approximation of it would be a different document
+    from the one that gets sent to an employer.
+    """
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
+
+    try:
+        rendered = render_resume_pdf(
+            payload.json_resume, template_key=payload.template_key
+        )
+    except LatexRenderError as exc:
+        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return Response(
-        render_resume_html(payload.json_resume),
-        media_type="text/html",
-        headers={
-            "Content-Security-Policy": (
-                "default-src 'none'; style-src 'unsafe-inline'; "
-                "img-src data: https:; base-uri 'none'; form-action 'none'"
-            )
-        },
+        rendered.bytes_,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="preview.pdf"'},
     )
 
 
@@ -267,22 +302,26 @@ async def render_and_review_draft(
 ) -> ResumeRenderReviewResponse:
     """Render and review a document without storing or mutating anything.
 
-    The Appwrite agent function cannot do this: WeasyPrint needs the native pango
-    and cairo libraries, which the Appwrite python runtime does not ship, so a
-    tailored version comes back there with no PDF and no review score. This
-    container image installs those libs (see Dockerfile.vercel), so the browser
-    hands the tailored document here and writes the result back to Appwrite.
+    The Appwrite agent function cannot do this: its python runtime has no LaTeX
+    engine, so a tailored version comes back there with no PDF and no page
+    count. This container image ships Tectonic and a warm package cache (see
+    Dockerfile.vercel), so the browser hands the tailored document here and
+    writes the result back to Appwrite.
 
     Stateless on purpose. Resumes tailored through the Appwrite workspace do not
     exist in this database, so there is no row to look up.
     """
+    from job_os.services.latex_render import LatexRenderError
     from job_os.services.resume_engine import generate_latex_source, review_resume
 
-    review, pdf_bytes = await review_resume(
-        payload.json_resume,
-        html_source=payload.html_source,
-        css_source=payload.css_source,
-    )
+    try:
+        review, pdf_bytes = await review_resume(
+            payload.json_resume,
+            template_key=payload.template_key,
+            latex_source=payload.latex_source,
+        )
+    except LatexRenderError as exc:
+        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return ResumeRenderReviewResponse(
         review=review,
         latex_source=generate_latex_source(payload.json_resume),
@@ -290,43 +329,64 @@ async def render_and_review_draft(
     )
 
 
-@router.post("/generate-template", response_model=GeneratedTemplateResponse)
-async def generate_template(
+def _render_hint(exc: Exception) -> str:
+    """The one line of a TeX log that says what went wrong, if it is in there.
+
+    A LaTeX log is thousands of lines and unreadable to somebody who did not
+    write LaTeX. The line beginning with `!` is the error.
+    """
+    log = getattr(exc, "log", "") or ""
+    for line in log.splitlines():
+        if line.startswith("!"):
+            return line.strip()
+    return ""
+
+
+@router.post("/latex-template", response_model=GeneratedTemplateResponse)
+async def build_latex_template(
     file: UploadFile = File(...),
+    name: str | None = Form(default=None),
     _user: User = Depends(get_current_user),
 ) -> GeneratedTemplateResponse:
-    """Recreate an uploaded resume's design as a reusable template.
+    """Turn an uploaded .tex or .pdf into a reusable LaTeX template.
 
     Lives here rather than in the Appwrite agent function because accepting a
-    template means really rendering it, and that runtime has no pango or cairo.
+    template means really compiling it, and that runtime has no LaTeX engine.
 
-    A design that cannot be turned into a working template returns 422 with a
-    readable reason. The caller keeps the default look and says so, rather than
-    storing a template that does not render.
+    A .tex upload is the accurate path: the design is already expressed as
+    LaTeX and the model only has to replace the content with placeholders. A
+    .pdf is reconstructed from the document itself, which is a best effort at
+    the design rather than a copy of it.
+
+    Either way the result has to compile with sample data before it is
+    returned. A design that cannot be turned into a template that compiles
+    returns 422 with the compiler's own reason, and nothing is stored.
     """
-    from job_os.services.template_generate import (
-        TemplateGenerationError,
-        generate_template_from_document,
+    from job_os.services.latex_from_document import (
+        TemplateBuildError,
+        build_template_from_upload,
     )
 
     raw = await file.read()
     if len(raw) > 12 * 1024 * 1024:
-        raise HTTPException(400, "Design documents are limited to 12 MB.")
+        raise HTTPException(400, "Template uploads are limited to 12 MB.")
     if not raw:
         raise HTTPException(400, "That file is empty.")
     try:
-        candidate = await generate_template_from_document(
-            raw, Path(file.filename or "design.pdf").name
+        candidate = await build_template_from_upload(
+            raw,
+            Path(file.filename or "template.tex").name,
+            requested_name=(name or "").strip() or None,
         )
-    except TemplateGenerationError as exc:
+    except TemplateBuildError as exc:
         raise HTTPException(422, str(exc)) from exc
     return GeneratedTemplateResponse(
         name=candidate.name,
-        html_source=candidate.html_source,
-        css_source=candidate.css_source,
+        latex_source=candidate.latex_source,
         notes=candidate.notes,
         pdf_base64=base64.b64encode(candidate.pdf_bytes).decode("ascii"),
-        preview_html=candidate.preview_html,
+        attempts=candidate.attempts,
+        repairs=candidate.repairs,
     )
 
 
@@ -717,18 +777,18 @@ async def preview_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Response:
-    from job_os.services.pdf_render import render_resume_html
+    """The stored version, rendered. A PDF, because that is what a resume is."""
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
 
     version = await _load_version(session, resume_id, version_id, user)
+    try:
+        rendered = render_resume_pdf(version.json_resume)
+    except LatexRenderError as exc:
+        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return Response(
-        render_resume_html(version.json_resume),
-        media_type="text/html",
-        headers={
-            "Content-Security-Policy": (
-                "default-src 'none'; style-src 'unsafe-inline'; "
-                "img-src data: https:; base-uri 'none'; form-action 'none'"
-            )
-        },
+        rendered.bytes_,
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="preview.pdf"'},
     )
 
 
@@ -750,10 +810,10 @@ async def export_version(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ExportResult:
-    """Render the version's JSON Resume to PDF via WeasyPrint, push to R2 if
+    """Render the version's JSON Resume to PDF with LaTeX, push to R2 if
     configured (otherwise just report the rendered byte count)."""
     from job_os.integrations import r2
-    from job_os.services.pdf_render import render_resume_pdf
+    from job_os.services.latex_render import render_resume_pdf
 
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)
@@ -816,7 +876,7 @@ async def download_version(
     if version.pdf_bytes:
         pdf_bytes = bytes(version.pdf_bytes)
     else:
-        from job_os.services.pdf_render import render_resume_pdf
+        from job_os.services.latex_render import render_resume_pdf
 
         rendered = render_resume_pdf(version.json_resume)
         pdf_bytes = rendered.bytes_

@@ -1,0 +1,186 @@
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+% Deedy - One Page Two Column Resume
+% Original author: Debarghya Das (http://debarghyadas.com)
+% Original repository: https://github.com/deedydas/Deedy-Resume
+% Licensed under the Apache License, Version 2.0.
+%
+% This is the repository's OpenFonts variant, which needs XeLaTeX. Tectonic is
+% XeTeX, so it compiles as written. Lato and Raleway are vendored next to this
+% file, which is how the class finds them. See ATTRIBUTION.md.
+%
+% Known upstream issue, still true here: a column whose contents exceed the
+% page runs onto a second page.
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+
+\documentclass[]{deedy-resume-openfont}
+\usepackage{fancyhdr}
+
+\pagestyle{fancy}
+\fancyhf{}
+
+% The class loads its faces without TeX ligatures, which left every date range
+% printing as two hyphens instead of a dash. Setting the default here catches
+% the inline \fontspec calls inside \location, \descript and \namesection, and
+% reissuing the body font catches running text.
+\defaultfontfeatures{Ligatures=TeX}
+\setmainfont[Color=primary, Path = fonts/lato/, BoldItalicFont=Lato-RegIta,
+  BoldFont=Lato-Reg, ItalicFont=Lato-LigIta]{Lato-Lig}
+
+\begin{document}
+
+\lastupdated
+
+\namesection{<<first_name>>}{<<last_name>>}{
+<% for item in contact %>
+<% if not loop.first %> | <% endif %><% if item.url %>\urlstyle{same}\href{<<item.url>>}{<<item.text>>}<% else %><<item.text>><% endif %>
+<% endfor %>
+
+}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     COLUMN ONE
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{minipage}[t]{0.33\textwidth}
+
+<% if education %>
+\section{Education}
+<% for school in education %>
+\subsection{<<school.institution>>}
+<% if school.degree %>
+\descript{<<school.degree>>}
+<% endif %>
+\location{<<school.dates>><% if school.location %> | <<school.location>><% endif %>}
+<% if school.score %>
+\location{GPA: <<school.score>>}
+<% endif %>
+\sectionsep
+
+<% endfor %>
+<% endif %>
+
+<% if profiles %>
+\section{Links}
+<% for profile in profiles %>
+<<profile.network or 'Web'>>:// <% if profile.url %>\href{<<profile.url>>}{\bf <<profile.username or profile.label>>}<% else %>{\bf <<profile.label>>}<% endif %> \\
+<% endfor %>
+\sectionsep
+
+<% endif %>
+
+<% if skills %>
+\section{Skills}
+<% for group in skills %>
+\subsection{<<group.name>>}
+<% for keyword in group.keywords %>
+<% if not loop.first %>\textbullet{} <% endif %><<keyword>>
+<% endfor %>
+\\
+\sectionsep
+
+<% endfor %>
+<% endif %>
+
+<% if certificates %>
+\section{Certifications}
+<% for cert in certificates %>
+{\bf <<cert.name>>} \\
+<% if cert.issuer or cert.date %>
+\location{<<cert.issuer>><% if cert.issuer and cert.date %> | <% endif %><<cert.date>>}
+<% endif %>
+<% endfor %>
+\sectionsep
+
+<% endif %>
+
+<% if languages %>
+\section{Languages}
+<% for language in languages %>
+{\bf <<language.language>>} <% if language.fluency %>\textbullet{} <<language.fluency>><% endif %> \\
+<% endfor %>
+\sectionsep
+
+<% endif %>
+
+\end{minipage}
+\hfill
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+%     COLUMN TWO
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\begin{minipage}[t]{0.66\textwidth}
+
+<% if summary %>
+\section{Summary}
+<<summary>>
+\sectionsep
+
+<% endif %>
+
+<% if work %>
+\section{Experience}
+<% for job in work %>
+\runsubsection{<<job.company>>}
+\descript{| <<job.position>>}
+\location{<<job.dates>><% if job.location %> | <<job.location>><% endif %>}
+<% if job.bullets %>
+<% if loop.first %>
+\vspace{\topsep} <# tightemize opens with a negative skip, which collides with
+   the line above it when the list is the first one in a column. Upstream's own
+   example compensates the same way. #>
+<% endif %>
+\begin{tightemize}
+<% for bullet in job.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{tightemize}
+<% elif job.summary %>
+<<job.summary>>
+<% endif %>
+\sectionsep
+
+<% endfor %>
+<% endif %>
+
+<% if projects %>
+\section{Projects}
+<% for project in projects %>
+\runsubsection{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}
+<% if project.keywords_line %>
+\descript{| <<project.keywords_line>>}
+<% endif %>
+<% if project.dates %>
+\location{<<project.dates>>}
+<% endif %>
+<% if project.bullets %>
+<% if loop.first and not work %>
+\vspace{\topsep}
+<% endif %>
+\begin{tightemize}
+<% if project.description %>
+\item <<project.description>>
+<% endif %>
+<% for bullet in project.bullets %>
+\item <<bullet>>
+<% endfor %>
+\end{tightemize}
+<% elif project.description %>
+<<project.description>>
+<% endif %>
+\sectionsep
+
+<% endfor %>
+<% endif %>
+
+<% if awards %>
+\section{Honors}
+<% for award in awards %>
+\runsubsection{<<award.title>>}
+<% if award.awarder %>
+\descript{| <<award.awarder>>}
+<% endif %>
+\sectionsep
+
+<% endfor %>
+<% endif %>
+
+\end{minipage}
+\end{document}

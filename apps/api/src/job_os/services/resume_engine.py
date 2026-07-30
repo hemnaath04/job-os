@@ -23,6 +23,7 @@ from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
+from job_os.services.latex_render import TectonicUnavailableError, render_resume_pdf
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
@@ -31,7 +32,6 @@ from job_os.services.llm_json import (
     response_diagnostics,
     response_text,
 )
-from job_os.services.pdf_render import render_resume_pdf
 from job_os.services.resume_writing import (
     BANNED_WORDING,
     document_quality_flags,
@@ -322,6 +322,22 @@ def deterministic_review(
     pdf_bytes: bytes,
 ) -> tuple[list[ResumeReviewIssue], int, bool]:
     issues: list[ResumeReviewIssue] = []
+    # No PDF means the runtime has no LaTeX engine, not that the document is
+    # bad. Skip the two checks that need a render and say so, rather than
+    # failing a resume for something it did not do. See review_resume.
+    if not pdf_bytes:
+        issues.append(
+            ResumeReviewIssue(
+                severity="warning",
+                code="render_unavailable",
+                message=(
+                    "Page count and selectable text were not checked: this "
+                    "runtime cannot render a PDF."
+                ),
+            )
+        )
+        return issues + _document_review(doc), 0, False
+
     reader = PdfReader(io.BytesIO(pdf_bytes))
     page_count = len(reader.pages)
     extracted = "\n".join((page.extract_text() or "") for page in reader.pages).strip()
@@ -347,6 +363,12 @@ def deterministic_review(
             )
         )
 
+    return issues + _document_review(doc), page_count, text_selectable
+
+
+def _document_review(doc: dict[str, Any]) -> list[ResumeReviewIssue]:
+    """Everything a rule can check without a rendered PDF."""
+    issues: list[ResumeReviewIssue] = []
     basics = doc.get("basics") or {}
     for key in ("name", "email", "phone"):
         if not str(basics.get(key) or "").strip():
@@ -426,21 +448,26 @@ def deterministic_review(
     # enforced where it belongs, by grounding every bullet in a verified fact and
     # by CAREER_OPS_RULES in the model's system prompt. This function checks the
     # structure of the document, not the truth of the candidate's history.
-    return issues, page_count, text_selectable
+    return issues
 
 
 async def review_resume(
     doc: dict[str, Any],
     *,
-    html_source: str | None = None,
-    css_source: str | None = None,
+    template_key: str | None = None,
+    latex_source: str | None = None,
     verified_facts: list[dict[str, Any]] | None = None,
 ) -> tuple[ResumeReviewResult, bytes]:
     """Render, inspect, then run an independent quality-model review.
 
-    `html_source`/`css_source` render a stored template's look instead of the
-    bundled one. The review judges the document either way: a template changes
-    how the resume looks, not what it claims.
+    `template_key` names one of the bundled LaTeX templates and `latex_source`
+    supplies a stored one. The review judges the document either way: a template
+    changes how the resume looks, not what it claims.
+
+    A runtime with no LaTeX engine returns a review and empty PDF bytes rather
+    than raising. The Appwrite function is such a runtime, and a tailored draft
+    coming back without a page count is far better than one coming back not at
+    all; the caller decides whether an empty render is acceptable.
 
     `verified_facts` is the evidence the resume was built from. Without it the
     reviewer has no way to tell a verified claim from an invented one, so it
@@ -450,8 +477,14 @@ async def review_resume(
     same pass. Pass it wherever it is available.
     """
     validate_json_resume_document(doc)
-    rendered = render_resume_pdf(doc, html_source=html_source, css_source=css_source)
-    rule_issues, page_count, text_selectable = deterministic_review(doc, rendered.bytes_)
+    try:
+        pdf_bytes = render_resume_pdf(
+            doc, template_key=template_key, latex_source=latex_source
+        ).bytes_
+    except TectonicUnavailableError as exc:
+        log.warning("resume_render_unavailable", error=str(exc))
+        pdf_bytes = b""
+    rule_issues, page_count, text_selectable = deterministic_review(doc, pdf_bytes)
     github_context, checked, missing_repos = await load_github_context(doc)
     for slug in missing_repos:
         rule_issues.append(
@@ -619,7 +652,7 @@ async def review_resume(
                 "automated document checks only."
             ),
         ),
-        rendered.bytes_,
+        pdf_bytes,
     )
 
 
