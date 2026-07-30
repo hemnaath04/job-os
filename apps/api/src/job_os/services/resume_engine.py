@@ -23,6 +23,7 @@ from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
+from job_os.services.latex_catalog import builtin
 from job_os.services.latex_render import TectonicUnavailableError, render_resume_pdf
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
@@ -65,8 +66,11 @@ REVISE_MAX_TOKENS = 32000
 
 # The bundled template that fits the most content on one page, named in the
 # page-count advice so the user has a concrete next step rather than just being
-# told the resume is too long.
+# told the resume is too long. Resolved through the catalogue rather than written
+# out, so the advice cannot name a template that no longer exists, and shows the
+# name the picker shows rather than the internal key.
 TIGHTEST_TEMPLATE_KEY = "sb2nov"
+TIGHTEST_TEMPLATE_NAME = builtin(TIGHTEST_TEMPLATE_KEY).name
 GITHUB_RE = re.compile(r"https?://(?:www\.)?github\.com/([^/\s]+)/([^/#?\s]+)", re.I)
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
@@ -385,7 +389,7 @@ def deterministic_review(
                 message=(
                     f"Renders to {page_count} pages. One page is the target: trim "
                     "a bullet or a project, or switch to a tighter single-column "
-                    f"template. {TIGHTEST_TEMPLATE_KEY} fits the same content on "
+                    f"template. {TIGHTEST_TEMPLATE_NAME} fits the same content on "
                     "one page."
                 ),
             )
