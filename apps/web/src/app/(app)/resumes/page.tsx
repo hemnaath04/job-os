@@ -553,6 +553,7 @@ function TemplatesSection({
       >
         <TemplatePicker
           templates={templates}
+          selectable={false}
           value=""
           onChange={() => {}}
           onRemove={(templateId) => {

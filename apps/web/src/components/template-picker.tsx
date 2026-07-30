@@ -21,6 +21,7 @@ export function TemplatePicker({
   onChange,
   onRemove,
   removingId,
+  selectable = true,
 }: {
   templates: ResumeTemplate[];
   /** Empty string means the app's default, which is Jake's Resume. */
@@ -29,6 +30,12 @@ export function TemplatePicker({
   /** Omit to hide removal. Builtins are never removable. */
   onRemove?: (templateId: string) => void;
   removingId?: string | null;
+  /**
+   * False on the library page, where there is nothing to select: choosing a look
+   * belongs to the run that uses it. The card then opens the full render instead
+   * of looking clickable and doing nothing.
+   */
+  selectable?: boolean;
 }) {
   const [previewing, setPreviewing] = useState<ResumeTemplate | null>(null);
 
@@ -57,8 +64,17 @@ export function TemplatePicker({
               >
                 <button
                   type="button"
-                  onClick={() => onChange(selected ? "" : template.id)}
-                  aria-pressed={selected}
+                  onClick={() =>
+                    selectable
+                      ? onChange(selected ? "" : template.id)
+                      : setPreviewing(template)
+                  }
+                  aria-pressed={selectable ? selected : undefined}
+                  aria-label={
+                    selectable
+                      ? `Use the ${template.name} template`
+                      : `View the ${template.name} sample render`
+                  }
                   className="block w-full cursor-pointer bg-white text-left"
                 >
                   <span className="block aspect-[8.5/11] w-full overflow-hidden">
