@@ -729,6 +729,7 @@ async def _revise_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         message=message,
         verified_facts=workspace.verified_facts(),
     )
+    blocked_claims = [claim.model_dump() for claim in output.blocked_claims]
     now = _now()
     user_message = {
         "id": str(uuid4()),
@@ -750,6 +751,7 @@ async def _revise_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         "content": output.assistant_message,
         "suggestions": output.suggestions,
         "proposed_json_resume": output.json_resume,
+        "blocked_claims": blocked_claims,
         "applied": False,
         "created_at": now,
         "updated_at": now,
@@ -766,6 +768,7 @@ async def _revise_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         "suggestions": output.suggestions,
         "proposal_id": assistant_message["id"],
         "proposed_json_resume": output.json_resume,
+        "blocked_claims": blocked_claims,
     }
 
 
