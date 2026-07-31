@@ -74,6 +74,17 @@ export type RenderReviewResult = {
 };
 
 /**
+ * A render with no review. The model review is the slow part of render-review
+ * (~80s on top of a ~17s render), so this endpoint returns just the PDF fast,
+ * and the quality review follows separately. Same request shape as
+ * render-review, minus the review in the response.
+ */
+export type RenderResult = {
+  latex_source: string;
+  pdf_base64: string;
+};
+
+/**
  * Result of a finalize attempt. `blocked` is an ordinary outcome, not an error:
  * the review found issues and the caller should show them and offer to proceed
  * anyway, since the review advises rather than gates.
@@ -397,6 +408,34 @@ const legacyApi = {
       }),
       RENDER_TIMEOUT_MS,
       "The quality review timed out. The API container may be waking up, try again in a moment.",
+    );
+  },
+
+  /**
+   * Render an unsaved document to a PDF on the container without the model
+   * review. Used to put a downloadable PDF in front of the user in ~17s while
+   * the ~80s quality review runs separately. Same template resolution and
+   * request body as renderReviewDraft, just the render-only endpoint.
+   */
+  render: async (
+    jsonResume: object,
+    { templateId }: { templateId?: string | null } = {},
+  ) => {
+    const look = templateId
+      ? await appwriteWorkspace.getTemplateSource(templateId)
+      : null;
+    await warmBackend();
+    return withTimeout(
+      request<RenderResult>("/resumes/render", {
+        method: "POST",
+        body: JSON.stringify({
+          json_resume: jsonResume,
+          template_key: look?.template_key ?? null,
+          latex_source: look?.latex_source ?? null,
+        }),
+      }),
+      RENDER_TIMEOUT_MS,
+      "The PDF render timed out. The API container may be waking up, try again in a moment.",
     );
   },
 
@@ -815,7 +854,21 @@ export const api = {
   async finalizeVersion(
     resumeId: string,
     versionId: string,
-    { force = false, templateId }: { force?: boolean; templateId?: string | null } = {},
+    {
+      force = false,
+      templateId,
+      onPdfReady,
+    }: {
+      force?: boolean;
+      templateId?: string | null;
+      /**
+       * Fired the moment the PDF is rendered and attached, before the slower
+       * review runs. Lets the caller light up Download at ~17s instead of
+       * waiting the full ~100s. Only called on the render path, never when a
+       * stored review is reused.
+       */
+      onPdfReady?: () => void;
+    } = {},
   ): Promise<FinalizeOutcome> {
     if (!isAppwriteWorkspaceEnabled) {
       return {
@@ -825,15 +878,39 @@ export const api = {
     }
     const version = await appwriteWorkspace.getVersion(versionId);
     const stored = version as ResumeVersion & { pdf_file_id?: string | null };
+
+    // A stored review is always current: any edit spawns a fresh version with a
+    // null review, so a version that still carries one was reviewed against
+    // exactly this document, and its PDF is already attached. Reuse it instead
+    // of paying ~100s to render and score an unchanged doc again.
+    if (stored.review_report && stored.pdf_file_id) {
+      if (!stored.review_report.passed && !force) {
+        return { status: "blocked", review: stored.review_report, version };
+      }
+      return {
+        status: "finalized",
+        version: await appwriteWorkspace.markFinalized(versionId),
+      };
+    }
+
     // A forced finalize follows a blocked one, which already rendered and
-    // attached the PDF, so do not make the user sit through a second render
-    // just to confirm a decision they already made.
+    // attached the PDF, so honour the decision without a second render.
     if (force && stored.pdf_file_id) {
       return {
         status: "finalized",
         version: await appwriteWorkspace.markFinalized(versionId),
       };
     }
+
+    // No current review. Render the PDF on its own first (~17s) and attach it so
+    // Download lights up right away, then run the authoritative review (~80s)
+    // that decides whether this finalizes. The fast PDF is a convenience and
+    // does not weaken the review gate: the same review still runs and still
+    // blocks a failing finalize.
+    const draft = await legacyApi.render(version.json_resume, { templateId });
+    await appwriteWorkspace.attachPdf(versionId, draft);
+    onPdfReady?.();
+
     const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
       templateId,
     });

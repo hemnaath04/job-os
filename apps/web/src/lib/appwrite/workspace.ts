@@ -1080,6 +1080,62 @@ export const appwriteWorkspace = {
     return rememberVersionFile(version);
   },
 
+  /**
+   * Store a rendered PDF against a version WITHOUT a review.
+   *
+   * The fast half of the download story: /resumes/render returns a PDF in ~17s,
+   * while the full render-review takes ~80s more for the model score. Attaching
+   * the PDF on its own lights up Download without waiting on the review, which
+   * attachReview fills in afterwards. Deliberately leaves review_score,
+   * review_report, and the status column untouched so the honest review still
+   * governs those; only pdf_file_id, latex_source, and updated_at change.
+   */
+  async attachPdf(
+    versionId: string,
+    result: { latex_source: string; pdf_base64: string },
+  ): Promise<ResumeVersion> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const { tables, storage } = getAppwriteServices();
+    const ownerId = getCurrentAppwriteUserId();
+
+    const row = await tables.getRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+    });
+
+    const pdfFileId = ID.unique();
+    await storage.createFile({
+      bucketId: config.resumeFilesBucketId,
+      fileId: pdfFileId,
+      file: new File([decodeBase64(result.pdf_base64)], `${versionId}.pdf`, {
+        type: "application/pdf",
+      }),
+      permissions: ownerPermissions(ownerId),
+    });
+
+    const version: ResumeVersion = {
+      ...parseSnapshot<ResumeVersion>(row),
+      latex_source: result.latex_source,
+      updated_at: now(),
+    };
+    (version as StoredResumeVersion).pdf_file_id = pdfFileId;
+
+    await tables.updateRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: versionId,
+      data: {
+        // No status change here: this is a PDF-only attach, and the snapshot
+        // above preserves whatever review status the version already had.
+        source_updated_at: version.updated_at,
+        snapshot: JSON.stringify(version),
+      },
+    });
+    return rememberVersionFile(version);
+  },
+
   /** Mark a reviewed version final. Call only after a review has passed. */
   async markFinalized(versionId: string): Promise<ResumeVersion> {
     await ensureAppwriteSession();

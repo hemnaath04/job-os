@@ -58,6 +58,9 @@ export default function ResumeEditorClient({
   // nothing to decide on.
   const [finalizeReview, setFinalizeReview] =
     useState<ResumeReviewResult | null>(null);
+  // True once a finalize has rendered and attached the PDF but is still running
+  // the review, so the progress banner can offer the download mid-flight.
+  const [finalizePdfReady, setFinalizePdfReady] = useState(false);
 
   const versionQuery = useQuery({
     queryKey: ["resume-version", resumeId, versionId],
@@ -103,7 +106,19 @@ export default function ResumeEditorClient({
   });
   const finalize = useMutation({
     mutationFn: (force: boolean) =>
-      api.finalizeVersion(resumeId, versionId, { force }),
+      api.finalizeVersion(resumeId, versionId, {
+        force,
+        // Fires once the PDF is rendered and attached, before the slower review
+        // finishes. Refetch so Download lights up at ~17s, and flag it so the
+        // progress banner offers the file while the review keeps running.
+        onPdfReady: () => {
+          setFinalizePdfReady(true);
+          queryClient.invalidateQueries({
+            queryKey: ["resume-version", resumeId, versionId],
+          });
+        },
+      }),
+    onMutate: () => setFinalizePdfReady(false),
     onSuccess: (outcome) => {
       queryClient.invalidateQueries({
         queryKey: ["resume-version", resumeId, versionId],
@@ -125,6 +140,7 @@ export default function ResumeEditorClient({
     onError: (error: Error) =>
       reportFailure("finalize this resume", error, parseFinalizeError(error.message)),
     onSettled: () => {
+      setFinalizePdfReady(false);
       queryClient.invalidateQueries({
         queryKey: ["resume-version", resumeId, versionId],
       });
@@ -289,6 +305,7 @@ export default function ResumeEditorClient({
       <FinalizeStatus
         status={version.status}
         finalizing={finalize.isPending && finalizeReview === null}
+        pdfReady={finalizePdfReady}
         hasRenderedPdf={hasRenderedPdf}
         onDownload={downloadResume}
       />
@@ -423,22 +440,39 @@ export default function ResumeEditorClient({
 function FinalizeStatus({
   status,
   finalizing,
+  pdfReady,
   hasRenderedPdf,
   onDownload,
 }: {
   status: string;
   finalizing: boolean;
+  pdfReady: boolean;
   hasRenderedPdf: boolean;
   onDownload: () => void;
 }) {
   if (finalizing) {
+    // Two phases: the PDF renders first (~17s), then the review scores it
+    // (~80s). Once the PDF is attached, say so and offer the download instead
+    // of making the user wait out the review for a file that already exists.
     return (
-      <div className="mb-4 flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3.5 text-sm">
-        <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--color-accent-ink)]" />
-        <span className="text-[color:var(--color-text-muted)]">
-          Finalizing: rendering your one-page PDF and scoring the draft. This can
-          take up to a minute.
-        </span>
+      <div className="mb-4 flex flex-col gap-3 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3.5 text-sm sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5 text-[color:var(--color-text-muted)]">
+          <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--color-accent-ink)]" />
+          <span>
+            {pdfReady
+              ? "Your PDF is ready to download. Scoring the draft for the quality review, up to a minute more."
+              : "Finalizing: rendering your one-page PDF, then scoring the draft. This can take up to a minute."}
+          </span>
+        </div>
+        {pdfReady && (
+          <button
+            onClick={onDownload}
+            className="product-button product-button-secondary shrink-0 justify-center"
+          >
+            <Download className="size-4" />
+            Download PDF
+          </button>
+        )}
       </div>
     );
   }
