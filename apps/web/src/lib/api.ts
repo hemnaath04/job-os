@@ -754,14 +754,9 @@ export const api = {
       suggestions: string[];
       proposal_id: string;
       proposed_json_resume: import("./types").JsonResume;
-      // Present once the revise agent reports which unsupported claims it left
-      // out. Optional so an older agent build that omits it still typechecks and
-      // simply surfaces no blocked claims.
-      blocked_claims?: import("./types").BlockedClaim[];
     }>(job, { timeoutMs: REVISE_TIMEOUT_MS });
     return {
       ...output,
-      blocked_claims: output.blocked_claims ?? [],
       version: null,
       review: null,
     } satisfies ResumeChatResponse;
