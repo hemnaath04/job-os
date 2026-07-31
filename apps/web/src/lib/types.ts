@@ -312,6 +312,21 @@ export interface ResumeReviewResult {
   model_summary: string;
 }
 
+/**
+ * One claim an "Edit with AI" request tried to add that no verified Profile fact
+ * supports, so the revise guard left it out while applying the rest of the edit.
+ * Mirrors the backend BlockedClaim (job_os.services.resume_engine): `metric` is
+ * the offending number(s), `text` the sentence they appeared in, `reason` why it
+ * was dropped, `remedy` how to keep it. Optional on the responses below because
+ * an edit with nothing unsupported carries none.
+ */
+export interface BlockedClaim {
+  metric: string;
+  text: string;
+  reason: string;
+  remedy: string;
+}
+
 export interface ResumeChatResponse {
   message: string;
   suggestions: string[];
@@ -319,6 +334,7 @@ export interface ResumeChatResponse {
   proposed_json_resume: JsonResume | null;
   version: ResumeVersion | null;
   review: ResumeReviewResult | null;
+  blocked_claims?: BlockedClaim[];
 }
 
 export interface RevisionMessage {
@@ -329,6 +345,8 @@ export interface RevisionMessage {
   suggestions: string[];
   proposed_json_resume: JsonResume | null;
   applied: boolean;
+  /** Present on an assistant message when the guard dropped unsupported claims. */
+  blocked_claims?: BlockedClaim[];
   created_at: string;
   updated_at: string;
 }
