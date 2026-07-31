@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
+  ArrowUpRight,
   Bot,
   CheckCircle2,
   Download,
@@ -29,6 +30,7 @@ import { reportFailure } from "@/lib/errors";
 import { downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
 import type {
+  BlockedClaim,
   JsonResume,
   ResumeChatResponse,
   ResumeReviewIssue,
@@ -331,22 +333,26 @@ export default function ResumeEditorClient({
               className="max-h-[42dvh] space-y-3 overflow-y-auto p-4"
             >
               {(messagesQuery.data ?? []).map((message) => (
-                <div
-                  key={message.id}
-                  className={`flex gap-2 ${message.role === "user" ? "justify-end" : ""}`}
-                >
-                  {message.role === "assistant" && (
-                    <span className="product-icon size-7 shrink-0"><Bot className="size-3.5" /></span>
-                  )}
+                <div key={message.id} className="space-y-2">
                   <div
-                    className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-5 ${
-                      message.role === "user"
-                        ? "bg-[color:var(--color-kiwi)]/12 text-[color:var(--color-text)]"
-                        : "border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
-                    }`}
+                    className={`flex gap-2 ${message.role === "user" ? "justify-end" : ""}`}
                   >
-                    {message.content}
+                    {message.role === "assistant" && (
+                      <span className="product-icon size-7 shrink-0"><Bot className="size-3.5" /></span>
+                    )}
+                    <div
+                      className={`max-w-[88%] rounded-xl px-3 py-2 text-xs leading-5 ${
+                        message.role === "user"
+                          ? "bg-[color:var(--color-kiwi)]/12 text-[color:var(--color-text)]"
+                          : "border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-muted)]"
+                      }`}
+                    >
+                      {message.content}
+                    </div>
                   </div>
+                  {message.role === "assistant" && !!message.blocked_claims?.length && (
+                    <BlockedClaimsNotice claims={message.blocked_claims} />
+                  )}
                 </div>
               ))}
               {!messagesQuery.data?.length && (
@@ -424,6 +430,9 @@ function ProposalPanel({
         Review before applying
       </div>
       <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-muted)]">{proposal.message}</p>
+      {!!proposal.blocked_claims?.length && (
+        <BlockedClaimsNotice claims={proposal.blocked_claims} />
+      )}
       {sections.length > 0 && (
         <p className="mt-2 text-[11px] text-[color:var(--color-text-dim)]">
           Changes: {sections.join(", ")}
@@ -457,6 +466,63 @@ function ProposalPanel({
           Apply and review
         </button>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The claims the revise guard left out because no verified Profile fact backs
+ * their numbers. Deliberately calm, not an error: the rest of the edit applied,
+ * and this explains exactly what did not and how to keep it. Each row names the
+ * offending number, the sentence it was in, why it was held back, and the
+ * remedy, with one link to the place that fixes all of them.
+ */
+function BlockedClaimsNotice({ claims }: { claims: BlockedClaim[] }) {
+  if (!claims.length) return null;
+  return (
+    <div className="notice notice-caution p-3 text-xs">
+      <div className="flex items-center gap-1.5 font-semibold">
+        <ShieldCheck className="size-3.5 shrink-0" />
+        <span>
+          {claims.length} claim{claims.length === 1 ? "" : "s"} left out until verified
+        </span>
+      </div>
+      <p className="notice-detail mt-1 leading-5">
+        The rest of the edit is applied. These introduced numbers your Profile does
+        not have yet, so the guard held them back rather than inventing them.
+      </p>
+      <ul className="mt-2.5 space-y-2">
+        {claims.map((claim, index) => (
+          <li
+            key={index}
+            className="rounded-[var(--radius-nested)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] p-2.5"
+          >
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[color:var(--color-amber-ink)]">
+                {claim.metric}
+              </span>
+              <span className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+                left out
+              </span>
+            </div>
+            <p className="mt-1.5 leading-5 text-[color:var(--color-text)]">
+              &ldquo;{claim.text}&rdquo;
+            </p>
+            <p className="mt-1 leading-5 text-[color:var(--color-text-muted)]">
+              {claim.reason}
+            </p>
+            <p className="mt-1 leading-5 text-[color:var(--color-text-muted)]">
+              {claim.remedy}
+            </p>
+          </li>
+        ))}
+      </ul>
+      <Link
+        href="/profile"
+        className="mt-2.5 inline-flex items-center gap-1 font-medium text-[color:var(--color-accent-ink)] hover:underline"
+      >
+        <ArrowUpRight className="size-3" /> Open Profile to add verified facts
+      </Link>
     </div>
   );
 }

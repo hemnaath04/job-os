@@ -785,6 +785,7 @@ export const appwriteWorkspace = {
       suggestions: message.suggestions,
       proposal_id: message.id,
       proposed_json_resume: message.proposed_json_resume,
+      blocked_claims: message.blocked_claims ?? [],
       version: { ...version, resume_id: resumeId },
       review: null,
     };
