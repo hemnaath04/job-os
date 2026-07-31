@@ -496,6 +496,62 @@ def _document_review(doc: dict[str, Any]) -> list[ResumeReviewIssue]:
     return issues
 
 
+# Points deducted per issue when scoring a review. A blocking issue is the
+# heaviest, a warning is a deduction a reader would really make, a suggestion is a
+# minor polish note. The suggestion total is capped so a thorough reviewer that
+# lists many small notes cannot, by being thorough, score a clean resume down.
+_BLOCKING_PENALTY = 20
+_WARNING_PENALTY = 5
+_SUGGESTION_PENALTY = 1
+_MAX_SUGGESTION_PENALTY = 5
+
+
+def _score_from_issues(
+    issues: list[ResumeReviewIssue],
+) -> tuple[Decimal, dict[str, int]]:
+    """The 0-100 score derived deterministically from the weighted issue list.
+
+    The number is a function of the issues alone, so identical inputs produce an
+    identical score. This is what replaces the reviewing model's free-form 0-100
+    self-report, which swung nine points across three identical reviews of one real
+    document (85, 89, 80) while the issue counts barely moved: that swing was the
+    score whiplash the user felt at finalize. Deriving the number from the issues
+    makes every deducted point traceable to a named issue, and makes a no-PDF draft
+    agree with a render-backed finalize except for the one check a draft genuinely
+    cannot run, the page count.
+    """
+    blocking = sum(1 for issue in issues if issue.severity == "blocking")
+    warning = sum(1 for issue in issues if issue.severity == "warning")
+    suggestion = sum(1 for issue in issues if issue.severity == "suggestion")
+    blocking_penalty = _BLOCKING_PENALTY * blocking
+    warning_penalty = _WARNING_PENALTY * warning
+    suggestion_penalty = min(_MAX_SUGGESTION_PENALTY, _SUGGESTION_PENALTY * suggestion)
+    total = blocking_penalty + warning_penalty + suggestion_penalty
+    score = Decimal(max(0, 100 - total))
+    breakdown = {
+        "blocking": blocking,
+        "warning": warning,
+        "suggestion": suggestion,
+        "blocking_penalty": blocking_penalty,
+        "warning_penalty": warning_penalty,
+        "suggestion_penalty": suggestion_penalty,
+        "total_penalty": total,
+    }
+    return score, breakdown
+
+
+def _document_quality_score(doc: dict[str, Any]) -> Decimal:
+    """A cheap, deterministic quality proxy from the document checks alone.
+
+    No render, no model, no network, so it is safe to call twice around an edit to
+    tell whether the edit made the resume measurably worse. It is the same
+    penalty model the full review uses, restricted to what a rule can see, so the
+    two never contradict each other.
+    """
+    score, _ = _score_from_issues(_document_review(doc))
+    return score
+
+
 async def review_resume(
     doc: dict[str, Any],
     *,
@@ -564,6 +620,13 @@ async def review_resume(
         "issue to report.\n\n"
         "Reply with the JSON object only: no prose around it, no markdown "
         "fences. Report at most 10 issues, the most important first.\n\n"
+        "HOW THE GRADE IS COMPUTED. The resume's score is derived from the issues "
+        "you report, weighted by severity, not from your `score` field, which is "
+        "advisory. So report every real problem as an issue with an honest "
+        "severity: blocking for a fabrication or a missing contact field, warning "
+        "for an overclaim, an unverified metric, a domain the page cannot back or a "
+        "readability defect, suggestion for a minor polish item. Do not hold a "
+        "concern back because you already lowered the number.\n\n"
         f"RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
         "VERIFIED FACTS (the evidence this resume was built from, complete):\n"
         f"{json.dumps(_compact_facts(verified_facts or []), ensure_ascii=False)[:40000]}\n\n"
@@ -654,22 +717,14 @@ async def review_resume(
             for issue in (model_review.issues if model_review else [])
         ],
     ]
-    deterministic_penalty = sum(
-        20 if issue.severity == "blocking" else 5 if issue.severity == "warning" else 1
-        for issue in rule_issues
-    )
-    rule_score = max(Decimal("0"), Decimal("100") - Decimal(deterministic_penalty))
-    # Score what was actually checked. When the model review could not run, the
-    # old code substituted a flat 70, so a structurally clean resume was branded
-    # mediocre by a request that never happened, and with a pass mark of 90 it
-    # could never be finalized. An unavailable review is an unknown, not a
-    # verdict: fall back to the deterministic checks and let the warning above
-    # tell the user the AI half is missing.
-    score = (
-        min(Decimal(str(model_review.score)), rule_score)
-        if model_review is not None
-        else rule_score
-    ).quantize(Decimal("0.1"))
+    # Score deterministically from the weighted issue list, not from the model's
+    # own 0-100 number. The model number was the whiplash: it swung nine points
+    # across identical reviews of one document. It is kept as an advisory estimate
+    # in the report, never as the grade. The model still contributes ISSUES, which
+    # are what the number is built from and are far more stable run to run.
+    score, breakdown = _score_from_issues(issues)
+    score = score.quantize(Decimal("0.1"))
+    model_estimate = int(model_review.score) if model_review is not None else None
     # An unavailable review is an unknown, and an unknown is not a pass. The
     # deterministic checks alone scored a resume 95 and reported passed=True on a
     # run where the model review never returned a single token, which hands the
@@ -696,6 +751,8 @@ async def review_resume(
                 else "The independent AI review did not run. Score reflects the "
                 "automated document checks only."
             ),
+            model_estimate=model_estimate,
+            score_breakdown=breakdown,
         ),
         pdf_bytes,
     )
@@ -783,6 +840,9 @@ async def revise_resume(
     new_numbers = set(NUMBER_RE.findall(_resume_text(output.json_resume)))
     unsupported = set(new_numbers - source_numbers)
     if not unsupported:
+        loss = _content_loss_note(doc, output.json_resume)
+        if loss:
+            output.assistant_message = f"{loss}\n\n{output.assistant_message}".strip()
         return output
 
     # The guard is unchanged: a number no verified fact supports never reaches the
@@ -807,11 +867,59 @@ async def revise_resume(
         "applied. To use those numbers, add them as verified facts on your "
         "Profile first, or ask again without them."
     )
+    loss = _content_loss_note(doc, cleaned)
+    message = f"{notice}\n\n{output.assistant_message}".strip()
+    if loss:
+        message = f"{notice}\n\n{loss}\n\n{output.assistant_message}".strip()
     return RevisionOutput(
-        assistant_message=f"{notice}\n\n{output.assistant_message}".strip(),
+        assistant_message=message,
         suggestions=output.suggestions,
         json_resume=cleaned,
         blocked_claims=blocked,
+    )
+
+
+def _content_loss_note(original: dict[str, Any], revised: dict[str, Any]) -> str | None:
+    """An honest heads-up when an edit made the resume thinner, or None.
+
+    A fix that resolves an overclaim by cutting the claim leaves a shorter, more
+    honest resume, and a shorter resume scores lower on both keyword coverage and
+    the quality checks. Surfacing that here is the difference between a score that
+    silently craters after "propose review fixes" and one that drops for a reason
+    the user was told. Only fires on a real reduction: a project removed, or the
+    deterministic document-quality score falling, so a dedup that trims a repeated
+    bullet without hurting the page says nothing.
+    """
+
+    def bullet_count(doc: dict[str, Any]) -> int:
+        return sum(
+            len(entry.get("highlights") or [])
+            for section in ("work", "projects", "volunteer")
+            for entry in (doc.get(section) or [])
+            if isinstance(entry, dict)
+        )
+
+    dropped_projects = len(original.get("projects") or []) - len(
+        revised.get("projects") or []
+    )
+    dropped_bullets = bullet_count(original) - bullet_count(revised)
+    quality_dropped = _document_quality_score(revised) < _document_quality_score(original)
+    if dropped_projects <= 0 and not quality_dropped:
+        return None
+    if dropped_projects <= 0 and dropped_bullets <= 0:
+        return None
+    parts: list[str] = []
+    if dropped_projects > 0:
+        parts.append(f"{dropped_projects} project{'s' if dropped_projects != 1 else ''}")
+    if dropped_bullets > 0:
+        parts.append(f"{dropped_bullets} bullet{'s' if dropped_bullets != 1 else ''}")
+    removed = " and ".join(parts) or "content"
+    return (
+        f"Heads up: this edit removed {removed}, so the resume is thinner and its "
+        "coverage and quality score will reflect that. That is the honest trade-off "
+        "for cutting claims your verified Profile does not support. To recover the "
+        "score, add the missing evidence as verified facts on your Profile, then "
+        "tailor or edit again."
     )
 
 

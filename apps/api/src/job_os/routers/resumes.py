@@ -27,6 +27,7 @@ from job_os.schemas.resumes import (
     ResumePatch,
     ResumePreviewRequest,
     ResumeRead,
+    ResumeRenderResponse,
     ResumeRenderReviewRequest,
     ResumeRenderReviewResponse,
     ResumeReviewResult,
@@ -326,6 +327,41 @@ async def render_and_review_draft(
         review=review,
         latex_source=generate_latex_source(payload.json_resume),
         pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+    )
+
+
+@router.post("/render", response_model=ResumeRenderResponse)
+async def render_draft(
+    payload: ResumeRenderReviewRequest,
+    _user: User = Depends(get_current_user),
+) -> ResumeRenderResponse:
+    """Render a document to PDF WITHOUT the quality review, and return the bytes.
+
+    The fast half of /render-review. The render takes a few seconds; the model
+    review takes over a minute, so a caller that only needs a downloadable PDF, or
+    a PDF to attach to storage before the review lands, hits this instead of paying
+    for the review it does not need yet. Same stateless contract as /render-review:
+    nothing is stored here. The Appwrite workspace attaches the returned PDF to the
+    version so Download works immediately, then fetches the review separately.
+    """
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
+    from job_os.services.resume_engine import (
+        generate_latex_source,
+        validate_json_resume_document,
+    )
+
+    validate_json_resume_document(payload.json_resume)
+    try:
+        rendered = render_resume_pdf(
+            payload.json_resume,
+            template_key=payload.template_key,
+            latex_source=payload.latex_source,
+        )
+    except LatexRenderError as exc:
+        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
+    return ResumeRenderResponse(
+        latex_source=generate_latex_source(payload.json_resume),
+        pdf_base64=base64.b64encode(rendered.bytes_).decode("ascii"),
     )
 
 

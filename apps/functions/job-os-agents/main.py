@@ -951,15 +951,24 @@ async def _tailor_resume(
         review_score = str(review.score)
         review_report = review.model_dump(mode="json")
         status = "reviewed" if review.passed else "needs_changes"
-        on_progress("Rendering PDF", 0.97)
         latex_source = generate_latex_source(json_resume)
-        pdf_file_id = ID.unique()
-        workspace.storage.create_file(
-            workspace.files_bucket,
-            pdf_file_id,
-            InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
-            permissions=workspace.permissions,
-        )
+        # Only upload a PDF when one was actually rendered. This runtime has no
+        # LaTeX engine, so review_resume returns empty bytes here; the browser
+        # renders and attaches the real PDF on the container immediately after
+        # (api.reviewVersion / render). Uploading an empty file would set
+        # pdf_file_id to zero bytes, which makes Download serve nothing AND makes
+        # the browser skip the render-backed review because a PDF already looks
+        # present. Leaving pdf_file_id None keeps the draft score and lets the
+        # container do the real render.
+        if pdf_bytes:
+            on_progress("Rendering PDF", 0.97)
+            pdf_file_id = ID.unique()
+            workspace.storage.create_file(
+                workspace.files_bucket,
+                pdf_file_id,
+                InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
+                permissions=workspace.permissions,
+            )
     except Exception as exc:  # noqa: BLE001 - review is best-effort
         status = "needs_changes"
         review_score = None

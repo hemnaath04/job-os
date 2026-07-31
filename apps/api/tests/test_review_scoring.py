@@ -183,7 +183,10 @@ async def test_review_retries_once_when_the_model_answers_with_prose(
     calls = _stub_model(monkeypatch, ["Sure, here is my review of the resume.", good])
     result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
     assert len(calls) == 2
-    assert result.score == 91
+    # No issues means no deductions, so a clean resume scores 100. The model's own
+    # 91 is advisory now, kept as model_estimate, never the grade.
+    assert result.score == 100
+    assert result.model_estimate == 91
     assert "model_review_unavailable" not in {i.code for i in result.issues}
 
 
@@ -203,6 +206,52 @@ async def test_blocking_issues_still_fail_regardless_of_score(
     result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
     assert not result.passed
     assert result.score == 80  # a perfect model score cannot outvote a blocker
+
+
+@pytest.mark.asyncio
+async def test_the_grade_is_deterministic_across_model_moods(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The whiplash fix: identical issues, different model self-scores, one grade.
+
+    Three real container reviews of one document self-reported 85, 89 and 80 while
+    the issue counts barely moved, and that swing was the score the user watched
+    crater at finalize. The grade now comes from the weighted issues, not the mood,
+    so two reviews that disagree only on the number land on the same score.
+    """
+    warning = {"severity": "warning", "code": "overclaim", "message": "x", "section": None}
+    for model_score in (55, 92):
+        _stub_model(
+            monkeypatch,
+            [json.dumps({"score": model_score, "issues": [warning], "strengths": [], "summary": "s"})],
+        )
+        result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
+        assert result.score == 95  # 100 - one warning, whatever the model said
+        assert result.model_estimate == model_score
+
+
+@pytest.mark.asyncio
+async def test_many_small_suggestions_do_not_sink_a_clean_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A thorough reviewer listing nine polish notes must not fail a good resume.
+
+    The suggestion total is capped, so being thorough about small things cannot
+    score a resume down the way one real defect does.
+    """
+    suggestions = [
+        {"severity": "suggestion", "code": f"polish_{i}", "message": "m", "section": None}
+        for i in range(9)
+    ]
+    _stub_model(
+        monkeypatch,
+        [json.dumps({"score": 70, "issues": suggestions, "strengths": [], "summary": "s"})],
+    )
+    result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
+    assert result.score == 95  # nine suggestions capped at a 5-point deduction
+    assert result.passed
+    assert result.score_breakdown is not None
+    assert result.score_breakdown["suggestion_penalty"] == 5
 
 
 def test_model_score_tolerates_a_decimal_or_string() -> None:
@@ -237,7 +286,8 @@ async def test_a_two_page_resume_passes_with_advice(
     result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
 
     assert result.passed, f"a two-page resume should pass, scored {result.score}"
-    # The advice is still on the record, and the warning still caps the rule score
-    # at 95, so missing one page is never free.
+    # The advice is still on the record, and the one warning deducts 5, so missing
+    # one page is never free. The model's 92 is advisory.
     assert "page_count" in {issue.code for issue in result.issues}
-    assert result.score == 92  # min(model 92, rule cap 95)
+    assert result.score == 95  # 100 - one page_count warning
+    assert result.model_estimate == 92

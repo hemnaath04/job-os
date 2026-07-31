@@ -95,6 +95,13 @@ class ResumeReviewResult(BaseModel):
     strengths: list[str] = Field(default_factory=list)
     github_projects_checked: list[str] = Field(default_factory=list)
     model_summary: str = ""
+    # Advisory only. `score` is the authoritative, deterministic, issue-derived
+    # number the UI shows. `model_estimate` is the reviewing model's own free-form
+    # 0-100 guess, kept for context but never the grade because it is not
+    # reproducible run to run. `score_breakdown` explains how `score` was reached,
+    # so every deducted point is traceable to a named issue.
+    model_estimate: int | None = None
+    score_breakdown: dict[str, int] | None = None
 
 
 class BuiltinTemplateSummary(BaseModel):
@@ -153,6 +160,20 @@ class ResumeRenderReviewResponse(BaseModel):
     """
 
     review: ResumeReviewResult
+    latex_source: str
+    pdf_base64: str
+
+
+class ResumeRenderResponse(BaseModel):
+    """The rendered PDF and its LaTeX, with NO quality review.
+
+    The fast half of render-review. Rendering a resume takes a few seconds;
+    the independent model review takes over a minute. A caller that only needs a
+    downloadable PDF (Download, a preview to attach) must not wait on the review,
+    so this returns the PDF the moment the compile finishes. The review is fetched
+    separately through /render-review and stored when it arrives.
+    """
+
     latex_source: str
     pdf_base64: str
 
