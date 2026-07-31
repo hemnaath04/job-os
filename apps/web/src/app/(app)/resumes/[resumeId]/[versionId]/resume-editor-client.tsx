@@ -1,5 +1,6 @@
 "use client";
 
+import * as Dialog from "@radix-ui/react-dialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
@@ -20,6 +21,7 @@ import {
   Sparkles,
   Trash2,
   UserRound,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -35,6 +37,7 @@ import type {
   ResumeChatResponse,
   ResumeReviewIssue,
   ResumeReviewResult,
+  ResumeVersion,
 } from "@/lib/types";
 
 export default function ResumeEditorClient({
@@ -51,6 +54,10 @@ export default function ResumeEditorClient({
   const [mode, setMode] = useState<"edit" | "preview">("edit");
   const [pendingProposal, setPendingProposal] =
     useState<ResumeChatResponse | null>(null);
+  // The blocked finalize review, shown in an in-app panel. Null when there is
+  // nothing to decide on.
+  const [finalizeReview, setFinalizeReview] =
+    useState<ResumeReviewResult | null>(null);
 
   const versionQuery = useQuery({
     queryKey: ["resume-version", resumeId, versionId],
@@ -101,24 +108,19 @@ export default function ResumeEditorClient({
       queryClient.invalidateQueries({
         queryKey: ["resume-version", resumeId, versionId],
       });
-      if (outcome.status !== "blocked") {
-        toast.success("Resume finalized and stored");
+      if (outcome.status === "blocked") {
+        // The review advises, it does not gate: an honest resume scores in the
+        // seventies and the user must still be able to finalize it. Surface the
+        // findings in an in-app panel that can render severity and an action,
+        // rather than a native browser dialog that can render neither.
+        setFinalizeReview(outcome.review);
         return;
       }
-      // The review advises, it does not gate: an honest resume scores in the
-      // seventies and the user must still be able to finalize it. Show what it
-      // found and let them decide.
-      const issues = outcome.review.issues
-        .slice(0, 8)
-        .map((issue) => `- ${issue.message}`)
-        .join("\n");
-      const proceed = window.confirm(
-        `The review scored this ${Math.round(Number(outcome.review.score))}/100 ` +
-          `and flagged ${outcome.review.issues.length} issue` +
-          `${outcome.review.issues.length === 1 ? "" : "s"}:\n\n${issues}\n\n` +
-          "Finalize anyway?",
-      );
-      if (proceed) finalize.mutate(true);
+      // Finalized: the PDF is rendered and stored. Close the panel and let the
+      // success banner offer the download, so the click never feels like it
+      // did nothing.
+      setFinalizeReview(null);
+      toast.success("Resume finalized. Your PDF is ready to download.");
     },
     onError: (error: Error) =>
       reportFailure("finalize this resume", error, parseFinalizeError(error.message)),
@@ -196,6 +198,16 @@ export default function ResumeEditorClient({
 
   const version = versionQuery.data;
   const downloadUrl = api.downloadVersionUrl(resumeId, versionId);
+  // A downloadable PDF exists once the render has uploaded one. The precise
+  // signal is the stored file id the download URL resolves to (pdf_file_id on
+  // Appwrite, pdf_r2_key on the legacy path); both a blocked and a finalized
+  // outcome attach it, so it is set well before the version is marked final.
+  const storedFileId =
+    (version as ResumeVersion & { pdf_file_id?: string | null }).pdf_file_id ??
+    version.pdf_r2_key;
+  const hasRenderedPdf = Boolean(storedFileId) || version.status === "final";
+  const downloadResume = () =>
+    downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf");
 
   return (
     <div className="workspace-page max-w-[1720px]">
@@ -260,28 +272,26 @@ export default function ResumeEditorClient({
             className="product-button product-button-primary disabled:opacity-50"
           >
             {finalize.isPending ? <Loader2 className="size-4 animate-spin" /> : <FileCheck2 className="size-4" />}
-            {finalize.isPending ? "Finalizing…" : "Finalize"}
+            {finalize.isPending
+              ? "Finalizing…"
+              : version.status === "final"
+                ? "Re-finalize & render PDF"
+                : "Finalize & render PDF"}
           </button>
-          {(review.isPending || finalize.isPending) && (
-            <span className="text-xs text-[color:var(--color-text-dim)]">
-              Rendering the PDF and scoring the draft, up to a minute.
+          {review.isPending && (
+            <span className="self-center text-xs text-[color:var(--color-text-dim)]">
+              Scoring the draft, up to a minute.
             </span>
-          )}
-          {/* A reviewed version has a rendered PDF even before it is final, so
-              offer the download as soon as one exists. */}
-          {!!downloadUrl && (
-            <button
-              onClick={() =>
-                downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf")
-              }
-              className="product-button product-button-secondary"
-            >
-              <Download className="size-4" />
-              PDF
-            </button>
           )}
         </div>
       </header>
+
+      <FinalizeStatus
+        status={version.status}
+        finalizing={finalize.isPending && finalizeReview === null}
+        hasRenderedPdf={hasRenderedPdf}
+        onDownload={downloadResume}
+      />
 
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.45fr)_minmax(340px,.55fr)]">
         {/* Not a <main>: the app shell already owns the page's main landmark,
@@ -399,8 +409,246 @@ export default function ResumeEditorClient({
           </section>
         </aside>
       </div>
+
+      <FinalizeReviewDialog
+        review={finalizeReview}
+        finalizing={finalize.isPending}
+        onFinalize={() => finalize.mutate(true)}
+        onCancel={() => setFinalizeReview(null)}
+      />
     </div>
   );
+}
+
+function FinalizeStatus({
+  status,
+  finalizing,
+  hasRenderedPdf,
+  onDownload,
+}: {
+  status: string;
+  finalizing: boolean;
+  hasRenderedPdf: boolean;
+  onDownload: () => void;
+}) {
+  if (finalizing) {
+    return (
+      <div className="mb-4 flex items-center gap-2.5 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3.5 text-sm">
+        <Loader2 className="size-4 shrink-0 animate-spin text-[color:var(--color-accent-ink)]" />
+        <span className="text-[color:var(--color-text-muted)]">
+          Finalizing: rendering your one-page PDF and scoring the draft. This can
+          take up to a minute.
+        </span>
+      </div>
+    );
+  }
+  if (status === "final") {
+    return (
+      <div className="notice notice-positive mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-2.5">
+          <CheckCircle2 className="size-5 shrink-0" />
+          <div>
+            <p className="text-sm font-semibold">Resume finalized</p>
+            <p className="notice-detail text-xs leading-5">
+              Your one-page PDF is rendered and stored. Download it here.
+            </p>
+          </div>
+        </div>
+        <button
+          onClick={onDownload}
+          className="product-button product-button-primary shrink-0 justify-center"
+        >
+          <Download className="size-4" />
+          Download PDF
+        </button>
+      </div>
+    );
+  }
+  if (hasRenderedPdf) {
+    return (
+      <div className="mb-4 flex flex-col gap-2 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3 text-xs sm:flex-row sm:items-center sm:justify-between">
+        <span className="text-[color:var(--color-text-dim)]">
+          A PDF from your last review is ready. Finalize to lock this version as
+          final.
+        </span>
+        <button
+          onClick={onDownload}
+          className="product-button product-button-secondary shrink-0 justify-center"
+        >
+          <Download className="size-4" />
+          Download PDF
+        </button>
+      </div>
+    );
+  }
+  return null;
+}
+
+/**
+ * The finalize review, shown in-app instead of through a native browser
+ * confirm. The review advises, it does not gate: an honest one-page resume
+ * routinely scores in the seventies, so the user reads every finding, then
+ * finalizes anyway or returns to editing. Severity uses the same status hues as
+ * the rest of the app, with the most serious findings first.
+ */
+function FinalizeReviewDialog({
+  review,
+  finalizing,
+  onFinalize,
+  onCancel,
+}: {
+  review: ResumeReviewResult | null;
+  finalizing: boolean;
+  onFinalize: () => void;
+  onCancel: () => void;
+}) {
+  const issues = review
+    ? [...review.issues].sort(
+        (a, b) => severityRank(a.severity) - severityRank(b.severity),
+      )
+    : [];
+  return (
+    <Dialog.Root
+      open={review !== null}
+      onOpenChange={(next) => {
+        // Don't let a stray Escape or backdrop click abandon a finalize that is
+        // already in flight.
+        if (!next && !finalizing) onCancel();
+      }}
+    >
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 px-4">
+          <div className="glass max-h-[85vh] overflow-y-auto rounded-[var(--radius-card)] p-6">
+            {review && (
+              <>
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <Dialog.Title className="flex items-center gap-2 text-lg font-semibold">
+                      <ShieldCheck className="size-5 text-[color:var(--color-amber-ink)]" />
+                      Review before finalizing
+                    </Dialog.Title>
+                    <Dialog.Description className="mt-1 text-sm leading-5 text-[color:var(--color-text-muted)]">
+                      The review advises, it does not block. Read what it found,
+                      then finalize anyway or keep editing.
+                    </Dialog.Description>
+                  </div>
+                  <Dialog.Close
+                    aria-label="Close"
+                    disabled={finalizing}
+                    className="grid size-8 shrink-0 place-items-center rounded-md text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+                  >
+                    <X className="size-4" aria-hidden="true" />
+                  </Dialog.Close>
+                </div>
+
+                <div className="mt-4 flex items-center gap-3 rounded-[var(--radius-card)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3">
+                  <div className="text-3xl font-semibold leading-none">
+                    {formatScore(review.score)}
+                  </div>
+                  <div className="text-xs leading-5 text-[color:var(--color-text-dim)]">
+                    <span className="font-medium text-[color:var(--color-text-muted)]">
+                      Quality score
+                    </span>{" "}
+                    out of 100
+                    <br />
+                    {review.page_count} page{review.page_count === 1 ? "" : "s"}{" "}
+                    · {review.text_selectable ? "ATS text verified" : "ATS text issue"}
+                  </div>
+                  <div className="ml-auto shrink-0 text-right text-xs text-[color:var(--color-text-dim)]">
+                    {review.issues.length} finding
+                    {review.issues.length === 1 ? "" : "s"}
+                  </div>
+                </div>
+
+                {issues.length > 0 && (
+                  <ul className="mt-4 space-y-2">
+                    {issues.map((issue) => (
+                      <FinalizeIssueRow
+                        key={`${issue.code}-${issue.message}`}
+                        issue={issue}
+                      />
+                    ))}
+                  </ul>
+                )}
+
+                <p className="mt-4 text-xs leading-5 text-[color:var(--color-text-dim)]">
+                  Finalizing renders and stores the PDF as it stands now. Keep
+                  editing to address these first, or finalize anyway if they are
+                  intentional.
+                </p>
+
+                <div className="mt-4 flex justify-end gap-2">
+                  <button
+                    onClick={onCancel}
+                    disabled={finalizing}
+                    className="product-button product-button-secondary disabled:opacity-50"
+                  >
+                    Keep editing
+                  </button>
+                  <button
+                    onClick={onFinalize}
+                    disabled={finalizing}
+                    className="product-button product-button-primary disabled:opacity-50"
+                  >
+                    {finalizing ? (
+                      <Loader2 className="size-4 animate-spin" />
+                    ) : (
+                      <FileCheck2 className="size-4" />
+                    )}
+                    {finalizing ? "Finalizing…" : "Finalize anyway"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
+  );
+}
+
+const SEVERITY_RANK: Record<string, number> = {
+  blocking: 0,
+  warning: 1,
+  suggestion: 2,
+};
+
+function severityRank(severity: string): number {
+  return SEVERITY_RANK[severity] ?? 3;
+}
+
+function FinalizeIssueRow({ issue }: { issue: ResumeReviewIssue }) {
+  const pill =
+    issue.severity === "blocking"
+      ? "bg-[color:var(--color-rose)]/15 text-[color:var(--color-rose-ink)]"
+      : issue.severity === "warning"
+        ? "bg-[color:var(--color-amber)]/15 text-[color:var(--color-amber-ink)]"
+        : "bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)]";
+  return (
+    <li className="rounded-[var(--radius-nested)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] p-3">
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${pill}`}
+        >
+          {issue.severity}
+        </span>
+        {issue.section && (
+          <span className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+            {issue.section}
+          </span>
+        )}
+      </div>
+      <p className="mt-1.5 text-xs leading-5 text-[color:var(--color-text)]">
+        {issue.message}
+      </p>
+    </li>
+  );
+}
+
+function formatScore(score: string | number | null | undefined): string {
+  const value = Number(score);
+  return Number.isFinite(value) ? String(Math.round(value)) : "N/A";
 }
 
 function ProposalPanel({
@@ -906,7 +1154,7 @@ function QualityPanel({
             {review.page_count} page · {review.text_selectable ? "ATS text verified" : "text issue"}
           </p>
         </div>
-        <div className="text-2xl font-semibold">{Math.round(Number(review.score))}</div>
+        <div className="text-2xl font-semibold">{formatScore(review.score)}</div>
       </div>
       {review.github_projects_checked.length > 0 && (
         <div className="mt-3 flex items-center gap-2 rounded-lg bg-[color:var(--color-surface-2)] px-3 py-2 text-[11px] text-[color:var(--color-text-dim)]">
