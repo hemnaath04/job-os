@@ -3,29 +3,37 @@
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { AlertCircle, ArrowUpRight, CheckCircle2, Loader2, X } from "lucide-react";
 import Link from "next/link";
-import { dismissProcess, useRunningProcess } from "@/lib/process-store";
+import {
+  dismissOperation,
+  operationDetail,
+  operationTitle,
+  useOperations,
+  type Operation,
+} from "@/lib/operations-store";
 
 /**
- * A small floating card that reports the one long-running background job, a
- * resume tailor pass, on every workspace page. It survives navigation because it
- * is mounted once in the shell and reads a global store, so a run started on the
- * Tailor page keeps reporting here after the user leaves, and a click lands on
- * the finished resume once it is ready.
+ * A small floating stack that reports every long-running agent job, a tailor
+ * (draft), an AI revision, a resume import, a profile extract, on every
+ * workspace page. It survives navigation because it is mounted once in the shell
+ * and reads a global store, so a job started on one page keeps reporting here
+ * after the user leaves, and a click lands on the finished result once it is
+ * ready. More than one job at a time stacks, newest nearest the corner.
  *
  * Placement is bottom-left: clear of the bottom-right toaster, clear of the
- * desktop sidebar (which is never wider than 232px), and lifted above the mobile
- * bottom nav and the home-indicator safe area.
+ * desktop sidebar (never wider than 232px), and lifted above the mobile bottom
+ * nav and the home-indicator safe area.
  */
 export function RunningProcessIndicator() {
-  const process = useRunningProcess();
+  const operations = useOperations();
   const reduceMotion = useReducedMotion();
 
   return (
-    <div className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] left-4 z-40 lg:bottom-6 lg:left-[248px]">
-      <AnimatePresence>
-        {process && (
+    <div className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] left-4 z-40 flex flex-col-reverse items-start gap-2 lg:bottom-6 lg:left-[248px]">
+      <AnimatePresence initial={false}>
+        {operations.map((op) => (
           <motion.div
-            key={process.status}
+            key={op.id}
+            layout={!reduceMotion}
             initial={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={reduceMotion ? { opacity: 0 } : { opacity: 0, y: 8, scale: 0.98 }}
@@ -36,52 +44,47 @@ export function RunningProcessIndicator() {
             }
             className="pointer-events-auto w-[min(20rem,calc(100vw-2rem))]"
           >
-            <ProcessCard process={process} />
+            <OperationCard op={op} />
           </motion.div>
-        )}
+        ))}
       </AnimatePresence>
     </div>
   );
 }
 
-function ProcessCard({ process }: { process: NonNullable<ReturnType<typeof useRunningProcess>> }) {
-  const running = process.status === "running";
-  const done = process.status === "done";
+function OperationCard({ op }: { op: Operation }) {
+  const running = op.status === "running";
+  const title = operationTitle(op);
+  const detail = operationDetail(op);
 
   const ariaLabel = running
-    ? "Tailoring in progress. Open the Tailor page."
-    : done
-      ? "Tailored resume ready. Open the finished resume."
-      : "Tailoring did not finish. Return to the Tailor page.";
+    ? `${title}. In progress, open the page it runs on.`
+    : op.status === "done"
+      ? `${title}. ${detail}.`
+      : `${title}. ${detail}`;
 
   return (
     <div className="relative">
       <Link
-        href={process.href}
+        href={op.href}
         aria-label={ariaLabel}
         className="workspace-panel workspace-panel-interactive block rounded-[var(--radius-card)] p-3.5 transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-ink)]"
       >
         {/* aria-live so a screen reader announces the change from running to
-            ready without the user having to poll the corner themselves. */}
+            ready without the user having to watch the corner. */}
         <div role="status" aria-live="polite" className="flex items-start gap-2.5">
-          <StatusIcon status={process.status} />
+          <StatusIcon status={op.status} />
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-[color:var(--color-text)]">
-              <span className="truncate">{process.title}</span>
+              <span className="truncate">{title}</span>
               {!running && (
                 <ArrowUpRight className="size-3.5 shrink-0 text-[color:var(--color-text-dim)]" />
               )}
             </div>
             <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
-              {running
-                ? process.stage
-                  ? process.stage
-                  : "Working on the server. Safe to keep browsing."
-                : done
-                  ? "Open the finished resume"
-                  : process.message}
+              {detail}
             </p>
-            {running && <ProgressTrack pct={process.pct} />}
+            {running && <ProgressTrack pct={op.pct} />}
           </div>
         </div>
       </Link>
@@ -89,7 +92,7 @@ function ProcessCard({ process }: { process: NonNullable<ReturnType<typeof useRu
       {!running && (
         <button
           type="button"
-          onClick={dismissProcess}
+          onClick={() => dismissOperation(op.id)}
           aria-label="Dismiss"
           className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] text-[color:var(--color-text-dim)] shadow-[var(--shadow-xs)] transition hover:text-[color:var(--color-text)] active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-ink)]"
         >
@@ -100,7 +103,7 @@ function ProcessCard({ process }: { process: NonNullable<ReturnType<typeof useRu
   );
 }
 
-function StatusIcon({ status }: { status: RunningStatus }) {
+function StatusIcon({ status }: { status: Operation["status"] }) {
   if (status === "running") {
     return (
       <Loader2
@@ -126,7 +129,7 @@ function StatusIcon({ status }: { status: RunningStatus }) {
 }
 
 /**
- * Only drawn when the agent has reported a real fraction. Before that, the copy
+ * Only drawn when the agent has reported a real fraction. Before that the copy
  * says the work is running and no bar is shown, rather than inventing a
  * percentage the server never sent.
  */
@@ -138,7 +141,7 @@ function ProgressTrack({ pct }: { pct: number | null }) {
       <div
         className="h-1.5 flex-1 overflow-hidden rounded-full bg-[color:var(--color-surface-3)]"
         role="progressbar"
-        aria-label="Tailoring progress"
+        aria-label="Progress"
         aria-valuenow={percent}
         aria-valuemin={0}
         aria-valuemax={100}
@@ -154,5 +157,3 @@ function ProgressTrack({ pct }: { pct: number | null }) {
     </div>
   );
 }
-
-type RunningStatus = "running" | "done" | "failed";

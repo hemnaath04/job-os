@@ -380,6 +380,26 @@ export default function ResumeEditorClient({
                   {message.role === "assistant" && !!message.blocked_claims?.length && (
                     <BlockedClaimsNotice claims={message.blocked_claims} />
                   )}
+                  {/* A proposal reached after navigating back (or after a reload)
+                      is only in the log, not the live panel below, so give it a
+                      way to still be applied rather than stranding the result. */}
+                  {message.role === "assistant" &&
+                    !message.applied &&
+                    !!message.proposed_json_resume &&
+                    pendingProposal?.proposal_id !== message.id && (
+                      <button
+                        onClick={() => applyProposal.mutate(message.id)}
+                        disabled={applyProposal.isPending}
+                        className="product-button product-button-secondary w-full justify-center disabled:opacity-50"
+                      >
+                        {applyProposal.isPending ? (
+                          <Loader2 className="size-4 animate-spin" />
+                        ) : (
+                          <CheckCircle2 className="size-4" />
+                        )}
+                        Apply this edit and review
+                      </button>
+                    )}
                 </div>
               ))}
               {!messagesQuery.data?.length && (

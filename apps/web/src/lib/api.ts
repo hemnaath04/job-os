@@ -169,8 +169,14 @@ const AGENT_TIMEOUT_MS = 15 * 60 * 1_000;
  * never resolves.
  */
 const RENDER_TIMEOUT_MS = 2 * 60 * 1_000;
-/** A single conversational edit is one Claude call, not a batch job. */
-const REVISE_TIMEOUT_MS = 4 * 60 * 1_000;
+/**
+ * A single conversational edit is one Claude call, but a grounded revision over
+ * a full resume routinely runs three to five minutes. Cap it generously so the
+ * in-page wait does not surface an error while the job is still landing; the
+ * shell's operations tracker also follows the same job independently, so the
+ * result is reachable even past this.
+ */
+const REVISE_TIMEOUT_MS = 8 * 60 * 1_000;
 const WARM_TIMEOUT_MS = 12 * 1_000;
 /**
  * Building a template is the slowest call in the app: a cold start, a model

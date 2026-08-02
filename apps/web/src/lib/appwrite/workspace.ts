@@ -25,6 +25,7 @@ import {
   getCurrentAppwriteUserId,
 } from "./client";
 import { requirePublicAppwriteConfig } from "./config";
+import { registerAgentOperation } from "@/lib/operations-bus";
 
 interface SnapshotRow extends Models.Row {
   owner_id: string;
@@ -231,6 +232,9 @@ async function createAgentJob<TInput extends Record<string, unknown>>(
     });
     throw error;
   }
+  // Announce the queued job so the shell's operations tracker follows it to
+  // completion, on every page, no matter which flow started it.
+  registerAgentOperation({ id, kind, input });
   return job;
 }
 
