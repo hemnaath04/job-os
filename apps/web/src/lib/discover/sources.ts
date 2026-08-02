@@ -79,15 +79,15 @@ export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
   },
   greenhouse: {
     label: "Greenhouse",
-    hint: "Stripe, Airbnb, Anthropic and 17 more",
+    hint: "Stripe, Airbnb, Anthropic and 37 more",
   },
   lever: {
     label: "Lever",
-    hint: "Public Lever boards",
+    hint: "Palantir, Veeva, Shield AI and 6 more",
   },
   ashby: {
     label: "Ashby",
-    hint: "OpenAI, Ramp, Notion and 7 more",
+    hint: "OpenAI, Ramp, Notion and 33 more",
   },
   remotive: {
     label: "Remotive",

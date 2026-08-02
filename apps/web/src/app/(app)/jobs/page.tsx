@@ -26,6 +26,12 @@ import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { api } from "@/lib/api";
+import {
+  buildProfileVocab,
+  scoreJob,
+  type FitResult,
+  type ProfileVocab,
+} from "@/lib/discover/fit-score";
 import { reportFailure } from "@/lib/errors";
 import {
   CUSTOM_SOURCES_CHANGED_EVENT,
@@ -59,10 +65,10 @@ import type {
   SavedSearch,
 } from "@/lib/types";
 
-type SortMode = "recency" | "relevance" | "location";
+type SortMode = "fit" | "recency" | "location";
 const SORT_LABEL: Record<SortMode, string> = {
+  fit: "Best fit",
   recency: "Recency",
-  relevance: "Relevance",
   location: "My location",
 };
 
@@ -273,6 +279,12 @@ export default function DiscoverPage() {
     queryKey: ["saved-searches"],
     queryFn: () => api.listSavedSearches(),
   });
+  // The verified profile powers the per-job fit score. Loaded once; the score
+  // is computed client-side so a whole page ranks instantly and for free.
+  const { data: facts = [] } = useQuery({
+    queryKey: ["facts"],
+    queryFn: () => api.listFacts(),
+  });
 
   // Hydrate from localStorage so the result list survives nav, reload, and
   // closing and reopening the browser, until Clear results.
@@ -290,7 +302,9 @@ export default function DiscoverPage() {
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
   const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
-  const [sort, setSort] = useState<SortMode>(initial.sort ?? "recency");
+  // Default to fit so the strongest matches lead. When the profile is empty the
+  // fit branch falls back to recency, so this is safe for a fresh account too.
+  const [sort, setSort] = useState<SortMode>(initial.sort ?? "fit");
 
   const [smartQuery, setSmartQuery] = useState<string>("");
 
@@ -518,17 +532,27 @@ export default function DiscoverPage() {
   }
 
   // Sort cached results client-side. Recompute on sort change.
-  const titleKeywords = splitCsv(titles);
   const userLocation = (settings?.default_location ?? "").toLowerCase().trim();
+  const vocab: ProfileVocab = useMemo(() => buildProfileVocab(facts), [facts]);
+  // Score every result once, keyed the same way the card list is keyed, so both
+  // the sort and each card's badge read from the same computation.
+  const fitByKey = useMemo(() => {
+    const m = new Map<string, FitResult>();
+    if (!results || !vocab.ready) return m;
+    for (const r of results) m.set(resultKey(r), scoreJob(r, vocab));
+    return m;
+  }, [results, vocab]);
   const sortedResults = useMemo(() => {
     if (!results) return null;
     const copy = [...results];
-    if (sort === "recency") {
+    if (sort === "fit") {
+      copy.sort((a, b) => {
+        const fb = fitByKey.get(resultKey(b))?.score ?? -1;
+        const fa = fitByKey.get(resultKey(a))?.score ?? -1;
+        return fb - fa || tsOrZero(b.posted_at) - tsOrZero(a.posted_at);
+      });
+    } else if (sort === "recency") {
       copy.sort((a, b) => tsOrZero(b.posted_at) - tsOrZero(a.posted_at));
-    } else if (sort === "relevance") {
-      copy.sort(
-        (a, b) => relevanceScore(b, titleKeywords) - relevanceScore(a, titleKeywords),
-      );
     } else if (sort === "location") {
       copy.sort((a, b) => {
         const aHit = userLocation && (a.location ?? "").toLowerCase().includes(userLocation);
@@ -540,7 +564,7 @@ export default function DiscoverPage() {
     }
     return copy;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, sort, titles, userLocation]);
+  }, [results, sort, userLocation, fitByKey]);
 
   return (
     <div className="workspace-page max-w-7xl">
@@ -829,7 +853,7 @@ export default function DiscoverPage() {
         </div>
       </div>
 
-      {/* Per-source warnings — surfaced any time a source returned 0 hits or
+      {/* Per-source warnings, surfaced any time a source returned 0 hits or
           threw (e.g. THEIRSTACK_API_KEY missing in Render). Prevents the
           "only SimplifyJobs is showing" mystery state where one source silently
           fails. */}
@@ -931,8 +955,9 @@ export default function DiscoverPage() {
                 <ResultCard
                   // source_id is only unique within a source, and the list is
                   // now merged across seven of them.
-                  key={`${r.source}:${r.source_id || r.source_url}`}
+                  key={resultKey(r)}
                   result={r}
+                  fit={fitByKey.get(resultKey(r))}
                   onImported={() => {
                     setResults((prev) =>
                       prev?.map((x) =>
@@ -956,13 +981,35 @@ export default function DiscoverPage() {
   );
 }
 
+// The at-a-glance match. Colour tracks the number so a strong fit reads green
+// before the digits are even parsed. The tooltip spells out the ratio behind it.
+function FitBadge({ fit }: { fit: FitResult }) {
+  const tone =
+    fit.score >= 75
+      ? "border-[color:var(--color-mint)]/35 bg-[color:var(--color-mint)]/15 text-[color:var(--color-mint-ink)]"
+      : fit.score >= 50
+        ? "border-[color:var(--color-accent-border)] bg-[color:var(--color-accent)]/30 text-[color:var(--color-accent-ink)]"
+        : "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)]";
+  const total = fit.matched.length + fit.gaps.length;
+  return (
+    <span
+      className={`shrink-0 self-start rounded-full border px-2 py-0.5 text-[11px] font-semibold tabular-nums ${tone}`}
+      title={`Fit to your profile: you match ${fit.matched.length} of ${total} skills this role names`}
+    >
+      {fit.score}% fit
+    </span>
+  );
+}
+
 function ResultCard({
   result,
+  fit,
   onImported,
   onTailored,
   onGoToApplications,
 }: {
   result: DiscoveryResult;
+  fit?: FitResult;
   onImported: () => void;
   onTailored: (jobId: string) => void;
   onGoToApplications: () => void;
@@ -1055,6 +1102,7 @@ function ResultCard({
             </div>
           )}
         </div>
+        {fit && fit.confident && <FitBadge fit={fit} />}
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-dim)]">
@@ -1080,7 +1128,35 @@ function ResultCard({
         </p>
       )}
 
-      {result.technologies.length > 0 && (
+      {fit && fit.confident && (fit.matched.length > 0 || fit.gaps.length > 0) ? (
+        // When we can judge fit, the skills the posting names are more useful
+        // shown against the profile than as raw source tags: what you already
+        // back, and what this role wants that you do not.
+        <div className="mt-2 flex flex-col gap-1">
+          {fit.matched.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1">
+              {fit.matched.slice(0, 5).map((t) => (
+                <span
+                  key={t}
+                  className="rounded-full border border-[color:var(--color-mint)]/30 bg-[color:var(--color-mint)]/10 px-2 py-0.5 text-[10px] text-[color:var(--color-mint-ink)]"
+                >
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+          {fit.gaps.length > 0 && (
+            <div className="flex flex-wrap items-center gap-1 text-[10px] text-[color:var(--color-text-dim)]">
+              <span className="uppercase tracking-wide">Gaps</span>
+              {fit.gaps.slice(0, 3).map((t) => (
+                <span key={t} className="rounded-full bg-[color:var(--color-surface-2)] px-2 py-0.5">
+                  {t}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ) : result.technologies.length > 0 ? (
         <div className="mt-2 flex flex-wrap gap-1">
           {result.technologies.slice(0, 6).map((t) => (
             <span
@@ -1091,7 +1167,7 @@ function ResultCard({
             </span>
           ))}
         </div>
-      )}
+      ) : null}
 
       <div className="mt-auto flex items-center justify-between gap-2 pt-3">
         {result.already_imported ? (
@@ -1363,17 +1439,10 @@ function tsOrZero(s: string | null | undefined): number {
   return s ? new Date(s).getTime() : 0;
 }
 
-function relevanceScore(r: DiscoveryResult, keywords: string[]): number {
-  if (keywords.length === 0) return tsOrZero(r.posted_at);
-  const haystack = `${r.title} ${r.description}`.toLowerCase();
-  let score = 0;
-  for (const k of keywords) {
-    const needle = k.toLowerCase();
-    if (!needle) continue;
-    if (r.title.toLowerCase().includes(needle)) score += 3;
-    if (haystack.includes(needle)) score += 1;
-  }
-  return score * 1e12 + tsOrZero(r.posted_at);
+// The same identity the card list keys on, so the fit map and the rendered
+// cards line up. source_id is only unique within a source.
+function resultKey(r: DiscoveryResult): string {
+  return `${r.source}:${r.source_id || r.source_url}`;
 }
 
 function hasEmptySource(

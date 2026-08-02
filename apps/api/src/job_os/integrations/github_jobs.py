@@ -1,7 +1,7 @@
 """GitHub-hosted intern/new-grad lists (SimplifyJobs / PittCSC heritage).
 
 These repos maintain a Markdown table of open roles; we parse the README and
-treat each row as a discovery hit. We do NOT scrape companies directly here —
+treat each row as a discovery hit. We do NOT scrape companies directly here:
 the repo maintainers already aggregate them; we're just reading their list.
 
 Parsing notes (current as of 2026-06-20):
@@ -14,16 +14,21 @@ Parsing notes (current as of 2026-06-20):
   is the real apply URL, the second is the Simplify redirect.
 - Age cell: `Nd` days-since-posted; we convert to a UTC datetime.
 
-The repos update many times a day; the user wants fresh data on every search,
-so there's no result cache — `list_repo_jobs` re-fetches the README each call.
-GitHub doesn't rate-limit anonymous reads of raw.githubusercontent for this
-volume; if that ever becomes an issue we'll add a 30-60s cache here.
+The repos update many times a day, but re-downloading and re-parsing both
+READMEs on every search is wasteful, so `list_repo_jobs` keeps a small
+in-process cache of the parsed rows, keyed by repo, with a 5 minute TTL.
+Repeated searches inside that window reuse the parsed result; the first call
+after it expires re-fetches and re-parses. GitHub doesn't rate-limit anonymous
+reads of raw.githubusercontent at this volume, so the TTL is about our own
+latency and CPU rather than their limits. The cache lives per worker process,
+so a redeploy or a freshly spawned worker starts cold.
 """
 from __future__ import annotations
 
 import asyncio
 import hashlib
 import re
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final
@@ -82,7 +87,7 @@ def _parse_age(cell: str) -> datetime | None:
 
 
 def _first_apply_url(cell: Tag) -> str | None:
-    """First <a href> inside the Application cell — the real apply URL.
+    """First <a href> inside the Application cell, the real apply URL.
 
     Skip simplify.jobs/* redirects (those are the second link in every row)."""
     fallback: str | None = None
@@ -96,7 +101,7 @@ def _first_apply_url(cell: Tag) -> str | None:
         if fallback is None:
             fallback = href_str
         if "simplify.jobs/" in href_str and "/p/" in href_str:
-            # The Simplify redirect — keep looking for the upstream URL.
+            # The Simplify redirect, keep looking for the upstream URL.
             continue
         return href_str
     return fallback
@@ -108,7 +113,7 @@ def _parse_table(repo: str, md: str) -> list[GithubJob]:
     jobs: list[GithubJob] = []
     for table in soup.find_all("table"):
         last_company: str | None = None
-        # Iterate body rows only — header rows live in <thead>.
+        # Iterate body rows only. Header rows live in <thead>.
         for tr in table.find_all("tr"):
             tds = tr.find_all("td")
             if len(tds) < 5:
@@ -155,13 +160,46 @@ async def _fetch_md(url: str) -> str:
         return resp.text
 
 
+# Parsed rows keyed by repo, plus the monotonic time we filled the entry.
+# Guarded per repo so two concurrent searches for the same repo fetch once
+# rather than stampeding raw.githubusercontent. A single event loop makes the
+# lock creation itself race-free; the GIL covers the plain dict access.
+_CACHE_TTL_SECONDS: Final[float] = 300.0
+_jobs_cache: dict[str, tuple[float, list[GithubJob]]] = {}
+_cache_locks: dict[str, asyncio.Lock] = {}
+
+
+def _cache_lock(repo: str) -> asyncio.Lock:
+    lock = _cache_locks.get(repo)
+    if lock is None:
+        lock = asyncio.Lock()
+        _cache_locks[repo] = lock
+    return lock
+
+
+def _cached_jobs(repo: str) -> list[GithubJob] | None:
+    hit = _jobs_cache.get(repo)
+    if hit is not None and time.monotonic() - hit[0] < _CACHE_TTL_SECONDS:
+        return hit[1]
+    return None
+
+
 async def list_repo_jobs(repo: str) -> list[GithubJob]:
     if repo not in REPOS:
         raise ValueError(f"unknown repo: {repo}")
-    md = await _fetch_md(REPOS[repo])
-    jobs = _parse_table(repo, md)
-    log.info("github.parsed", repo=repo, count=len(jobs))
-    return jobs
+    fresh = _cached_jobs(repo)
+    if fresh is not None:
+        return fresh
+    async with _cache_lock(repo):
+        # A caller we queued behind may have just refilled the entry.
+        fresh = _cached_jobs(repo)
+        if fresh is not None:
+            return fresh
+        md = await _fetch_md(REPOS[repo])
+        jobs = _parse_table(repo, md)
+        _jobs_cache[repo] = (time.monotonic(), jobs)
+        log.info("github.parsed", repo=repo, count=len(jobs))
+        return jobs
 
 
 async def list_all_jobs() -> list[GithubJob]:
