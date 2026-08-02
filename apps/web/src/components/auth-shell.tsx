@@ -29,7 +29,7 @@ export function AuthShell({
       <div className="grid min-h-[calc(100vh-1.5rem)] gap-3 lg:grid-cols-[1.02fr_0.98fr]">
         {/* Form column */}
         <section className="flex items-center justify-center rounded-[1.25rem] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-6 py-12 sm:px-10 lg:px-14">
-          <div className="w-full max-w-[26rem]">
+          <div className="w-full max-w-[31rem]">
             <Wordmark />
             <div className="animate-rise-in">{children}</div>
           </div>
@@ -79,6 +79,10 @@ function Wordmark() {
 export const clerkAppearance = {
   variables: {
     colorPrimary: "var(--color-accent-ink)",
+    // The button fill is jasmine, so its label has to be the dark ink the rest
+    // of the app puts on that colour. Without this Clerk picks white and the
+    // Continue button reads as blank: pale yellow on pale yellow.
+    colorPrimaryForeground: "var(--color-on-accent)",
     colorBackground: "var(--color-surface-1)",
     colorInputBackground: "var(--color-surface-2)",
     colorInputText: "var(--color-text)",
@@ -90,14 +94,20 @@ export const clerkAppearance = {
     colorWarning: "var(--color-amber-ink)",
     borderRadius: "var(--radius-control)",
     fontFamily: "var(--font-sans)",
+    // Scale the whole widget up. Clerk sizes itself from these two, and they
+    // are the only reliable way in: utility classes passed through `elements`
+    // lose to Clerk's own generated CSS, which is why the first attempt at
+    // restyling the button did nothing.
+    fontSize: "0.95rem",
+    spacing: "1.15rem",
   },
   elements: {
     // The widget sits inside our own column, so it brings no card of its own.
-    rootBox: "w-full",
-    cardBox: "w-full shadow-none border-0",
-    card: "bg-transparent shadow-none border-0 p-0",
+    rootBox: "!w-full",
+    cardBox: "!w-full !shadow-none !border-0",
+    card: "!bg-transparent !shadow-none !border-0 !p-0",
     headerTitle:
-      "text-[color:var(--color-text)] text-2xl tracking-[-0.03em] font-medium",
+      "!text-[color:var(--color-text)] !text-3xl !tracking-[-0.035em] !font-medium",
     headerSubtitle: "text-[color:var(--color-text-muted)]",
     socialButtonsBlockButton:
       "border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text)] hover:bg-[color:var(--color-surface-hover)]",
@@ -106,8 +116,10 @@ export const clerkAppearance = {
     formFieldLabel: "text-[color:var(--color-text)]",
     formFieldInput:
       "field-control placeholder:text-[color:var(--color-text-dim)]",
-    formButtonPrimary:
-      "bg-white text-black hover:bg-white/90 w-full normal-case tracking-normal font-semibold shadow-none",
+    // Colour comes from `variables` above, not from here. These only nudge the
+    // things Clerk leaves alone, and they carry `!` because a bare utility
+    // class loses the specificity fight with Clerk's own stylesheet.
+    formButtonPrimary: "!font-semibold !normal-case !tracking-normal",
     footerActionText: "text-[color:var(--color-text-muted)]",
     footerActionLink:
       "text-[color:var(--color-accent-ink)] underline decoration-from-font underline-offset-2",
