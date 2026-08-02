@@ -23,6 +23,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
@@ -188,8 +189,18 @@ def link_label(value: Any) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _fmt_date(value: str | date | datetime | None) -> str:
-    """JSON Resume dates are YYYY-MM or YYYY. Render them like 'Jul 2024'."""
+def _fmt_date(
+    value: str | date | datetime | None,
+    *,
+    escape: Callable[[Any], str] = latex_escape,
+) -> str:
+    """JSON Resume dates are YYYY-MM or YYYY. Render them like 'Jul 2024'.
+
+    `escape` is how to render a value that is not a date at all, which is the
+    one branch here that emits user text verbatim. The Typst renderer shares
+    this function and passes its own cleaner, so the two engines cannot start
+    formatting the same date differently.
+    """
     if value is None or value == "":
         return ""
     if isinstance(value, (date, datetime)):
@@ -198,7 +209,7 @@ def _fmt_date(value: str | date | datetime | None) -> str:
     try:
         year = int(parts[0])
     except ValueError:
-        return latex_escape(value)
+        return escape(value)
     try:
         month = int(parts[1]) if len(parts) > 1 else None
     except ValueError:
@@ -670,6 +681,45 @@ def compile_pdf(
         return pdf.read_bytes()
 
 
+def _try_typst(json_resume: dict[str, Any], key: str) -> RenderedPdf | None:
+    """Render through Typst, or return None to let Tectonic handle it.
+
+    Returns rather than raises on every "not this way" answer, because none of
+    them is the user's problem: a template nobody has ported yet, a catalogue
+    entry not yet marked as matching, or an image built without the binary all
+    mean the same thing to a caller, which is that the slow path renders it.
+    A template that IS ported and DOES fail is a different matter and raises,
+    since silently serving a different layout would hide a real regression.
+    """
+    # Imported here rather than at module scope: typst_render imports this
+    # module for the shared date helpers, and at module scope that is a cycle.
+    from job_os.services import typst_render
+    from job_os.services.latex_catalog import builtin
+
+    try:
+        spec = builtin(key)
+    except KeyError:
+        return None
+    if not spec.typst_ready or not typst_render.has_builtin(key):
+        return None
+    try:
+        return typst_render.render_resume_pdf(json_resume, template_key=key)
+    except typst_render.TypstUnavailableError:
+        return None
+
+
+def render_engine() -> str:
+    """Which engine renders a bundled template: `tectonic` (the default) or `typst`.
+
+    An environment variable rather than a field on a request, because this is a
+    deployment decision and not something a caller should be able to ask for.
+    `typst` is still per template: it means "use Typst wherever the template has
+    been ported and its output has been checked", and anything else falls
+    through to Tectonic below.
+    """
+    return os.environ.get("RENDER_ENGINE", "tectonic").strip().lower()
+
+
 def render_resume_pdf(
     json_resume: dict[str, Any],
     *,
@@ -682,8 +732,23 @@ def render_resume_pdf(
     from an upload is used. `template_key` names a bundled template. Neither
     given falls back to the default, which is a single-column look that parses
     cleanly in applicant tracking systems.
+
+    A bundled template may render through Typst instead of Tectonic, which is
+    two orders of magnitude faster. That is opt-in per template and per
+    deployment, and it never changes what a caller has to pass: this signature
+    is the whole interface, and `resume_engine.py` neither knows nor cares which
+    engine produced the bytes.
     """
     from job_os.services.latex_catalog import DEFAULT_TEMPLATE_KEY, builtin
+
+    # A stored template is model-written source, and it stays on Tectonic. The
+    # hardening for executing somebody else's markup lives there: --untrusted,
+    # the forbidden-command screen, the scrubbed environment. None of that
+    # transfers for free, so the fast path is offered only for templates we wrote.
+    if latex_source is None and render_engine() == "typst":
+        rendered = _try_typst(json_resume, template_key or DEFAULT_TEMPLATE_KEY)
+        if rendered is not None:
+            return rendered
 
     model = build_render_model(json_resume)
     if latex_source is not None:

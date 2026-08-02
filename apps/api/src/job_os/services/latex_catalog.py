@@ -27,6 +27,13 @@ class BuiltinTemplate:
     author: str
     changes: str = ""
     tags: tuple[str, ...] = field(default_factory=tuple)
+    # Whether this template also exists as a Typst port whose output has been
+    # compared against the LaTeX one and honestly matches. Typst renders the
+    # same page in about a tenth of a second where Tectonic takes twenty, but
+    # speed is worth nothing if the resume comes out looking different, so this
+    # is set per template after a side-by-side check and not before. It only
+    # takes effect where RENDER_ENGINE=typst; see latex_render.render_engine.
+    typst_ready: bool = False
 
 
 BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
@@ -50,6 +57,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "compiles under Tectonic's XeTeX engine."
         ),
         tags=("single column", "classic", "ats safe"),
+        typst_ready=True,
     ),
     BuiltinTemplate(
         key="sb2nov",
@@ -68,6 +76,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "compiles under Tectonic's XeTeX engine."
         ),
         tags=("single column", "compact", "ats safe"),
+        typst_ready=True,
     ),
     BuiltinTemplate(
         key="awesome-cv",
@@ -161,6 +170,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "omits."
         ),
         tags=("two column", "designed", "lato"),
+        typst_ready=True,
     ),
 )
 
