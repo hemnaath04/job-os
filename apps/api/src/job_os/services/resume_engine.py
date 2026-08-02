@@ -552,6 +552,40 @@ def _document_quality_score(doc: dict[str, Any]) -> Decimal:
     return score
 
 
+def provisional_review(doc: dict[str, Any]) -> ResumeReviewResult:
+    """The rules-only half of `review_resume`: no render, no model, no network.
+
+    A runtime that can neither render a PDF nor afford a ninety-second review
+    call still owes the caller an honest first read of the document. This runs
+    exactly the checks a rule can run and scores them on the same weighted issue
+    model the full review uses, so the two never contradict each other.
+
+    `passed` is False by construction. The independent review has not happened,
+    and an unknown is not a pass, which is the same stance `review_resume` takes
+    when its model call fails. The caller is expected to replace this wholesale
+    the moment a render-backed review lands.
+    """
+    validate_json_resume_document(doc)
+    issues, page_count, text_selectable = deterministic_review(doc, b"")
+    score, breakdown = _score_from_issues(issues)
+    return ResumeReviewResult(
+        score=score.quantize(Decimal("0.1")),
+        passed=False,
+        page_count=page_count,
+        text_selectable=text_selectable,
+        issues=issues,
+        strengths=[],
+        github_projects_checked=[],
+        model_summary=(
+            "Provisional score from the automated document checks only. The "
+            "independent AI review, the page count and the selectable-text "
+            "check run once the PDF is rendered."
+        ),
+        model_estimate=None,
+        score_breakdown=breakdown,
+    )
+
+
 async def review_resume(
     doc: dict[str, Any],
     *,
@@ -777,7 +811,13 @@ async def revise_resume(
         "patch. Preserve JSON Resume keys. Keep it one-page and concise.\n\n"
         f"USER REQUEST:\n{message}\n\n"
         f"CURRENT RESUME:\n{json.dumps(doc, ensure_ascii=False)[:24000]}\n\n"
-        f"VERIFIED FACTS:\n{json.dumps(verified_facts, ensure_ascii=False)[:18000]}\n\n"
+        # Compact, for the same reason the review is: sent raw, this profile is
+        # 40,179 characters and the 18,000 cut landed mid-JSON, dropping 39 skill
+        # facts, 3 certifications, 3 projects, an education entry and a job. The
+        # editor was refusing supported claims because the evidence for them had
+        # been truncated away. Compacted it is 12,542 characters and fits whole.
+        "VERIFIED FACTS (complete):\n"
+        f"{json.dumps(_compact_facts(verified_facts), ensure_ascii=False)[:18000]}\n\n"
         f"GITHUB README EVIDENCE:\n{json.dumps(github_context, ensure_ascii=False)[:20000]}\n\n"
         f"UNAVAILABLE GITHUB EVIDENCE:\n{json.dumps(missing_repos)}\n\n"
         # The request reads like a chat turn, so say plainly that the reply is
@@ -828,6 +868,16 @@ async def revise_resume(
 
     # Defense in depth: new metrics must already exist in verified facts or
     # the current resume. Chat remains an editor, not a fact-creation path.
+    #
+    # CAREER_OPS_RULES is deliberately NOT a source here, tempting as it looks.
+    # It states "Sathyabama ... CGPA 8.39/10.0" where the matching vault fact
+    # carries score: null, so harvesting its numbers would end the circular
+    # failure where the reviewer suggests adding the CGPA and this guard then
+    # rejects it. But the same file spells out the numbers it FORBIDS, "~92%",
+    # "2 minutes to 10 seconds", and the cumulative GPA 3.334 that must not be
+    # shown automatically. Reading numbers out of a prose rules file cannot tell
+    # a permission from a prohibition, so it would whitelist precisely the claims
+    # the rules exist to block. The right place to fix the CGPA is the vault.
     source_numbers = set(
         NUMBER_RE.findall(
             _resume_text(doc)

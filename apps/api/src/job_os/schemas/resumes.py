@@ -149,6 +149,17 @@ class ResumeRenderReviewRequest(ORMModel):
     # it is filled in a Jinja sandbox and compiled with tectonic --untrusted.
     template_key: str | None = None
     latex_source: str | None = None
+    # The evidence vault the resume was built from, when the caller has it.
+    #
+    # This endpoint is stateless and resumes tailored through the Appwrite
+    # workspace do not exist in this database, so the reviewer cannot look the
+    # facts up: only the caller can supply them. Without them it has an empty
+    # vault and grades the candidate's own verified history as unverified.
+    # Measured on one real tailored document, the identical resume scored 21.0
+    # with no facts and 60.0 with them, a 39-point swing driven by three
+    # false blocking issues. Optional so an older client still gets a review,
+    # just a blinder one.
+    verified_facts: list[dict[str, Any]] | None = None
 
 
 class ResumeRenderReviewResponse(BaseModel):

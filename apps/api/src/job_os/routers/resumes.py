@@ -310,7 +310,10 @@ async def render_and_review_draft(
     writes the result back to Appwrite.
 
     Stateless on purpose. Resumes tailored through the Appwrite workspace do not
-    exist in this database, so there is no row to look up.
+    exist in this database, so there is no row to look up. That is also why the
+    caller has to hand over `verified_facts`: the reviewer needs the evidence
+    vault to tell a verified claim from an invented one, and this service has no
+    way to read the Appwrite one.
     """
     from job_os.services.latex_render import LatexRenderError
     from job_os.services.resume_engine import generate_latex_source, review_resume
@@ -320,6 +323,7 @@ async def render_and_review_draft(
             payload.json_resume,
             template_key=payload.template_key,
             latex_source=payload.latex_source,
+            verified_facts=payload.verified_facts,
         )
     except LatexRenderError as exc:
         raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc

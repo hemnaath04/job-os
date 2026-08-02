@@ -30,6 +30,7 @@ from job_os.services.profile_extract import (
 from job_os.services.identity import fact_identity
 from job_os.services.resume_engine import (
     generate_latex_source,
+    provisional_review,
     review_resume,
     revise_resume,
     validate_json_resume_document,
@@ -943,33 +944,31 @@ async def _tailor_resume(
     latex_source: str | None = None
     pdf_file_id: str | None = None
 
-    # Independent quality pass, mirroring the FastAPI path. Non-fatal: a render
-    # failure still yields a usable draft the user can review manually.
+    # Deliberately NOT the full model review. This runtime has no LaTeX engine,
+    # so the review it can run has no PDF behind it: no page count, no
+    # selectable-text check, and a render_unavailable warning deducted from its
+    # own score. The browser then hands the same document to the container,
+    # which renders it and runs the real review, and attachReview overwrites
+    # status, review_score, review_report and latex_source wholesale. Measured,
+    # that model call cost ~86s of gateway time for a number with a guaranteed
+    # ~100s lifespan, out of a 900s function timeout the tailor already spends
+    # most of. The rules-only review is free, says plainly that it is
+    # provisional, and keeps the row populated while the real one is in flight.
     try:
-        on_progress("Reviewing", 0.92)
-        review, pdf_bytes = await review_resume(json_resume, verified_facts=verified)
-        review_score = str(review.score)
+        on_progress("Checking the draft", 0.95)
+        review = provisional_review(json_resume)
+        # The rules-only issues are worth keeping, the number is not. Writing a
+        # provisional 95 that the render-backed review then corrects to 60 is the
+        # score whiplash the deterministic scoring was introduced to end, only
+        # now inside a single tailor. review_score stays None, which the tailor
+        # view already renders as "pending" while it runs the real review.
         review_report = review.model_dump(mode="json")
-        status = "reviewed" if review.passed else "needs_changes"
         latex_source = generate_latex_source(json_resume)
-        # Only upload a PDF when one was actually rendered. This runtime has no
-        # LaTeX engine, so review_resume returns empty bytes here; the browser
-        # renders and attaches the real PDF on the container immediately after
-        # (api.reviewVersion / render). Uploading an empty file would set
-        # pdf_file_id to zero bytes, which makes Download serve nothing AND makes
-        # the browser skip the render-backed review because a PDF already looks
-        # present. Leaving pdf_file_id None keeps the draft score and lets the
-        # container do the real render.
-        if pdf_bytes:
-            on_progress("Rendering PDF", 0.97)
-            pdf_file_id = ID.unique()
-            workspace.storage.create_file(
-                workspace.files_bucket,
-                pdf_file_id,
-                InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
-                permissions=workspace.permissions,
-            )
-    except Exception as exc:  # noqa: BLE001 - review is best-effort
+        # pdf_file_id stays None on purpose. Download and the render-backed
+        # review both key off it: the browser skips its own render when a PDF
+        # already looks present, so writing a placeholder here would cost the
+        # user the only review that can see a page count.
+    except Exception as exc:  # noqa: BLE001 - the draft is usable without a score
         status = "needs_changes"
         review_score = None
         review_report = {
