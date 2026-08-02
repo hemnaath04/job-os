@@ -84,6 +84,14 @@ function OperationCard({ op }: { op: Operation }) {
             <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
               {detail}
             </p>
+            {/* What the agent found, under what it is doing. This is the line
+                that proves the run is alive during a model call, because it
+                changes with the work rather than with a timer. */}
+            {running && op.detail && (
+              <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-dim)]">
+                {op.detail}
+              </p>
+            )}
             {running && <ProgressTrack pct={op.pct} />}
           </div>
         </div>

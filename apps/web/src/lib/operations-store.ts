@@ -63,6 +63,11 @@ export type Operation = {
   status: OpStatus;
   /** The agent's current stage, e.g. "Composing". Null before it reports one. */
   stage: string | null;
+  /**
+   * One measured fact about the current stage, e.g. "6 of 9 already backed by
+   * your profile". Null when the agent reports none.
+   */
+  detail: string | null;
   /** 0..1 real progress from the agent, or null when it has reported none. */
   pct: number | null;
   /** Where a click leads: the origin page while running, the result once done. */
@@ -308,6 +313,7 @@ async function pollOne(op: Operation) {
           ...current,
           status: "done",
           stage: null,
+          detail: null,
           pct: null,
           href,
           finishedAt: nowIso(),
@@ -321,11 +327,12 @@ async function pollOne(op: Operation) {
       markFailed(op.id, "The agent never started this run. Try again.");
     } else {
       const stage = job.progress?.stage ?? null;
+      const detail = job.progress?.detail ?? null;
       const pct = clamp01(job.progress?.pct);
       updateOp(op.id, (current) =>
-        current.stage === stage && current.pct === pct
+        current.stage === stage && current.detail === detail && current.pct === pct
           ? current
-          : { ...current, stage, pct },
+          : { ...current, stage, detail, pct },
       );
     }
   } catch (error) {
@@ -378,18 +385,22 @@ function initFromStorage() {
     ops = parsed
       .filter((op) => op && op.id && op.kind && op.startedAt)
       .map((op) => {
-        if (op.status === "running") {
-          const age = now - Date.parse(op.startedAt);
+        // Records written before `detail` existed have none, and the card reads
+        // it directly, so it is normalised on the way in rather than guarded at
+        // every use.
+        const record = { ...op, detail: op.detail ?? null };
+        if (record.status === "running") {
+          const age = now - Date.parse(record.startedAt);
           if (!Number.isFinite(age) || age > MAX_AGE_MS) {
             return {
-              ...op,
+              ...record,
               status: "failed" as const,
               message: "This run timed out. Try again.",
               finishedAt: nowIso(),
             };
           }
         }
-        return op;
+        return record;
       })
       .filter((op) => {
         if (op.status === "running") return true;
@@ -412,6 +423,7 @@ function handleRegistered(registered: RegisteredOperation) {
     kind,
     status: "running",
     stage: null,
+    detail: null,
     pct: null,
     href: metaForKind(kind).origin(input),
     input,

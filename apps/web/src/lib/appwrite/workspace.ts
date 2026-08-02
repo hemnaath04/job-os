@@ -102,14 +102,21 @@ export type AgentJobKind =
 export type AgentJobStatus = "queued" | "running" | "succeeded" | "failed";
 
 /**
- * Coarse progress written onto a running agent job's snapshot by the Appwrite
- * Function (currently only the tailor agent emits it). `pct` is a 0.0-1.0
- * fraction. Optional because older snapshots and other agents omit it.
+ * Progress written onto a running agent job's snapshot by the Appwrite Function
+ * (currently only the tailor agent emits it). `pct` is a 0.0-1.0 fraction.
+ * Optional because older snapshots and other agents omit it.
+ *
+ * `step` is a stable id the UI keys its checklist off, so renaming the
+ * human-facing `stage` never breaks the display. `detail` is one measured fact
+ * about what just happened, such as how many requirements the profile already
+ * answers. Both are optional for the same backwards-compatibility reason.
  */
 export interface AgentJobProgress {
   stage: string;
   pct: number;
   updated_at: string;
+  step?: string | null;
+  detail?: string | null;
 }
 
 export interface AgentJob<T = unknown> {

@@ -5,6 +5,7 @@ import {
   AlertCircle,
   ArrowLeft,
   Building2,
+  Check,
   CheckCircle2,
   Download,
   LibraryBig,
@@ -565,6 +566,8 @@ function TailorInner() {
     return (
       <TailorProgress
         stage={progress?.stage ?? "Starting"}
+        step={progress?.step ?? null}
+        detail={progress?.detail ?? null}
         pct={progress?.pct ?? 0.02}
         jobTitle={job?.title ?? "the selected role"}
         resumeName={runResumeName}
@@ -717,40 +720,115 @@ function TailorInner() {
   );
 }
 
+/**
+ * The steps a tailor run walks through, in the order the agent emits them.
+ *
+ * `step` matches the stable id the agent writes onto the job row, so the label
+ * shown here can be reworded without the checklist losing its place. Optional
+ * steps only exist on some runs: a repair pass runs when the first draft leaves
+ * something a repair can honestly fix, and is skipped when it does not.
+ */
+const TAILOR_STEPS: { step: string; label: string; optional?: boolean }[] = [
+  { step: "load_profile", label: "Opening your profile" },
+  { step: "read_role", label: "Reading the role" },
+  { step: "match_evidence", label: "Matching your verified evidence" },
+  { step: "find_gaps", label: "Finding the real gaps" },
+  { step: "compose", label: "Composing your resume" },
+  { step: "check_claims", label: "Checking every claim is backed" },
+  { step: "repair", label: "Tightening the weak spots", optional: true },
+  { step: "check_repair", label: "Rechecking every claim", optional: true },
+  { step: "assemble", label: "Assembling the page" },
+  { step: "check_draft", label: "Reviewing the draft" },
+  { step: "save_draft", label: "Saving your draft" },
+  // The agent reports this once the version row exists, a poll or so before this
+  // screen is replaced by the result. Without a row for it the checklist would
+  // blink out for that last second.
+  { step: "done", label: "Finished" },
+];
+
+/**
+ * How long the current step has been running, in whole seconds.
+ *
+ * A composing step is a single model call that can take well over a minute, and
+ * a line that never changes for that long reads as a hang. This is the honest
+ * thing to show meanwhile: not a fake percentage, just how long the real work
+ * has been going.
+ */
+function useStepElapsed(step: string | null): number {
+  const [startedAt, setStartedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    setStartedAt(Date.now());
+    setNow(Date.now());
+  }, [step]);
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  return Math.max(0, Math.floor((now - startedAt) / 1_000));
+}
+
+function formatElapsed(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  return `${Math.floor(seconds / 60)}m ${String(seconds % 60).padStart(2, "0")}s`;
+}
+
 function TailorProgress({
   stage,
+  step,
+  detail,
   pct,
   jobTitle,
   resumeName,
   onCancel,
 }: {
   stage: string;
+  step: string | null;
+  detail: string | null;
   pct: number;
   jobTitle: string;
   resumeName: string | null;
   onCancel: () => void;
 }) {
   const percent = Math.round(Math.max(0, Math.min(1, pct)) * 100);
+  const elapsed = useStepElapsed(step);
+  const currentIndex = TAILOR_STEPS.findIndex((entry) => entry.step === step);
+  // An optional step is only real once the run has reached it. Hiding the rest
+  // keeps the list a description of this run rather than of every possible run.
+  const rows = TAILOR_STEPS.map((entry, index) => ({ ...entry, index })).filter(
+    (entry) => !entry.optional || (currentIndex >= 0 && entry.index <= currentIndex),
+  );
+
   return (
     <div className="workspace-page max-w-3xl">
       <PageIntro
         eyebrow="Tailoring in progress"
         title="Tailoring your resume"
-        description="The agent is grounding a draft in your verified evidence, scoring it against the JD, then running a separate quality and PDF pass."
+        description="The agent reads the role against your verified evidence, writes from what genuinely matches, then checks every claim on the page is backed."
         icon={Sparkles}
       >
         <InfoChip tone="sage">Safe to leave this page</InfoChip>
       </PageIntro>
 
       <section className="workspace-panel mt-6 space-y-5 p-6 sm:p-7">
-        {/* The run takes minutes and the stage is the only signal it is moving,
-            so each new stage is announced rather than only redrawn. */}
-        <div role="status" className="flex items-center gap-3">
+        {/* The run takes minutes, so the current step is announced rather than
+            only redrawn, and the elapsed time next to it is real. */}
+        <div role="status" aria-live="polite" className="flex items-center gap-3">
           <Loader2
             className="size-4 shrink-0 animate-spin text-[color:var(--color-violet)]"
             aria-hidden="true"
           />
-          <div className="text-sm font-medium">{stage}</div>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">{stage}</div>
+            {detail && (
+              <div className="truncate text-xs text-[color:var(--color-text-muted)]">
+                {detail}
+              </div>
+            )}
+          </div>
           <div className="ml-auto text-sm tabular-nums text-[color:var(--color-text-muted)]">
             {percent}%
           </div>
@@ -768,6 +846,65 @@ function TailorProgress({
             style={{ width: `${percent}%` }}
           />
         </div>
+
+        {/* Only drawn once the agent has named a step. A deployment where the
+            function still reports stage text alone falls back to the line and
+            bar above rather than to a checklist with nothing selected. */}
+        {currentIndex >= 0 && (
+          <ol className="space-y-2.5">
+            {rows.map((entry) => {
+              const done = entry.index < currentIndex;
+              const current = entry.index === currentIndex;
+              return (
+                <li
+                  key={entry.step}
+                  aria-current={current ? "step" : undefined}
+                  className="flex items-start gap-2.5 text-sm"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={`mt-0.5 grid size-4 shrink-0 place-items-center rounded-full border ${
+                      done
+                        ? "border-transparent bg-[color:var(--color-mint-ink)] text-white"
+                        : current
+                          ? "border-[color:var(--color-violet)]"
+                          : "border-[color:var(--color-border)]"
+                    }`}
+                  >
+                    {done && <Check className="size-2.5" strokeWidth={3} />}
+                    {current && (
+                      <span className="size-1.5 animate-pulse rounded-full bg-[color:var(--color-violet)]" />
+                    )}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div
+                      className={
+                        current
+                          ? "font-medium text-[color:var(--color-text)]"
+                          : done
+                            ? "text-[color:var(--color-text-muted)]"
+                            : "text-[color:var(--color-text-dim)]"
+                      }
+                    >
+                      {current ? stage : entry.label}
+                    </div>
+                    {current && detail && (
+                      <p className="mt-0.5 text-xs text-[color:var(--color-text-muted)]">
+                        {detail}
+                      </p>
+                    )}
+                  </div>
+                  {current && (
+                    <span className="shrink-0 text-xs tabular-nums text-[color:var(--color-text-dim)]">
+                      {formatElapsed(elapsed)}
+                    </span>
+                  )}
+                </li>
+              );
+            })}
+          </ol>
+        )}
+
         <p className="text-xs leading-relaxed text-[color:var(--color-text-dim)]">
           Tailoring {resumeName ?? "your resume"} for {jobTitle}. This runs on the
           server, so you can navigate away and come back. The run keeps going and
