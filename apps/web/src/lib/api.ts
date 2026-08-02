@@ -230,6 +230,55 @@ async function waitForAgentJob<T>(
   throw new Error("The agent is still running. Refresh shortly to see its result.");
 }
 
+/** A verified fact in the shape the container reviewer's _compact_facts reads. */
+type ReviewFact = {
+  kind: string;
+  title: string;
+  org: string | null;
+  start_date: string | null;
+  end_date: string | null;
+  location: string | null;
+  source_url: string | null;
+  payload: Record<string, unknown>;
+  bullets: { text: string }[];
+};
+
+/**
+ * The verified Profile facts the container reviewer grades a resume against.
+ *
+ * Without them the reviewer reads real, verified history, a job title, the
+ * coursework, a metric that is present in a verified bullet, as invented, and
+ * scores an honest resume in the twenties instead of the sixties. The Appwrite
+ * agent reads these server-side when it tailors, but the render-review container
+ * is stateless and has no workspace, so the browser has to send them itself.
+ *
+ * Only verified facts are sent, matching the server's own vault: an unverified
+ * fact cannot justify a claim. A read failure degrades to an unfacted review
+ * rather than blocking the whole thing, since a review with no facts is still
+ * more useful than no review at all.
+ */
+async function verifiedFactsForReview(): Promise<ReviewFact[]> {
+  if (!isAppwriteWorkspaceEnabled) return [];
+  try {
+    const facts = await appwriteWorkspace.listFacts();
+    return facts
+      .filter((fact) => fact.verified)
+      .map((fact) => ({
+        kind: fact.kind,
+        title: fact.title,
+        org: fact.org,
+        start_date: fact.start_date,
+        end_date: fact.end_date,
+        location: fact.location,
+        source_url: fact.source_url,
+        payload: fact.payload,
+        bullets: fact.bullets.map((bullet) => ({ text: bullet.text })),
+      }));
+  } catch {
+    return [];
+  }
+}
+
 const legacyApi = {
   listApplications: (params?: { status?: AppStatus; q?: string }) => {
     const qs = new URLSearchParams();
@@ -398,10 +447,13 @@ const legacyApi = {
     { templateId }: { templateId?: string | null } = {},
   ) => {
     // A template supplies the look only. Fetched here rather than held in page
-    // state so the render always uses what is actually stored.
-    const look = templateId
-      ? await appwriteWorkspace.getTemplateSource(templateId)
-      : null;
+    // state so the render always uses what is actually stored. The verified
+    // facts ride along so the stateless reviewer can tell real history from an
+    // invented claim; both reads run in parallel since neither needs the other.
+    const [look, verifiedFacts] = await Promise.all([
+      templateId ? appwriteWorkspace.getTemplateSource(templateId) : Promise.resolve(null),
+      verifiedFactsForReview(),
+    ]);
     await warmBackend();
     return withTimeout(
       request<RenderReviewResult>("/resumes/render-review", {
@@ -410,6 +462,7 @@ const legacyApi = {
           json_resume: jsonResume,
           template_key: look?.template_key ?? null,
           latex_source: look?.latex_source ?? null,
+          verified_facts: verifiedFacts,
         }),
       }),
       RENDER_TIMEOUT_MS,
