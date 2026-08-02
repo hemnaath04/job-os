@@ -211,20 +211,37 @@ def _compact_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     not see them and reported verified skills as invented technology claims:
     "Qwen is named ... but no verified fact mentions Qwen", about a skill fact
     literally titled "LLM integration (OpenAI, Anthropic, Qwen)".
+
+    Defensive about shape, because this is no longer fed only by our own
+    workspace loader. `/resumes/render-review` now accepts the vault from the
+    browser over HTTP, so a payload that arrives as a JSON string, or a bullet
+    that is not an object, is ordinary untrusted input. Raising here would 500
+    the whole request and take the PDF render down with the review, when the
+    right answer is to use what is well formed and ignore what is not.
     """
     compact: list[dict[str, Any]] = []
     for fact in facts:
+        if not isinstance(fact, dict):
+            continue
+        payload = fact.get("payload")
+        if not isinstance(payload, dict):
+            payload = {}
         kind = str(fact.get("kind") or "")
         if kind == "skill":
             compact.append(
                 {
                     "kind": "skill",
                     "title": fact.get("title"),
-                    "category": (fact.get("payload") or {}).get("category")
-                    or fact.get("org"),
+                    "category": payload.get("category") or fact.get("org"),
                 }
             )
             continue
+        raw_bullets = fact.get("bullets")
+        bullets = [
+            str(bullet.get("text") or "")
+            for bullet in (raw_bullets if isinstance(raw_bullets, list) else [])
+            if isinstance(bullet, dict)
+        ]
         entry = {
             "kind": kind,
             "title": fact.get("title"),
@@ -233,10 +250,8 @@ def _compact_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "end_date": fact.get("end_date"),
             "location": fact.get("location"),
             "source_url": fact.get("source_url"),
-            "payload": fact.get("payload") or {},
-            "bullets": [
-                str(bullet.get("text") or "") for bullet in (fact.get("bullets") or [])
-            ],
+            "payload": payload,
+            "bullets": [bullet for bullet in bullets if bullet],
         }
         compact.append({key: value for key, value in entry.items() if value})
     return compact
