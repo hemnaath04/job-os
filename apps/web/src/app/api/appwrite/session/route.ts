@@ -16,6 +16,28 @@ function serverConfig() {
   return { endpoint, projectId, apiKey };
 }
 
+/**
+ * The Appwrite id the signed-in Clerk user is entitled to, and nothing else.
+ *
+ * The browser cannot work this out for itself: the mapping lives in
+ * `appwriteUserIdForClerk`, which hashes with `node:crypto` and so is
+ * server-only. Without it the client has no way to tell whose Appwrite session
+ * it is holding, which is exactly how a signed-out user's session gets reused
+ * by the next person to sign in on the same browser. Deliberately cheap: it
+ * touches Clerk and a hash, never Appwrite, so calling it on every session
+ * check costs a round trip and nothing more.
+ */
+export async function GET() {
+  const { userId: clerkUserId } = await auth();
+  if (!clerkUserId) {
+    return NextResponse.json({ detail: "not authenticated" }, { status: 401 });
+  }
+  return NextResponse.json(
+    { userId: appwriteUserIdForClerk(clerkUserId) },
+    { headers: { "Cache-Control": "no-store" } },
+  );
+}
+
 export async function POST() {
   const { userId: clerkUserId } = await auth();
   if (!clerkUserId) {

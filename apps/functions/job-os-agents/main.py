@@ -7,6 +7,7 @@ is queued here so the browser never waits on an AI request.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import UTC, date, datetime
@@ -15,6 +16,7 @@ from typing import Any
 from uuid import uuid4
 
 from appwrite.client import Client
+from appwrite.exception import AppwriteException
 from appwrite.id import ID
 from appwrite.input_file import InputFile
 from appwrite.permission import Permission
@@ -36,6 +38,36 @@ from job_os.services.resume_engine import (
     validate_json_resume_document,
 )
 from job_os.services.tailor import TailorBullet, TailorFact, TailorStage, run_tailor
+
+
+# What one user may spend per day, per action.
+#
+# These paths each cost real money: a single tailor is three to four Sonnet
+# calls, and nothing else in the system stops a signed-in account from running
+# them in a loop. The numbers are set where a working job seeker will not meet
+# them (most people tailor a handful of resumes a day) but a script will, within
+# minutes. Raising one is a one-line change; having no ceiling at all is not
+# something a personal API budget survives.
+DAILY_LIMITS: dict[str, int] = {
+    "tailor": 20,
+    "review": 40,
+    "extract": 5,
+}
+
+# Which budget each agent path draws from. Revision is a chat edit and is
+# metered with review rather than given a bucket of its own.
+QUOTA_ACTIONS: dict[str, str] = {
+    "/resume/tailor": "tailor",
+    "/resume/review": "review",
+    "/resume/finalize": "review",
+    "/resume/revise": "review",
+    "/profile/extract": "extract",
+    "/resume/import": "extract",
+}
+
+
+class QuotaExceeded(Exception):
+    """The caller has used today's allowance for this action."""
 
 
 def _now() -> str:
@@ -314,6 +346,7 @@ class Workspace:
             "APPWRITE_FACT_BULLETS_TABLE_ID", "fact_bullets"
         )
         self.jobs_table = os.getenv("APPWRITE_AGENT_JOBS_TABLE_ID", "agent_jobs")
+        self.usage_table = os.getenv("APPWRITE_USAGE_TABLE_ID", "usage_counters")
         self.files_bucket = os.getenv(
             "APPWRITE_RESUME_FILES_BUCKET_ID", "resume_files"
         )
@@ -329,6 +362,86 @@ class Workspace:
             Permission.update(role),
             Permission.delete(role),
         ]
+
+    def _usage_row_id(self, action: str, day: str) -> str:
+        """One stable row per user per action per day.
+
+        Derived rather than looked up so the check costs a single read: there is
+        no query to run and no index to depend on. Hashed because an Appwrite id
+        is capped at 36 characters and the user id alone can fill it.
+        """
+        digest = hashlib.sha256(
+            f"{self.user_id}|{day}|{action}".encode()
+        ).hexdigest()
+        return f"q{digest[:31]}"
+
+    def enforce_quota(self, action: str) -> None:
+        """Spend one unit of today's allowance, or refuse.
+
+        Fails OPEN on anything that is not a real quota breach. A missing table,
+        an Appwrite hiccup or a malformed row must never be the reason a user
+        cannot tailor their resume: the cost of letting a few extra runs through
+        is a few dollars, while the cost of the guard itself breaking the
+        product is every user, all at once. A breach is the one case that fails
+        closed.
+
+        Not atomic. Two requests that land in the same instant can both read the
+        same count and both be allowed, so a determined caller can overshoot by
+        roughly their concurrency. That is acceptable for a spend ceiling, which
+        only has to turn an unbounded bill into a bounded one, and it is not
+        load-bearing for any security decision.
+        """
+        limit = DAILY_LIMITS.get(action)
+        if limit is None:
+            return
+        day = datetime.now(UTC).strftime("%Y-%m-%d")
+        row_id = self._usage_row_id(action, day)
+
+        try:
+            row = self.tables.get_row(self.database_id, self.usage_table, row_id)
+        except AppwriteException as exc:
+            if getattr(exc, "code", None) != 404:
+                print(f"[quota] read failed, allowing: {exc!r}")
+                return
+            try:
+                self.tables.create_row(
+                    self.database_id,
+                    self.usage_table,
+                    row_id,
+                    {
+                        "owner_id": self.user_id,
+                        "day": day,
+                        "action": action,
+                        "count": 1,
+                    },
+                    permissions=self.permissions,
+                )
+            except AppwriteException as create_exc:
+                # A concurrent first call may have created it already, which is
+                # fine: the next request through reads and increments it.
+                print(f"[quota] create failed, allowing: {create_exc!r}")
+            return
+
+        try:
+            used = int(_field(row, "count") or 0)
+        except (TypeError, ValueError):
+            # A row we cannot read is an infrastructure problem, not a breach.
+            print("[quota] unreadable count, allowing")
+            return
+        if used >= limit:
+            raise QuotaExceeded(
+                f"Daily limit reached for {action}: {used} of {limit} used today. "
+                "This resets at midnight UTC."
+            )
+        try:
+            self.tables.update_row(
+                self.database_id,
+                self.usage_table,
+                row_id,
+                {"count": used + 1},
+            )
+        except AppwriteException as exc:
+            print(f"[quota] increment failed, allowing: {exc!r}")
 
     def owned_row(self, table_id: str, row_id: str) -> Any:
         row = self.tables.get_row(self.database_id, table_id, row_id)
@@ -1076,6 +1189,13 @@ async def _dispatch(
     *,
     job_id: str | None = None,
 ) -> dict[str, Any]:
+    # Charged here rather than inside each handler: one choke point every
+    # expensive path already goes through, so a new agent path cannot be added
+    # without a deliberate decision about what it costs.
+    action = QUOTA_ACTIONS.get(path)
+    if action:
+        workspace.enforce_quota(action)
+
     if path == "/resume/import":
         return await _import_resume(workspace, payload)
     if path == "/profile/extract":
@@ -1120,6 +1240,11 @@ async def main(context: Any) -> Any:
             raise
         workspace.update_job(job_id, status="succeeded", output=result)
         return context.res.json({"job_id": job_id, "status": "succeeded"})
+    except QuotaExceeded as exc:
+        # The one refusal the user can act on by waiting, so it says so plainly
+        # and gets its own status rather than reading as a crash. The job row
+        # was already marked failed with this same message by the inner handler.
+        return context.res.json({"detail": str(exc)}, 429)
     except PermissionError as exc:
         return context.res.json({"detail": str(exc)}, 401)
     except (ValueError, KeyError, json.JSONDecodeError) as exc:

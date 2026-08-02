@@ -49,33 +49,92 @@ function getServices() {
   return services;
 }
 
+/**
+ * Whose Appwrite session are we allowed to be holding right now.
+ *
+ * Asked on every session establishment rather than cached across them: the
+ * answer changes the moment a different person signs in, and that change is
+ * precisely what this guards against.
+ */
+async function expectedAppwriteUserId(): Promise<string> {
+  const response = await fetch("/api/appwrite/session", { cache: "no-store" });
+  if (!response.ok) {
+    throw new Error(`Appwrite identity check failed (${response.status})`);
+  }
+  const { userId } = (await response.json()) as { userId: string };
+  return userId;
+}
+
+/**
+ * Bind this browser to the Appwrite session belonging to the signed-in user,
+ * and to no one else's.
+ *
+ * The identity check is the load-bearing part. An Appwrite session outlives the
+ * Clerk one: signing out of Clerk does not end it, and the SDK keeps it in an
+ * app-origin localStorage fallback whenever the third-party cookie is dropped,
+ * which is the normal case here (see `appwriteFileAuthHeaders` below). So an
+ * `account.get()` that succeeds proves only that SOME session exists, not that
+ * it is ours. Trusting it is how the next person to sign in on a shared browser
+ * inherits the previous user's resumes, profile and applications, and has their
+ * own writes land in that user's workspace. Verify the owner, and drop any
+ * session that fails.
+ */
 export async function ensureAppwriteSession(): Promise<void> {
   if (sessionPromise) return sessionPromise;
 
   sessionPromise = (async () => {
     const { account } = getServices();
+    const expected = await expectedAppwriteUserId();
+
     try {
       const user = await account.get();
-      currentUserId = user.$id;
-      return;
-    } catch {
-      const response = await fetch("/api/appwrite/session", {
-        method: "POST",
-        cache: "no-store",
-      });
-      if (!response.ok) {
-        throw new Error(`Appwrite session bridge failed (${response.status})`);
+      if (user.$id === expected) {
+        currentUserId = user.$id;
+        return;
       }
-      const token = (await response.json()) as { userId: string; secret: string };
-      await account.createSession(token);
-      currentUserId = token.userId;
+      // Somebody else's session. Not ours to keep or to read from.
+      await account.deleteSession("current").catch(() => undefined);
+    } catch {
+      // No usable session yet, which is the ordinary first-load path.
     }
+
+    const response = await fetch("/api/appwrite/session", {
+      method: "POST",
+      cache: "no-store",
+    });
+    if (!response.ok) {
+      throw new Error(`Appwrite session bridge failed (${response.status})`);
+    }
+    const token = (await response.json()) as { userId: string; secret: string };
+    await account.createSession(token);
+    currentUserId = token.userId;
   })().catch((error) => {
     sessionPromise = undefined;
     throw error;
   });
 
   return sessionPromise;
+}
+
+/**
+ * End the Appwrite session and forget everything derived from it.
+ *
+ * Called on sign-out so the session does not outlive the person who opened it.
+ * `ensureAppwriteSession` would catch a leftover session on the next sign-in
+ * anyway, but that is the backstop; this is the part that keeps a signed-out
+ * user's data from sitting in the browser at all. Best effort by design: a
+ * failed delete must never block sign-out, so the local state is cleared either
+ * way and the identity check covers what is left.
+ */
+export async function clearAppwriteSession(): Promise<void> {
+  try {
+    await getServices().account.deleteSession("current");
+  } catch {
+    // Already gone, offline, or never established. Nothing to recover.
+  } finally {
+    sessionPromise = undefined;
+    currentUserId = undefined;
+  }
 }
 
 export function getAppwriteServices() {

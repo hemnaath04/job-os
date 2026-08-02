@@ -1,6 +1,6 @@
 "use client";
 
-import { SignOutButton, UserButton } from "@clerk/nextjs";
+import { UserButton, useClerk } from "@clerk/nextjs";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Bookmark,
@@ -22,6 +22,7 @@ import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { clearAppwriteSession } from "@/lib/appwrite/client";
 
 type NavItem = {
   href: Route;
@@ -47,6 +48,18 @@ export function Sidebar() {
   const reduceMotion = useReducedMotion();
   const [collapsed, setCollapsed] = useState(false);
   const width = collapsed ? 72 : 232;
+  const { signOut } = useClerk();
+
+  // Clerk and Appwrite hold separate sessions, and ending the Clerk one does
+  // not end the Appwrite one. Drop Appwrite first so a signed-out user's
+  // resumes and profile are not left readable in the browser for whoever signs
+  // in next. Appwrite first, and never blocking: if it fails, signing out of
+  // Clerk still has to happen, and the identity check in ensureAppwriteSession
+  // catches the leftover session on the next sign-in.
+  async function signOutEverywhere() {
+    await clearAppwriteSession();
+    await signOut({ redirectUrl: "/" });
+  }
 
   return (
     <>
@@ -120,20 +133,19 @@ export function Sidebar() {
           collapsed={collapsed}
           reduceMotion={Boolean(reduceMotion)}
         />
-        <SignOutButton>
-          <button
-            type="button"
-            className={
-              "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-rose-ink)] active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
-              (collapsed ? "justify-center" : "")
-            }
-            title="Sign out"
-            aria-label="Sign out"
-          >
-            <LogOut className="size-4 shrink-0" aria-hidden="true" />
-            {!collapsed && <span className="truncate">Sign out</span>}
-          </button>
-        </SignOutButton>
+        <button
+          type="button"
+          onClick={signOutEverywhere}
+          className={
+            "flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-rose-ink)] active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] " +
+            (collapsed ? "justify-center" : "")
+          }
+          title="Sign out"
+          aria-label="Sign out"
+        >
+          <LogOut className="size-4 shrink-0" aria-hidden="true" />
+          {!collapsed && <span className="truncate">Sign out</span>}
+        </button>
         <div
           className={
             "mt-2 flex items-center gap-2 border-t border-[color:var(--color-border)] pt-3 " +

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from collections.abc import Callable
 from typing import Any
@@ -100,6 +101,45 @@ def ensure_private_table(
             enabled=True,
         )
     )
+
+
+def ensure_usage_counters(tables: TablesDB, database_id: str) -> None:
+    """Per-user, per-day spend counters for the paid agent paths.
+
+    Addressed by a derived row id (user, day, action), never queried, so this
+    table deliberately carries no index: the function reads one row by id and
+    writes it back. Keeping it out of the `ensure_resume_workspace` loop is on
+    purpose too, since that loop adds a `source_updated_at` column and an
+    `owner_updated` index that a counter has no use for.
+
+    `count` is a varchar holding digits rather than an integer column. The
+    counter is read and written only through `int()` in the function, so the
+    storage type is invisible to callers, and this keeps the schema to the one
+    column helper the rest of this script already relies on.
+    """
+    table_id = os.getenv("APPWRITE_USAGE_TABLE_ID", "usage_counters")
+    ensure_private_table(
+        tables,
+        database_id=database_id,
+        table_id=table_id,
+        name="Daily usage counters",
+    )
+    columns: list[tuple[str, int]] = [
+        ("owner_id", 36),
+        ("day", 10),
+        ("action", 32),
+        ("count", 12),
+    ]
+    for key, size in columns:
+        ensure_column(
+            tables,
+            database_id=database_id,
+            table_id=table_id,
+            key=key,
+            create=lambda key=key, size=size: tables.create_varchar_column(
+                database_id, table_id, key, size, True
+            ),
+        )
 
 
 def ensure_resume_workspace(tables: TablesDB, config: AppwriteAdminConfig) -> None:
@@ -546,6 +586,7 @@ def main() -> None:
         ),
     )
     ensure_resume_workspace(tables, config)
+    ensure_usage_counters(tables, database_id)
 
     storage = Storage(config.client())
     ignore_conflict(
