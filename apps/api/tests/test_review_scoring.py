@@ -123,7 +123,7 @@ def _stub_model(
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
     return calls

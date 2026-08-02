@@ -78,7 +78,7 @@ def _capture_prompt(monkeypatch: pytest.MonkeyPatch, reply: dict[str, Any]) -> l
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
     return calls

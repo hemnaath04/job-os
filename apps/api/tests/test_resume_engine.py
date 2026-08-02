@@ -212,7 +212,7 @@ async def test_revision_recovers_when_the_model_answers_with_prose(
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
 
@@ -221,12 +221,20 @@ async def test_revision_recovers_when_the_model_answers_with_prose(
     )
 
     assert output.assistant_message == "Trimmed the summary."
-    # One corrective retry, and it showed the model its own bad reply.
+    # One corrective retry, and it does NOT show the model its own bad reply.
+    #
+    # This assertion used to require the echo. It was changed deliberately: a
+    # reply with no document in it has nothing to correct, and quoting four
+    # thousand characters of prose back as an assistant turn establishes prose as
+    # the format of this conversation. Both production retries that were handed
+    # their own "**Assistant message:** ..." back answered in prose again and
+    # lost the edit after paying for a second full document generation. An
+    # object-shaped reply is still echoed, which test_revise_retry.py covers.
     assert len(calls) == 2
     retry_messages = calls[1]["messages"]
-    assert retry_messages[-2]["role"] == "assistant"
-    assert "Review" in retry_messages[-2]["content"]
-    assert "not valid JSON" in retry_messages[-1]["content"]
+    assert all(message["role"] == "user" for message in retry_messages)
+    assert not any("Review" in str(m["content"]) for m in retry_messages[1:])
+    assert "one raw JSON object" in retry_messages[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -248,7 +256,7 @@ async def test_revision_accepts_json_wrapped_in_prose_without_retrying(
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
 
@@ -274,7 +282,7 @@ async def test_revision_raises_a_readable_error_when_retry_also_fails(
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
 

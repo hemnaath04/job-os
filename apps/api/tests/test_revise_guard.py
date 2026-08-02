@@ -60,7 +60,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, revised: dict[str, Any]) -> list[Any]
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
-        return {}, [], []
+        return {}, [], {}
 
     monkeypatch.setattr(resume_engine, "load_github_context", no_github)
     return calls

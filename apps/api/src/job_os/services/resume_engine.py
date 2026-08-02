@@ -64,6 +64,22 @@ REVIEW_RETRY_MAX_TOKENS = 32000
 # minutes to come back. One call that fits is the whole fix.
 REVISE_MAX_TOKENS = 32000
 
+# What to say when an edit came back as prose with no document in it at all.
+# Deliberately does NOT hand the model its own prose back: a retry that quotes a
+# chatty reply as an assistant turn establishes prose as the format of this
+# conversation, and the two production retries that did so answered in prose
+# again and lost the edit. This restates the shape and asks for a short answer,
+# because a second full document generation is what makes the wait double.
+REVISION_FORMAT_RETRY = (
+    "That reply was prose, so it could not be applied. Answer again as one raw "
+    "JSON object and nothing else: no prose before or after it, no markdown "
+    "fences, no headings. The object has exactly these keys: assistant_message "
+    "(a string, where anything you want to say to the user goes), suggestions "
+    "(a list of short strings), and json_resume (the COMPLETE edited resume, "
+    "every section carried over, not a patch). Keep assistant_message to two or "
+    "three sentences so the answer fits in one reply."
+)
+
 # The bundled template that fits the most content on one page, named in the
 # page-count advice so the user has a concrete next step rather than just being
 # told the resume is too long. Resolved through the catalogue rather than written
@@ -295,15 +311,61 @@ def _github_repositories(
     return repos
 
 
+# Why a README could not be read, split by whose problem it is. A repository the
+# resume links to that does not answer is the resume's problem: the URL is wrong
+# or the repo is private, and a reader clicking it hits the same wall. Everything
+# else is ours, and the resume must not be marked down for our missing token.
+GITHUB_NOT_FOUND = "not_found"
+GITHUB_RATE_LIMITED = "rate_limited"
+GITHUB_UNAUTHORIZED = "unauthorized"
+GITHUB_UNREACHABLE = "unreachable"
+# The reasons that say nothing about the candidate.
+GITHUB_OUR_FAULT = frozenset({GITHUB_RATE_LIMITED, GITHUB_UNAUTHORIZED, GITHUB_UNREACHABLE})
+
+
+def _github_failure_reason(status_code: int, headers: Any) -> str:
+    """Classify a non-200 from the GitHub API.
+
+    403 and 429 both carry the rate limit; 403 is also what an exhausted
+    unauthenticated quota returns, which is the common case from a shared cloud
+    IP where sixty requests an hour is the whole budget. GitHub sets
+    x-ratelimit-remaining to 0 on those, which separates them from a 403 for a
+    private repository.
+    """
+    if status_code in (403, 429):
+        remaining = None
+        try:
+            remaining = (headers or {}).get("x-ratelimit-remaining")
+        except AttributeError:
+            remaining = None
+        if remaining == "0":
+            return GITHUB_RATE_LIMITED
+        return GITHUB_UNAUTHORIZED
+    if status_code == 401:
+        return GITHUB_UNAUTHORIZED
+    if status_code == 404:
+        return GITHUB_NOT_FOUND
+    return GITHUB_UNREACHABLE
+
+
 async def load_github_context(
     doc: dict[str, Any], *, requested_text: str = ""
-) -> tuple[dict[str, dict[str, str]], list[str], list[str]]:
-    """Fetch current README text and commit-pinned SHA for included projects."""
+) -> tuple[dict[str, dict[str, str]], list[str], dict[str, str]]:
+    """Fetch current README text and commit-pinned SHA for included projects.
+
+    Returns the contexts, the slugs that were checked, and a slug -> reason map
+    for the ones that could not be read. The reason matters: production reviews
+    carry `github_evidence_unavailable` warnings that cost five points each while
+    a local run fetches every repo in 0.22s, because the deployed environments
+    have no GITHUB_TOKEN and sixty unauthenticated requests an hour is nothing
+    from a shared cloud IP. Deducting from the resume for that is scoring the
+    candidate on our configuration.
+    """
     repos = _github_repositories(doc, requested_text=requested_text)
 
     contexts: dict[str, dict[str, str]] = {}
     checked: list[str] = []
-    missing: list[str] = []
+    missing: dict[str, str] = {}
     if not repos:
         return contexts, checked, missing
 
@@ -320,19 +382,37 @@ async def load_github_context(
 
         async def fetch_one(
             project_name: str, owner: str, repo: str
-        ) -> tuple[str, str, str, str | None]:
+        ) -> tuple[str, str, str, str | None, str]:
             slug = f"{owner}/{repo}"
             try:
                 response = await client.get(f"https://api.github.com/repos/{slug}/readme")
                 if response.status_code != 200:
-                    return project_name, slug, "", None
+                    reason = _github_failure_reason(response.status_code, response.headers)
+                    # Logged at warning, with the status, because the previous
+                    # silence made a missing token look exactly like a deleted
+                    # repository and there was no way to tell from the outside
+                    # whether GITHUB_TOKEN was working.
+                    log.warning(
+                        "resume.github_readme_unavailable",
+                        repo=slug,
+                        status=response.status_code,
+                        reason=reason,
+                        authenticated=bool(settings.github_token),
+                    )
+                    return project_name, slug, "", None, reason
                 payload = response.json()
                 encoded = str(payload.get("content") or "").replace("\n", "")
                 readme = base64.b64decode(encoded).decode("utf-8", errors="replace")
-                return project_name, slug, readme[:16000], str(payload.get("sha") or "")
+                return project_name, slug, readme[:16000], str(payload.get("sha") or ""), ""
             except (httpx.HTTPError, ValueError) as exc:
-                log.info("resume.github_readme_unavailable", repo=slug, error=str(exc))
-                return project_name, slug, "", None
+                log.warning(
+                    "resume.github_readme_unavailable",
+                    repo=slug,
+                    reason=GITHUB_UNREACHABLE,
+                    error=str(exc),
+                    authenticated=bool(settings.github_token),
+                )
+                return project_name, slug, "", None, GITHUB_UNREACHABLE
 
         results = await asyncio.gather(
             *(
@@ -341,9 +421,9 @@ async def load_github_context(
             )
         )
 
-    for project_name, slug, readme, sha in results:
+    for project_name, slug, readme, sha, reason in results:
         if not readme:
-            missing.append(slug)
+            missing[slug] = reason or GITHUB_UNREACHABLE
             continue
         contexts[project_name] = {
             "repository": slug,
@@ -621,12 +701,44 @@ async def review_resume(
         pdf_bytes = b""
     rule_issues, page_count, text_selectable = deterministic_review(doc, pdf_bytes)
     github_context, checked, missing_repos = await load_github_context(doc)
-    for slug in missing_repos:
+    for slug, reason in missing_repos.items():
+        # A repository the resume links to that does not answer is the resume's
+        # problem: a reader clicking that link hits the same 404, so it stays a
+        # warning. A rate limit or a missing token is OURS, and charging the
+        # candidate five points per repo for it is scoring them on our
+        # configuration. Deployed reviews were losing ten points a run to this
+        # while the identical fetch succeeded locally in 0.22s.
+        ours = reason in GITHUB_OUR_FAULT
+        if reason == GITHUB_UNAUTHORIZED:
+            # GitHub returns 403 both for a token without the right scope and for
+            # a repository we are not allowed to see, and there is no way to tell
+            # which from the response. Scored as ours, because guessing wrong in
+            # the other direction charges the candidate for our credentials, but
+            # worded so a genuinely private repo is not silently excused: a
+            # recruiter clicking that link would be turned away too.
+            detail = (
+                f"GitHub refused the request for {slug}, which means either our "
+                "access token or a repository that is not public. Worth confirming "
+                "the repository is public, since a reader following that link "
+                "would be turned away as well."
+            )
+        elif ours:
+            detail = (
+                f"Could not reach GitHub to re-check {slug} ({reason}), so its "
+                "project claims were reviewed against the verified facts alone. "
+                "This is a limit on the check, not a problem with the resume."
+            )
+        else:
+            detail = (
+                f"Current README evidence could not be loaded for {slug}: the "
+                f"repository did not answer ({reason}). Confirm the project URL is "
+                "right and the repository is public."
+            )
         rule_issues.append(
             ResumeReviewIssue(
-                severity="warning",
+                severity="suggestion" if ours else "warning",
                 code="github_evidence_unavailable",
-                message=f"Current README evidence could not be loaded for {slug}.",
+                message=detail,
                 section="projects",
             )
         )
@@ -847,14 +959,32 @@ async def revise_resume(
     try:
         output = parse_model_json(RevisionOutput, raw)
     except ValidationError:
-        # A chatty reply is recoverable, so show the model its own output and
-        # ask once more for the object alone rather than failing the edit.
-        log.warning("resume.revision_not_json", preview=raw[:300])
-        messages = [
-            *messages,
-            {"role": "assistant", "content": raw[:4000] or "(empty)"},
-            {"role": "user", "content": JSON_ONLY_RETRY},
-        ]
+        # A chatty reply is recoverable, so ask once more rather than failing the
+        # edit. What gets sent back depends on what came back, because the retry
+        # is a second full document generation and it doubles a two-minute edit.
+        #
+        # When the reply contained something object-shaped, showing it back is
+        # useful: the model can see what to fix. When the reply was pure prose,
+        # echoing four thousand characters of it as an assistant turn teaches the
+        # conversation that prose is the house style here, and both production
+        # retries that were handed their own "**Assistant message:** ..." back
+        # answered in prose again and lost the edit. Ask fresh instead, and ask
+        # for a compact answer, since output length is what the wait is made of.
+        looks_recoverable = "{" in raw and '"json_resume"' in raw
+        log.warning(
+            "resume.revision_not_json",
+            preview=raw[:300],
+            recoverable=looks_recoverable,
+        )
+        messages = (
+            [
+                *messages,
+                {"role": "assistant", "content": raw[:4000]},
+                {"role": "user", "content": JSON_ONLY_RETRY},
+            ]
+            if looks_recoverable
+            else [*messages, {"role": "user", "content": REVISION_FORMAT_RETRY}]
+        )
         retried = await ask()
         try:
             output = parse_model_json(RevisionOutput, retried)
