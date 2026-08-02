@@ -10,7 +10,7 @@ export default async function Landing() {
   if (userId) redirect("/dashboard");
 
   return (
-    <main className="marketing-dark relative isolate min-h-screen overflow-x-hidden">
+    <main className="relative isolate min-h-screen overflow-x-hidden">
       <BackendReadiness />
       <MarketingNav />
 
@@ -26,7 +26,7 @@ export default async function Landing() {
           }}
         />
 
-        <p className="animate-rise-in inline-flex items-center gap-2 rounded-full border border-[color:var(--color-border-strong)] bg-white/[0.04] px-4 py-1.5 text-xs text-[color:var(--color-text-muted)] backdrop-blur-sm">
+        <p className="animate-rise-in inline-flex items-center gap-2 rounded-full border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface-2)] px-4 py-1.5 text-xs text-[color:var(--color-text-muted)] backdrop-blur-sm">
           Every bullet traceable to evidence you control
         </p>
 
@@ -47,7 +47,7 @@ export default async function Landing() {
         <div className="animate-rise-in mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
             href="/sign-up"
-            className="inline-flex h-12 items-center gap-2 rounded-xl bg-gradient-to-b from-white via-white to-white/70 px-7 text-base font-semibold text-black transition hover:scale-[1.02] active:scale-[.98]"
+            className="bg-gradient-brand inline-flex h-12 items-center gap-2 rounded-xl px-7 text-base font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02] active:scale-[.98]"
           >
             Get started <ArrowRight className="size-4" />
           </Link>
@@ -96,7 +96,7 @@ export default async function Landing() {
         </p>
         <Link
           href="/sign-up"
-          className="mt-9 inline-flex h-12 items-center gap-2 rounded-xl bg-white px-7 text-base font-semibold text-black transition hover:bg-white/90 active:scale-[.98]"
+          className="bg-gradient-brand mt-9 inline-flex h-12 items-center gap-2 rounded-xl px-7 text-base font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02] active:scale-[.98]"
         >
           Start with your resume <ArrowRight className="size-4" />
         </Link>
@@ -157,7 +157,7 @@ function MatchPreview() {
             {["Microservices", "REST APIs"].map((gap) => (
               <span
                 key={gap}
-                className="rounded-full bg-white/[0.06] px-2 py-0.5"
+                className="rounded-full bg-[color:var(--color-surface-3)] px-2 py-0.5"
               >
                 {gap}
               </span>

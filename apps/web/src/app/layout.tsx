@@ -23,16 +23,21 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <ClerkProvider
       localization={clerkLocalization}
+      // Tokens, not literals. These were hardcoded light hex values, so every
+      // Clerk surface outside the auth pages, the account menu in the sidebar
+      // most visibly, stayed white after the theme flipped to dark. Custom
+      // properties resolve at paint time and follow the theme for free.
       appearance={{
         variables: {
-          colorPrimary: "#8A6D12",
-          colorBackground: "#FFFFFF",
-          colorInputBackground: "#FFFFFF",
-          colorInputText: "#2A2530",
-          colorText: "#2A2530",
-          colorTextSecondary: "#6C6470",
-          colorNeutral: "#2A2530",
-          borderRadius: "0.7rem",
+          colorPrimary: "var(--color-accent-ink)",
+          colorPrimaryForeground: "var(--color-on-accent)",
+          colorBackground: "var(--color-surface-1)",
+          colorInputBackground: "var(--color-surface-2)",
+          colorInputText: "var(--color-text)",
+          colorText: "var(--color-text)",
+          colorTextSecondary: "var(--color-text-muted)",
+          colorNeutral: "var(--color-text)",
+          borderRadius: "var(--radius-control)",
         },
       }}
     >

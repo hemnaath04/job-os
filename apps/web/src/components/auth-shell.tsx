@@ -1,5 +1,6 @@
 import { GrainPanel } from "@/components/marketing/grain-panel";
 import { BrandMark } from "@/components/brand-mark";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 /**
  * Two-column frame for the auth routes: the real Clerk widget on one side, a
@@ -25,7 +26,7 @@ export function AuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="marketing-dark min-h-screen p-3">
+    <main className="min-h-screen p-3">
       <div className="grid min-h-[calc(100vh-1.5rem)] gap-3 lg:grid-cols-[1.02fr_0.98fr]">
         {/* Form column */}
         <section className="flex items-center justify-center rounded-[1.25rem] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-6 py-12 sm:px-10 lg:px-14">
@@ -58,11 +59,14 @@ export function AuthShell({
  *  a half-finished sign-in than the page you are already on. */
 function Wordmark() {
   return (
-    <div className="mb-10 flex items-center gap-2.5">
-      <BrandMark className="drop-shadow-[0_12px_16px_rgba(255,231,135,.28)]" />
-      <span className="font-mono text-sm tracking-tight text-[color:var(--color-text)]">
-        job.os
-      </span>
+    <div className="mb-10 flex items-center justify-between gap-3">
+      <div className="flex items-center gap-2.5">
+        <BrandMark className="drop-shadow-[0_12px_16px_rgba(255,231,135,.28)]" />
+        <span className="font-mono text-sm tracking-tight text-[color:var(--color-text)]">
+          job.os
+        </span>
+      </div>
+      <ThemeToggle />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { ArrowRight, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 const LINKS = [
   { href: "#how", label: "How it works" },
@@ -24,7 +25,7 @@ export function MarketingNav() {
   const reduceMotion = useReducedMotion();
 
   return (
-    <header className="fixed inset-x-0 top-0 z-50 border-b border-[color:var(--color-border)] bg-black/70 backdrop-blur-xl">
+    <header className="fixed inset-x-0 top-0 z-50 border-b border-[color:var(--color-border)] bg-[color:var(--color-bg)]/75 backdrop-blur-xl">
       <nav aria-label="Primary" className="mx-auto max-w-6xl px-6">
         <div className="relative flex h-16 items-center justify-between">
           <Link href="/" className="flex items-center gap-2.5">
@@ -50,29 +51,33 @@ export function MarketingNav() {
           </div>
 
           <div className="hidden items-center gap-2 md:flex">
+            <ThemeToggle />
             <Link
               href="/sign-in"
-              className="rounded-full px-4 py-1.5 text-sm text-[color:var(--color-text-muted)] transition hover:bg-white/5 hover:text-[color:var(--color-text)]"
+              className="rounded-full px-4 py-1.5 text-sm text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-2)] hover:text-[color:var(--color-text)]"
             >
               Sign in
             </Link>
             <Link
               href="/sign-up"
-              className="inline-flex items-center gap-1.5 rounded-full bg-white px-4 py-1.5 text-sm font-semibold text-black transition hover:bg-white/90 active:scale-[.97]"
+              className="bg-gradient-brand inline-flex items-center gap-1.5 rounded-full px-4 py-1.5 text-sm font-semibold text-[color:var(--color-on-accent)] transition hover:scale-[1.02] active:scale-[.97]"
             >
               Get started <ArrowRight className="size-3.5" />
             </Link>
           </div>
 
-          <button
-            type="button"
-            onClick={() => setOpen((v) => !v)}
-            className="-mr-2 p-2 text-[color:var(--color-text)] md:hidden"
-            aria-label={open ? "Close menu" : "Open menu"}
-            aria-expanded={open}
-          >
-            {open ? <X className="size-5" /> : <Menu className="size-5" />}
-          </button>
+          <div className="flex items-center gap-1.5 md:hidden">
+            <ThemeToggle />
+            <button
+              type="button"
+              onClick={() => setOpen((v) => !v)}
+              className="-mr-2 p-2 text-[color:var(--color-text)]"
+              aria-label={open ? "Close menu" : "Open menu"}
+              aria-expanded={open}
+            >
+              {open ? <X className="size-5" /> : <Menu className="size-5" />}
+            </button>
+          </div>
         </div>
       </nav>
 
@@ -84,7 +89,7 @@ export function MarketingNav() {
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
-            className="overflow-hidden border-t border-[color:var(--color-border)] bg-black/95 backdrop-blur-xl md:hidden"
+            className="overflow-hidden border-t border-[color:var(--color-border)] bg-[color:var(--color-bg)]/95 backdrop-blur-xl md:hidden"
           >
             <div className="flex flex-col gap-1 px-6 py-4">
               {LINKS.map((link) => (
@@ -111,7 +116,7 @@ export function MarketingNav() {
                 <Link
                   href="/sign-up"
                   onClick={() => setOpen(false)}
-                  className="rounded-full bg-white px-4 py-2 text-center text-sm font-semibold text-black"
+                  className="bg-gradient-brand rounded-full px-4 py-2 text-center text-sm font-semibold text-[color:var(--color-on-accent)]"
                 >
                   Get started
                 </Link>

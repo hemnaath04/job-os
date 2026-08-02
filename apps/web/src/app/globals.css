@@ -201,54 +201,29 @@
 }
 
 /* ──── Marketing surfaces: landing + auth ─────────────────────
-   The product is warm light. The two pages a stranger sees first are dark,
-   which is a deliberate split: marketing wants contrast and drama, a tool
-   people stare at for an hour wants calm parchment.
+   These follow the app's theme rather than pinning themselves to one. Light is
+   the default everywhere, including here, and the toggle flips all of it
+   together: a visitor who picks dark on the landing page stays in dark once
+   they sign in.
 
-   Done by overriding the same custom properties the app already uses, rather
-   than by adding a second palette. That is what makes Clerk's widget come
-   along for free: `clerkAppearance` is written entirely in var() references,
-   so it resolves against whatever scope it renders inside, with nothing to
-   keep in sync. */
-.marketing-dark {
-  --color-bg: #050505;
-  --color-surface-1: #0A0A0A;
-  --color-surface-2: #101010;
-  --color-surface-3: #161616;
-  --color-surface-hover: #1A1A1A;
+   Which is why there is no palette in this section. Everything below reads the
+   same custom properties the product uses, so the `.dark` block at the bottom
+   of this file is the only place either theme is defined. */
 
-  --color-border: rgba(255, 255, 255, 0.10);
-  --color-border-strong: rgba(255, 255, 255, 0.20);
+/* Headline wash: the type fades toward the bottom, the way the reference reads.
+   Built from `--color-text` rather than a literal white so it inverts with the
+   theme instead of vanishing into parchment.
 
-  --color-text: #FAFAF7;
-  --color-text-muted: rgba(250, 250, 247, 0.62);
-  --color-text-dim: rgba(250, 250, 247, 0.42);
-
-  /* On parchment the brand reads as gold ink because pale jasmine fails
-     contrast as text. On black that inverts: the fill itself is the readable
-     colour, so accent-ink becomes jasmine and the status inks lighten to
-     match. */
-  --color-accent-ink: #FFE787;
-  --color-kiwi: #FFE787;
-  --color-mint-ink: #86D8A0;
-  --color-amber-ink: #F2C864;
-  --color-rose-ink: #F4949D;
-
-  background-color: var(--color-bg);
-  color: var(--color-text);
-}
-
-/* Headline wash: white falling into transparency, the way the reference reads.
    The one place a gradient is allowed to carry text, and only because the
-   marketing headline is the single piece of type on the site whose job is to
-   be looked at rather than read for information. Everywhere else, including
+   marketing headline is the single piece of type on the site whose job is to be
+   looked at rather than read for information. Everywhere else, including
    metrics and product headings, uses a solid colour. */
 @utility text-gradient-night {
   background-image: linear-gradient(
     to bottom,
-    #FFFFFF 0%,
-    #FFFFFF 42%,
-    rgba(255, 255, 255, 0.58) 100%
+    var(--color-text) 0%,
+    var(--color-text) 42%,
+    color-mix(in srgb, var(--color-text) 58%, transparent) 100%
   );
   -webkit-background-clip: text;
   background-clip: text;
