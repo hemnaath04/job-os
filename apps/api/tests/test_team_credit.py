@@ -47,6 +47,33 @@ def test_keeping_the_team_with_a_real_verb_is_fine() -> None:
     )
 
 
+def test_shared_credit_counts_however_it_is_worded() -> None:
+    """The guard protects the claim, not one vocabulary.
+
+    A real chat edit returned "Helped build an AI agent that generates test cases
+    from user stories, SRS, and FSDs; demoed end to end, pending senior
+    approval." That is honest shared credit and better writing than the verified
+    original. A guard that only recognised the literal word "team" would have
+    reverted it and thrown the improvement away.
+    """
+    for wording in (
+        "Helped build an AI agent that generates test cases from user stories.",
+        "Contributed to an AI agent generating test cases from SRS and FSDs.",
+        "Co-built an AI agent that drafts test cases from user stories.",
+        "Worked as part of the group that built an AI test-case agent.",
+    ):
+        assert not drops_team_credit(wording, TEAM_FACT), wording
+
+
+def test_sole_credit_is_still_caught_however_it_is_worded() -> None:
+    for wording in (
+        "Built agentic workflows that generate test cases from user stories.",
+        "Designed and shipped an AI agent for automated test generation.",
+        "Owned the AI agent that generates test cases from SRS and FSDs.",
+    ):
+        assert drops_team_credit(wording, TEAM_FACT), wording
+
+
 def test_evidence_that_never_named_a_team_is_left_alone() -> None:
     # The rule must not fire on ordinary scope hedging, or it would revert good
     # rewrites across most of the page.

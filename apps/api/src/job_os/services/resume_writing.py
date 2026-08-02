@@ -221,8 +221,20 @@ _TEAM_CREDIT_RE = re.compile(
     re.I,
 )
 # Any wording in the rewrite that still tells the reader it was not solo work.
+# Wider than the literal word "team" on purpose. A real edit produced "Helped
+# build an AI agent that generates test cases", which is honest shared credit and
+# better writing than the verified original, and a guard that only looked for
+# "team" would have reverted it and thrown the improvement away. Anything here
+# leaves the reader knowing the candidate did not do it alone, which is the whole
+# claim the guard protects.
 _TEAM_RETAINED_RE = re.compile(
-    r"\b(?:team|teams|collaborat\w*|alongside|jointly|co[- ](?:built|wrote|designed))\b",
+    r"\b(?:"
+    r"team|teams|"
+    r"collaborat\w*|alongside|jointly|"
+    r"co[- ](?:built|wrote|designed|developed|authored)|"
+    r"help(?:ed|ing)?|contribut\w*|assist\w*|supported|"
+    r"part of|with others|shared"
+    r")\b",
     re.I,
 )
 
