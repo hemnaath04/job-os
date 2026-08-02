@@ -40,16 +40,35 @@ exceed the page runs onto a second page instead of being balanced.
 
 ## Differences from the LaTeX render
 
-- **The text layer is correct here and is not in the LaTeX version.** Extracting
-  text from the Tectonic render of this template yields "it is not a
-  realresume", "a nightly manualregression pass" and "a suite thatruns in 11
-  minutes": spaces are dropped between runs. The page looks right, so this is
-  invisible to a human reader and very visible to an applicant tracking system,
-  which reads exactly that layer. The Typst render extracts cleanly. Given this
-  is already the riskiest of the six for automated parsing, that is the more
-  valuable of the two differences on this page.
+- **On a real resume the LaTeX render breaks and this one does not.** This is
+  the difference that matters here. Deedy's known upstream behaviour is that a
+  column longer than the page runs onto the next one, and at real length it
+  does: page one ends up holding nothing but the name and the contact line while
+  the whole document is pushed onto pages two and three. The Typst render fills
+  page one and fits in two. Verified against a real resume, not the sample,
+  because the sample is short enough that neither engine overflows.
 - **No hyphenation.** The LaTeX version hyphenates "EXAMPLE INSTITUTE OF
   TECH-NOLOGY" in the sidebar; this one wraps the whole word instead.
+
+### A text-layer claim that was made here and is wrong
+
+An earlier version of this file said the Tectonic render dropped spaces in its
+text layer, quoting "a suite thatruns in 11 minutes", and that Typst fixed it.
+That is retracted. It came from one PDF text extractor and does not survive
+checking with another.
+
+What is actually true is duller: neither render writes space characters into the
+content stream, because both set text by positioning glyphs. `pdftotext -raw`
+shows "canbepreviewed;itisnotarealresume" for BOTH engines, and `pdftotext` in
+its default mode recovers the words correctly for both, because it reconstructs
+spaces from the gaps between glyphs. So there is no Tectonic-versus-Typst
+difference in this template's text layer at all, and the original claim compared
+two extractions that happened to have been reconstructed differently.
+
+Recorded rather than quietly deleted, because the mistake is worth not repeating:
+a text layer has to be checked with more than one extractor before any claim is
+made about what a parser will see. The equivalent findings for awesome-cv and
+altacv were confirmed independently and do hold; see their ATTRIBUTION.md files.
 
 ## Placeholders
 
