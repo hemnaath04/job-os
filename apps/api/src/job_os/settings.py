@@ -59,6 +59,21 @@ class Settings(BaseSettings):
     # Manifest custom routing tiers. Fast handles short structured tasks;
     # quality is reserved for resume extraction; sonnet handles resume
     # tailoring and the independent review/verify pass.
+    #
+    # The fast tier does not behave like the other two, and moving a step onto
+    # it is not the one-line change it looks like. Probed against the live
+    # gateway: job-os-sonnet serves claude-sonnet-5 and job-os-quality serves
+    # claude-opus-5 whatever model id they are handed, so the id is decoration
+    # there. job-os-fast honours the id instead. A bare "auto" routes to
+    # claude-opus-4-8, so sending a step there to make it cheap, without naming
+    # "claude-haiku-4-5", buys the most expensive model on the gateway.
+    #
+    # "manifest/auto", which is what ANTHROPIC_MODEL_TAILOR is set to, is worse
+    # than that: the fast tier answers 200 OK with stop_reason end_turn and the
+    # string "[Manifest M302] Model \"manifest/auto\" is not available" as the
+    # assistant's reply. Nothing raises. The caller sees a well-formed response
+    # whose text is an error message, JSON parsing fails, and a step written to
+    # fail soft returns empty as though the model had found nothing.
     manifest_tier_fast: str = "job-os-fast"
     manifest_tier_quality: str = "job-os-quality"
     manifest_tier_sonnet: str = "job-os-sonnet"

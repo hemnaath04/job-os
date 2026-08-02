@@ -390,6 +390,37 @@ class TailorGraphState(TypedDict):
     done: bool
 
 
+def _log_prompt_cache(step: str, iteration: int, message: Any) -> None:
+    """Report whether this call's prompt was read from cache or paid for again.
+
+    The Manifest gateway caches prompts on its own, without this code asking. It
+    is not documented and nothing here controls it, so it is logged rather than
+    assumed: every call in a measured run reported input_tokens=2 with the rest
+    read or written as cache, and a repair pass read back the whole prefix its
+    first pass had written. If that ever stops, the repair passes quietly start
+    costing ten times what they cost now, and this line is what shows it.
+
+    Marking our own cache_control breakpoints on top of that was tried and
+    reverted. Probed against the live gateway, an unmarked prompt cached exactly
+    as well as a marked one: cold wrote 2475 tokens, the same prompt again read
+    2475, and a grown conversation read back 8486 of its 8504. The one thing
+    marking did add was letting the analyst, the writer and the reviewer share
+    one entry for the rules they all start with, worth about two thousand tokens
+    of write turned into a read, twice a run. That is under a cent and well
+    under a second against a run that takes minutes, and it is not worth
+    splitting the writer's system prompt to get.
+    """
+    usage = getattr(message, "usage", None)
+    log.info(
+        "tailor.prompt_cache",
+        step=step,
+        iteration=iteration,
+        cache_read=getattr(usage, "cache_read_input_tokens", None),
+        cache_written=getattr(usage, "cache_creation_input_tokens", None),
+        uncached_input=getattr(usage, "input_tokens", None),
+    )
+
+
 def _plural(count: int, noun: str) -> str:
     """"1 gap" / "3 gaps", for progress lines and notes a person reads."""
     if count == 1:
@@ -642,6 +673,24 @@ async def run_tailor(
         )
         analysis = await _analyse_requirements(
             client,
+            # Sonnet, though this step only classifies, and classifying is what
+            # a cheap tier is for. Haiku on the fast tier was measured against it
+            # and it really is faster: 10.7s against 21.1s on a short JD, 18.9s
+            # against 67.5s on a long one, and 238s against 353s for the whole
+            # run. On the short JD it is also just as good, same Job Match, same
+            # page.
+            #
+            # It was dropped on the long JD, where it answered far less: 1,672
+            # tokens of analysis against Sonnet's 8,018, leaving most of the
+            # unresolved requirements unclassified. The writer got a thin plan
+            # and the page ended on Job Match 52.2 where the Sonnet plan reached
+            # 73.9 and 78.3. Those are real matches the candidate can defend,
+            # dropped to save two minutes.
+            #
+            # Worth knowing that the honesty review does not catch this. It
+            # scored the Haiku pages 90 and 95, its best pair, because a resume
+            # that claims less is easier to defend. Job Match is the number that
+            # moved, so Job Match is the number that decides this.
             model=settings.anthropic_model_tailor,
             tier=settings.manifest_tier_sonnet,
             jd_parsed=jd_parsed,
@@ -741,6 +790,7 @@ async def run_tailor(
                 return {**state, "done": True}
             # Nothing to ship yet, so the caller has to hear about it.
             raise
+        _log_prompt_cache("compose", iteration, msg)
         raw = response_text(msg)
         try:
             attempt = parse_model_json(TailorAgentOutput, raw)
@@ -2681,6 +2731,7 @@ async def _analyse_requirements(
             messages=[{"role": "user", "content": prompt}],
             extra_headers={"x-manifest-tier": tier},
         )
+        _log_prompt_cache("analyst", 1, msg)
         analysis = parse_model_json(TailorAnalysis, response_text(msg))
     except (anthropic.APIError, ValidationError) as exc:
         log.warning("tailor.analysis_failed", error=str(exc)[:200])
