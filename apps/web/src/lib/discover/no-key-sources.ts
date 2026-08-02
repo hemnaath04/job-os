@@ -694,6 +694,12 @@ function isRemoteResult(result: DiscoveryResult): boolean {
  */
 function matchesCountry(result: DiscoveryResult, codes: string[]): boolean {
   if (result.country_code) return codes.includes(result.country_code);
+  // A remote posting has no country to check and is usually open to the one
+  // being filtered on, so it passes. This used to require the words "worldwide"
+  // or "anywhere", which meant a job labelled plainly "Remote", by far the most
+  // common wording, was dropped by every country filter. Someone searching
+  // "USA and remote" was having the remote half deleted.
+  if (isRemoteResult(result)) return true;
   return /\b(worldwide|anywhere)\b/i.test(result.location ?? "");
 }
 

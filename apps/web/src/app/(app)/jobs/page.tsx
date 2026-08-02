@@ -1102,7 +1102,20 @@ function ResultCard({
             </div>
           )}
         </div>
-        {fit && fit.confident && <FitBadge fit={fit} />}
+        {fit?.confident ? (
+          <FitBadge fit={fit} />
+        ) : !result.description ? (
+          // Some sources list a role without its description: the SimplifyJobs
+          // tables carry a title and a link and nothing else, and the JD is only
+          // fetched on import. A title alone is too little to score honestly, so
+          // say that rather than showing no badge and letting it read as 0% fit.
+          <span
+            className="shrink-0 self-start rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2 py-0.5 text-[11px] text-[color:var(--color-text-dim)]"
+            title="This source lists the role without a description, so there is nothing to score against yet. Import it and job.os fetches the full posting."
+          >
+            score on import
+          </span>
+        ) : null}
       </div>
 
       <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-dim)]">

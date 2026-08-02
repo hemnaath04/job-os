@@ -9,6 +9,7 @@ goes straight to `services.jd_parse`. For sources that only ship a link
 (GitHub), we run Firecrawl on the source_url first to grab the JD text.
 """
 import asyncio
+import re
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -130,30 +131,87 @@ async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryR
     ]
 
 
+_US_STATES = frozenset(
+    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
+    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY "
+    "DC PR".split()
+)
+_CA_PROVINCES = frozenset("AB BC MB NB NL NS NT NU ON PE QC SK YT".split())
+_SUBDIVISION_RE = re.compile(r",\s*([A-Z]{2})\b")
+_REMOTE_RE = re.compile(r"\b(remote|anywhere|worldwide)\b", re.I)
+_COUNTRY_HINTS = {
+    "united states": "US", "usa": "US", "u.s.": "US",
+    "united kingdom": "GB", "uk": "GB", "england": "GB", "scotland": "GB",
+    "canada": "CA", "india": "IN", "germany": "DE", "france": "FR",
+    "netherlands": "NL", "ireland": "IE", "australia": "AU", "japan": "JP",
+    "singapore": "SG", "israel": "IL", "poland": "PL", "spain": "ES",
+    "brazil": "BR", "mexico": "MX", "switzerland": "CH", "sweden": "SE",
+}
+
+
+def _infer_country_code(location: str | None) -> str | None:
+    """Best-effort ISO-3166 alpha-2 from a SimplifyJobs location label.
+
+    Those tables write "Houston, TX", "London, UK", "Toronto, ON", so a
+    subdivision code after a comma carries most of the signal and a small hint
+    table covers the rest. Returns None rather than guessing, and the caller
+    decides what an unknown country means.
+    """
+    if not location:
+        return None
+    for code in _SUBDIVISION_RE.findall(location):
+        if code in _US_STATES:
+            return "US"
+        if code in _CA_PROVINCES:
+            return "CA"
+    lowered = location.lower()
+    for name, code in _COUNTRY_HINTS.items():
+        if re.search(rf"(^|[^a-z]){re.escape(name)}([^a-z]|$)", lowered):
+            return code
+    return None
+
+
 async def _search_github(payload: DiscoverySearchRequest) -> list[DiscoveryResult]:
     from job_os.integrations import github_jobs
 
-    # GitHub source honors title_keywords + max_age_days only; the others
-    # don't have analogues in the SimplifyJobs tables.
+    # The SimplifyJobs tables have no country column, so this source used to
+    # ignore country_codes entirely and a US-only search came back with London
+    # roles in it. The location label is enough to infer one, so infer it and
+    # apply the filter here rather than leaving it silently unenforced.
     hits = await github_jobs.search_jobs(
         title_keywords=payload.title_keywords or None,
         max_age_days=payload.max_age_days,
         limit=payload.limit,
     )
-    return [
-        DiscoveryResult(
-            source="github",
-            source_label=h.repo_label,
-            source_id=h.source_id,
-            source_url=h.apply_url,
-            title=h.role,
-            company_name=h.company,
-            location=h.location,
-            posted_at=h.posted_at,
-            description="",
+    wanted = {code.upper() for code in payload.country_codes}
+
+    results: list[DiscoveryResult] = []
+    for h in hits:
+        country = _infer_country_code(h.location)
+        if wanted:
+            if country is not None:
+                if country not in wanted:
+                    continue
+            # No country to read. A remote listing is plausibly open to the
+            # country being asked for, so it stays; anything else is a location
+            # we could not place and would be a guess to include.
+            elif not _REMOTE_RE.search(h.location or ""):
+                continue
+        results.append(
+            DiscoveryResult(
+                source="github",
+                source_label=h.repo_label,
+                source_id=h.source_id,
+                source_url=h.apply_url,
+                title=h.role,
+                company_name=h.company,
+                location=h.location,
+                country_code=country,
+                posted_at=h.posted_at,
+                description="",
+            )
         )
-        for h in hits
-    ]
+    return results
 
 
 async def _annotate_already_imported(
