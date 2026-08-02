@@ -37,18 +37,9 @@ export interface CustomSearchParams {
   limit?: number;
 }
 
-/** The shape the endpoint contract asks for. Everything but title and url is optional. */
-interface CustomJob {
-  id?: string | null;
-  title?: string | null;
-  url?: string | null;
-  company?: string | null;
-  company_domain?: string | null;
-  location?: string | null;
-  country_code?: string | null;
-  posted_at?: string | null;
-  description?: string | null;
-}
+// There is deliberately no interface for an incoming job here any more. A fixed
+// shape was the thing standing between this feature and the endpoints people
+// actually own; the field names are recognised by alias at read time instead.
 
 // ---------------------------------------------------------------------------
 // low-level helpers
@@ -99,6 +90,144 @@ function describeStatus(status: number): string {
   if (status === 429) return "endpoint rate-limited the request";
   if (status >= 500) return `endpoint error (HTTP ${status})`;
   return `HTTP ${status}`;
+}
+
+// ---------------------------------------------------------------------------
+// Universal shape adapter
+//
+// The documented contract asks for POST, a `results` array and a fixed set of
+// field names. That only ever suited an endpoint written for job.os. People
+// point this at whatever they already have: a GET route, a third-party API, a
+// scraper someone else built. So rather than reject those, recognise them.
+//
+// Two problems to solve, and both are pattern matching rather than
+// configuration, because a field-mapping UI is a form nobody wants to fill in
+// to try a URL once.
+//   1. Where is the list? Providers nest it under results, data, jobs, hits,
+//      and sometimes two levels down.
+//   2. What are the fields called? job_title, jobTitle, position and name all
+//      mean title.
+// ---------------------------------------------------------------------------
+
+/** Keys that commonly hold the array of postings, tried in this order. */
+const ROW_KEYS = [
+  "results", "data", "jobs", "items", "hits", "records", "postings",
+  "positions", "listings", "docs", "elements", "content", "vacancies",
+];
+
+// Compared after normalising to lowercase alphanumerics, so job_title,
+// jobTitle, JobTitle and "job title" all collapse to jobtitle.
+const TITLE_KEYS = ["title", "jobtitle", "position", "role", "name", "headline", "vacancyname"];
+const URL_KEYS = [
+  "url", "joburl", "applyurl", "applylink", "jobapplylink", "absoluteurl",
+  "link", "redirecturl", "permalink", "href", "detailsurl", "canonicalurl",
+];
+const COMPANY_KEYS = [
+  "company", "companyname", "employer", "employername", "organization",
+  "organisation", "hiringorganization", "org", "brand", "accountname",
+];
+const DOMAIN_KEYS = ["companydomain", "domain", "companywebsite", "employerwebsite", "website"];
+const LOCATION_KEYS = [
+  "location", "joblocation", "candidaterequiredlocation", "city", "area",
+  "region", "place", "locationname", "formattedlocation",
+];
+const COUNTRY_KEYS = ["countrycode", "country", "jobcountry"];
+const DATE_KEYS = [
+  "postedat", "dateposted", "publicationdate", "publishedat", "pubdate",
+  "createdat", "created", "listedat", "firstpublished", "postingdate",
+  "updatedat", "jobpostedat",
+];
+const DESC_KEYS = [
+  "description", "jobdescription", "snippet", "summary", "contents", "content",
+  "abstract", "body", "text", "jobsummary",
+];
+const ID_KEYS = ["id", "jobid", "slug", "guid", "reference", "ref", "uuid", "externalid"];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeKey(key: string): string {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+/** A row's own keys, normalised once so every lookup below is a map hit. */
+function keyIndex(row: Record<string, unknown>): Map<string, unknown> {
+  const index = new Map<string, unknown>();
+  for (const [key, value] of Object.entries(row)) {
+    const norm = normalizeKey(key);
+    // First writer wins: `title` should beat a later `seoTitle`.
+    if (!index.has(norm)) index.set(norm, value);
+  }
+  return index;
+}
+
+/**
+ * First candidate key that holds usable text.
+ *
+ * Unwraps one level of object or array, because providers routinely nest what
+ * you want: `company: { name }`, `location: { city }`, `locations: [{ name }]`.
+ */
+function pickText(index: Map<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const found = unwrapText(index.get(key));
+    if (found) return found;
+  }
+  return null;
+}
+
+function unwrapText(value: unknown, depth = 0): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number") return String(value);
+  if (depth > 1) return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = unwrapText(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (isRecord(value)) {
+    for (const key of ["name", "title", "label", "value", "text", "display", "city"]) {
+      const found = unwrapText(value[normalizeKey(key)] ?? value[key], depth + 1);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+/** Enough of a job to be worth showing: something to read and somewhere to go. */
+function looksLikeJob(row: Record<string, unknown>): boolean {
+  const index = keyIndex(row);
+  return Boolean(pickText(index, TITLE_KEYS)) && Boolean(pickText(index, URL_KEYS));
+}
+
+/**
+ * Find the postings anywhere in the response.
+ *
+ * Depth-limited and preference-ordered rather than "first array wins", because
+ * responses often carry a facets or filters array before the results, and
+ * grabbing that would silently return nothing useful.
+ */
+function findRows(payload: unknown, depth = 0): Record<string, unknown>[] {
+  if (depth > 4) return [];
+
+  if (Array.isArray(payload)) {
+    const rows = payload.filter(isRecord);
+    return rows.some(looksLikeJob) ? rows : [];
+  }
+  if (!isRecord(payload)) return [];
+
+  for (const key of ROW_KEYS) {
+    const direct = payload[key] ?? payload[normalizeKey(key)];
+    const found = findRows(direct, depth + 1);
+    if (found.length) return found;
+  }
+  for (const value of Object.values(payload)) {
+    const found = findRows(value, depth + 1);
+    if (found.length) return found;
+  }
+  return [];
 }
 
 // ---------------------------------------------------------------------------
@@ -198,21 +327,54 @@ export async function fetchCustomSource(
   }
   if (authHeader) headers[authHeader] = authValue ?? "";
 
+  const limit = params.limit ?? DEFAULT_LIMIT;
+  const body = JSON.stringify({
+    title_keywords: params.titleKeywords,
+    location: params.location ?? null,
+    country_codes: params.countryCodes,
+    max_age_days: params.maxAgeDays ?? null,
+    limit,
+  });
+
+  // The same filters as a query string, for an endpoint that only reads GET.
+  // `q` is sent alongside the canonical name because it is what most existing
+  // job APIs call the search term, and an endpoint that ignores it loses
+  // nothing by receiving it.
+  const getUrl = new URL(url.toString());
+  if (params.titleKeywords.length) {
+    getUrl.searchParams.set("q", params.titleKeywords.join(" "));
+    getUrl.searchParams.set("title_keywords", params.titleKeywords.join(","));
+  }
+  if (params.location) getUrl.searchParams.set("location", params.location);
+  if (params.countryCodes.length) {
+    getUrl.searchParams.set("country_codes", params.countryCodes.join(","));
+  }
+  if (params.maxAgeDays) {
+    getUrl.searchParams.set("max_age_days", String(params.maxAgeDays));
+  }
+  getUrl.searchParams.set("limit", String(limit));
+
   let text: string;
   try {
-    const res = await fetch(url, {
+    let res = await fetch(url, {
       method: "POST",
       signal: controller.signal,
       cache: "no-store",
       headers,
-      body: JSON.stringify({
-        title_keywords: params.titleKeywords,
-        location: params.location ?? null,
-        country_codes: params.countryCodes,
-        max_age_days: params.maxAgeDays ?? null,
-        limit: params.limit ?? DEFAULT_LIMIT,
-      }),
+      body,
     });
+    // 405 says the route exists and refuses the verb, which is the single most
+    // common shape for an endpoint that was not written for job.os. Retry it
+    // the way it wants to be called rather than reporting a failure the user
+    // would have to read the contract to understand.
+    if (res.status === 405 || res.status === 501) {
+      res = await fetch(getUrl, {
+        method: "GET",
+        signal: controller.signal,
+        cache: "no-store",
+        headers,
+      });
+    }
     if (!res.ok) throw new Error(describeStatus(res.status));
     text = await res.text();
   } catch (e) {
@@ -234,32 +396,42 @@ export async function fetchCustomSource(
     throw new Error("endpoint did not return JSON");
   }
 
-  // A bare array and { results: [...] } are both valid per the contract.
-  const rows = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as { results?: unknown })?.results)
-      ? ((payload as { results: unknown[] }).results)
-      : [];
+  const rows = findRows(payload);
+  if (!rows.length) {
+    // Distinguishing "nothing matched your filters" from "I could not read
+    // this" matters: the first is a search result, the second is a setup
+    // problem, and they need opposite responses from the user.
+    throw new Error(
+      "no job list found in the response, expected an array of objects with a title and a url",
+    );
+  }
 
   const out: DiscoveryResult[] = [];
   for (const row of rows.slice(0, MAX_ITEMS)) {
-    if (!row || typeof row !== "object") continue;
-    const job = row as CustomJob;
-    const title = (job.title ?? "").trim();
-    const jobUrl = nonEmpty(job.url);
+    const index = keyIndex(row);
+    const title = pickText(index, TITLE_KEYS);
+    const jobUrl = pickText(index, URL_KEYS);
+    // A posting with nothing to click is not something we can hand to the user,
+    // and one with no title is not something they could read.
     if (!title || !jobUrl) continue;
+
+    const country = pickText(index, COUNTRY_KEYS);
     out.push({
       source: `custom:${cfg.id}`,
       source_label: cfg.name,
-      source_id: nonEmpty(job.id) ?? jobUrl,
+      source_id: pickText(index, ID_KEYS) ?? jobUrl,
       source_url: jobUrl,
       title,
-      company_name: nonEmpty(job.company),
-      company_domain: nonEmpty(job.company_domain),
-      location: nonEmpty(job.location),
-      country_code: nonEmpty(job.country_code)?.toUpperCase() ?? null,
-      posted_at: toIsoDate(job.posted_at),
-      description: plainText(job.description),
+      company_name: pickText(index, COMPANY_KEYS),
+      company_domain: pickText(index, DOMAIN_KEYS),
+      location: pickText(index, LOCATION_KEYS),
+      // Only a 2-letter code is a country code. Providers put "United States"
+      // in the same field, and passing that through breaks the country filter
+      // silently instead of just leaving it unknown.
+      country_code:
+        country && country.trim().length === 2 ? country.trim().toUpperCase() : null,
+      posted_at: toIsoDate(pickText(index, DATE_KEYS)),
+      description: plainText(pickText(index, DESC_KEYS) ?? ""),
       technologies: [],
       already_imported: false,
     } satisfies DiscoveryResult);
