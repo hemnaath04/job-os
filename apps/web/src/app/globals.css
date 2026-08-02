@@ -191,14 +191,6 @@
   box-shadow: 0 0 0 1px var(--color-accent-border), 0 0 24px -6px rgba(233, 198, 74, 0.5);
 }
 
-/* Brand gradient text — for hero titles / big numbers, gold to mauve. */
-@utility text-gradient-brand {
-  background: linear-gradient(120deg, #6E5A10 0%, #A9861F 55%, #7C6C77 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-}
-
 /* Brand gradient surface — jasmine fill with dark text. */
 @utility bg-gradient-brand {
   background-image: linear-gradient(120deg, #FFE787 0%, #FFDF6A 55%, #F8D64F 100%);
@@ -247,8 +239,10 @@
 }
 
 /* Headline wash: white falling into transparency, the way the reference reads.
-   Kept as its own utility rather than reusing text-gradient-brand, which is
-   tuned for gold on a light page and disappears on black. */
+   The one place a gradient is allowed to carry text, and only because the
+   marketing headline is the single piece of type on the site whose job is to
+   be looked at rather than read for information. Everywhere else, including
+   metrics and product headings, uses a solid colour. */
 @utility text-gradient-night {
   background-image: linear-gradient(
     to bottom,
