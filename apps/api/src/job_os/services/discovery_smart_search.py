@@ -4,15 +4,25 @@ The user types a free-form sentence (e.g. "fullstack internship in Boston with
 Python and React, posted in the last 2 weeks"). Claude returns a structured
 DiscoverySearchRequest the FE can hydrate the form with + execute.
 
-Hard rules baked into the prompt:
-  - Don't invent country codes outside the user's sentence. If they didn't
-    specify, leave country_codes empty.
-  - Title keywords are short phrases (1-4 words each), lower-cased.
-  - Technology slugs are lower-case canonical names (python, react, fastapi,
-    pytorch, kubernetes, ...). Don't echo company names or random nouns.
-  - max_age_days defaults to 30 unless the user said otherwise.
-  - Always include both sources (theirstack + github) unless the user told
-    you to narrow.
+The prompt is written against how the filters are actually applied downstream,
+which is the part that decides whether a search returns anything:
+
+  - title_keywords does the real work. Every source honours it, and for the
+    key-free ATS boards it is the ONLY filter that narrows anything, because
+    those boards are fetched whole and filtered here. Each entry is matched
+    word-by-word against the title, so a longer phrase is a stricter one, and
+    several short alternatives beat one long restatement of the sentence.
+  - technology_slugs and country_codes are honoured by some sources and
+    ignored by others, so a role word must never be moved out of
+    title_keywords into them.
+  - country_codes stays empty unless the user named a place. An empty list
+    searches everywhere; a wrong code hides everything.
+  - max_age_days defaults to 30, limit to 20.
+  - sources is left empty. The UI toggles own that choice.
+
+Runs on the fast tier (Haiku): this is short structured extraction on one
+sentence, not reasoning, and the user is waiting on it before the search even
+starts.
 """
 from __future__ import annotations
 
@@ -37,27 +47,59 @@ You translate a user's free-form job-search sentence into a structured
 DiscoverySearchRequest. Return ONLY a single JSON object matching the
 provided schema. No prose, no fences.
 
-Hard rules:
-1. title_keywords: 1-4 short phrases, lower-cased, comma-separated as
-   array entries. Capture the role (e.g. "software engineer intern",
-   "data scientist new grad"). NEVER include company names here.
-2. technology_slugs: lower-case canonical tech names mentioned in the
-   sentence (python, react, fastapi, pytorch, kubernetes, etc.). Only
-   include techs the user named. Skip generic words like "AI" or "ML"
-   unless they're explicit framework slugs.
-3. country_codes: only include if the user gave a country/region. Use
-   ISO 3166 alpha-2 (US, CA, GB, IN, ...). If they said a US city,
-   country = US. If unspecified, leave empty.
-4. max_age_days: integer, default 30. Bump higher only if the user
-   explicitly says "last month", "this year", etc.
-5. limit: integer, default 20. Cap at 50.
-6. sources: ["theirstack", "github"] unless the user told you to limit.
+HOW title_keywords IS ACTUALLY MATCHED. Read this before writing any.
+Each entry is a phrase. A posting matches a phrase when EVERY word in that
+phrase appears somewhere in the job title, in any order, punctuation ignored.
+The entries are alternatives: matching any one of them is enough.
+
+So "ai engineer intern" matches "AI/ML Engineer Intern" and "Software Engineer
+Intern, AI", but NOT "Machine Learning Engineer Intern", because the word "ai"
+is not in that title.
+
+Two consequences, and they decide whether the search returns anything:
+- Every extra word in a phrase makes it STRICTER. Three words is usually the
+  most a real job title will satisfy. Four is rarely worth it.
+- Employers title the same role many different ways, so give the alternatives.
+  One phrase per way the role is actually written, 3 to 6 of them.
+
+For "AI engineer internship" a good answer is:
+  ["ai engineer intern", "ai intern", "machine learning intern",
+   "ml engineer intern", "ai engineer co-op"]
+and a bad answer is:
+  ["ai engineer internship 2027"]
+because no posting is titled that, and it would return nothing.
+
+Rules for the rest:
+1. title_keywords: lower-case. Cover synonyms the user did not type:
+   intern / internship / co-op, new grad / entry level / university graduate,
+   ml / machine learning, ai / artificial intelligence. NEVER include a
+   company name, a location, or a year. Years over-constrain the title and
+   recency is handled by max_age_days.
+2. technology_slugs: lower-case canonical names the user actually named
+   (python, react, fastapi, pytorch, kubernetes). Skip broad words like "AI"
+   or "ML", which belong in title_keywords. NOTE: only some sources filter on
+   this, so never move a role word out of title_keywords into here.
+3. country_codes: only if the user named a country or region. ISO 3166
+   alpha-2 (US, CA, GB, IN). A US city implies US. If unspecified, leave
+   empty, since an empty list searches everywhere and a wrong code hides
+   everything.
+4. max_age_days: integer, default 30. Raise only if the user asked for a
+   wider window.
+5. limit: integer, default 20, cap 50.
+6. sources: leave empty. The user picks sources with toggles in the UI and
+   their choice wins over anything you put here.
+
+WHEN IN DOUBT, SEARCH WIDER. An empty result page tells the user nothing,
+while extra results are ranked by fit against their profile and cost them one
+scroll. Prefer the shorter phrase and the extra synonym.
 
 Output schema:
 {schema}
 
-Also include a one-line `explanation` describing what you extracted
-("Looking for fullstack interns in Boston with React + Python").
+Also include a one-line `explanation` of what you extracted, in plain language
+("Interns and co-ops for AI and ML engineering roles, posted in the last 30
+days"). If you dropped something the user said, such as a graduation year, say
+so there.
 """
 
 
