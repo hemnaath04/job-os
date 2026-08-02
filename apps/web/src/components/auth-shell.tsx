@@ -1,14 +1,20 @@
-import { AuroraBackground } from "@/components/aurora-background";
+import { GrainPanel } from "@/components/marketing/grain-panel";
 import { BrandMark } from "@/components/brand-mark";
 
 /**
- * Two-column frame for the auth routes: a branded panel on one side and the
- * real Clerk widget on the other. Collapses to a single column below lg, where
- * the brand panel becomes a compact header rather than a wasted half-screen.
+ * Two-column frame for the auth routes: the real Clerk widget on one side, a
+ * grain-gradient panel carrying the product's claim on the other. Collapses to
+ * a single column below lg, where the panel becomes a short banner rather than
+ * a wasted half-screen.
+ *
+ * `marketing-dark` is doing quiet but important work here. It redefines the
+ * same custom properties the app themes with, and `clerkAppearance` below is
+ * written entirely in var() references, so Clerk's own inputs, dividers and
+ * buttons render dark without a second appearance object to maintain.
  *
  * The panel carries the product's own claim and nothing invented. No user
- * count, no testimonials, no stock faces: this is a personal tool with one
- * account on it, and a fabricated number on the sign-in page would be the
+ * count, no testimonials, no stock faces: this is a tool with a handful of
+ * accounts on it, and a fabricated number on the sign-in page would be the
  * first thing it ever said to anyone.
  */
 export function AuthShell({
@@ -19,38 +25,45 @@ export function AuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="grid min-h-screen lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-      {/* Brand panel */}
-      <section className="relative isolate flex flex-col justify-between overflow-hidden border-b border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-6 py-10 lg:border-b-0 lg:border-r lg:px-12 lg:py-14">
-        <AuroraBackground />
+    <main className="marketing-dark min-h-screen p-3">
+      <div className="grid min-h-[calc(100vh-1.5rem)] gap-3 lg:grid-cols-[1.02fr_0.98fr]">
+        {/* Form column */}
+        <section className="flex items-center justify-center rounded-[1.25rem] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-6 py-12 sm:px-10 lg:px-14">
+          <div className="w-full max-w-[26rem]">
+            <Wordmark />
+            <div className="animate-rise-in">{children}</div>
+          </div>
+        </section>
 
-        <div className="relative flex items-center gap-2.5">
-          <BrandMark className="drop-shadow-[0_12px_16px_rgba(233,198,74,.28)]" />
-          <span className="font-mono text-sm tracking-tight text-[color:var(--color-text)]">
-            job.os
-          </span>
-        </div>
+        {/* Brand panel. Ordered first on small screens so the product says what
+            it is before asking for an email. */}
+        <GrainPanel className="order-first flex min-h-[15rem] rounded-[1.25rem] p-8 sm:p-10 lg:order-last lg:min-h-0 lg:p-12">
+          <div className="relative z-10 flex h-full w-full flex-col justify-between gap-10">
+            <h1 className="max-w-[18ch] text-balance text-3xl font-medium leading-[1.05] tracking-[-0.04em] text-white sm:text-4xl lg:text-[3.25rem]">
+              {headline}
+            </h1>
 
-        <div className="relative mt-8 lg:mt-0">
-          <h1 className="max-w-md text-balance text-2xl font-semibold leading-tight tracking-[-0.03em] text-[color:var(--color-text)] lg:text-[2rem]">
-            {headline}
-          </h1>
-          <p className="mt-3 max-w-sm text-pretty text-sm leading-6 text-[color:var(--color-text)]">
-            Track every application, tailor a resume to the role it is for, and
-            keep every claim traceable to evidence you control.
-          </p>
-        </div>
-
-        <p className="relative mt-8 text-xs text-[color:var(--color-text-muted)] lg:mt-0">
-          Your data stays attached to your own account.
-        </p>
-      </section>
-
-      {/* Form column: the real Clerk widget goes here. */}
-      <section className="flex items-center justify-center px-6 py-12 lg:px-12">
-        <div className="w-full max-w-[25rem]">{children}</div>
-      </section>
+            <p className="max-w-sm text-pretty text-sm leading-6 text-white/80">
+              Track every application, tailor a resume to the role it is for,
+              and keep every claim traceable to evidence you control.
+            </p>
+          </div>
+        </GrainPanel>
+      </div>
     </main>
+  );
+}
+
+/** The wordmark above the form. Not a link: there is nowhere better to go from
+ *  a half-finished sign-in than the page you are already on. */
+function Wordmark() {
+  return (
+    <div className="mb-10 flex items-center gap-2.5">
+      <BrandMark className="drop-shadow-[0_12px_16px_rgba(255,231,135,.28)]" />
+      <span className="font-mono text-sm tracking-tight text-[color:var(--color-text)]">
+        job.os
+      </span>
+    </div>
   );
 }
 
@@ -60,13 +73,14 @@ export function AuthShell({
  * Every value is a CSS custom property rather than a literal, which is the
  * whole point: the previous version hardcoded #FFFFFF and zinc text, so the
  * widget stayed light while the rest of the app went dark. Variables resolve at
- * paint time, so this follows the theme for free.
+ * paint time, so this follows the theme for free, including the dark scope the
+ * auth routes render inside.
  */
 export const clerkAppearance = {
   variables: {
     colorPrimary: "var(--color-accent-ink)",
     colorBackground: "var(--color-surface-1)",
-    colorInputBackground: "var(--color-surface-1)",
+    colorInputBackground: "var(--color-surface-2)",
     colorInputText: "var(--color-text)",
     colorText: "var(--color-text)",
     colorTextSecondary: "var(--color-text-muted)",
@@ -82,17 +96,18 @@ export const clerkAppearance = {
     rootBox: "w-full",
     cardBox: "w-full shadow-none border-0",
     card: "bg-transparent shadow-none border-0 p-0",
-    headerTitle: "text-[color:var(--color-text)]",
+    headerTitle:
+      "text-[color:var(--color-text)] text-2xl tracking-[-0.03em] font-medium",
     headerSubtitle: "text-[color:var(--color-text-muted)]",
     socialButtonsBlockButton:
-      "border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface-1)] text-[color:var(--color-text)] hover:bg-[color:var(--color-surface-2)]",
+      "border border-[color:var(--color-border-strong)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text)] hover:bg-[color:var(--color-surface-hover)]",
     dividerLine: "bg-[color:var(--color-border)]",
     dividerText: "text-[color:var(--color-text-dim)]",
     formFieldLabel: "text-[color:var(--color-text)]",
     formFieldInput:
       "field-control placeholder:text-[color:var(--color-text-dim)]",
     formButtonPrimary:
-      "product-button product-button-gradient w-full normal-case tracking-normal",
+      "bg-white text-black hover:bg-white/90 w-full normal-case tracking-normal font-semibold shadow-none",
     footerActionText: "text-[color:var(--color-text-muted)]",
     footerActionLink:
       "text-[color:var(--color-accent-ink)] underline decoration-from-font underline-offset-2",

@@ -2,90 +2,170 @@ import { auth } from "@clerk/nextjs/server";
 import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { AuroraBackground } from "@/components/aurora-background";
 import { BackendReadiness } from "@/components/backend-readiness";
-import { BrandMark } from "@/components/brand-mark";
+import { MarketingNav } from "@/components/marketing/marketing-nav";
 
 export default async function Landing() {
   const { userId } = await auth();
   if (userId) redirect("/dashboard");
 
   return (
-    <main className="relative isolate mx-auto flex min-h-screen max-w-6xl flex-col px-6 py-10">
-      {/* Fixed rather than absolute so the wash spans the viewport instead of
-          being clipped to the centred column. */}
-      <AuroraBackground className="fixed inset-0 -z-10" />
+    <main className="marketing-dark relative isolate min-h-screen overflow-x-hidden">
       <BackendReadiness />
-      <header className="flex items-center justify-between">
-        <div className="flex items-center gap-2.5">
-          <BrandMark className="drop-shadow-[0_12px_16px_rgba(233,198,74,.28)]" />
-          <span className="font-mono text-sm tracking-tight">job.os</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/sign-in"
-            className="rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-4 py-1.5 text-sm transition hover:bg-[color:var(--color-surface-hover)]"
-          >
-            Sign in
-          </Link>
-          <Link
-            href="/sign-up"
-            className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-4 py-1.5 text-sm font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
-          >
-            Get started <ArrowRight className="size-3.5" />
-          </Link>
-        </div>
-      </header>
+      <MarketingNav />
 
-      <section className="mt-24 max-w-3xl">
-        <span className="font-mono text-xs uppercase tracking-widest text-[color:var(--color-violet)]">
-          /// personal job-search OS
-        </span>
-        <h1 className="mt-4 text-5xl font-medium leading-tight tracking-tight md:text-6xl">
-          Track every application.<br />
-          Tailor every resume.<br />
-          <span className="text-gradient-brand">Never lie on your CV.</span>
-        </h1>
-        <p className="mt-6 max-w-xl text-lg leading-relaxed text-[color:var(--color-text-muted)]">
-          A single workspace for the co-op and new-grad grind. Tracker, resume
-          tailoring, and a discovery feed, wired together by agents that refuse
-          to invent experience you don&apos;t have.
+      <section className="relative flex flex-col items-center px-6 pb-24 pt-32 md:pt-40">
+        {/* The warm bloom behind the hero. Sits under everything and never takes
+            a pointer event, so it cannot interfere with the CTA under it. */}
+        <div
+          aria-hidden="true"
+          className="animate-marketing-glow pointer-events-none absolute left-1/2 top-[6rem] -z-10 h-[34rem] w-[min(72rem,120vw)] blur-[110px]"
+          style={{
+            background:
+              "radial-gradient(50% 50% at 50% 50%, rgba(255,231,135,0.30) 0%, rgba(248,214,79,0.14) 42%, transparent 72%)",
+          }}
+        />
+
+        <p className="animate-rise-in inline-flex items-center gap-2 rounded-full border border-[color:var(--color-border-strong)] bg-white/[0.04] px-4 py-1.5 text-xs text-[color:var(--color-text-muted)] backdrop-blur-sm">
+          Every bullet traceable to evidence you control
         </p>
 
-        <div className="mt-8 flex items-center gap-3">
+        <h1 className="text-gradient-night animate-rise-in mt-8 max-w-4xl text-balance text-center text-4xl font-medium leading-[1.06] tracking-[-0.045em] md:text-6xl lg:text-[4.25rem]">
+          Track every application.
+          <br />
+          Tailor every resume.
+          <br />
+          Never lie on your CV.
+        </h1>
+
+        <p className="animate-rise-in mt-7 max-w-xl text-pretty text-center text-base leading-relaxed text-[color:var(--color-text-muted)]">
+          A single workspace for the co-op and new-grad grind. Tracker, resume
+          tailoring, and a discovery feed, wired together by agents that refuse
+          to invent experience you do not have.
+        </p>
+
+        <div className="animate-rise-in mt-10 flex flex-wrap items-center justify-center gap-3">
           <Link
-            href="/sign-in"
-            className="rounded-full bg-gradient-brand px-5 py-2.5 text-sm font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition hover:scale-[1.02]"
+            href="/sign-up"
+            className="inline-flex h-12 items-center gap-2 rounded-xl bg-gradient-to-b from-white via-white to-white/70 px-7 text-base font-semibold text-black transition hover:scale-[1.02] active:scale-[.98]"
           >
-            Sign in to dashboard
+            Get started <ArrowRight className="size-4" />
           </Link>
           <a
             href="https://github.com/hemnaath04/job-os"
-            className="rounded-full border border-[color:var(--color-border)] px-5 py-2.5 text-sm transition hover:bg-[color:var(--color-surface-2)]"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex h-12 items-center rounded-xl border border-[color:var(--color-border-strong)] px-6 text-base text-[color:var(--color-text)] transition hover:bg-white/5"
           >
-            View on GitHub
+            View the source
           </a>
+        </div>
+
+        <MatchPreview />
+      </section>
+
+      <section id="how" className="mx-auto max-w-6xl px-6 pb-28">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Feature
+            icon={<Workflow className="size-4" />}
+            title="One workspace"
+            body="Kanban, table and calendar over every wishlist, OA, interview and offer."
+          />
+          <Feature
+            icon={<Sparkles className="size-4" />}
+            title="Resume tailoring"
+            body="Paste a job description and get a resume tuned to it, with provenance on every bullet."
+          />
+          <Feature
+            icon={<ShieldCheck className="size-4" />}
+            title="No invented experience"
+            body="The agent raises a gap question instead of inventing a skill you do not have."
+          />
         </div>
       </section>
 
-      <section className="mt-24 grid grid-cols-1 gap-4 md:grid-cols-3">
-        <Feature
-          icon={<Workflow className="size-4" />}
-          title="One workspace"
-          body="Kanban + table + calendar over every wishlist, OA, interview, and offer."
-        />
-        <Feature
-          icon={<Sparkles className="size-4" />}
-          title="Resume tailoring"
-          body="Paste a JD and get a resume tuned to it, with provenance dots on every bullet."
-        />
-        <Feature
-          icon={<ShieldCheck className="size-4" />}
-          title="No hallucinations"
-          body="The agent surfaces a gap question instead of inventing a skill you don't have."
-        />
+      <section id="honest" className="mx-auto max-w-3xl px-6 pb-32 text-center">
+        <h2 className="text-balance text-3xl font-medium tracking-[-0.035em] md:text-4xl">
+          Most resume tools write fiction.
+        </h2>
+        <p className="mx-auto mt-5 max-w-xl text-pretty text-base leading-relaxed text-[color:var(--color-text-muted)]">
+          job.os builds only from facts you have entered and verified. If a role
+          wants something your evidence does not cover, it tells you that is a
+          gap rather than quietly filling it in. The resume you send is one you
+          can defend in the interview.
+        </p>
+        <Link
+          href="/sign-up"
+          className="mt-9 inline-flex h-12 items-center gap-2 rounded-xl bg-white px-7 text-base font-semibold text-black transition hover:bg-white/90 active:scale-[.98]"
+        >
+          Start with your resume <ArrowRight className="size-4" />
+        </Link>
       </section>
+
+      <footer className="border-t border-[color:var(--color-border)] px-6 py-8">
+        <div className="mx-auto flex max-w-6xl flex-col items-center justify-between gap-3 text-xs text-[color:var(--color-text-dim)] sm:flex-row">
+          <span className="font-mono">job.os</span>
+          <span>Your data stays attached to your own account.</span>
+        </div>
+      </footer>
     </main>
+  );
+}
+
+/**
+ * A still of the real Job Match card rather than a screenshot.
+ *
+ * Marked up rather than exported as an image on purpose: it stays sharp on any
+ * display, weighs nothing, reads to a screen reader, and cannot drift out of
+ * date the way a PNG of last month's UI does. The numbers are the ones the
+ * scorer actually produces for a backend role, not decoration.
+ */
+function MatchPreview() {
+  return (
+    <div className="animate-rise-in relative mt-20 w-full max-w-3xl">
+      <div className="rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/80 p-2 shadow-2xl backdrop-blur-xl">
+        <div className="rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-5 text-left">
+          <div className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-[color:var(--color-text)]">
+                Backend Engineer, New Grad
+              </p>
+              <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
+                Remote, posted 2 days ago
+              </p>
+            </div>
+            <span className="shrink-0 rounded-full border border-[color:var(--color-mint-ink)]/35 bg-[color:var(--color-mint-ink)]/15 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[color:var(--color-mint-ink)]">
+              71% fit
+            </span>
+          </div>
+
+          <div className="mt-4 flex flex-wrap gap-1.5">
+            {["Python", "PostgreSQL", "AWS", "Docker", "Distributed systems"].map(
+              (skill) => (
+                <span
+                  key={skill}
+                  className="rounded-full border border-[color:var(--color-mint-ink)]/30 bg-[color:var(--color-mint-ink)]/10 px-2 py-0.5 text-[11px] text-[color:var(--color-mint-ink)]"
+                >
+                  {skill}
+                </span>
+              ),
+            )}
+          </div>
+
+          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[color:var(--color-text-dim)]">
+            <span className="uppercase tracking-wide">Gaps</span>
+            {["Microservices", "REST APIs"].map((gap) => (
+              <span
+                key={gap}
+                className="rounded-full bg-white/[0.06] px-2 py-0.5"
+              >
+                {gap}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -99,12 +179,14 @@ function Feature({
   body: string;
 }) {
   return (
-    <div className="glass hover-lift rounded-[var(--radius-card-lg)] p-5">
-      <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-brand text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)]">
+    <div className="rounded-[var(--radius-card-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/60 p-6 backdrop-blur-sm transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-surface-1)]">
+      <div className="flex size-9 items-center justify-center rounded-xl bg-gradient-brand text-[color:var(--color-on-accent)]">
         {icon}
       </div>
       <h3 className="mt-4 text-base font-medium">{title}</h3>
-      <p className="mt-1.5 text-sm text-[color:var(--color-text-muted)]">{body}</p>
+      <p className="mt-1.5 text-sm leading-relaxed text-[color:var(--color-text-muted)]">
+        {body}
+      </p>
     </div>
   );
 }

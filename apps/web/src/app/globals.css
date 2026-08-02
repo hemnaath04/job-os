@@ -208,6 +208,96 @@
   background-image: linear-gradient(120deg, var(--color-sage) 0%, var(--color-cream) 100%);
 }
 
+/* ──── Marketing surfaces: landing + auth ─────────────────────
+   The product is warm light. The two pages a stranger sees first are dark,
+   which is a deliberate split: marketing wants contrast and drama, a tool
+   people stare at for an hour wants calm parchment.
+
+   Done by overriding the same custom properties the app already uses, rather
+   than by adding a second palette. That is what makes Clerk's widget come
+   along for free: `clerkAppearance` is written entirely in var() references,
+   so it resolves against whatever scope it renders inside, with nothing to
+   keep in sync. */
+.marketing-dark {
+  --color-bg: #050505;
+  --color-surface-1: #0A0A0A;
+  --color-surface-2: #101010;
+  --color-surface-3: #161616;
+  --color-surface-hover: #1A1A1A;
+
+  --color-border: rgba(255, 255, 255, 0.10);
+  --color-border-strong: rgba(255, 255, 255, 0.20);
+
+  --color-text: #FAFAF7;
+  --color-text-muted: rgba(250, 250, 247, 0.62);
+  --color-text-dim: rgba(250, 250, 247, 0.42);
+
+  /* On parchment the brand reads as gold ink because pale jasmine fails
+     contrast as text. On black that inverts: the fill itself is the readable
+     colour, so accent-ink becomes jasmine and the status inks lighten to
+     match. */
+  --color-accent-ink: #FFE787;
+  --color-kiwi: #FFE787;
+  --color-mint-ink: #86D8A0;
+  --color-amber-ink: #F2C864;
+  --color-rose-ink: #F4949D;
+
+  background-color: var(--color-bg);
+  color: var(--color-text);
+}
+
+/* Headline wash: white falling into transparency, the way the reference reads.
+   Kept as its own utility rather than reusing text-gradient-brand, which is
+   tuned for gold on a light page and disappears on black. */
+@utility text-gradient-night {
+  background-image: linear-gradient(
+    to bottom,
+    #FFFFFF 0%,
+    #FFFFFF 42%,
+    rgba(255, 255, 255, 0.58) 100%
+  );
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Film grain. An SVG turbulence tile rather than a bitmap: a few hundred bytes,
+   no network request, and it scales to any panel size without resampling. */
+@utility grain-noise {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.82' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+@keyframes marketing-glow {
+  0%, 100% { opacity: 0.52; transform: translate3d(-50%, 0, 0) scale(1); }
+  50%      { opacity: 0.78; transform: translate3d(-50%, 0, 0) scale(1.05); }
+}
+
+@keyframes grain-drift {
+  from { transform: translate3d(0, 0, 0); }
+  to   { transform: translate3d(-7%, -5%, 0); }
+}
+
+@keyframes rise-in {
+  from { opacity: 0; transform: translate3d(0, 12px, 0); }
+  to   { opacity: 1; transform: none; }
+}
+
+/* Slow on purpose. These run for the whole time the page is open, and ambient
+   motion that repeats is the kind a user stops seeing and starts feeling: fast
+   enough to notice is fast enough to annoy. Compositor-only properties, so
+   none of it costs a layout. */
+.animate-marketing-glow { animation: marketing-glow 11s var(--ease-in-out) infinite; }
+.animate-grain-drift    { animation: grain-drift 26s linear infinite alternate; }
+.animate-rise-in        { animation: rise-in 0.5s var(--ease-out) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marketing-glow,
+  .animate-grain-drift,
+  .animate-rise-in {
+    animation: none;
+  }
+}
+
 /* Soft border-gradient stroke — sits on top of cards for accent. */
 @utility border-gradient-brand {
   position: relative;
