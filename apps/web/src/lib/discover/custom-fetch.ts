@@ -86,8 +86,18 @@ function plainText(value: unknown): string {
  */
 function describeStatus(status: number): string {
   if (status === 401 || status === 403) return "endpoint rejected the request";
-  if (status === 404) return "endpoint not found";
-  if (status >= 500) return "endpoint error (5xx)";
+  if (status === 404) return "endpoint not found, check the path";
+  // The most common way a working endpoint still fails here: it was written to
+  // answer GET, and job.os posts the filters as a JSON body. Worth naming
+  // outright, because every other clue points at the URL or the key instead.
+  if (status === 405) {
+    return "endpoint does not accept POST, and job.os posts the filters as JSON";
+  }
+  if (status === 400 || status === 422) {
+    return "endpoint rejected the request body, check the endpoint contract";
+  }
+  if (status === 429) return "endpoint rate-limited the request";
+  if (status >= 500) return `endpoint error (HTTP ${status})`;
   return `HTTP ${status}`;
 }
 
