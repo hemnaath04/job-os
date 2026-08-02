@@ -112,11 +112,12 @@ ENV TECTONIC_ONLY_CACHED=1
 # template has stopped compiling or forgot to guard an empty section.
 RUN /app/.venv/bin/python -m job_os.scripts.check_typst_templates
 
-# Which engine serves a bundled template. Tectonic remains the default and the
-# fallback: `typst` opts in only for templates whose port has been compared
-# against the LaTeX render, and anything else still goes through Tectonic. A
-# stored template built from somebody's upload always does.
-ENV RENDER_ENGINE=tectonic
+# Which engine serves a bundled template. `typst` is selected: it renders the
+# templates whose port has been compared against the LaTeX output (jakes,
+# sb2nov, deedy, altacv, awesome-cv). Anything else, moderncv and any template
+# built from somebody's upload, still goes through Tectonic, which also stays
+# the fallback if the Typst binary is ever unavailable.
+ENV RENDER_ENGINE=typst
 
 # Vercel supplies PORT (80 by default). Migrations intentionally do not run
 # here: autoscaling can start multiple instances concurrently. Run Alembic
