@@ -127,6 +127,15 @@ Implementation notes that are load-bearing:
   model with the compiler's own log, up to four attempts.
 - Template preview cards show the PDF produced from obviously invented sample
   data, never the user's own history.
+- Every render is audited for what its **text layer** hands a parser, which is
+  not always what the page shows. The primary check is engine-agnostic: what
+  fraction of the resume's own words can still be found, as whole words, in the
+  extracted text. AltaCV under Tectonic scores 26% against 98% for the same
+  resume through Typst. Three narrower patterns corroborate it, because a clean
+  render only scores about 85% anyway once a template legitimately omits a
+  section: leaked LaTeX macros (`\faGlobe`), small caps decomposing so "Computer
+  Science" arrives as `COMPUTERSCiENCE`, and lost word spacing. All of it looks
+  perfect on screen. See `apps/api/src/job_os/services/pdf_text_audit.py`.
 
 ## Architecture
 
@@ -215,4 +224,27 @@ pnpm appwrite:migrate-workspace   # copy an existing Postgres workspace across
   order behind it.
 - `docs/DEPLOY.md` and `docs/SETUP.md` cover production and first-run
   configuration.
+
+## Acknowledgements
+
+[**pdf-inspector**](https://github.com/firecrawl/pdf-inspector) by Firecrawl
+(MIT) reads the text layer of every rendered resume. It classifies the PDF as
+text-based or scanned and extracts the text in reading order, in single-digit
+milliseconds, which is what makes it cheap enough to run on the request path
+rather than in a batch job somewhere.
+
+To be precise about the division of labour, since it affects what the credit is
+for: the library supplies the classification and the extracted text. The
+coverage measurement and the patterns that decide whether that text would
+survive an applicant tracking system are ours, in `pdf_text_audit.py`. The
+library's own `has_encoding_issues` flag does not fire on the LaTeX defects
+described under [Rendering](#rendering); it is not tuned for them. What it gives
+us is a trustworthy view of the string the parser actually gets, which is the
+part that used to be guesswork.
+
+The six resume templates are vendored from their upstream authors under their
+own licences, listed in the table under [Rendering](#rendering), each with an
+`ATTRIBUTION.md` recording every change. Rendering itself is
+[Tectonic](https://tectonic-typesetting.github.io/) and
+[Typst](https://typst.app/).
 

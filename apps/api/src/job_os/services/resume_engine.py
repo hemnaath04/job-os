@@ -33,6 +33,7 @@ from job_os.services.llm_json import (
     response_diagnostics,
     response_text,
 )
+from job_os.services.pdf_text_audit import audit_pdf_text
 from job_os.services.resume_writing import (
     BANNED_WORDING,
     document_quality_flags,
@@ -502,6 +503,29 @@ def deterministic_review(
                 message="Rendered PDF does not contain enough selectable text for ATS parsing.",
             )
         )
+    else:
+        # `text_selectable` only asks whether there is text. This asks whether the
+        # text is any good, which is a different question and the one that was
+        # actually costing interviews: a render can be full of selectable text and
+        # still hand a parser `COMPUTERSCiENCE` or a literal `\faGlobe`. A warning
+        # rather than a veto, for the reason given on the page count above, and
+        # because the fix is to switch template, which the message names.
+        # `doc` is passed so the audit can run its primary check, which compares
+        # the text layer against the words this very document contains.
+        audit = audit_pdf_text(pdf_bytes, source_document=doc)
+        if audit.available and not audit.clean:
+            detail = "; ".join(audit.artifacts)
+            issues.append(
+                ResumeReviewIssue(
+                    severity="warning",
+                    code="ats_text_layer",
+                    message=(
+                        f"The text an applicant tracking system reads is damaged: {detail}. "
+                        "The page looks correct, but keyword matching runs on this text. "
+                        f"Switching to {TIGHTEST_TEMPLATE_NAME} avoids it."
+                    ),
+                )
+            )
 
     return issues + _document_review(doc), page_count, text_selectable
 

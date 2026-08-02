@@ -4,6 +4,14 @@ The loop is the point of this module: a model writing LaTeX gets it wrong often
 enough that a single attempt would mean regularly telling the user their design
 cannot be used. So the compiler's own error goes back to the model, up to a few
 times, and a template that never compiles is never stored.
+
+This path stays on Tectonic by design, because it executes model-written source
+and the hardening for that lives there, so there is no fast engine to switch to.
+Instead the two questions are separated. How the loop behaves, which is what
+this module is, is asserted against a stand-in compiler in milliseconds. That
+Tectonic really compiles the good template and really produces the log the
+stand-in imitates is asserted at the bottom, marked `slow`, and run by
+`pytest -m slow`. Before that split the four-attempt test alone took a minute.
 """
 from __future__ import annotations
 
@@ -24,7 +32,7 @@ os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
 
 from _fake_llm import StreamingFakeMessages  # noqa: E402
 from job_os.services import latex_from_document as lfd  # noqa: E402
-from job_os.services.latex_render import LatexRenderError  # noqa: E402
+from job_os.services.latex_render import LatexRenderError, tectonic_binary  # noqa: E402
 
 
 def _reply(latex_source: str, *, name: str = "Two Column Slate") -> Any:
@@ -85,6 +93,40 @@ BROKEN_TEMPLATE = r"""
 \end{document}
 """
 
+# A recorded tail of what Tectonic really says about BROKEN_TEMPLATE. That it
+# says this is asserted for real in test_latex_render.py, by
+# `test_a_broken_template_fails_with_the_compiler_reason`; copying the shape here
+# lets the loop be exercised without a twenty second compile per attempt.
+TECTONIC_LOG = (
+    "LaTeX Font Info:    ... okay on input line 3.\n"
+    "\n"
+    "! Undefined control sequence.\n"
+    r"l.4 <<name>> \thisCommandDoesNotExist" + "\n"
+    "                                     \n"
+    "No pages of output."
+)
+
+# `validate_template` rejects anything under two kilobytes as an empty page, so
+# a stand-in for a compiled resume has to clear that.
+COMPILED_PDF = b"%PDF-1.7\n" + b"0" * 2_048
+
+
+@pytest.fixture
+def fake_compiler(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Stand in for Tectonic: fails on the broken template, succeeds otherwise.
+
+    Only the subprocess is replaced. `_reject_unsafe` and `fill_template` still
+    run for real, so the template is really screened and really filled, and the
+    filled source is what this sees.
+    """
+
+    def compile_pdf(source: str, **_kwargs: Any) -> bytes:
+        if "thisCommandDoesNotExist" in source:
+            raise LatexRenderError("The LaTeX compile failed.", log=TECTONIC_LOG)
+        return COMPILED_PDF
+
+    monkeypatch.setattr(lfd, "compile_pdf", compile_pdf)
+
 
 def test_only_tex_and_pdf_are_accepted() -> None:
     for filename in ("design.docx", "design.png", "resume.doc"):
@@ -129,12 +171,9 @@ def test_the_contract_sent_to_the_model_matches_the_renderer() -> None:
 
 
 @pytest.mark.asyncio
-async def test_a_compiling_template_is_returned_on_the_first_pass(fake_gateway) -> None:
-    from job_os.services.latex_render import tectonic_binary
-
-    if tectonic_binary() is None:
-        pytest.skip("tectonic is not installed on this machine")
-
+async def test_a_compiling_template_is_returned_on_the_first_pass(
+    fake_gateway, fake_compiler: None
+) -> None:
     fake_gateway([_reply(GOOD_TEMPLATE)])
     candidate = await lfd.build_template_from_upload(
         b"\\documentclass{article}", "mine.tex"
@@ -147,13 +186,8 @@ async def test_a_compiling_template_is_returned_on_the_first_pass(fake_gateway) 
 
 @pytest.mark.asyncio
 async def test_a_failing_template_is_repaired_with_the_compiler_error(
-    fake_gateway,
+    fake_gateway, fake_compiler: None
 ) -> None:
-    from job_os.services.latex_render import tectonic_binary
-
-    if tectonic_binary() is None:
-        pytest.skip("tectonic is not installed on this machine")
-
     messages = fake_gateway([_reply(BROKEN_TEMPLATE), _reply(GOOD_TEMPLATE)])
     candidate = await lfd.build_template_from_upload(
         b"\\documentclass{article}", "mine.tex"
@@ -168,12 +202,9 @@ async def test_a_failing_template_is_repaired_with_the_compiler_error(
 
 
 @pytest.mark.asyncio
-async def test_nothing_is_returned_when_every_attempt_fails(fake_gateway) -> None:
-    from job_os.services.latex_render import tectonic_binary
-
-    if tectonic_binary() is None:
-        pytest.skip("tectonic is not installed on this machine")
-
+async def test_nothing_is_returned_when_every_attempt_fails(
+    fake_gateway, fake_compiler: None
+) -> None:
     fake_gateway([_reply(BROKEN_TEMPLATE) for _ in range(lfd.MAX_ATTEMPTS)])
     with pytest.raises(lfd.TemplateBuildError, match="after 4 attempts"):
         await lfd.build_template_from_upload(b"\\documentclass{article}", "mine.tex")
@@ -202,17 +233,14 @@ def test_an_empty_render_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.asyncio
-async def test_an_empty_reply_is_retried_as_an_empty_reply(fake_gateway) -> None:
+async def test_an_empty_reply_is_retried_as_an_empty_reply(
+    fake_gateway, fake_compiler: None
+) -> None:
     """A spent thinking budget is its own failure with its own remedy."""
     empty = SimpleNamespace(
         content=[], stop_reason="max_tokens", usage=SimpleNamespace(output_tokens=16000)
     )
     messages = fake_gateway([empty, _reply(GOOD_TEMPLATE)])
-    from job_os.services.latex_render import tectonic_binary
-
-    if tectonic_binary() is None:
-        pytest.skip("tectonic is not installed on this machine")
-
     candidate = await lfd.build_template_from_upload(b"x", "mine.tex")
     assert candidate.attempts == 2
     assert "no text" in candidate.repairs[0]
@@ -237,13 +265,10 @@ async def test_the_loop_stops_when_the_caller_can_no_longer_be_answered(
 
 
 @pytest.mark.asyncio
-async def test_a_truncated_reply_is_told_it_was_truncated(fake_gateway) -> None:
+async def test_a_truncated_reply_is_told_it_was_truncated(
+    fake_gateway, fake_compiler: None
+) -> None:
     """A reply cut off mid-string is not a LaTeX bug to go hunting for."""
-    from job_os.services.latex_render import tectonic_binary
-
-    if tectonic_binary() is None:
-        pytest.skip("tectonic is not installed on this machine")
-
     cut_off = SimpleNamespace(
         content=[SimpleNamespace(type="text", text='{"name": "X", "latex_sou')],
         stop_reason="max_tokens",
@@ -260,3 +285,47 @@ def test_a_compile_error_carries_the_log() -> None:
     """The repair prompt is only useful if the log survives the raise."""
     error = LatexRenderError("failed", log="! Undefined control sequence.")
     assert "Undefined control sequence" in lfd._failure_note(error)
+
+
+# ---------------------------------------------------------------------------
+# Against the real compiler, on demand
+# ---------------------------------------------------------------------------
+#
+# What the stand-in above assumes: that Tectonic accepts GOOD_TEMPLATE, rejects
+# BROKEN_TEMPLATE, and says why in a log the loop can forward. Slow because each
+# attempt is a real compile, so these are excluded from the default run.
+
+needs_tectonic = pytest.mark.skipif(
+    tectonic_binary() is None,
+    reason="tectonic is not installed on this machine",
+)
+
+
+@needs_tectonic
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_a_generated_template_really_compiles(fake_gateway) -> None:
+    fake_gateway([_reply(GOOD_TEMPLATE)])
+    candidate = await lfd.build_template_from_upload(
+        b"\\documentclass{article}", "mine.tex"
+    )
+    assert candidate.attempts == 1
+    assert candidate.repairs == []
+    assert candidate.pdf_bytes.startswith(b"%PDF")
+    # Big enough that validate_template's empty-page floor really cleared.
+    assert len(candidate.pdf_bytes) > 2_000
+
+
+@needs_tectonic
+@pytest.mark.slow
+@pytest.mark.asyncio
+async def test_a_real_compiler_error_drives_the_repair(fake_gateway) -> None:
+    """The whole round trip: broken LaTeX in, Tectonic's own words back out."""
+    messages = fake_gateway([_reply(BROKEN_TEMPLATE), _reply(GOOD_TEMPLATE)])
+    candidate = await lfd.build_template_from_upload(
+        b"\\documentclass{article}", "mine.tex"
+    )
+    assert candidate.attempts == 2
+    assert candidate.repairs and "Undefined control sequence" in candidate.repairs[0]
+    assert "Tectonic reported" in messages.prompts[1]
+    assert "thisCommandDoesNotExist" in messages.prompts[1]

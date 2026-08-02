@@ -53,6 +53,7 @@ dependencies = [
     "orjson>=3.10",
     "rich>=13.9",
     "appwrite>=22.2.0",
+    "pdf-inspector>=0.2.6",
 ]
 
 [dependency-groups]
@@ -101,3 +102,12 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# A real Tectonic compile takes fifteen to thirty seconds, and there are twenty
+# of them, which is the whole of a seven minute run. They are excluded here
+# rather than deleted: every one of them still asserts something Typst cannot,
+# and `pytest -m slow` runs exactly that set. Everything the fast engine can
+# cover is covered in the default run instead, against a real Typst compile.
+addopts = ["-m", "not slow"]
+markers = [
+    "slow: needs a real Tectonic compile. Excluded from the default run; `pytest -m slow` runs only these.",
+]
