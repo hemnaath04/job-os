@@ -12,7 +12,7 @@ import {
   TrendingUp,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
@@ -158,10 +158,10 @@ export default function DashboardClient({
         <DashboardPanel
           variants={itemVariants}
           title="Application activity"
-          subtitle="Applications added per day, last 7 days."
+          subtitle="Applications added per day."
           badge={intelligence.velocity > 0 ? `${intelligence.velocity} this week` : undefined}
         >
-          <WeekdayBars intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
+          <ActivityChart intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
         </DashboardPanel>
         <DashboardPanel
           variants={itemVariants}
@@ -317,70 +317,153 @@ function DashboardPanel({
   );
 }
 
-function WeekdayBars({
+type RangeKey = "week" | "month";
+
+/**
+ * Applications added per day.
+ *
+ * The range switch is not decoration: over seven days this chart is usually one
+ * bar and six blanks, which looks broken rather than quiet. Thirty days is
+ * already computed for the totals, so the wider view costs nothing and is the
+ * one that actually shows a shape.
+ *
+ * Only two ranges. A "1 year" or "All" tab would be inventing options the data
+ * cannot fill, and an empty range is worse than an absent one.
+ */
+function ActivityChart({
   intelligence,
   reduceMotion,
 }: {
   intelligence: Intelligence;
   reduceMotion: boolean;
 }) {
+  const [range, setRange] = useState<RangeKey>("week");
+  const count = range === "week" ? 7 : 30;
   const now = Date.now();
-  const last7 = intelligence.daily.slice(-7).map((day, i) => {
-    const date = new Date(now - (6 - i) * DAY);
+  const series = intelligence.daily.slice(-count).map((day, i) => {
+    const date = new Date(now - (count - 1 - i) * DAY);
     return {
       value: day.value,
-      label: WEEKDAY[date.getDay()],
+      // A weekday initial reads well across seven columns and turns to mush
+      // across thirty, where the date is both shorter and more useful.
+      label: count === 7 ? WEEKDAY[date.getDay()] : String(date.getDate()),
       // "S, M, T, W, T, F, S" is fine to look at and useless to listen to.
-      spokenLabel: date.toLocaleDateString(undefined, { weekday: "long" }),
+      spokenLabel: date.toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+      }),
     };
   });
-  const peak = Math.max(...last7.map((d) => d.value), 1);
-  const busiest = last7.reduce((a, b) => (b.value >= a.value ? b : a), last7[0]);
+  const peak = Math.max(...series.map((d) => d.value), 1);
+  const busiest = series.reduce((a, b) => (b.value >= a.value ? b : a), series[0]);
+  // Whole numbers only: these are counts, and a gridline at 0.5 applications
+  // would be measuring something that cannot happen.
+  const ticks =
+    peak <= 3
+      ? Array.from({ length: peak + 1 }, (_, i) => i)
+      : [0, Math.round(peak / 2), peak];
+  // Every column labelled works at seven and collides at thirty.
+  const labelEvery = count === 7 ? 1 : 5;
 
-  // Just the chart. The panel header already carries the title, the week's
-  // count and a line saying what is being plotted, so the summary that used to
-  // sit here repeated all three and contradicted one of them: it counted 30
-  // days under a heading that says 7.
   return (
-    <div
-      role="img"
-      aria-label={`Applications added per day over the last week: ${last7
-        .map((d) => `${d.spokenLabel} ${d.value}`)
-        .join(", ")}.`}
-      className="flex h-36 items-end gap-2.5"
-    >
-      {last7.map((d, i) => {
-        const h = d.value > 0 ? Math.max((d.value / peak) * 100, 14) : 4;
-        const isPeak = d.value === busiest.value && d.value > 0;
-        return (
-          <div key={i} className="flex h-full flex-1 flex-col items-center gap-2">
-            {/* A fixed row for the figure rather than a pill floated over the
-                bar. The old one was positioned off the bar's own height, so it
-                sat at a different distance on every column and collided with
-                the top of a tall one. A row of its own cannot drift. */}
-            <div className="h-4 text-[11px] font-semibold tabular-nums leading-4 text-[color:var(--color-text-muted)]">
-              {d.value > 0 ? d.value : ""}
-            </div>
-            <div className="flex w-full flex-1 items-end justify-center">
-              <motion.div
-                style={{ height: `${h}%` }}
-                initial={reduceMotion ? false : { scaleY: 0 }}
-                animate={{ scaleY: 1 }}
-                transition={{ duration: 0.55, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                className={
-                  "w-full max-w-[44px] origin-bottom rounded-md " +
-                  (isPeak
-                    ? "bg-[color:var(--color-accent)]"
-                    : d.value > 0
-                      ? "bg-[color:var(--color-accent)]/45"
-                      : "bg-[color:var(--color-surface-3)]")
-                }
+    <div>
+      <div
+        role="group"
+        aria-label="Chart range"
+        className="mb-6 inline-flex rounded-full bg-[color:var(--color-surface-2)] p-1"
+      >
+        {(
+          [
+            ["week", "1 week"],
+            ["month", "1 month"],
+          ] as [RangeKey, string][]
+        ).map(([key, label]) => (
+          <button
+            key={key}
+            type="button"
+            onClick={() => setRange(key)}
+            aria-pressed={range === key}
+            className={
+              "rounded-full px-3.5 py-1 text-xs transition " +
+              (range === key
+                ? "bg-[color:var(--color-surface-1)] font-semibold text-[color:var(--color-text)] shadow-[var(--shadow-xs)]"
+                : "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]")
+            }
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex gap-3">
+        {/* Axis labels sit outside the plot so the gridlines can run the full
+            width without text interrupting them. */}
+        <div className="flex h-44 w-6 shrink-0 flex-col-reverse justify-between text-right text-[10px] tabular-nums leading-none text-[color:var(--color-text-dim)]">
+          {ticks.map((t) => (
+            <span key={t}>{t}</span>
+          ))}
+        </div>
+
+        <div className="relative min-w-0 flex-1">
+          {/* Positioned by value rather than spread evenly, so a line always
+              means the number printed beside it. */}
+          <div aria-hidden="true" className="absolute inset-x-0 top-0 h-44">
+            {ticks.map((t) => (
+              <div
+                key={t}
+                className="absolute inset-x-0 border-t border-dashed border-[color:var(--color-border)]"
+                style={{ bottom: `${(t / peak) * 100}%` }}
               />
-            </div>
-            <span className="text-[11px] font-medium text-[color:var(--color-text-dim)]">{d.label}</span>
+            ))}
           </div>
-        );
-      })}
+
+          <div
+            role="img"
+            aria-label={`Applications added per day over the last ${count} days: ${series
+              .map((d) => `${d.spokenLabel} ${d.value}`)
+              .join(", ")}.`}
+            className="relative flex h-44 items-end gap-1.5"
+          >
+            {series.map((d, i) => {
+              const h = d.value > 0 ? Math.max((d.value / peak) * 100, 6) : 2;
+              const isPeak = d.value === busiest.value && d.value > 0;
+              return (
+                <motion.div
+                  key={i}
+                  style={{ height: `${h}%` }}
+                  initial={reduceMotion ? false : { scaleY: 0 }}
+                  animate={{ scaleY: 1 }}
+                  transition={{
+                    duration: 0.55,
+                    delay: reduceMotion ? 0 : i * (count === 7 ? 0.05 : 0.012),
+                    ease: [0.16, 1, 0.3, 1],
+                  }}
+                  title={`${d.spokenLabel}: ${d.value}`}
+                  className={
+                    "min-w-0 flex-1 origin-bottom rounded-full " +
+                    (isPeak
+                      ? "bg-[color:var(--color-accent)]"
+                      : d.value > 0
+                        ? "bg-[color:var(--color-accent)]/45"
+                        : "bg-[color:var(--color-surface-3)]")
+                  }
+                />
+              );
+            })}
+          </div>
+
+          <div className="mt-2.5 flex gap-1.5">
+            {series.map((d, i) => (
+              <span
+                key={i}
+                className="min-w-0 flex-1 text-center text-[11px] font-medium text-[color:var(--color-text-dim)]"
+              >
+                {i % labelEvery === 0 ? d.label : ""}
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
