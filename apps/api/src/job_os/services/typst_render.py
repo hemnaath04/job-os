@@ -475,6 +475,11 @@ def typst_binary() -> str | None:
     return shutil.which(os.environ.get("TYPST_BIN", "typst"))
 
 
+# The discard port on loopback: nothing listens there, so a connection attempt
+# is refused immediately rather than hanging until a timeout.
+_BLACKHOLE_PROXY = "http://127.0.0.1:9"
+
+
 def _compile_env(home: Path) -> dict[str, str]:
     """A deliberately tiny environment for the engine subprocess.
 
@@ -483,11 +488,29 @@ def _compile_env(home: Path) -> dict[str, str]:
     Typst reads its own TYPST_* variables for font and package paths, so an
     inherited environment could also redirect where it looks for both. Every
     such path is passed on the command line instead.
+
+    The proxy variables are the network backstop, and they are belt to
+    `_reject_imports`'s braces. A `@preview` import is the one thing Typst
+    fetches, 0.15.1 has no offline switch, and a guard that reads the source is
+    only as good as its regex. Pointing every proxy variable at a closed port
+    means that even an import this module failed to spot cannot reach the
+    network: it fails closed, in milliseconds, with a connection refused.
+    Verified against 0.15.1 rather than assumed.
+
+    NO_PROXY is deliberately absent. Setting it would punch a hole straight
+    back through this, which is also why the child gets a built environment
+    rather than a filtered copy of the parent's.
     """
     return {
         "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
         "HOME": str(home),
         "TMPDIR": str(home),
+        "HTTP_PROXY": _BLACKHOLE_PROXY,
+        "HTTPS_PROXY": _BLACKHOLE_PROXY,
+        "ALL_PROXY": _BLACKHOLE_PROXY,
+        "http_proxy": _BLACKHOLE_PROXY,
+        "https_proxy": _BLACKHOLE_PROXY,
+        "all_proxy": _BLACKHOLE_PROXY,
     }
 
 

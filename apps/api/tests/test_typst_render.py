@@ -164,6 +164,31 @@ def test_a_template_importing_a_package_is_refused() -> None:
         compile_pdf('#import "@preview/cetz:0.2.2"\nhello', {})
 
 
+@needs_typst
+def test_a_package_fetch_fails_closed_even_past_the_guard(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The backstop, tested with the guard deliberately disabled.
+
+    A source screen is only as good as its regex, so the render subprocess also
+    gets every proxy variable pointed at a closed port. This asserts the second
+    layer alone: with `_reject_imports` neutered, an import that reaches Typst
+    must fail to reach the network rather than quietly downloading a package on
+    a request a user is waiting for.
+
+    Matching on the refusal specifically, not just on failure. A test that
+    accepted any error here would still pass if the fetch succeeded and the
+    package merely failed to compile, which is the opposite of the point.
+    """
+    from job_os.services import typst_render as module
+
+    monkeypatch.setattr(module, "_reject_imports", lambda source: None)
+    with pytest.raises(TypstRenderError) as caught:
+        module.compile_pdf('#import "@preview/oxifmt:0.2.0": strfmt\nhello', {})
+    assert "failed to download package" in caught.value.log
+    assert "Connection refused" in caught.value.log or "Connect error" in caught.value.log
+
+
 # ---------------------------------------------------------------------------
 # Engine selection
 # ---------------------------------------------------------------------------
