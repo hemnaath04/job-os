@@ -6,6 +6,18 @@ gateway) which facts/bullets to include and how to lightly edit them. Python
 assembles the final JSON Resume deterministically from the agent's decisions
 so the no-hallucination contract is enforced server-side, not in the prompt.
 
+The flow is analyse, then compose, then repair only if a repair can honestly
+help:
+  1. Python derives the scored requirement list from the JD and word-matches
+     every requirement against the whole evidence vault. Free, and it settles
+     most of them.
+  2. One analyst model call reads only the leftovers and says which existing
+     bullet covers each one under a different name, and which are real gaps.
+  3. One writing pass composes the resume with that rubric and that plan in hand.
+  4. Python scores the assembled document. A repair pass runs only when there is
+     something a repair could fix: a writing flag, or a requirement the vault
+     genuinely holds and the writer failed to surface.
+
 Hard rules baked into the prompt:
   - Every bullet in the output must reference a `fact_bullet_id` that exists
     in the provided bullets list. The agent NEVER invents new bullets.
@@ -36,6 +48,7 @@ from job_os.schemas.resumes import (
     ProvenanceEntry,
     SelectedBullet,
     TailorAgentOutput,
+    TailorAnalysis,
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text as _identity_text
@@ -56,6 +69,7 @@ from job_os.services.resume_writing import (
     document_quality_flags,
     drops_team_credit,
     normalize_dashes,
+    records_provisional_status,
     upgrades_status,
 )
 from job_os.settings import get_settings
@@ -105,16 +119,43 @@ class TailorFact:
     updated_at: str | None = None
 
 
-# The user's real complaint was that the first tailor comes out below what they
-# want, so they hand-edit it upward with the chat editor. Those hand-edits are
-# refinement, not new facts, which means the loop can do that work before the
-# resume is ever shown. It runs until the score stops improving rather than
-# stopping at a fixed three, so the ceiling is the evidence rather than the budget.
-MAX_ITERATIONS = 6
-# One flat pass is not a plateau: a pass sometimes trades a keyword for a writing
-# fix and lands level before improving again. Two in a row is a plateau.
-IMPROVEMENT_PATIENCE = 2
-# Below this the gain is not worth another call and a longer wait.
+@dataclass(frozen=True)
+class TailorStage:
+    """One honest, user-visible step of a tailor run.
+
+    The run takes minutes, so a silent bar reads as a hang. Every field here is
+    something that actually happened: `step` is a stable id the UI keys its
+    checklist off, `label` is the line a person reads, and `detail` is a fact
+    measured from the run so far. Nothing in here is a timer or a guess, which
+    means the screen only changes when the work does.
+    """
+
+    step: str
+    label: str
+    detail: str | None = None
+    pct: float = 0.0
+
+
+# The old flow drafted blind and then spent up to five more full rewrites, each a
+# two-minute model call, rediscovering two things Python already knew: the exact
+# requirement list the score is computed from, and the exact writing rules the
+# penalty is computed from. A measured run took 579 seconds over five passes to
+# climb 49 -> 87 against a list `_jd_requirements` derives in under a millisecond.
+#
+# So the answer key is handed over before a word is written. Python matches every
+# requirement against the whole evidence vault, one analyst pass decides which of
+# the leftovers existing work covers under another name, and only then does the
+# writer compose, with the rubric in hand.
+#
+# Two, measured rather than chosen. On the same good-fit posting, allowing three
+# writing passes took 406s and finished on Job Match 73.9; allowing two took 188s
+# and finished on the same 73.9. The third pass bought nothing but the wait. On a
+# stretch posting the loop stops itself after one.
+MAX_COMPOSE_PASSES = 2
+# Below this the gain is not worth another call and a longer wait. A repair pass
+# is told exactly what is wrong, so one that lands flat has hit the limit of the
+# evidence rather than paused on its way up, and the old two-pass patience only
+# bought a slower way to reach the same answer.
 MIN_IMPROVEMENT = Decimal("0.5")
 TARGET_ATS_SCORE = Decimal("80")
 
@@ -124,7 +165,7 @@ TARGET_ATS_SCORE = Decimal("80")
 # on thinking and returned zero text blocks: stop_reason max_tokens,
 # block_types ['thinking'], output_tokens 16000. Every pass after that point failed
 # the same way, which silently capped the loop at two or three passes however high
-# MAX_ITERATIONS was set. The budget has to hold the reasoning AND the answer.
+# the pass budget was set. The budget has to hold the reasoning AND the answer.
 DRAFT_MAX_TOKENS = 32000
 # More room again for the recovery attempt, since the reason it is happening is
 # that the answer did not fit. It must exceed what thinking already consumed, or
@@ -234,17 +275,21 @@ BULLET WRITING (this is what a human reader judges):
 - Where two bullets in the profile describe the SAME work in different words,
   pick the single best wording. Never select both.
 
-FILL THE PAGE, WITH EVIDENCE, NEVER WITH PADDING. The output is exactly one
-Letter page and a half-empty resume reads as a thin candidate. Aim for 3 to 4
-bullets on each role and 2 to 3 on each project, and select 3 to 4 projects
-whenever the profile holds that many that are defensibly relevant. Those are
-also the ceilings: Python cuts the surplus at 4 per role and 3 per project, so
-choose deliberately rather than listing everything. When a JD is a poor fit,
-lead with the closest honest evidence and still fill the page; do not shrink the
-resume to signal the mismatch, that is what gap_questions are for.
-A project that owns only ONE bullet still earns its place when it is relevant. A
-third relevant project with one dense bullet beats a page that stops early, and
-the reader has no way to know the profile held only one bullet for it.
+FILL THE PAGE, WITH EVIDENCE, NEVER WITH PADDING, AND DO NOT OVERFLOW IT. The
+output is exactly one Letter page. A half-empty resume reads as a thin candidate,
+and a page that spills is a two-page resume, which is a failure and not a fuller
+one. The budget, measured on real renders: roles and projects together hold about
+30 lines, counting one line for each entry's heading plus one line for every 13
+words of bullet. One role at 4 bullets and two projects at 3 fits. Add a third
+project and something has to come out.
+Aim for 9 to 11 bullets across the whole page, 3 to 4 on each role and 2 to 3 on
+each project. Those are also the ceilings: Python cuts the surplus at 4 per role
+and 3 per project, so choose deliberately rather than listing everything. When a
+JD is a poor fit, lead with the closest honest evidence and still fill the page;
+do not shrink the resume to signal the mismatch, that is what gap_questions are
+for. A project that owns only ONE bullet still earns its place when it is
+relevant and the budget has room, and the reader has no way to know the profile
+held only one bullet for it.
 
 ATS:
 - `ats_keywords_matched`: JD keywords that appear in your selected bullets or
@@ -252,11 +297,11 @@ ATS:
 - `ats_keywords_missing`: JD keywords that do not appear and have no matching
   fact. These usually become gap_questions too.
 
-TREAT THIS PASS AS THE ONE THAT SHIPS. There is a refine loop behind you, but the
-user should never need it, and they should never need to hand-edit the result
-afterwards. Everything below is measured by Python the moment you answer, and a
-first pass that leaves any of it on the table is a first pass that wasted the
-user's time:
+TREAT THIS PASS AS THE ONE THAT SHIPS. The analysis is done, the rubric is in
+front of you, and there is at most one repair pass behind you, each one costing
+the user another minute of waiting. Everything below is measured by Python the
+moment you answer, and a pass that leaves any of it on the table is a pass that
+wasted the user's time:
 - Every JD requirement you can honestly surface, surfaced, by renaming what was
   actually built rather than by appending the JD's words.
 - Every bullet under 30 words, opening with a different concrete past-tense verb,
@@ -273,24 +318,102 @@ Output: a single JSON object matching the provided schema. No prose, no fences.
 """
 
 
+ANALYST_SYSTEM_PROMPT = """\
+You are the analyst step of a resume tailoring pipeline. You do not write the
+resume and you do not choose its final wording. You answer one question: for each
+job requirement below, does the candidate's VERIFIED evidence already describe
+that work under a different name, or is it a genuine gap?
+
+Our scorer has already word-matched every requirement against the whole profile.
+The ones you are given are exactly the ones whose own words appear NOWHERE in it,
+so a verbatim match is not what you are hunting for. You are hunting for the same
+work called something else:
+- "built an LLM retrieval system over Pinecone" IS retrieval-augmented generation
+  and IS a vector store.
+- "an agent that delegates to specialised sub-agents" IS multi-agent orchestration.
+- "fine-tuned a transformer with low-rank adapters" IS LoRA.
+- "deployed on Azure Functions" IS Azure.
+
+Every requirement gets one of two answers and never a third:
+1. `covered`: the ONE fact_bullet_id whose underlying work genuinely demonstrates
+   it, plus `rename`, a short instruction for how to reword that bullet so the
+   employer's term appears in place of the candidate's own. A rename REPLACES
+   wording. It never appends the requirement to the end of a bullet, and it never
+   adds a metric, a technology or a claim the bullet does not already carry.
+2. `gaps`: the requirement, and one plain sentence on why nothing in the profile
+   demonstrates it.
+
+A requirement you are unsure about is a gap. Being wrong towards `covered` puts a
+claim on a resume the candidate cannot defend in an interview, which is the exact
+failure this pipeline exists to prevent. Being wrong towards `gaps` costs a few
+points on a coverage number. Those are not comparable, so when the evidence is
+thin, say gap.
+
+Two more decisions the writer should not have to rediscover:
+- `shortlist_fact_ids`: the 3 or 4 project facts, plus any certification that is
+  real evidence for THIS job, strongest first. The page holds that many, a
+  half-empty page reads as a thin candidate, and a flagship project left off is a
+  worse mistake than a keyword left uncovered.
+- `positioning`: one sentence on how to frame this candidate for this role, in
+  terms of what he has actually built. No employer adjectives.
+
+Output: a single JSON object matching the provided schema. No prose, no fences.
+"""
+
+# The analyst returns a short object, but the budget has to hold the extended
+# thinking in front of it as well, and a JD with thirty unresolved requirements is
+# not a short thing to reason about. A real run capped at 16000 came back cut off
+# mid-object at column 6650, which cost the writer the whole plan silently and
+# then, worse, made every remaining miss look unreachable and ended the run a pass
+# early at Job Match 61 where the same flow with a working analysis reached 78.
+ANALYSIS_MAX_TOKENS = 32000
+
+# Sections Python renders whether or not the writer selects them. A requirement
+# already named inside one of these is on the page for free, and telling the
+# writer to chase it wastes a bullet on work that is already done.
+_ALWAYS_RENDERED_KINDS = frozenset(
+    {"skill", "education", "publication", "award", "experience"}
+)
+
+
 class TailorGraphState(TypedDict):
-    """State shared by the draft → score → refine LangGraph."""
+    """State shared by the compose → score → repair LangGraph."""
 
     messages: list[anthropic.types.MessageParam]
     best_agent: TailorAgentOutput | None
     best_score: Decimal
     iteration_scores: list[float]
-    # Consecutive passes that failed to beat the best score by a meaningful
-    # margin. The loop stops on a plateau rather than on a fixed pass count.
-    flat_passes: int
+    # What the next pass has been asked to fix, in the words the user will read.
+    # A repair step that says only "pass 2" tells them nothing about whether the
+    # wait is buying anything.
+    repair_note: str | None
     done: bool
+
+
+def _plural(count: int, noun: str) -> str:
+    """"1 gap" / "3 gaps", for progress lines and notes a person reads."""
+    if count == 1:
+        return f"1 {noun}"
+    suffix = "es" if noun.endswith(("s", "x", "ch", "sh")) else "s"
+    return f"{count} {noun}{suffix}"
+
+
+def _repair_note(flag_count: int, reachable: list[str]) -> str:
+    """What the repair pass is actually going after, said plainly."""
+    parts: list[str] = []
+    if flag_count:
+        parts.append(_plural(flag_count, "writing problem"))
+    if reachable:
+        parts.append(f"{_plural(len(reachable), 'requirement')} your evidence covers")
+    return "Fixing " + " and ".join(parts) if parts else "Looking for a better draft"
 
 
 def _refine_prompt(
     *,
     coverage: Decimal,
     penalty: Decimal,
-    missing: list[str],
+    reachable: list[str],
+    unreachable: list[str],
     quality: dict[str, list[str]],
     target: Decimal,
 ) -> str:
@@ -340,12 +463,24 @@ def _refine_prompt(
             "means replace an em dash with a comma or a colon. thin_page means "
             "the resume stops short of filling its one page: select another "
             "relevant project, or another verified bullet on one you already "
-            "chose, up to 4 per role and 3 per project.",
+            "chose, up to 4 per role and 3 per project. over_page is the opposite "
+            "and is worse, because the content spills onto a second page: cut the "
+            "weakest project or its weakest bullet, or shorten the longest "
+            "bullets, until it fits.",
         ]
-    if missing:
+    if unreachable:
         lines += [
             "",
-            f"Keywords still absent from the assembled resume: {json.dumps(missing)}",
+            "These requirements are absent because the profile does not hold the "
+            "work, which Python has confirmed against every verified fact and "
+            "bullet. They are gap_questions. Do not spend a sentence, a rename or "
+            f"a skills entry on them: {json.dumps(unreachable)}",
+        ]
+    if reachable:
+        lines += [
+            "",
+            "Requirements still absent from the assembled resume that your own "
+            f"evidence CAN cover: {json.dumps(reachable)}",
             "",
             "For each one, look for an existing bullet whose underlying claim "
             "ALREADY covers the concept and rename what was built so the JD's "
@@ -432,22 +567,27 @@ async def run_tailor(
     master_json_resume: dict[str, Any],
     jd_parsed: dict[str, Any],
     jd_clean: str,
-    on_progress: Callable[[str, float], None] | None = None,
+    on_progress: Callable[[TailorStage], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
 
-    Runs the draft -> score -> refine LangGraph, then assembles the JSON Resume
-    deterministically. No DB access, so both the FastAPI backend and the Appwrite
-    Function share this exact agent flow.
+    Reads the job against the evidence, composes once with the scoring rubric in
+    hand, repairs only what a repair can honestly fix, then assembles the JSON
+    Resume deterministically. No DB access, so both the FastAPI backend and the
+    Appwrite Function share this exact agent flow.
 
-    `on_progress(stage, pct)` is an optional coarse progress hook. `pct` is a
-    0.0-1.0 fraction. The FastAPI Postgres path passes nothing, so it is a no-op
-    there; the Appwrite Function passes a callback that writes progress onto the
-    agent job row so the browser can poll it.
+    `on_progress(stage)` is an optional hook receiving a `TailorStage` per step.
+    The FastAPI Postgres path passes nothing, so it is a no-op there; the Appwrite
+    Function passes a callback that writes the stage onto the agent job row so the
+    browser can show what the run is actually doing.
     """
     settings = get_settings()
     if not settings.anthropic_api_key:
         raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot run the tailoring agent.")
+
+    def report(step: str, label: str, detail: str | None, pct: float) -> None:
+        if on_progress:
+            on_progress(TailorStage(step=step, label=label, detail=detail, pct=pct))
 
     # One fact per real job, degree, project or skill before the model sees
     # anything. Re-importing a resume mints a second fact for the same job with
@@ -455,19 +595,93 @@ async def run_tailor(
     # with seven highlights, three of them saying the same thing twice.
     facts, bullets_by_fact = _merge_duplicate_facts(facts, bullets_by_fact)
     facts_payload = _build_facts_payload(facts, bullets_by_fact)
+    bullets_by_id = {b.id: b for bs in bullets_by_fact.values() for b in bs}
+    facts_by_id = {f.id: f for f in facts}
+
+    # Read the job the way the scorer reads it, before spending a model call on
+    # guessing. `_jd_requirements` is the same function that grades the finished
+    # page, so this is the rubric rather than an approximation of it, and
+    # `_requirement_coverage` then says which requirements the vault already
+    # answers. Both are pure Python and take under a millisecond.
+    requirements, _prose, _excluded = _jd_requirements(jd_parsed)
+    coverage = _requirement_coverage(
+        requirements, _evidence_items(facts, bullets_by_fact)
+    )
+    must_have = [req for req in requirements if not req.preferred]
+    backed = [req for req in must_have if coverage[req.label].found]
+    report(
+        "read_role",
+        "Reading the role",
+        f"{_plural(len(must_have), 'must-have requirement')}, "
+        f"{len(requirements) - len(must_have)} nice to have",
+        0.06,
+    )
+    report(
+        "match_evidence",
+        "Matching your verified evidence",
+        f"{len(backed)} of {len(must_have)} already backed by your profile",
+        0.14,
+    )
+
+    client = anthropic.AsyncAnthropic(
+        auth_token=settings.anthropic_api_key,
+        base_url=settings.anthropic_base_url or None,
+    )
+
+    # Only the requirements Python could not settle reach a model, and the one
+    # that reads them returns a short mapping rather than a resume.
+    unresolved = [req for req in requirements if not coverage[req.label].found]
+    analysis = TailorAnalysis()
+    if unresolved:
+        report(
+            "find_gaps",
+            "Finding the real gaps",
+            f"Checking {_plural(len(unresolved), 'requirement')} your wording does "
+            "not already name",
+            0.20,
+        )
+        analysis = await _analyse_requirements(
+            client,
+            model=settings.anthropic_model_tailor,
+            tier=settings.manifest_tier_sonnet,
+            jd_parsed=jd_parsed,
+            jd_clean=jd_clean,
+            facts_payload=facts_payload,
+            unresolved=unresolved,
+            valid_bullet_ids=set(bullets_by_id),
+        )
+        report(
+            "find_gaps",
+            "Finding the real gaps",
+            f"{len(analysis.covered)} covered by work you have already done, "
+            f"{_plural(len(analysis.gaps), 'genuine gap')}",
+            0.32,
+        )
+    else:
+        report(
+            "find_gaps",
+            "Finding the real gaps",
+            "Your profile already answers every requirement",
+            0.32,
+        )
+    # Whether the gaps were genuinely checked, as opposed to left unchecked by an
+    # analyst call that failed or came back empty. Only a checked gap proves a
+    # requirement is out of reach, and only proof is worth ending a run on.
+    analysis_settled = not unresolved or bool(analysis.covered or analysis.gaps)
 
     user_prompt = _build_user_prompt(
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
-    )
-    if on_progress:
-        on_progress("Reading job and profile", 0.1)
-
-    client = anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
+        briefing=_requirement_briefing(
+            requirements,
+            coverage,
+            status=_status_briefing(facts, bullets_by_fact),
+        ),
+        plan=_analysis_block(
+            analysis, bullets_by_id=bullets_by_id, facts_by_id=facts_by_id
+        ),
     )
 
     graph = StateGraph(TailorGraphState)
@@ -481,11 +695,27 @@ async def run_tailor(
     # loop early. Real run: coverage 25.0 then 14.3 on a better draft.
     frozen_terms: dict[str, list[str]] = {}
 
-    async def draft_and_score(state: TailorGraphState) -> TailorGraphState:
-        """One quality-model pass followed by deterministic Python scoring."""
+    async def compose_and_score(state: TailorGraphState) -> TailorGraphState:
+        """One writing pass followed by deterministic Python scoring.
+
+        Reached with the rubric and the analyst's findings already in the first
+        message, so the first visit here is meant to be the last one.
+        """
         iteration = len(state["iteration_scores"]) + 1
-        if on_progress:
-            on_progress(f"Drafting pass {iteration}", min(0.85, 0.15 + (iteration - 1) * 0.22))
+        if iteration == 1:
+            report(
+                "compose",
+                "Composing your resume",
+                f"Writing from {_plural(len(bullets_by_id), 'verified bullet')}",
+                0.36,
+            )
+        else:
+            report(
+                "repair",
+                "Tightening the weak spots",
+                state.get("repair_note") or None,
+                min(0.82, 0.36 + 0.30 * (iteration - 1)),
+            )
         try:
             msg = await create_message(
                 client,
@@ -576,7 +806,7 @@ async def run_tailor(
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
-        coverage, coverage_report = _compute_ats_from_document(
+        matched_share, coverage_report = _compute_ats_from_document(
             jd_parsed=jd_parsed,
             json_resume=document,
             fallback_matched=frozen_terms["matched"],
@@ -588,21 +818,39 @@ async def run_tailor(
             # pass points and the model is told why.
             quality["basics.summary"] = [summary_rejection]
         penalty = _quality_penalty(quality)
-        score = coverage - penalty
+        score = matched_share - penalty
         scores = [*state["iteration_scores"], float(score)]
+        flag_count = sum(len(flags) for flags in quality.values())
+        missing = list(coverage_report.get("missing") or [])
+        reachable = _reachable_missing(missing, coverage=coverage, analysis=analysis)
+        unreachable = [label for label in missing if label not in reachable]
         log.info(
             "tailor.iteration",
             iteration=len(scores),
             score=float(score),
-            coverage=float(coverage),
+            coverage=float(matched_share),
             penalty=float(penalty),
             quality_flags=sorted(
                 {flag for flags in quality.values() for flag in flags}
             ),
+            reachable_missing=reachable,
+            unreachable_missing=unreachable,
             target=float(TARGET_ATS_SCORE),
         )
-        if on_progress:
-            on_progress(f"Scoring pass {iteration}", min(0.85, 0.26 + (iteration - 1) * 0.22))
+        report(
+            # A repair gets its own check step so the browser's checklist only
+            # ever moves forwards. Reusing one id would re-activate a row the
+            # user already watched tick, which reads as the run going backwards.
+            "check_claims" if iteration == 1 else "check_repair",
+            "Checking every claim is backed",
+            f"Job Match {score.quantize(Decimal('1'))}, "
+            + (
+                f"{_plural(flag_count, 'writing problem')} to fix"
+                if flag_count
+                else "no writing problems"
+            ),
+            min(0.86, 0.62 + 0.18 * (iteration - 1)),
+        )
 
         best_agent = state["best_agent"]
         best_score = state["best_score"]
@@ -616,38 +864,45 @@ async def run_tailor(
             best_agent = attempt
             best_score = score
 
-        # Stop once the target is met, once the passes run out, or once the score
-        # has genuinely plateaued. Plateau means no meaningful gain over the best
-        # so far for IMPROVEMENT_PATIENCE consecutive passes: a single flat pass is
-        # not a plateau, because a pass sometimes spends itself fixing writing and
-        # lands level before improving again, and quitting on that left the first
-        # result short of what the evidence supported.
-        flat = state["flat_passes"]
-        if score > best_score_before + MIN_IMPROVEMENT:
-            flat = 0
-        else:
-            flat += 1
+        # Stop when the target is met, when the budget runs out, when the pass
+        # gained nothing, or, the rule that matters most on a stretch role, when
+        # nothing is left that another pass could honestly fix. A requirement the
+        # vault does not hold is not a keyword the writer forgot, it is work the
+        # candidate has not done, and the old loop spent four minutes proving that
+        # to itself on every stretch job. Python already knows, so the run ends
+        # and the gap is reported instead.
+        #
+        # That last rule only holds when the analyst actually answered. Word
+        # matching alone cannot see that a retrieval system IS RAG, so with no
+        # analysis "unreachable" means "unchecked", and a truncated analyst reply
+        # duly ended a real run one pass early at 61 where the same flow with a
+        # working analysis reached 78.
+        #
+        # The first pass has nothing to improve on, and the starting sentinel is
+        # a number a heavily penalised draft can score below, so measuring it
+        # against one would end the run before the repair it plainly needs.
+        improved = len(scores) == 1 or score > best_score_before + MIN_IMPROVEMENT
+        nothing_left = analysis_settled and not reachable and not quality
         done = (
             score >= TARGET_ATS_SCORE
-            or len(scores) >= MAX_ITERATIONS
-            or flat >= IMPROVEMENT_PATIENCE
+            or len(scores) >= MAX_COMPOSE_PASSES
+            or not improved
+            or nothing_left
         )
         messages = state["messages"]
+        repair_note = None
         if not done:
-            if on_progress:
-                on_progress(
-                    f"Refining pass {iteration + 1}",
-                    min(0.85, 0.3 + (iteration - 1) * 0.22),
-                )
+            repair_note = _repair_note(flag_count, reachable)
             messages = [
                 *messages,
                 {"role": "assistant", "content": raw},
                 {
                     "role": "user",
                     "content": _refine_prompt(
-                        coverage=coverage,
+                        coverage=matched_share,
                         penalty=penalty,
-                        missing=list(coverage_report.get("missing") or []),
+                        reachable=reachable,
+                        unreachable=unreachable,
                         quality=quality,
                         target=TARGET_ATS_SCORE,
                     ),
@@ -659,16 +914,16 @@ async def run_tailor(
             "best_agent": best_agent,
             "best_score": best_score,
             "iteration_scores": scores,
-            "flat_passes": flat,
+            "repair_note": repair_note,
             "done": done,
         }
 
     def route_after_score(state: TailorGraphState) -> str:
-        return END if state["done"] else "draft_and_score"
+        return END if state["done"] else "compose_and_score"
 
-    graph.add_node("draft_and_score", draft_and_score)
-    graph.add_edge(START, "draft_and_score")
-    graph.add_conditional_edges("draft_and_score", route_after_score)
+    graph.add_node("compose_and_score", compose_and_score)
+    graph.add_edge(START, "compose_and_score")
+    graph.add_conditional_edges("compose_and_score", route_after_score)
     compiled_graph = graph.compile()
     graph_result = await compiled_graph.ainvoke(
         {
@@ -676,7 +931,7 @@ async def run_tailor(
             "best_agent": None,
             "best_score": Decimal("-1"),
             "iteration_scores": [],
-            "flat_passes": 0,
+            "repair_note": None,
             "done": False,
         }
     )
@@ -688,8 +943,7 @@ async def run_tailor(
         raise RuntimeError("Tailoring agent returned no valid response after retries.")
     agent = best_agent
 
-    if on_progress:
-        on_progress("Assembling resume", 0.9)
+    report("assemble", "Assembling the page", None, 0.90)
 
     json_resume, provenance, _summary_rejection = _build_document(
         agent,
@@ -720,21 +974,41 @@ async def run_tailor(
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
     ats_report["writing_flags"] = document_quality_flags(json_resume)
+    # Which of the misses are the candidate's to close. A requirement absent from
+    # every verified fact and bullet is not a keyword the writer skipped, and
+    # saying so is more use than another percentage.
+    final_missing = list(ats_report.get("missing") or [])
+    still_reachable = _reachable_missing(
+        final_missing, coverage=coverage, analysis=analysis
+    )
+    ats_report["missing_needs_new_facts"] = [
+        label for label in final_missing if label not in still_reachable
+    ]
 
     note = agent.agent_note
-    n_iter = len(iteration_scores)
-    if n_iter > 1:
-        trail = " -> ".join(f"{s:.0f}" for s in iteration_scores)
-        pass_word = "passes" if n_iter != 1 else "pass"
-        if ats_score >= TARGET_ATS_SCORE:
-            note += (
-                f"\n(Hit target ATS {TARGET_ATS_SCORE} in {n_iter} {pass_word}: {trail})"
-            )
-        else:
-            note += (
-                f"\n(Could not reach target ATS {TARGET_ATS_SCORE} after {n_iter} "
-                f"passes ({trail}). Remaining gaps need new facts on your Profile.)"
-            )
+    passes = len(iteration_scores)
+    trail = " -> ".join(f"{s:.0f}" for s in iteration_scores)
+    if ats_score >= TARGET_ATS_SCORE:
+        note += (
+            f"\n(Hit the Job Match target of {TARGET_ATS_SCORE:.0f} in "
+            f"{_plural(passes, 'pass')}"
+            + (f": {trail})" if passes > 1 else ".)")
+        )
+    elif ats_report["missing_needs_new_facts"] and not still_reachable:
+        note += (
+            f"\n(Job Match {ats_score} against a target of {TARGET_ATS_SCORE:.0f} "
+            f"after {_plural(passes, 'pass')}"
+            + (f" ({trail}). " if passes > 1 else ". ")
+            + "Every requirement still missing is one your verified profile does "
+            "not hold, so another pass cannot close it. Add the evidence on your "
+            "Profile and run this again.)"
+        )
+    else:
+        note += (
+            f"\n(Job Match {ats_score} against a target of {TARGET_ATS_SCORE:.0f} "
+            f"after {_plural(passes, 'pass')}"
+            + (f": {trail}.)" if passes > 1 else ".)")
+        )
 
     return (
         json_resume,
@@ -1210,6 +1484,8 @@ def _build_user_prompt(
     jd_clean: str,
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
+    briefing: str,
+    plan: str,
 ) -> str:
     return (
         "JOB DESCRIPTION (parsed):\n"
@@ -1220,6 +1496,8 @@ def _build_user_prompt(
         f"{json.dumps(master_json_resume, indent=2)[:6000]}\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
         f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        f"{briefing}\n\n"
+        f"{plan}\n\n"
         "Respond with a single JSON object matching this schema (no prose, no fences):\n"
         f"{json.dumps(TailorAgentOutput.model_json_schema())}"
     )
@@ -2073,6 +2351,351 @@ def _jd_requirements(
                 )
 
     return requirements, prose, excluded
+
+
+@dataclass(frozen=True)
+class _EvidenceItem:
+    """One thing the candidate can point at, and where a reader would find it."""
+
+    where: str
+    text: str
+    bullet_id: str | None
+    always_on_page: bool
+
+
+def _evidence_items(
+    facts: list[TailorFact], bullets_by_fact: dict[str, list[TailorBullet]]
+) -> list[_EvidenceItem]:
+    """Everything the candidate has, flattened into matchable, citable units."""
+    items: list[_EvidenceItem] = []
+    for fact in facts:
+        label = " at ".join(part for part in (fact.title, fact.org) if part) or fact.kind
+        always = fact.kind in _ALWAYS_RENDERED_KINDS
+        items.append(
+            _EvidenceItem(
+                where=f"{fact.kind}: {label}",
+                text=" ".join(
+                    [
+                        fact.title or "",
+                        fact.org or "",
+                        json.dumps(fact.payload or {}, ensure_ascii=False),
+                    ]
+                ),
+                bullet_id=None,
+                # Only the fact's own fields are guaranteed to print. Its bullets
+                # are selected, so they are never free.
+                always_on_page=always,
+            )
+        )
+        for bullet in bullets_by_fact.get(fact.id, []):
+            items.append(
+                _EvidenceItem(
+                    where=f"{label} bullet {bullet.id}",
+                    text=bullet.text,
+                    bullet_id=bullet.id,
+                    always_on_page=False,
+                )
+            )
+    return items
+
+
+@dataclass(frozen=True)
+class _Coverage:
+    """Where a requirement's own words already appear in the vault.
+
+    Split two ways because the writer's job is different in each case. `free`
+    means the words sit in a section Python always renders, so the requirement is
+    met and chasing it again is wasted page space. `selectable` means a verified
+    bullet carries the words and they only reach the page if that bullet is
+    picked, which is a decision, not a rewrite.
+    """
+
+    free: tuple[str, ...]
+    selectable: tuple[str, ...]
+
+    @property
+    def found(self) -> bool:
+        return bool(self.free or self.selectable)
+
+
+# Three citations is enough to point the writer at the bullet. Listing every hit
+# for a common term like "Python" crowds the real evidence out of the prompt.
+_MAX_COVERAGE_CITATIONS = 3
+
+
+def _requirement_coverage(
+    requirements: list[_Requirement], evidence: list[_EvidenceItem]
+) -> dict[str, _Coverage]:
+    """Word-match every requirement against the whole vault, before any model call.
+
+    This is the half of the old refine loop that never needed a model. The loop
+    used to learn, one two-minute pass at a time, that "FastAPI" was sitting in a
+    bullet it had not selected. Python can say so for free, so it does.
+    """
+    coverage: dict[str, _Coverage] = {}
+    for requirement in requirements:
+        free: list[str] = []
+        selectable: list[str] = []
+        for item in evidence:
+            haystack = item.text.casefold()
+            if not any(_mentions(haystack, alt) for alt in requirement.alternatives):
+                continue
+            bucket = free if item.always_on_page else selectable
+            bucket.append(item.where)
+        coverage[requirement.label] = _Coverage(
+            free=tuple(free[:_MAX_COVERAGE_CITATIONS]),
+            selectable=tuple(selectable[:_MAX_COVERAGE_CITATIONS]),
+        )
+    return coverage
+
+
+def _requirement_briefing(
+    requirements: list[_Requirement],
+    coverage: dict[str, _Coverage],
+    *,
+    status: str = "",
+) -> str:
+    """The scoring rubric, handed to the model before it writes anything.
+
+    The writer used to guess which terms mattered and find out afterwards. It now
+    reads the same list the score is computed from, which is the single change
+    that makes a first pass worth shipping.
+    """
+    must = [req for req in requirements if not req.preferred]
+    bonus = [req for req in requirements if req.preferred]
+    free = [req.label for req in must if coverage[req.label].free]
+    selectable = [
+        req
+        for req in must
+        if not coverage[req.label].free and coverage[req.label].selectable
+    ]
+    absent = [req.label for req in must if not coverage[req.label].found]
+
+    lines = [
+        "HOW THIS PAGE IS SCORED. Our scorer derives the list below from the job "
+        "description and measures it against the finished page, so this is the "
+        "actual rubric rather than your estimate of it. Job Match = must-have "
+        "requirements met, divided by must-have requirements total, minus a "
+        "penalty for every writing problem Python finds.",
+        "",
+        f"MUST-HAVES ({len(must)}). One is met when any of its wordings appears "
+        "anywhere on the finished page, including the skills row.",
+    ]
+    if free:
+        lines += [
+            "  ALREADY MET, nothing to do. These words sit in sections that always "
+            f"render: {', '.join(free)}",
+        ]
+    if selectable:
+        lines.append(
+            "  MET ONLY IF YOU SELECT THE BULLET THAT CARRIES THE WORDS, AND YOUR "
+            "REWRITE KEEPS THEM:"
+        )
+        for req in selectable:
+            where = "; ".join(coverage[req.label].selectable)
+            lines.append(f"    - {req.label}  ->  {where}")
+        lines.append(
+            "    Selecting the bullet is not enough. A rewrite that drops the word "
+            "un-meets a requirement the candidate genuinely satisfies, and that is "
+            "the most common way a pass loses points it already had."
+        )
+    if absent:
+        lines += [
+            "  WORDED THIS WAY NOWHERE IN THE PROFILE. Either an existing bullet "
+            "describes the same work under another name and you rename it, or it "
+            f"is a gap_question: {', '.join(absent)}",
+        ]
+    if bonus:
+        lines += [
+            "",
+            "NICE TO HAVE, reported separately and NOT part of the number, so "
+            "never trade a must-have or a clean sentence for one: "
+            f"{', '.join(req.label for req in bonus)}",
+        ]
+    lines += [
+        "",
+        "This list is a diagnostic, not a checklist to satisfy. Padding a bullet "
+        "so a word appears costs more than the word is worth, and it is the one "
+        "failure this tool exists to prevent. A requirement you cannot name "
+        "honestly stays a gap_question.",
+    ]
+    if status:
+        lines += ["", status]
+    return "\n".join(lines)
+
+
+def _status_briefing(
+    facts: list[TailorFact], bullets_by_fact: dict[str, list[TailorBullet]]
+) -> str:
+    """The work the evidence records as unfinished, named before anything is written.
+
+    Python already refuses a summary that promotes provisional work, and on every
+    measured baseline run it refused one, pass after pass, for the same fact. The
+    refusal costs the page its opening line and the model only learned about it
+    afterwards. Saying it up front is the same rule enforced a minute earlier.
+    """
+    provisional: list[str] = []
+    for fact in facts:
+        for bullet in bullets_by_fact.get(fact.id, []):
+            if not records_provisional_status(bullet.text):
+                continue
+            label = " at ".join(part for part in (fact.title, fact.org) if part)
+            provisional.append(f"    - {label}: \"{bullet.text[:150]}\"")
+            break
+    if not provisional:
+        return ""
+    return "\n".join(
+        [
+            "WORK YOUR EVIDENCE RECORDS AS UNFINISHED. Neither a bullet nor the "
+            "summary may say any of this shipped, launched, was delivered, or is "
+            "in production or production-ready. Carry the qualifier through "
+            "instead:",
+            *provisional,
+            "    Python refuses a summary that breaks this, and a refused summary "
+            "leaves the page with no opening line at all.",
+        ]
+    )
+
+
+def _reachable_missing(
+    missing: list[str],
+    *,
+    coverage: dict[str, _Coverage],
+    analysis: TailorAnalysis,
+) -> list[str]:
+    """Missing requirements another pass could honestly still fix.
+
+    A requirement whose words are in the vault, or that the analyst tied to a real
+    bullet, is missing because the writer did not surface it, and a repair pass
+    can. One that is in neither is missing because the candidate has not done that
+    work, and no number of passes will change it. Separating them is what lets the
+    loop stop early against an unreachable target instead of burning the budget.
+    """
+    from_analysis = {match.requirement.casefold() for match in analysis.covered}
+    return [
+        label
+        for label in missing
+        if (label in coverage and coverage[label].found)
+        or label.casefold() in from_analysis
+    ]
+
+
+def _analysis_block(
+    analysis: TailorAnalysis,
+    *,
+    bullets_by_id: dict[str, TailorBullet],
+    facts_by_id: dict[str, TailorFact],
+) -> str:
+    """The analyst's findings, rendered for the writer that follows it."""
+    if not (
+        analysis.covered
+        or analysis.gaps
+        or analysis.shortlist_fact_ids
+        or analysis.positioning
+    ):
+        # Either every requirement was settled by word matching or the analyst
+        # found nothing. Announcing an empty analysis would be worse than saying
+        # nothing, because the writer would read it as "there is nothing here".
+        return ""
+    lines = [
+        "YOUR ANALYSIS OF THIS JOB, already done and already checked against the "
+        "evidence. Use it rather than redoing it.",
+    ]
+    if analysis.positioning:
+        lines += ["", f"POSITIONING: {analysis.positioning}"]
+    if analysis.covered:
+        lines += [
+            "",
+            "REQUIREMENTS EXISTING WORK COVERS ONCE THE BULLET IS REWORDED. Select "
+            "each of these bullets and apply the rename. The rename replaces "
+            "wording, it is never appended:",
+        ]
+        for match in analysis.covered:
+            source = bullets_by_id.get(match.fact_bullet_id)
+            if source is None:
+                continue
+            lines.append(
+                f"    - {match.requirement}  ->  bullet {match.fact_bullet_id}: "
+                f'"{source.text[:160]}"'
+            )
+            if match.rename:
+                lines.append(f"        reword as: {match.rename}")
+    if analysis.gaps:
+        lines += [
+            "",
+            "GENUINE GAPS. Do not chase these into a bullet. They belong in "
+            "gap_questions:",
+        ]
+        for gap in analysis.gaps:
+            lines.append(f"    - {gap.requirement}: {gap.why_no_match}")
+    shortlist = [
+        facts_by_id[fact_id].title
+        for fact_id in analysis.shortlist_fact_ids
+        if fact_id in facts_by_id
+    ]
+    if shortlist:
+        lines += [
+            "",
+            "EVIDENCE WORTH THE PAGE for this role, strongest first: "
+            f"{', '.join(shortlist)}. Select these fact ids unless you can say why "
+            "one does not belong.",
+        ]
+    return "\n".join(lines)
+
+
+async def _analyse_requirements(
+    client: anthropic.AsyncAnthropic,
+    *,
+    model: str,
+    tier: str,
+    jd_parsed: dict[str, Any],
+    jd_clean: str,
+    facts_payload: list[dict[str, Any]],
+    unresolved: list[_Requirement],
+    valid_bullet_ids: set[str],
+) -> TailorAnalysis:
+    """Read the job against the evidence once, before anything is written.
+
+    Fails soft on purpose. The deterministic briefing already carries most of what
+    the writer needs, so a malformed analysis degrades this run to the old
+    behaviour rather than sinking it.
+    """
+    prompt = (
+        "JOB DESCRIPTION (parsed):\n"
+        f"{json.dumps(jd_parsed or {}, indent=2)}\n\n"
+        "JOB DESCRIPTION (clean text, truncated):\n"
+        f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
+        "CANDIDATE VERIFIED FACTS + BULLETS:\n"
+        f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        "REQUIREMENTS WHOSE OWN WORDS APPEAR NOWHERE IN THAT PROFILE:\n"
+        f"{json.dumps([req.label for req in unresolved], indent=2)}\n\n"
+        "Respond with a single JSON object matching this schema (no prose, no "
+        f"fences):\n{json.dumps(TailorAnalysis.model_json_schema())}"
+    )
+    try:
+        msg = await create_message(
+            client,
+            model=model,
+            max_tokens=ANALYSIS_MAX_TOKENS,
+            system=f"{CAREER_OPS_RULES}\n\n{ANALYST_SYSTEM_PROMPT}",
+            messages=[{"role": "user", "content": prompt}],
+            extra_headers={"x-manifest-tier": tier},
+        )
+        analysis = parse_model_json(TailorAnalysis, response_text(msg))
+    except (anthropic.APIError, ValidationError) as exc:
+        log.warning("tailor.analysis_failed", error=str(exc)[:200])
+        return TailorAnalysis()
+    # A bullet id the analyst invented would send the writer looking for evidence
+    # that does not exist, so it never reaches the writer.
+    kept = [
+        match for match in analysis.covered if match.fact_bullet_id in valid_bullet_ids
+    ]
+    if len(kept) != len(analysis.covered):
+        log.warning(
+            "tailor.analysis_dropped_unknown_bullets",
+            count=len(analysis.covered) - len(kept),
+        )
+    return analysis.model_copy(update={"covered": kept})
 
 
 def _compute_ats_from_document(

@@ -265,6 +265,31 @@ class GapQuestion(BaseModel):
     suggested_fact_ids: list[str] = Field(default_factory=list)
 
 
+class RequirementMatch(BaseModel):
+    """One JD requirement that a verified bullet already covers under another name.
+
+    `rename` is how to word that bullet so the employer's own term appears. It is
+    a wording instruction, never new content: the analyst may only point at a
+    bullet the candidate already has.
+    """
+    requirement: str
+    fact_bullet_id: str
+    rename: str = ""
+
+
+class TailorAnalysis(BaseModel):
+    """The analyst pass, run before anything is written.
+
+    Reading the job against the evidence once, up front, is cheaper and better
+    than discovering the same answers one full rewrite at a time. The writer that
+    follows is handed this instead of guessing.
+    """
+    covered: list[RequirementMatch] = Field(default_factory=list)
+    gaps: list[GapQuestion] = Field(default_factory=list)
+    shortlist_fact_ids: list[str] = Field(default_factory=list)
+    positioning: str = ""
+
+
 class TailorAgentOutput(BaseModel):
     """Schema Claude returns verbatim. Pydantic-validated before assembly."""
     selected_fact_ids: list[str] = Field(default_factory=list)

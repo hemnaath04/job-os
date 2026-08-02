@@ -20,7 +20,7 @@ from _fake_llm import StreamingFakeMessages
 
 
 @pytest.mark.asyncio
-async def test_tailor_langgraph_refines_until_target(
+async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     responses = [
@@ -80,7 +80,12 @@ async def test_tailor_langgraph_refines_until_target(
     )
 
     _, _, gaps, score, report, note = result
+    # This JD parses to no requirements at all, so there is nothing for the
+    # analyst to resolve and no analyst call is made. Both calls are writing
+    # passes: the draft, then one repair, because the draft left a writing
+    # problem a repair could have fixed.
     assert len(calls) == 2
+    assert all("analyst step" not in call["system"] for call in calls)
     assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
     # The loop scores the document it would actually ship, not the model's own
     # account of how it did. Pass two claims every keyword matched, but the
@@ -93,13 +98,13 @@ async def test_tailor_langgraph_refines_until_target(
     assert report["scoring"] == "deterministic_required_requirements"
     assert report["writing_flags"] == {"page": ["thin_page(0 bullets)"]}
     assert gaps == []
-    # The refine pass did not beat the draft, so the draft is what ships. Keeping
+    # The repair pass did not beat the draft, so the draft is what ships. Keeping
     # the later pass regardless is how a padded rewrite used to win a tie.
     assert note == (
-        "first pass\n(Could not reach target ATS 80 after 2 passes (-3 -> -3). "
-        "Remaining gaps need new facts on your Profile.)"
+        "first pass\n(Job Match 0.0 against a target of 80 after 2 passes: "
+        "-3 -> -3.)"
     )
-    # The refine turn must hand back measurements, not the model's own numbers.
+    # The repair turn must hand back measurements, not the model's own numbers.
     refine_turn = calls[1]["messages"][-1]["content"]
     assert "not from your own" in refine_turn
 
@@ -123,7 +128,17 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
-            payload = responses[min(len(calls) - 1, len(responses) - 1)]
+            # The analyst runs first here, because neither requirement is worded
+            # anywhere in an empty profile. It finds nothing and is not one of
+            # the writing passes under test.
+            if "analyst step" in kwargs["system"]:
+                return SimpleNamespace(
+                    content=[SimpleNamespace(type="text", text=json.dumps({}))]
+                )
+            writing_pass = sum(
+                1 for call in calls if "analyst step" not in call["system"]
+            )
+            payload = responses[min(writing_pass - 1, len(responses) - 1)]
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )

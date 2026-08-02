@@ -9,6 +9,7 @@ from job_os.services.resume_writing import (
     bullet_flags,
     dedupe_bullets,
     document_quality_flags,
+    estimated_page_lines,
     normalize_dashes,
     section_flags,
     similarity,
@@ -221,3 +222,36 @@ def test_a_full_page_is_not_flagged_as_thin() -> None:
         ],
     }
     assert "page" not in document_quality_flags(document)
+
+
+def test_a_resume_that_spills_onto_a_second_page_is_flagged() -> None:
+    """A page that overflows is not a fuller resume, it is a two-page one.
+
+    Counting bullets cannot see this coming, which is how a real tailored run
+    shipped two pages while passing every other check: 11 bullets over 4 entries
+    rendered to two pages where 10 over 3 had fitted on one. The budget is
+    measured in estimated rendered lines and calibrated against Tectonic.
+    """
+    two_rows = " ".join(["word"] * 26)
+    three_rows = " ".join(["word"] * 27)
+    # Four entry headings, twelve two-row bullets and one three-row bullet: 31.
+    document = {
+        "work": [
+            {"position": "Engineer", "highlights": [three_rows, *[two_rows] * 3]}
+        ],
+        "projects": [
+            {"name": str(n), "highlights": [two_rows] * 3} for n in range(3)
+        ],
+    }
+    assert document_quality_flags(document)["page"] == ["over_page(31 of 30 lines)"]
+
+
+def test_the_line_estimate_counts_the_entry_heading_and_the_wrap() -> None:
+    single = {"work": [{"position": "Engineer", "highlights": ["Wrote the parser."]}]}
+    # One heading row plus one bullet row.
+    assert estimated_page_lines(single) == 2
+    wrapped = {
+        "work": [{"position": "Engineer", "highlights": [" ".join(["word"] * 27)]}]
+    }
+    # 27 words wrap onto three rows at 13 words each, under the same heading.
+    assert estimated_page_lines(wrapped) == 4

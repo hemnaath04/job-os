@@ -35,7 +35,7 @@ from job_os.services.resume_engine import (
     revise_resume,
     validate_json_resume_document,
 )
-from job_os.services.tailor import TailorBullet, TailorFact, run_tailor
+from job_os.services.tailor import TailorBullet, TailorFact, TailorStage, run_tailor
 
 
 def _now() -> str:
@@ -317,6 +317,9 @@ class Workspace:
         self.files_bucket = os.getenv(
             "APPWRITE_RESUME_FILES_BUCKET_ID", "resume_files"
         )
+        # The last progress payload written per job, so a repeated one is not
+        # paid for twice. See update_job_progress.
+        self._last_progress: dict[str, tuple[Any, ...]] = {}
 
     @property
     def permissions(self) -> list[str]:
@@ -399,23 +402,45 @@ class Workspace:
             {"status": status},
         )
 
-    def update_job_progress(self, job_id: str, *, stage: str, pct: float) -> None:
-        """Persist coarse progress onto the job snapshot without touching status.
+    def update_job_progress(
+        self,
+        job_id: str,
+        *,
+        stage: str,
+        pct: float,
+        step: str | None = None,
+        detail: str | None = None,
+    ) -> None:
+        """Persist progress onto the job snapshot without touching status.
+
+        `stage` is the line a person reads, `step` a stable id the browser keys
+        its checklist off, and `detail` one measured fact about what just
+        happened. All three live inside the snapshot JSON, which is the only
+        free-text column the agent_jobs table has, so this needs no migration.
 
         Best-effort: a progress write must never abort the run, so any failure
         here is swallowed. The browser polls the `progress` object off the job
         snapshot; the terminal status/output write still happens in update_job.
+
+        Writing costs two REST round trips, so an event that says the same thing
+        as the last one is dropped rather than paid for.
         """
+        signature = (step, stage, detail, round(float(pct), 3))
+        if self._last_progress.get(job_id) == signature:
+            return
         try:
             job = self.job(job_id)
             job["progress"] = {
                 "stage": stage,
                 "pct": round(float(pct), 4),
+                "step": step,
+                "detail": detail,
                 "updated_at": _now(),
             }
             job["updated_at"] = _now()
             # No status field passed, so the row's status column is left as-is.
             self.update_snapshot(self.jobs_table, job_id, job)
+            self._last_progress[job_id] = signature
         except Exception:  # noqa: BLE001 - progress is advisory, never fatal
             pass
 
@@ -843,15 +868,24 @@ async def _tailor_resume(
     jd_clean = str(payload.get("jd_clean") or "")
     spawned_from_job_id = payload.get("spawned_from_job_id")
 
-    def on_progress(stage: str, pct: float) -> None:
-        """Write live progress onto the agent job row so the browser can poll it.
+    def on_stage(stage: TailorStage) -> None:
+        """Write the agent's live stage onto the job row so the browser can poll it.
 
         Best-effort by way of update_job_progress, which swallows its own
         errors, so a progress write can never break the tailoring run."""
         if job_id:
-            workspace.update_job_progress(job_id, stage=stage, pct=pct)
+            workspace.update_job_progress(
+                job_id,
+                stage=stage.label,
+                pct=stage.pct,
+                step=stage.step,
+                detail=stage.detail,
+            )
 
-    on_progress("Reading your profile and job", 0.05)
+    def report(step: str, label: str, detail: str | None, pct: float) -> None:
+        on_stage(TailorStage(step=step, label=label, detail=detail, pct=pct))
+
+    report("load_profile", "Opening your profile", None, 0.03)
 
     # Target resume must belong to the caller.
     workspace.owned_row(workspace.resumes_table, resume_id)
@@ -933,7 +967,7 @@ async def _tailor_resume(
         master_json_resume=master_json_resume,
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
-        on_progress=on_progress,
+        on_progress=on_stage,
     )
 
     now = _now()
@@ -955,7 +989,7 @@ async def _tailor_resume(
     # most of. The rules-only review is free, says plainly that it is
     # provisional, and keeps the row populated while the real one is in flight.
     try:
-        on_progress("Checking the draft", 0.95)
+        report("check_draft", "Checking the draft", None, 0.95)
         review = provisional_review(json_resume)
         # The rules-only issues are worth keeping, the number is not. Writing a
         # provisional 95 that the render-backed review then corrects to 60 is the
@@ -1018,7 +1052,7 @@ async def _tailor_resume(
         "gap_questions": [g.model_dump(mode="json") for g in gap_questions],
         "agent_note": agent_note,
     }
-    on_progress("Done", 1.0)
+    report("save_draft", "Saving your draft", None, 0.98)
     workspace.create_snapshot(
         workspace.versions_table,
         row_id=version_id,
@@ -1029,6 +1063,9 @@ async def _tailor_resume(
             "archived": False,
         },
     )
+    # Only now, with the row actually written. Reporting done before the save
+    # meant a save that failed still showed the user a finished run.
+    report("done", "Done", None, 1.0)
     return version
 
 

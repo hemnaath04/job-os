@@ -120,7 +120,13 @@ async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             calls.append(kwargs)
-            if len(calls) >= 2:
+            # The analyst call comes first and is not a pass, so counting writing
+            # passes rather than calls is what keeps this test about the thing it
+            # is named after.
+            writing_passes = sum(
+                1 for call in calls if "analyst step" not in call["system"]
+            )
+            if writing_passes >= 2:
                 raise anthropic.RateLimitError(
                     "Rate limited by upstream provider",
                     response=httpx.Response(

@@ -11,6 +11,7 @@ them usable inside the no-hallucination contract.
 """
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Iterable
 
@@ -41,6 +42,18 @@ SUMMARY_MAX_WORDS = 45
 # bullet has to come from a verified fact, so the only way to satisfy it is to
 # surface more real evidence.
 MIN_PAGE_BULLETS = 9
+
+# The other end of the same budget. Overflowing the page does not produce a
+# fuller resume, it produces a two-page one, which the career-ops rules forbid
+# outright. Counting bullets cannot see it coming: 11 bullets over 4 entries
+# rendered to two pages while 10 over 3 fitted on one, because an entry costs a
+# heading row and a long bullet wraps onto a second line. So the budget is
+# measured in estimated rendered lines and calibrated against Tectonic on real
+# tailored documents: 26 and 29 estimated lines each rendered to one page, 33 to
+# two. 30 sits above every measured single-pager with room to spare.
+MAX_PAGE_LINES = 30
+# Words a bullet fits on one line in the one-page template.
+WORDS_PER_RENDERED_LINE = 13
 
 # Distinct skill rows a one-page resume can carry before the block eats the
 # space that evidence should occupy. Six is what the real profile needs once
@@ -171,6 +184,17 @@ _PROVISIONAL_RE = re.compile(
     r"in progress|work in progress|experimental|draft)\w*\b",
     re.I,
 )
+
+
+def records_provisional_status(text: str) -> bool:
+    """True when the evidence itself says the work is not finished.
+
+    Exported so the tailor can warn the writer BEFORE it composes rather than
+    only refusing the summary afterwards. A refused summary costs the page its
+    opening line and, on every measured baseline run, three points a pass until
+    the model happened to stop making the claim.
+    """
+    return bool(_PROVISIONAL_RE.search(text))
 
 
 def upgrades_status(
@@ -629,4 +653,29 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
     )
     if rendered_bullets < MIN_PAGE_BULLETS:
         found["page"] = [f"thin_page({rendered_bullets} bullets)"]
+    else:
+        lines = estimated_page_lines(document)
+        if lines > MAX_PAGE_LINES:
+            found["page"] = [f"over_page({lines} of {MAX_PAGE_LINES} lines)"]
     return found
+
+
+def estimated_page_lines(document: dict) -> int:
+    """Rendered lines the roles and projects will take, close enough to budget by.
+
+    One row for each entry's heading, then one row per line of bullet text. Not
+    exact, and it does not need to be: it only has to tell a page that fits from
+    a page that spills, which counting bullets alone could not.
+    """
+    lines = 0
+    for section in ("work", "projects", "volunteer"):
+        for entry in document.get(section) or []:
+            highlights = [h for h in (entry.get("highlights") or []) if h]
+            if not highlights and section != "work":
+                continue
+            lines += 1
+            for highlight in highlights:
+                lines += max(
+                    1, math.ceil(len(highlight.split()) / WORDS_PER_RENDERED_LINE)
+                )
+    return lines
