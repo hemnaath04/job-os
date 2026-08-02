@@ -56,6 +56,81 @@ def test_evidence_that_already_claims_completion_is_not_downgraded() -> None:
     assert not upgrades_status("Shipped a public deployment in one day.", shipped_fact)
 
 
+# The BedRocked fact, whose payload names the event that makes every bullet on it
+# provisional. The tailor hands the fact's payload to the guard alongside the
+# bullet, so the hackathon marker is in scope even when the bullet does not
+# mention it.
+HACKATHON_FACT = (
+    "Wired a natural-language search backed by Claude, strictly scoped to the "
+    "dataset, and an Autodesk handoff that exports the dig-plan as a DXF.\n"
+    '{"description": "Cyvl x Autodesk x NVIDIA x City of Boston Physical-AI Hackathon"}'
+)
+
+
+def test_production_as_an_adjective_is_a_completion_claim() -> None:
+    """The wording that survived every guard and blocked a real review.
+
+    The pattern used to require the preposition, so "in production" was caught
+    and "a guardrailed production interface" was not, though both say the same
+    thing: this runs for real. On a single-day hackathon build it was the one
+    blocking issue on an otherwise clean 80-point review.
+    """
+    assert upgrades_status(
+        "Wired a guardrailed production interface over civic data.", HACKATHON_FACT
+    )
+    assert upgrades_status(
+        "Built a production-ready retrieval service over the sewer dataset.",
+        HACKATHON_FACT,
+    )
+    assert upgrades_status(
+        "Productionised the scoring model for all 2,404 segments.", HACKATHON_FACT
+    )
+
+
+def test_the_wider_pattern_does_not_flag_honest_wordings() -> None:
+    # Same hackathon evidence, no completion claim: nothing to report.
+    assert not upgrades_status(
+        "Wired a natural-language search over the sewer dataset, scoped to it.",
+        HACKATHON_FACT,
+    )
+    # Real, non-provisional work may say production, because nothing about the
+    # evidence contradicts it.
+    assert not upgrades_status(
+        "Worked on the production pricing engine's Go regression suite.",
+        "Worked on Go automated test suites for the rideshare client's pricing engine.",
+    )
+
+
+def test_a_bare_production_adjective_is_not_enough_to_reject_a_summary() -> None:
+    """The summary is judged against every fact, so scope matters.
+
+    A bullet rewrite came from one fact and describes it. The summary is one line
+    about the whole page, tried against each bullet in turn, so a bare
+    "production" cannot be pinned to whichever bullet is currently under test.
+    Judged as strictly as a bullet, this real summary was rejected because an
+    unrelated EPAM bullet is provisional, and the page lost its tailored lede.
+    """
+    honest_summary = (
+        "Backend engineer who builds Python and FastAPI systems, backed by "
+        "experience automating tests for a production rideshare pricing engine."
+    )
+    assert not upgrades_status(honest_summary, PENDING_FACT, text_is_about_source=False)
+    # As a bullet about that very fact, the same adjective is a claim.
+    assert upgrades_status(
+        "Built a production interface for test generation.", PENDING_FACT
+    )
+
+
+def test_the_summary_still_cannot_claim_provisional_work_shipped() -> None:
+    # Loosening the adjective must not loosen the explicit claims.
+    for summary in (
+        "Backend engineer who has shipped an AI agent for automated test generation.",
+        "Backend engineer whose test-generation agent runs in production.",
+        "Delivers agentic test tooling.",
+    ):
+        assert upgrades_status(summary, PENDING_FACT, text_is_about_source=False)
+
+
 def test_a_bullet_that_upgrades_status_reverts_to_the_verified_wording() -> None:
     fact = TailorFact(id="f1", kind="experience", title="Engineer", org="EPAM Systems")
     source = TailorBullet(id="b1", fact_id="f1", text=PENDING_FACT)

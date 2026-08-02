@@ -54,6 +54,7 @@ from job_os.services.resume_writing import (
     bullet_flags,
     dedupe_bullets,
     document_quality_flags,
+    drops_team_credit,
     normalize_dashes,
     upgrades_status,
 )
@@ -211,6 +212,11 @@ BULLET WRITING (this is what a human reader judges):
 - Do not overstate scope. Prefer "worked on" to "owned" or "led" when the
   candidate contributed to something they did not own. Accuracy beats a
   stronger-sounding verb.
+- Where the evidence names a TEAM, the rewrite keeps the team. Opening with a
+  real verb and deleting the people is not a fix, it is a bigger claim: "was
+  part of a team building an AI agent" becomes "Built, with a team, an AI agent
+  that ...", never "Built agentic workflows". Python reverts a rewrite that
+  drops the team back to the verified wording, so you lose the better opener too.
 - Never upgrade a fact's STATUS. If the evidence says demoed, pending approval,
   prototype, hackathon build, trial or mock, the bullet cannot say shipped,
   launched, released, delivered or in production, and neither can the summary.
@@ -322,7 +328,11 @@ def _refine_prompt(
             "the weaker bullet. repeated_opening_verb means vary the verb. "
             "weak_opener means start with a real past-tense verb. first_person "
             "means remove I/my/we. upgraded_status means you claimed something "
-            "shipped that the evidence records as pending or a prototype. "
+            "shipped that the evidence records as pending or a prototype, which "
+            "includes calling it production or production-ready. "
+            "dropped_team_credit means the evidence says a team did this work and "
+            "your rewrite deleted the team: keep a real opening verb AND the team, "
+            "as in 'Built, with a team, an AI agent that ...'. "
             "unevidenced_domain means the summary claims a subject-matter domain "
             "that none of the selected bullets demonstrate: either drop that "
             "domain from the summary, or select a project that actually shows it. "
@@ -1021,6 +1031,12 @@ def _sanitize_selected_bullets(
         # demoed prototype into something that shipped.
         if upgrades_status(selected_bullet.rewritten_text, source_context):
             padding_flags.append("upgraded_status")
+        # Or keep the work and drop the people. "Was part of a team building an AI
+        # agent" came back as "Built agentic workflows", which the review flagged
+        # as ownership inflation. Reverting costs nothing: the verified wording is
+        # right there and it is already true.
+        if drops_team_credit(selected_bullet.rewritten_text, source.text):
+            padding_flags.append("dropped_team_credit")
         if added_numbers or added_technologies or wrong_section or padding_flags:
             log.warning(
                 "tailor.unsafe_rewrite_reverted",
@@ -1077,7 +1093,20 @@ def _safe_summary(
     # provisional.
     for fact in facts_payload:
         for bullet in fact.get("bullets") or []:
-            if upgrades_status(summary, str(bullet.get("text") or "")):
+            # text_is_about_source is False here on purpose, which keeps this
+            # check exactly as strict as it has always been. The summary is one
+            # line about the whole page and this loop tries it against every
+            # bullet in the vault, so a bare "production" cannot be attributed to
+            # whichever bullet is currently under test. A real tailored summary
+            # reads "backed by experience automating tests for a production
+            # rideshare pricing engine", which is true of the client's live
+            # system; folding the bullet-level adjective check in here would have
+            # rejected it because an unrelated EPAM bullet is provisional, and
+            # cost the page its lede. The explicit claims, shipped and launched
+            # and in production, still count here as they always did.
+            if upgrades_status(
+                summary, str(bullet.get("text") or ""), text_is_about_source=False
+            ):
                 log.warning(
                     "tailor.summary_upgraded_status_reverted",
                     fact=str(fact.get("title") or "")[:80],

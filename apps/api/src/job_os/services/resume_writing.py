@@ -130,9 +130,10 @@ _FIRST_PERSON_RE = re.compile(
     r"\b(?:I|I'?m|I'?ve|[Mm]y|[Mm]e|[Mm]ine|[Ww]e|[Ww]e'?ve|[Oo]ur|[Oo]urs|us)\b"
 )
 
-# Wording that says a thing reached users or production. Present tense included
-# on purpose: a summary reading "ships production FastAPI systems and agentic AI
-# workflows" makes exactly the claim a past-tense-only pattern let through.
+# Wording that says a thing reached users or production, in terms that can only
+# be about the work itself. Present tense included on purpose: a summary reading
+# "ships production FastAPI systems and agentic AI workflows" makes exactly the
+# claim a past-tense-only pattern let through.
 _COMPLETION_RE = re.compile(
     r"\b(?:"
     r"ships?|shipped|shipping|"
@@ -147,6 +148,19 @@ _COMPLETION_RE = re.compile(
     r")\b",
     re.I,
 )
+# "Production" as a bare adjective. It makes the same claim as "in production"
+# when it describes the thing that was built: a single-day hackathon build called
+# "a guardrailed production interface over civic data" passed every guard and
+# landed as the one blocking issue on an otherwise clean review.
+#
+# It is separate from the pattern above because it is only reliable when the text
+# is known to be ABOUT the evidence being checked. A one-line summary is judged
+# against every fact in the vault, and "backed by experience automating tests for
+# a production rideshare pricing engine" describes the CLIENT's live system,
+# truthfully, while some unrelated fact elsewhere is provisional. Folding this
+# into the main pattern would have started rejecting summaries like that one.
+# See `upgrades_status`.
+_ADJECTIVAL_PRODUCTION_RE = re.compile(r"\bproduction\b", re.I)
 # Wording that says it did not. A fact carrying one of these has a status, and a
 # rewrite is not allowed to quietly promote it: the verified EPAM AI agent was
 # "demoed end-to-end; pending senior approval at the time I left", which a
@@ -159,21 +173,79 @@ _PROVISIONAL_RE = re.compile(
 )
 
 
-def upgrades_status(text: str, source_text: str) -> bool:
+def upgrades_status(
+    text: str, source_text: str, *, text_is_about_source: bool = True
+) -> bool:
     """True when a rewrite claims completion the evidence does not support.
 
     Not a hallucination in the metric-and-technology sense, which is why the
     number and technology guards let it through. It is still the resume saying
     something the fact does not, and it is the kind of overstatement an
     interviewer catches.
+
+    `text_is_about_source` says whether `text` is known to describe this
+    particular evidence. A bullet rewrite is: it was produced from that fact and
+    from nothing else, so a bare "production" in it is a claim about that work.
+    A one-line summary is not: it is checked against every fact in the vault in
+    turn, so an adjective that could belong to any of them is too weak to reject
+    on, and treating it as proof rejected an honest summary about a client's
+    genuinely live pricing engine. The explicit wordings, shipped and launched
+    and in production, count either way.
     """
-    if not _COMPLETION_RE.search(text):
+    completion = _COMPLETION_RE.search(text) or (
+        text_is_about_source and _ADJECTIVAL_PRODUCTION_RE.search(text)
+    )
+    if not completion:
         return False
-    if _COMPLETION_RE.search(source_text):
+    if _COMPLETION_RE.search(source_text) or (
+        text_is_about_source and _ADJECTIVAL_PRODUCTION_RE.search(source_text)
+    ):
         # The evidence already claims it shipped, so the rewrite is not the one
         # making the claim.
         return False
     return bool(_PROVISIONAL_RE.search(source_text))
+
+
+# Evidence that explicitly credits the work to a TEAM rather than to the
+# candidate. Deliberately narrower than "any ownership hedge": "worked on" hedges
+# scope, not authorship, and a rewrite of "worked on and extended the Go test
+# suite" into "wrote and maintained automated tests" is an improvement the review
+# has never objected to. Naming a team is a different, checkable claim.
+_TEAM_CREDIT_RE = re.compile(
+    r"\b(?:"
+    r"(?:part of|member of|on|with|in|joined) an? team|"
+    r"team[- ](?:built|of|based)|"
+    r"a team building|"
+    r"collaborat\w*|alongside|together with|jointly"
+    r")\b",
+    re.I,
+)
+# Any wording in the rewrite that still tells the reader it was not solo work.
+_TEAM_RETAINED_RE = re.compile(
+    r"\b(?:team|teams|collaborat\w*|alongside|jointly|co[- ](?:built|wrote|designed))\b",
+    re.I,
+)
+
+
+def drops_team_credit(text: str, source_text: str) -> bool:
+    """True when a rewrite quietly takes sole credit for work a team did.
+
+    Same shape as `upgrades_status`, for the other half of the ownership rule.
+    The evidence for the EPAM AI agent reads "was part of a team building an AI
+    agent"; a rewrite came back as "Built agentic workflows that generate test
+    cases", which invents no metric and no technology and drops the team
+    outright. The independent review caught it as an ownership warning on a real
+    run, and the career-ops rules are explicit that accuracy beats a
+    stronger-sounding verb.
+
+    A rewrite may absolutely replace the weak opener "was part of a team
+    building" with a real verb, which the writing rules ask for. It may not
+    delete the team while doing it: "built, with a team, an AI agent" satisfies
+    both rules at once.
+    """
+    if not _TEAM_CREDIT_RE.search(source_text):
+        return False
+    return not _TEAM_RETAINED_RE.search(text)
 
 
 def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
