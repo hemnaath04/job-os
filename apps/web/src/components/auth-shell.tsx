@@ -1,6 +1,6 @@
 import { GrainPanel } from "@/components/marketing/grain-panel";
 import { BrandMark } from "@/components/brand-mark";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { ThemeToggle } from "@/components/shell/theme-toggle";
 
 /**
  * Two-column frame for the auth routes: the real Clerk widget on one side, a

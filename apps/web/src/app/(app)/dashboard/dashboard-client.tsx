@@ -4,16 +4,12 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUpRight,
-  BriefcaseBusiness,
   CalendarClock,
-  CheckCircle2,
-  Clock3,
   DatabaseZap,
   FileText,
   Radar,
   Sparkles,
   TrendingUp,
-  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
 import { useMemo } from "react";
@@ -104,44 +100,50 @@ export default function DashboardClient({
         </div>
       </motion.header>
 
-      {/* KPI row — hero card filled jasmine, Donezo-style */}
+      {/* One bordered slab split by hairlines rather than four floating cards.
+          Four separate surfaces made four separate things to look at; a single
+          row reads as one summary, and drops the icon chips and corner arrows
+          that were decorating numbers rather than explaining them.
+
+          The hairlines are a 1px grid gap over a border-coloured background, so
+          they stay perfect at every breakpoint instead of needing per-cell
+          border rules that break the moment the grid rewraps. */}
       <motion.div
         initial="hidden"
         animate="visible"
         variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.05 } } }}
-        className="grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4"
+        className="grid gap-px overflow-hidden rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-border)] sm:grid-cols-2 xl:grid-cols-4"
       >
-        <KpiCard
+        <StatCell
           variants={itemVariants}
-          accent
-          icon={BriefcaseBusiness}
-          label="Total Applications"
+          label="Total applications"
           value={intelligence.total}
-          trend={`${signed(intelligence.weekDelta)} this week`}
+          delta={`${signed(intelligence.weekDelta)}`}
+          note="this week"
           positive={intelligence.weekDelta >= 0}
         />
-        <KpiCard
+        <StatCell
           variants={itemVariants}
-          icon={TrendingUp}
-          label="Response Rate"
+          label="Response rate"
           value={`${intelligence.responseRate}%`}
-          trend={`${intelligence.responses} responses`}
-          positive
+          delta={String(intelligence.responses)}
+          note="responses"
+          positive={intelligence.responses > 0}
         />
-        <KpiCard
+        <StatCell
           variants={itemVariants}
-          icon={CalendarClock}
           label="Interviews"
           value={intelligence.interviews}
-          trend={`${intelligence.interviewRate}% conversion`}
-          positive
+          delta={`${intelligence.interviewRate}%`}
+          note="conversion"
+          positive={intelligence.interviews > 0}
         />
-        <KpiCard
+        <StatCell
           variants={itemVariants}
-          icon={CheckCircle2}
           label="Offers"
           value={intelligence.offers}
-          trend={intelligence.offers ? "Offer stage reached" : "No offers yet"}
+          delta={intelligence.offers ? String(intelligence.offers) : "None"}
+          note={intelligence.offers ? "reached offer" : "yet"}
           positive={intelligence.offers > 0}
         />
       </motion.div>
@@ -153,10 +155,19 @@ export default function DashboardClient({
         variants={{ visible: { transition: { staggerChildren: reduceMotion ? 0 : 0.06 } } }}
         className="mt-3.5 grid gap-3.5 xl:grid-cols-[minmax(0,1.6fr)_minmax(300px,.7fr)]"
       >
-        <DashboardPanel variants={itemVariants} title="Application activity" icon={TrendingUp}>
+        <DashboardPanel
+          variants={itemVariants}
+          title="Application activity"
+          subtitle="Applications added per day, last 7 days."
+          badge={intelligence.velocity > 0 ? `${intelligence.velocity} this week` : undefined}
+        >
           <WeekdayBars intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
         </DashboardPanel>
-        <DashboardPanel variants={itemVariants} title="Pipeline progress" icon={DatabaseZap}>
+        <DashboardPanel
+          variants={itemVariants}
+          title="Pipeline progress"
+          subtitle="How far your applications have moved."
+        >
           <ProgressGauge intelligence={intelligence} reduceMotion={Boolean(reduceMotion)} />
         </DashboardPanel>
       </motion.div>
@@ -171,7 +182,7 @@ export default function DashboardClient({
         <DashboardPanel
           variants={itemVariants}
           title="Recent applications"
-          icon={BriefcaseBusiness}
+          subtitle="Latest updates across your pipeline."
           action={{ href: "/applications", label: "View all" }}
         >
           <RecentApplications applications={intelligence.recent} />
@@ -179,7 +190,7 @@ export default function DashboardClient({
         <DashboardPanel
           variants={itemVariants}
           title="Next actions"
-          icon={Clock3}
+          subtitle="Follow-ups you have dated."
           action={{ href: "/calendar", label: "Calendar" }}
         >
           <NextActions applications={intelligence.nextMoves} />
@@ -189,104 +200,107 @@ export default function DashboardClient({
   );
 }
 
-function KpiCard({
-  icon: Icon,
+/**
+ * One number in the summary row.
+ *
+ * Label above, figure, then the movement behind it. The order matters: the
+ * figure is what the eye lands on, so it gets the size, and everything else is
+ * quiet enough to stay out of its way. Only the delta carries colour, and only
+ * to say which direction it went.
+ */
+function StatCell({
   label,
   value,
-  trend,
+  delta,
+  note,
   positive,
-  accent = false,
   variants,
 }: {
-  icon: LucideIcon;
   label: string;
   value: string | number;
-  trend: string;
+  delta: string;
+  note: string;
   positive?: boolean;
-  accent?: boolean;
   variants: Variants;
 }) {
   return (
     <motion.section
       variants={variants}
-      whileHover={{ y: -3 }}
-      transition={{ type: "spring", stiffness: 320, damping: 26 }}
-      className={
-        "relative overflow-hidden rounded-2xl p-5 " +
-        (accent
-          ? "border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent)] text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)]"
-          : "border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] shadow-[var(--shadow-glass)]")
-      }
+      className="bg-[color:var(--color-surface-1)] p-5 transition-colors hover:bg-[color:var(--color-surface-2)]"
     >
-      <div className="flex items-start justify-between">
-        <span
-          className={
-            "grid size-9 place-items-center rounded-xl " +
-            (accent
-              ? "bg-[color:var(--color-on-accent)]/10 text-[color:var(--color-on-accent)]"
-              : "border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)]")
-          }
-        >
-          <Icon className="size-[18px]" />
-        </span>
-        <span
-          className={
-            "grid size-7 place-items-center rounded-full border " +
-            (accent
-              ? "border-[color:var(--color-on-accent)]/20 text-[color:var(--color-on-accent)]"
-              : "border-[color:var(--color-border)] text-[color:var(--color-text-dim)]")
-          }
-        >
-          <ArrowUpRight className="size-3.5" />
-        </span>
-      </div>
-      <div className="mt-6 text-[2.4rem] font-extrabold leading-none tracking-[-0.045em] tabular-nums">{value}</div>
-      <div
-        className={
-          "mt-2.5 text-[0.8rem] font-semibold " +
-          (accent ? "text-[color:var(--color-on-accent)]/80" : "text-[color:var(--color-text-muted)]")
-        }
-      >
+      <div className="text-xs font-medium text-[color:var(--color-text-muted)]">
         {label}
       </div>
-      <div
-        className={
-          "mt-2 inline-flex items-center gap-1.5 text-[0.72rem] font-medium " +
-          (accent
-            ? "text-[color:var(--color-on-accent)]/70"
-            : positive
-              ? "text-[color:var(--color-mint)]"
+      <div className="mt-3 text-[2.1rem] font-semibold leading-none tracking-[-0.04em] tabular-nums text-[color:var(--color-text)]">
+        {value}
+      </div>
+      <div className="mt-3 flex items-center gap-1.5 text-xs">
+        <TrendingUp
+          aria-hidden="true"
+          className={
+            "size-3.5 " +
+            (positive
+              ? "text-[color:var(--color-mint-ink)]"
+              : "rotate-180 text-[color:var(--color-text-dim)]")
+          }
+        />
+        <span
+          className={
+            "font-semibold tabular-nums " +
+            (positive
+              ? "text-[color:var(--color-mint-ink)]"
               : "text-[color:var(--color-text-dim)]")
-        }
-      >
-        <TrendingUp className={"size-3.5 " + (positive ? "" : "rotate-180")} />
-        {trend}
+          }
+        >
+          {delta}
+        </span>
+        <span className="text-[color:var(--color-text-dim)]">{note}</span>
       </div>
     </motion.section>
   );
 }
 
+/**
+ * A titled panel.
+ *
+ * The icon chip that used to sit beside every title is gone. It was the same
+ * jasmine square on all four panels, so it distinguished nothing and simply
+ * pushed the title right. A short subtitle says what the panel is actually
+ * showing, which the icon never did.
+ */
 function DashboardPanel({
   title,
-  icon: Icon,
+  subtitle,
+  badge,
   action,
   children,
   variants,
 }: {
   title: string;
-  icon: LucideIcon;
+  subtitle?: string;
+  badge?: string;
   action?: { href: string; label: string };
   children: React.ReactNode;
   variants: Variants;
 }) {
   return (
     <motion.section variants={variants} className="product-panel">
-      <div className="flex items-center justify-between border-b border-[color:var(--color-border)] px-5 py-4">
-        <div className="flex items-center gap-2.5">
-          <span className="grid size-7 place-items-center rounded-lg border border-[color:var(--color-accent-border)] bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)]">
-            <Icon className="size-3.5" />
-          </span>
-          <h2 className="text-sm font-semibold text-[color:var(--color-text)]">{title}</h2>
+      <div className="flex items-start justify-between gap-4 border-b border-[color:var(--color-border)] px-5 py-4">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-[color:var(--color-text)]">{title}</h2>
+            {badge && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/12 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[color:var(--color-mint-ink)]">
+                <TrendingUp className="size-3" aria-hidden="true" />
+                {badge}
+              </span>
+            )}
+          </div>
+          {subtitle && (
+            <p className="mt-1 truncate text-xs text-[color:var(--color-text-dim)]">
+              {subtitle}
+            </p>
+          )}
         </div>
         {action && (
           <Link

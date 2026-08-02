@@ -22,7 +22,6 @@ import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
-import { ThemeToggle } from "@/components/theme-toggle";
 import { clearAppwriteSession } from "@/lib/appwrite/client";
 
 type NavItem = {
@@ -155,11 +154,10 @@ export function Sidebar() {
         >
           <UserButton afterSignOutUrl="/" />
           {!collapsed && (
-            <span className="flex-1 truncate text-xs text-[color:var(--color-text-dim)]">
+            <span className="truncate text-xs text-[color:var(--color-text-dim)]">
               account
             </span>
           )}
-          <ThemeToggle />
         </div>
         <button
           onClick={() => setCollapsed((c) => !c)}
@@ -196,10 +194,6 @@ export function Sidebar() {
           </Link>
         );
       })}
-      {/* The sidebar is desktop only, so without this a phone has no way to
-          reach the theme at all. Styled down to match the nav items rather than
-          carrying its own border into the bar. */}
-      <ThemeToggle className="!size-10 !rounded-xl !border-0 !bg-transparent" />
     </nav>
     </>
   );

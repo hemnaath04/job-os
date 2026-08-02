@@ -5,7 +5,7 @@ import { ArrowRight, Menu, X } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { ThemeToggle } from "@/components/shell/theme-toggle";
 
 const LINKS = [
   { href: "#how", label: "How it works" },
