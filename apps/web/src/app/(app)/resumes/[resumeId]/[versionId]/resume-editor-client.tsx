@@ -607,7 +607,7 @@ function FinalizeReviewDialog({
                     out of 100
                     <br />
                     {review.page_count} page{review.page_count === 1 ? "" : "s"}{" "}
-                    · {review.text_selectable ? "ATS text verified" : "ATS text issue"}
+                    · {review.text_selectable ? "Selectable text" : "Selectable text issue"}
                   </div>
                   <div className="ml-auto shrink-0 text-right text-xs text-[color:var(--color-text-dim)]">
                     {review.issues.length} finding
@@ -1191,7 +1191,7 @@ function QualityPanel({
           Quality gate
         </div>
         <p className="mt-2 text-xs leading-5 text-[color:var(--color-text-dim)]">
-          Run Review to check page count, ATS text, unsupported claims, GitHub evidence, and writing quality.
+          Run Review to check page count, selectable text, unsupported claims, GitHub evidence, and writing quality.
         </p>
       </section>
     );
@@ -1205,7 +1205,7 @@ function QualityPanel({
             Quality gate
           </div>
           <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">
-            {review.page_count} page · {review.text_selectable ? "ATS text verified" : "text issue"}
+            {review.page_count} page · {review.text_selectable ? "Selectable text" : "Selectable text issue"}
           </p>
         </div>
         <div className="text-2xl font-semibold">{formatScore(review.score)}</div>
