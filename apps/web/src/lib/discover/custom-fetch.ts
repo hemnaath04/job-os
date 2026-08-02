@@ -176,7 +176,17 @@ export async function fetchCustomSource(
     "user-agent": USER_AGENT,
   };
   const authHeader = nonEmpty(cfg.authHeader);
-  if (authHeader) headers[authHeader] = cfg.authValue ?? "";
+  const authValue = nonEmpty(cfg.authValue);
+  // A value with nowhere to go used to be dropped here without a word, so the
+  // request went out unauthenticated and the endpoint answered 404 or 401. The
+  // user then sees "endpoint not found" while looking at a filled-in secret,
+  // which points at the wrong problem entirely.
+  if (authValue && !authHeader) {
+    throw new Error(
+      "auth value set but no auth header name, so the key cannot be sent",
+    );
+  }
+  if (authHeader) headers[authHeader] = authValue ?? "";
 
   let text: string;
   try {

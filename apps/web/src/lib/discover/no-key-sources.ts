@@ -648,10 +648,38 @@ export interface DiscoverNoKeyResponse {
 
 const REMOTE_PATTERN = /\b(remote|anywhere|worldwide|distributed)\b/i;
 
+/** Words, not characters, so punctuation and separators stop mattering. */
+function titleWords(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9+#]+/)
+    .filter(Boolean);
+}
+
+/**
+ * Does this title match any of the searched phrases?
+ *
+ * Every word of a phrase must appear in the title, in any order and anywhere,
+ * and the phrases themselves are alternatives. So "ai engineer intern" finds
+ * "AI/ML Engineer Intern" and "Software Engineer Intern, AI".
+ *
+ * This used to be a substring test against the whole phrase, which meant the
+ * words had to be adjacent and punctuated exactly as typed. Almost nothing is
+ * titled literally "AI Engineer Intern", so a perfectly reasonable search
+ * returned zero results and looked like there were no such jobs.
+ *
+ * Whole words rather than substrings is the other half of it: "ai" as a
+ * substring also matches chair, email and maintain, which is how a keyword
+ * search quietly turns into noise. Splitting both sides into words makes the
+ * boundary free.
+ */
 function matchesTitle(title: string, keywords: string[]): boolean {
   if (keywords.length === 0) return true;
-  const haystack = title.toLowerCase();
-  return keywords.some((k) => haystack.includes(k));
+  const words = new Set(titleWords(title));
+  return keywords.some((phrase) => {
+    const needed = titleWords(phrase);
+    return needed.length > 0 && needed.every((word) => words.has(word));
+  });
 }
 
 function isRemoteResult(result: DiscoveryResult): boolean {
