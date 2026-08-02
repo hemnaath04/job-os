@@ -644,8 +644,13 @@ FONT_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "jakes": ("New Computer Modern",),
     "sb2nov": ("New Computer Modern",),
     "deedy": ("Lato", "Raleway"),
-    "awesome-cv": ("Source Sans Pro", "Roboto", "Font Awesome 5 Free Solid"),
-    "altacv": ("Roboto Slab", "Lato", "Font Awesome 5 Free Solid"),
+    "awesome-cv": (
+        "Source Sans Pro",
+        "Roboto",
+        "Font Awesome 5 Free Solid",
+        "Font Awesome 5 Brands",
+    ),
+    "altacv": ("Lato", "Font Awesome 5 Free Solid", "Font Awesome 5 Brands"),
     "moderncv": (),
 }
 

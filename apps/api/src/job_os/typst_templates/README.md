@@ -1,17 +1,23 @@
 # Bundled Typst resume templates
 
 The fast path beside `latex_templates/`. Same six designs, same contract, a
-different engine. Three are ported so far; the other three still render through
-Tectonic, and the app is none the wiser either way.
+different engine. Five are ported; moderncv still renders through Tectonic, and
+the app is none the wiser either way.
 
-| template | engine | why |
+| template | engine | fonts |
 | --- | --- | --- |
-| jakes | Typst, ported | New Computer Modern is embedded, so no fonts to vendor |
-| sb2nov | Typst, ported | same lineage as Jake's |
-| deedy | Typst, ported | Lato and Raleway already vendored under `latex_templates/deedy/fonts/` |
-| awesome-cv | LaTeX only | needs Source Sans Pro vendored |
-| altacv | LaTeX only | needs Roboto Slab vendored |
-| moderncv | LaTeX only | needs Latin Modern Sans vendored |
+| jakes | Typst | New Computer Modern, embedded in Typst |
+| sb2nov | Typst | New Computer Modern, embedded in Typst |
+| deedy | Typst | Lato, Raleway, from `latex_templates/deedy/fonts/` |
+| awesome-cv | Typst | Source Sans Pro, Roboto, Font Awesome 5 |
+| altacv | Typst | Lato, Font Awesome 5 |
+| moderncv | LaTeX only | would need Latin Modern Sans |
+
+moderncv stays on Tectonic deliberately. It is the one template with no vendored
+class to read values off: the design lives inside a fifteen-year-old CTAN class
+that Tectonic supplies whole, so porting it means reimplementing that class from
+its output rather than transcribing measurements. It renders fine on Tectonic
+and there is no reason to ship a worse-looking version of it quickly.
 
 Rendering is `services/typst_render.py`. Whether a request reaches it at all is
 decided by `RENDER_ENGINE` plus the per-template `typst_ready` flag in
@@ -90,11 +96,11 @@ error:
   sets 16pt type on a 24pt skip, the leading has to be asked for explicitly or
   a heading that wraps opens up much wider than the original.
 
-## Porting the remaining three
+## A missing font is the trap, and it is asserted
 
-All three need font files vendored, which is the bulk of the work and the reason
-they are not done. Source Sans Pro and Roboto Slab are OFL; Latin Modern Sans is
-under the GUST Font Licence. All three permit redistribution, and each needs its
-licence text carried alongside, as `latex_templates/deedy/fonts/` already does.
-Awesome-CV and AltaCV additionally use Font Awesome glyphs in their contact
-lines.
+Typst does not fail a compile when a family is absent: it substitutes another
+and carries on, so the page renders, looks wrong, and nobody notices. So
+`typst_render.FONT_REQUIREMENTS` records the families each template names,
+`missing_fonts` asks the binary which ones it can actually resolve, and the test
+suite and the image build both fail if any is missing. A template that starts
+using a new face has to be added there too.
