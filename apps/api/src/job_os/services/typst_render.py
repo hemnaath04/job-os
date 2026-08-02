@@ -608,18 +608,74 @@ def compile_pdf(
         return pdf.read_bytes()
 
 
-def _font_dirs(key: str) -> tuple[Path, ...]:
-    """Extra font directories a template needs, beyond its own.
+# Faces shared by more than one template, vendored once with their licences.
+# Underscored so it can never be mistaken for a template key: `builtin_directory`
+# only accepts keys matching [a-z0-9][a-z0-9-]*, so this name cannot be reached
+# through one.
+SHARED_FONTS_DIR = TEMPLATES_DIR / "_fonts"
 
-    Deedy's Lato and Raleway are already vendored beside the LaTeX template,
-    with the OFL text upstream omits, and altacv wants Lato as well. Pointing at
-    those rather than copying nineteen font files into a second directory keeps
-    one copy of the fonts and one copy of the licence.
+
+def _font_dirs(key: str) -> tuple[Path, ...]:
+    """Every font directory a template's faces could come from.
+
+    Two of them. The shared directory holds Source Sans Pro, Roboto, Roboto Slab
+    and Font Awesome. Deedy's Lato and Raleway were already vendored beside the
+    LaTeX template, with the OFL text upstream omits, so they are used from
+    there rather than copied: one copy of the fonts, one copy of the licence.
+
+    Handed to every template rather than filtered per template, because renders
+    run with `--ignore-system-fonts` and a template resolves faces by name. What
+    stops a template picking up a face it did not ask for is that it names the
+    one it wants; what stops it silently getting a substitute when that face is
+    absent is `missing_fonts`, below, which is asserted in the tests and at
+    image build time.
     """
     from job_os.services.latex_render import TEMPLATES_DIR as LATEX_TEMPLATES_DIR
 
-    shared = LATEX_TEMPLATES_DIR / "deedy" / "fonts"
-    return (shared,) if key in {"deedy", "altacv"} and shared.is_dir() else ()
+    candidates = (SHARED_FONTS_DIR, LATEX_TEMPLATES_DIR / "deedy" / "fonts")
+    return tuple(path for path in candidates if path.is_dir())
+
+
+# The font families each template names. A missing face does not fail a Typst
+# compile: it substitutes silently, and the render comes out looking wrong in a
+# way nobody notices until an employer opens it. So this is written down and
+# checked, rather than trusted to whatever happens to be installed.
+FONT_REQUIREMENTS: dict[str, tuple[str, ...]] = {
+    "jakes": ("New Computer Modern",),
+    "sb2nov": ("New Computer Modern",),
+    "deedy": ("Lato", "Raleway"),
+    "awesome-cv": ("Source Sans Pro", "Roboto", "Font Awesome 5 Free Solid"),
+    "altacv": ("Roboto Slab", "Lato", "Font Awesome 5 Free Solid"),
+    "moderncv": (),
+}
+
+
+def available_font_families(key: str) -> set[str]:
+    """The families Typst can actually resolve for this template, as it would.
+
+    Asks the binary rather than reading the directory, because what matters is
+    the family name inside the file and not the name of the file, and those are
+    routinely different: Lato ships here as `Lato-Reg.ttf` and resolves as
+    `Lato`.
+    """
+    binary = typst_binary()
+    if binary is None:
+        raise TypstUnavailableError("No typst binary on PATH.")
+    command = [binary, "fonts", "--ignore-system-fonts"]
+    for font_dir in (builtin_directory(key), *_font_dirs(key)):
+        command += ["--font-path", str(font_dir)]
+    proc = subprocess.run(  # noqa: S603 - fixed argv, no shell
+        command, capture_output=True, text=True, timeout=30, check=False
+    )
+    if proc.returncode != 0:
+        raise TypstRenderError("Could not list Typst fonts.", log=proc.stderr)
+    return {line.strip() for line in proc.stdout.splitlines() if line.strip()}
+
+
+def missing_fonts(key: str) -> list[str]:
+    """Families this template names that Typst would fail to find, if any."""
+    available = available_font_families(key)
+    return sorted(set(FONT_REQUIREMENTS.get(key, ())) - available)
 
 
 def render_resume_pdf(

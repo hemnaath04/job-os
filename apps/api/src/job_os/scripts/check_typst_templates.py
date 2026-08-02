@@ -26,6 +26,7 @@ from job_os.services.latex_catalog import BUILTIN_TEMPLATES, SAMPLE_RESUME
 from job_os.services.typst_render import (
     TypstRenderError,
     has_builtin,
+    missing_fonts,
     render_resume_pdf,
     typst_binary,
 )
@@ -55,6 +56,18 @@ def main() -> int:
 
     failures: list[str] = []
     for spec in ported:
+        # Checked before rendering, because a missing face does not fail a
+        # compile. Typst substitutes one silently and the page comes out wrong,
+        # which is invisible here and very visible to whoever opens the PDF.
+        absent = missing_fonts(spec.key)
+        if absent:
+            failures.append(f"{spec.key} (fonts)")
+            print(
+                f"FAIL {spec.key}: these faces did not resolve: {', '.join(absent)}",
+                file=sys.stderr,
+            )
+            continue
+
         for label, document in (("sample", SAMPLE_RESUME), ("sparse", SPARSE_RESUME)):
             started = time.monotonic()
             try:

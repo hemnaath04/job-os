@@ -190,6 +190,64 @@ def test_a_package_fetch_fails_closed_even_past_the_guard(
 
 
 # ---------------------------------------------------------------------------
+# Fonts
+# ---------------------------------------------------------------------------
+
+
+@needs_typst
+@pytest.mark.parametrize("key", PORTED)
+def test_every_face_a_template_names_actually_resolves(key: str) -> None:
+    """The failure this catches is silent, which is why it is a test.
+
+    A Typst compile does not fail on a missing font. It substitutes one and
+    carries on, so the resume renders, looks wrong, and nobody finds out until
+    somebody opens it. Asking the binary which families it can see is the only
+    way to know the render that was checked is the render that ships.
+    """
+    from job_os.services.typst_render import missing_fonts
+
+    assert missing_fonts(key) == []
+
+
+@needs_typst
+def test_fonts_resolve_by_family_name_not_file_name() -> None:
+    """Lato ships as Lato-Reg.ttf and has to resolve as `Lato`.
+
+    Guards the vendored set as a whole, including the faces the templates not
+    yet ported will need, so a font going missing is caught here rather than
+    when somebody starts that port.
+    """
+    from job_os.services.typst_render import available_font_families
+
+    available = available_font_families("jakes")
+    for family in (
+        "Lato",
+        "Raleway",
+        "Source Sans Pro",
+        "Roboto",
+        "Roboto Slab",
+        "Font Awesome 5 Free Solid",
+        "New Computer Modern",
+    ):
+        assert family in available, f"{family} did not resolve"
+
+
+@needs_typst
+def test_a_face_that_is_not_vendored_is_reported_missing() -> None:
+    """The check has to be able to fail, or it is decoration."""
+    from job_os.services import typst_render as module
+
+    monkey = dict(module.FONT_REQUIREMENTS)
+    monkey["jakes"] = ("Definitely Not A Real Typeface",)
+    original = module.FONT_REQUIREMENTS
+    module.FONT_REQUIREMENTS = monkey
+    try:
+        assert module.missing_fonts("jakes") == ["Definitely Not A Real Typeface"]
+    finally:
+        module.FONT_REQUIREMENTS = original
+
+
+# ---------------------------------------------------------------------------
 # Engine selection
 # ---------------------------------------------------------------------------
 
