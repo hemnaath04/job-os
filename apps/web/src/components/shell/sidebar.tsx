@@ -4,12 +4,12 @@ import { SignOutButton, UserButton } from "@clerk/nextjs";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Bookmark,
+  Briefcase,
   CalendarDays,
   ChevronsLeft,
   ChevronsRight,
   FileText,
   LayoutDashboard,
-  LayoutGrid,
   LogOut,
   Radar,
   Settings as SettingsIcon,
@@ -32,7 +32,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
-  { href: "/applications", label: "Applications", icon: LayoutGrid, section: "Pipeline" },
+  { href: "/applications", label: "Applications", icon: Briefcase, section: "Pipeline" },
   { href: "/tailor", label: "AI Resume Tailor", icon: Sparkles, section: "Pipeline" },
   { href: "/jobs", label: "Job Finder", icon: Radar, section: "Pipeline" },
   { href: "/resumes", label: "Resumes", icon: FileText, section: "Documents" },
