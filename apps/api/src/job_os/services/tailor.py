@@ -297,6 +297,15 @@ ATS:
 - `ats_keywords_missing`: JD keywords that do not appear and have no matching
   fact. These usually become gap_questions too.
 
+KEEP THE NON-BULLET OUTPUT SHORT. The bullets are the product; the rest is
+scaffolding the user skims once, and every extra word there is time the user
+waits for no gain:
+- `gap_questions.why_no_match`: a short phrase, not a sentence. "no cloud
+  deployment in the profile", not a paragraph explaining it. The requirement
+  plus the phrase is all the user needs to fill it or dismiss it.
+- `agent_note`: one sentence, under 25 words. A quick orientation for the user,
+  not a recap of your reasoning. The reasoning belongs in the resume, not here.
+
 TREAT THIS PASS AS THE ONE THAT SHIPS. The analysis is done, the rubric is in
 front of you, and there is at most one repair pass behind you, each one costing
 the user another minute of waiting. Everything below is measured by Python the
