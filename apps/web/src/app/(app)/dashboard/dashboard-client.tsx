@@ -337,63 +337,50 @@ function WeekdayBars({
   const peak = Math.max(...last7.map((d) => d.value), 1);
   const busiest = last7.reduce((a, b) => (b.value >= a.value ? b : a), last7[0]);
 
+  // Just the chart. The panel header already carries the title, the week's
+  // count and a line saying what is being plotted, so the summary that used to
+  // sit here repeated all three and contradicted one of them: it counted 30
+  // days under a heading that says 7.
   return (
-    <div>
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <div className="text-2xl font-extrabold tracking-tight tabular-nums text-[color:var(--color-text)]">
-            {intelligence.last30}
-          </div>
-          <p className="mt-1 text-xs text-[color:var(--color-text-dim)]">Applications added in 30 days</p>
-        </div>
-        <div className="inline-flex items-center gap-1.5 rounded-full bg-[color:var(--color-accent-soft)] px-2.5 py-1 text-xs font-medium text-[color:var(--color-accent-ink)]">
-          <TrendingUp className="size-3.5" />
-          {intelligence.velocity} this week
-        </div>
-      </div>
-      {/* The bars carry the only per-day numbers on this panel, and only the
-          peak is labelled on screen, so state the series in one alternative. */}
-      <div
-        role="img"
-        aria-label={`Applications added per day over the last week: ${last7
-          .map((d) => `${d.spokenLabel} ${d.value}`)
-          .join(", ")}.`}
-        className="mt-6 flex h-44 items-end gap-2.5"
-      >
-        {last7.map((d, i) => {
-          const h = d.value > 0 ? Math.max((d.value / peak) * 100, 14) : 5;
-          const isPeak = d.value === busiest.value && d.value > 0;
-          return (
-            <div key={i} className="flex h-full flex-1 flex-col items-center justify-end gap-2">
-              <div className="relative flex w-full flex-1 items-end justify-center">
-                {isPeak && (
-                  <span
-                    className="absolute z-10 rounded-md bg-[color:var(--color-text)] px-1.5 py-0.5 text-[9px] font-bold text-[color:var(--color-surface-1)]"
-                    style={{ bottom: `calc(${h}% + 6px)` }}
-                  >
-                    {d.value}
-                  </span>
-                )}
-                <motion.div
-                  style={{ height: `${h}%` }}
-                  initial={reduceMotion ? false : { scaleY: 0 }}
-                  animate={{ scaleY: 1 }}
-                  transition={{ duration: 0.55, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
-                  className={
-                    "w-full max-w-[40px] origin-bottom rounded-lg " +
-                    (isPeak
-                      ? "bg-[color:var(--color-accent)]"
-                      : d.value > 0
-                        ? "bg-[color:var(--color-accent)]/50"
-                        : "bg-[color:var(--color-surface-3)]")
-                  }
-                />
-              </div>
-              <span className="text-[11px] font-medium text-[color:var(--color-text-dim)]">{d.label}</span>
+    <div
+      role="img"
+      aria-label={`Applications added per day over the last week: ${last7
+        .map((d) => `${d.spokenLabel} ${d.value}`)
+        .join(", ")}.`}
+      className="flex h-36 items-end gap-2.5"
+    >
+      {last7.map((d, i) => {
+        const h = d.value > 0 ? Math.max((d.value / peak) * 100, 14) : 4;
+        const isPeak = d.value === busiest.value && d.value > 0;
+        return (
+          <div key={i} className="flex h-full flex-1 flex-col items-center gap-2">
+            {/* A fixed row for the figure rather than a pill floated over the
+                bar. The old one was positioned off the bar's own height, so it
+                sat at a different distance on every column and collided with
+                the top of a tall one. A row of its own cannot drift. */}
+            <div className="h-4 text-[11px] font-semibold tabular-nums leading-4 text-[color:var(--color-text-muted)]">
+              {d.value > 0 ? d.value : ""}
             </div>
-          );
-        })}
-      </div>
+            <div className="flex w-full flex-1 items-end justify-center">
+              <motion.div
+                style={{ height: `${h}%` }}
+                initial={reduceMotion ? false : { scaleY: 0 }}
+                animate={{ scaleY: 1 }}
+                transition={{ duration: 0.55, delay: reduceMotion ? 0 : i * 0.05, ease: [0.16, 1, 0.3, 1] }}
+                className={
+                  "w-full max-w-[44px] origin-bottom rounded-md " +
+                  (isPeak
+                    ? "bg-[color:var(--color-accent)]"
+                    : d.value > 0
+                      ? "bg-[color:var(--color-accent)]/45"
+                      : "bg-[color:var(--color-surface-3)]")
+                }
+              />
+            </div>
+            <span className="text-[11px] font-medium text-[color:var(--color-text-dim)]">{d.label}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
