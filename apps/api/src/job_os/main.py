@@ -9,6 +9,7 @@ from sqlalchemy import text
 
 from job_os import __version__
 from job_os.db.session import engine
+from job_os.observability import setup_observability
 from job_os.routers import (
     applications,
     calendar,
@@ -21,6 +22,12 @@ from job_os.routers import (
 from job_os.settings import get_settings
 
 log = structlog.get_logger()
+
+# At import rather than in `lifespan`, so a crash while the app is still being
+# constructed is reported too. That is exactly the failure you cannot see from
+# the outside: the container exits and the platform shows a dead deployment with
+# no explanation.
+setup_observability("api")
 
 
 @asynccontextmanager

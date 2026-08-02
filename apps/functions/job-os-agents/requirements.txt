@@ -7,4 +7,7 @@ pydantic>=2.9
 pydantic-settings>=2.6
 pypdf>=5.1
 python-docx>=1.1
+# 2.35 is the floor for `before_send_log`, which is what keeps resume text out
+# of Sentry while still shipping every log line.
+sentry-sdk>=2.35
 structlog>=24.4

@@ -54,6 +54,8 @@ dependencies = [
     "rich>=13.9",
     "appwrite>=22.2.0",
     "pdf-inspector>=0.2.6",
+    # observability. 2.35 is the floor for `before_send_log`.
+    "sentry-sdk[fastapi]>=2.35",
 ]
 
 [dependency-groups]

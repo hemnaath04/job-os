@@ -25,6 +25,7 @@ from appwrite.role import Role
 from appwrite.services.storage import Storage
 from appwrite.services.tables_db import TablesDB
 
+from job_os.observability import setup_observability
 from job_os.services.profile_extract import (
     extract_json_resume_from_docx,
     extract_json_resume_from_pdf,
@@ -68,6 +69,13 @@ QUOTA_ACTIONS: dict[str, str] = {
 
 class QuotaExceeded(Exception):
     """The caller has used today's allowance for this action."""
+
+
+# At module scope so a cold start that fails during import is still reported.
+# This is the runtime where it matters most: a failure here has only ever
+# surfaced as an error string on the job row the browser polls, which tells the
+# user something broke and tells you nothing about why.
+setup_observability("agent")
 
 
 def _now() -> str:
