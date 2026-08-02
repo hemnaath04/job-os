@@ -523,19 +523,12 @@
   padding: 1.5rem clamp(1rem, 2.6vw, 2.25rem) 4rem;
 }
 
-.workspace-page::before {
-  content: "";
-  position: fixed;
-  z-index: -1;
-  inset: 3.25rem 0 0 0;
-  pointer-events: none;
-  opacity: 0.5;
-  background-image:
-    linear-gradient(rgba(60, 50, 40, 0.03) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(60, 50, 40, 0.03) 1px, transparent 1px);
-  background-size: 72px 72px;
-  mask-image: linear-gradient(to bottom, black, transparent 75%);
-}
+/* There used to be a 72px hairline grid painted here. It was removed rather
+   than tuned: at 3% ink under a 50% opacity it was barely visible, so it paid
+   for a full-viewport fixed layer on every page with almost nothing on screen,
+   and a faint blueprint grid behind ordinary product content is a stock
+   decoration rather than something this app measures against. The warm radial
+   wash on body::before already keeps the parchment from reading flat. */
 
 .page-intro {
   position: relative;
