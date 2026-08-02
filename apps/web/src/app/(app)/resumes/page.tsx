@@ -811,7 +811,7 @@ function VersionRow({
             {version.ats_score !== null && version.ats_score !== undefined && (
               <>
                 <span>·</span>
-                <span>ATS {version.ats_score}</span>
+                <span>Match {version.ats_score}</span>
               </>
             )}
             {version.review_score !== null && version.review_score !== undefined && (

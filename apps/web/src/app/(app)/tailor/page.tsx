@@ -1119,7 +1119,7 @@ function AtsBadge({ score }: { score: string | null }) {
         </div>
       </div>
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
-        ATS score
+        Job Match
       </span>
     </div>
   );
@@ -1130,7 +1130,7 @@ function AtsPanel({ matched, missing }: { matched: string[]; missing: string[] }
   return (
     <div className="workspace-panel p-5">
       <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
-        ATS keyword coverage
+        Keyword coverage
       </div>
       <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
         <KeywordGroup label="Matched" tone="mint" items={matched} />
