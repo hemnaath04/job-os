@@ -30,7 +30,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -64,11 +67,44 @@ def _render_typst(key: str, document: dict[str, Any]) -> tuple[float, bytes]:
     return time.perf_counter() - started, pdf
 
 
-def _write(out: Path, key: str, engine: str, pdf: bytes) -> None:
-    (out / f"{key}-{engine}.pdf").write_bytes(pdf)
+def _rasterize_all_pages(pdf: bytes, out: Path, stem: str) -> int:
+    """Every page as a PNG, not just the first.
+
+    A one-page thumbnail would hide the difference that matters most between
+    these two engines, which is where the content stops: one of these templates
+    fits on a single page under Typst and takes two under Tectonic. Whoever is
+    deciding a cutover has to be able to see the page that a first-page-only
+    image would have quietly dropped.
+    """
+    pdftoppm = shutil.which("pdftoppm")
+    with tempfile.TemporaryDirectory(prefix="compare-") as raw_tmp:
+        tmp = Path(raw_tmp)
+        source = tmp / "in.pdf"
+        source.write_bytes(pdf)
+
+        if pdftoppm:
+            subprocess.run(  # noqa: S603 - fixed argv, no shell
+                [pdftoppm, "-png", "-r", "110", str(source), str(tmp / "page")],
+                check=True,
+                capture_output=True,
+            )
+            pages = sorted(tmp.glob("page*.png"))
+            for number, page in enumerate(pages, start=1):
+                (out / f"{stem}-p{number}.png").write_bytes(page.read_bytes())
+            return len(pages)
+
+    # No pdftoppm: fall back to the seeding script's rasteriser, which only
+    # does page one. Better a first page than nothing, but say so.
     png = rasterize_first_page(pdf)
     if png:
-        (out / f"{key}-{engine}.png").write_bytes(png)
+        (out / f"{stem}-p1.png").write_bytes(png)
+        return 1
+    return 0
+
+
+def _write(out: Path, key: str, engine: str, pdf: bytes) -> int:
+    (out / f"{key}-{engine}.pdf").write_bytes(pdf)
+    return _rasterize_all_pages(pdf, out, f"{key}-{engine}")
 
 
 def main() -> int:
@@ -110,26 +146,32 @@ def main() -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     print(f"document: {source_label}")
     print(f"output:   {args.out.resolve()}\n")
-    print(f"{'template':<12} {'tectonic':>10} {'typst':>10} {'speedup':>9} {'ported':>8}")
-    print("-" * 54)
+    print(
+        f"{'template':<12} {'tectonic':>10} {'typst':>10} {'speedup':>9} "
+        f"{'ported':>8} {'tecpp':>6} {'typpp':>6}"
+    )
+    print("-" * 68)
 
     failures: list[str] = []
     for spec in specs:
         try:
             tectonic_seconds, tectonic_pdf = _render_tectonic(spec.key, document)
-            _write(args.out, spec.key, "tectonic", tectonic_pdf)
+            tectonic_pages = _write(args.out, spec.key, "tectonic", tectonic_pdf)
         except LatexRenderError as exc:
             failures.append(f"{spec.key} (tectonic)")
             print(f"{spec.key:<12} FAILED: {exc}", file=sys.stderr)
             continue
 
         if not typst_render.has_builtin(spec.key):
-            print(f"{spec.key:<12} {tectonic_seconds:9.2f}s {'-':>10} {'-':>9} {'no':>8}")
+            print(
+                f"{spec.key:<12} {tectonic_seconds:9.2f}s {'-':>10} {'-':>9} "
+                f"{'no':>8} {tectonic_pages:>6} {'-':>6}"
+            )
             continue
 
         try:
             typst_seconds, typst_pdf = _render_typst(spec.key, document)
-            _write(args.out, spec.key, "typst", typst_pdf)
+            typst_pages = _write(args.out, spec.key, "typst", typst_pdf)
         except typst_render.TypstRenderError as exc:
             failures.append(f"{spec.key} (typst)")
             print(f"{spec.key:<12} FAILED: {exc}\n{exc.log}", file=sys.stderr)
@@ -137,9 +179,13 @@ def main() -> int:
 
         # Marked "no" when the port exists but has not been signed off, so the
         # table never implies a template is live when it is not.
+        # A differing page count is the loudest difference two renders can have,
+        # so it goes in the table rather than being left for someone to notice.
+        flag = " <- PAGE COUNT DIFFERS" if tectonic_pages != typst_pages else ""
         print(
             f"{spec.key:<12} {tectonic_seconds:9.2f}s {typst_seconds:9.3f}s "
-            f"{tectonic_seconds / typst_seconds:8.0f}x {'yes' if spec.typst_ready else 'no':>8}"
+            f"{tectonic_seconds / typst_seconds:8.0f}x {'yes' if spec.typst_ready else 'no':>8} "
+            f"{tectonic_pages:>6} {typst_pages:>6}{flag}"
         )
 
     if failures:

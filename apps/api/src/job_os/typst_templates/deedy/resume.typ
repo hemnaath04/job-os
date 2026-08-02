@@ -78,11 +78,16 @@
 
 #let today = datetime.today()
 
-#place(
-  top + right,
-  text(font: "Raleway", weight: 200, size: 8pt, fill: c-date)[
+// On its own line rather than absolutely positioned the way the class does it.
+// The class drops this into a textblock at a fixed point, which is fine for a
+// short name and collides with a long one: "Hemnaath Balasubramani" at 40pt
+// reaches the right margin at exactly this height. A real name found that.
+#block(
+  above: 0pt,
+  below: 0pt,
+  align(right, text(font: "Raleway", weight: 200, size: 8pt, fill: c-date)[
     Last Updated on #ordinal(today.day()) #today.display("[month repr:long] [year]")
-  ],
+  ]),
 )
 
 #align(center, {

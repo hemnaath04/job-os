@@ -100,7 +100,6 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "fonts by file rather than by family."
         ),
         tags=("single column", "colour accent", "icons"),
-        typst_ready=True,
     ),
     BuiltinTemplate(
         key="altacv",
@@ -125,7 +124,6 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "fonts by file rather than by family."
         ),
         tags=("two column", "sidebar", "colour"),
-        typst_ready=True,
     ),
     BuiltinTemplate(
         key="moderncv",

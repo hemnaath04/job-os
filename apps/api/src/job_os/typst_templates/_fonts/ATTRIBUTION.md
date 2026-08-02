@@ -14,6 +14,7 @@ look similar. All three permit commercial use and redistribution.
 | `sourcesanspro/` | Source Sans Pro | SIL OFL 1.1 | Adobe, [source-sans 3.006R](https://github.com/adobe-fonts/source-sans/releases/tag/3.006R) |
 | `roboto/` | Roboto, Roboto Slab | Apache-2.0 | CTAN [`roboto`](https://ctan.org/pkg/roboto) |
 | `fontawesome5/` | Font Awesome 5 Free Solid, Font Awesome 5 Brands | SIL OFL 1.1 (fonts) | CTAN [`fontawesome5`](https://ctan.org/pkg/fontawesome5) |
+| `latinmodern/` | Latin Modern Sans | GUST Font License | CTAN [`lm`](https://ctan.org/pkg/lm) |
 
 Notes on each:
 
@@ -26,6 +27,12 @@ Notes on each:
   for the same reason: the CTAN `roboto` package is where Tectonic's bundle gets
   them, so these are byte-for-byte the faces the LaTeX renders use.
   `LICENSE.txt` is the package's own Apache-2.0 text.
+- **Latin Modern Sans**, for moderncv, which passes the class's `sans` option.
+  Only the four `lmsans10` faces are vendored, not the whole Latin Modern
+  family, which runs to hundreds of files. `GUST-FONT-LICENSE.TXT` is the
+  package's own. Note this is Latin Modern and not the New Computer Modern that
+  Typst embeds: the two are close relatives, and the older one is what
+  Tectonic's bundle renders moderncv with, so it is what matches.
 - **Font Awesome 5 Free.** The CTAN package ships no licence file, so
   `LICENSE.txt` was fetched from the Font Awesome repository itself. The icons
   as SVG are CC BY 4.0 and the fonts are OFL 1.1; only the fonts are here.

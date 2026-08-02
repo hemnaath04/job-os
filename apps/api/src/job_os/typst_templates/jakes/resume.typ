@@ -82,7 +82,12 @@
 // ---------------------------------------------------------------------------
 
 #align(center, {
-  text(size: 24.88pt, strong(smallcaps(d.name)))
+  // Bold, and deliberately NOT small caps, even though the LaTeX source says
+  // \textbf{\Huge \scshape}. Computer Modern has no bold small-caps face, so
+  // LaTeX silently substitutes bold upright and the name has always rendered
+  // that way. Typst would honour the small caps, which would change the most
+  // prominent thing on the page. Matching the render, not the source.
+  text(size: 24.88pt, strong(d.name))
   linebreak()
   v(1pt)
   // Each item is kept whole so a contact line long enough to wrap breaks after

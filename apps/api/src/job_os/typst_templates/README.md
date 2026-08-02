@@ -11,13 +11,18 @@ the app is none the wiser either way.
 | deedy | Typst | Lato, Raleway, from `latex_templates/deedy/fonts/` |
 | awesome-cv | Typst | Source Sans Pro, Roboto, Font Awesome 5 |
 | altacv | Typst | Lato, Font Awesome 5 |
-| moderncv | LaTeX only | would need Latin Modern Sans |
+| moderncv | Typst, not enabled | Latin Modern Sans |
 
-moderncv stays on Tectonic deliberately. It is the one template with no vendored
-class to read values off: the design lives inside a fifteen-year-old CTAN class
-that Tectonic supplies whole, so porting it means reimplementing that class from
-its output rather than transcribing measurements. It renders fine on Tectonic
-and there is no reason to ship a worse-looking version of it quickly.
+All six are ported. Which of them a deployment actually uses is a separate
+decision, recorded as `typst_ready` in `latex_catalog.py`, and today that is
+jakes, sb2nov and deedy. The rest render on either engine and are waiting on
+somebody looking at the two pages side by side.
+
+moderncv is the one to be careful with, and its ATTRIBUTION.md says why at
+length: it is the only template with no class file in this repository to measure
+against, so the port is a reconstruction from rendered output rather than a
+transcription. It came out closer than expected, but a change upstream would
+show up in the Tectonic render and not here, and nothing local would catch it.
 
 Rendering is `services/typst_render.py`. Whether a request reaches it at all is
 decided by `RENDER_ENGINE` plus the per-template `typst_ready` flag in
