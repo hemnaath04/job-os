@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import ipaddress
+import socket
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
@@ -10,6 +12,60 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
+
+_BLOCKED_HOSTNAMES = {"localhost", "metadata.google.internal"}
+
+
+def _assert_fetchable_url(url: str) -> None:
+    """Keep a user-supplied job posting URL from probing the private network
+    this runs in: https only, and no loopback, private, link-local or
+    cloud-metadata target.
+
+    Mirrors the guard in apps/web/src/lib/discover/custom-fetch.ts. Best-effort
+    by design, same as that guard: it resolves the hostname once, up front, so
+    DNS rebinding (the name resolving to something else by the time the
+    request actually connects) and a redirect to a private address (the
+    caller still fetches with follow_redirects=True) are both out of scope
+    here.
+    """
+    parsed = urlparse(url)
+    if parsed.scheme != "https":
+        raise ValueError("must be an https URL")
+
+    host = (parsed.hostname or "").lower()
+    if not host:
+        raise ValueError("must be an https URL")
+    if host in _BLOCKED_HOSTNAMES or host.endswith(".local") or host.endswith(".internal"):
+        raise ValueError("blocked host")
+
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        addr = None
+    if addr is not None and (
+        addr.is_loopback
+        or addr.is_private
+        or addr.is_link_local
+        or addr.is_multicast
+        or addr.is_unspecified
+    ):
+        raise ValueError("blocked host")
+
+    # A bare hostname (not a literal IP) still resolves to something. Reject it
+    # if every address it resolves to is private, so a name like
+    # "internal.example.com" pointed at 10.0.0.5 cannot be used as a detour
+    # around the literal-IP check above.
+    if addr is None:
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror as e:
+            raise ValueError("could not resolve host") from e
+        resolved = [ipaddress.ip_address(info[4][0]) for info in infos]
+        if resolved and all(
+            a.is_loopback or a.is_private or a.is_link_local or a.is_multicast or a.is_unspecified
+            for a in resolved
+        ):
+            raise ValueError("blocked host")
 
 
 @dataclass(slots=True)
@@ -60,6 +116,11 @@ async def _fetch_firecrawl(url: str, api_key: str) -> FetchedPage:
 
 async def _fetch_plain(url: str) -> FetchedPage:
     from bs4 import BeautifulSoup
+
+    # This server does the fetching itself here (unlike _fetch_firecrawl, where
+    # Firecrawl's servers fetch on our behalf), so a user-supplied URL reaches
+    # our own network directly. Reachable whenever FIRECRAWL_API_KEY is unset.
+    _assert_fetchable_url(url)
 
     async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": "job-os/0.1"})
