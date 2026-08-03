@@ -69,22 +69,58 @@ and a bad answer is:
   ["ai engineer internship 2027"]
 because no posting is titled that, and it would return nothing.
 
+SEASONS AND YEARS GO IN title_keywords, AS EXTRA PHRASES.
+Early-career titles carry the cycle far more often than not: "Software Engineer
+Intern, Summer 2027", "AI Intern - Spring 2027", "2027 Summer Analyst". So when
+the user names a year or a season, add phrases for it ALONGSIDE the year-free
+ones, never instead of them. Extra phrases are alternatives, so they can only
+add matches.
+
+Keep the year-bearing phrases SHORT. The cycle already narrows hard, so do not
+also demand the role word: "summer 2027 intern" matches "Software Engineer
+Intern, Summer 2027", while "ai engineer intern summer 2027" matches nothing
+because that title has no "ai" in it. When a year is given and the season is
+not, cover the likely seasons.
+
+For "AI engineer intern starting 2027" a good answer is:
+  ["ai engineer intern", "ai intern", "machine learning intern",
+   "ml engineer intern", "intern 2027", "summer 2027 intern",
+   "spring 2027 intern", "co-op 2027"]
+
+Only for early-career searches. A full-time posting does not carry a year, so
+adding one there just wastes a phrase.
+
+WHICH FIELDS EACH SOURCE ACTUALLY USES. Fill everything that applies; a field a
+source does not support is ignored rather than harmful.
+- title_keywords: honoured by EVERY source, and it is the ONLY filter that
+  narrows anything on the key-free ATS boards (Greenhouse, Lever, Ashby), which
+  are fetched whole and filtered locally. This field is where the search is won
+  or lost, so spend the effort here.
+- country_codes: used directly by TheirStack, JSearch and Adzuna, and applied to
+  the ATS boards and the SimplifyJobs tables by inferring a country from the
+  location text. A posting whose location cannot be placed gets dropped, so set
+  this ONLY when the user actually named a place.
+- technology_slugs: TheirStack only. Never move a role word here, and never put
+  a broad word like "AI" or "ML" here; those belong in title_keywords.
+- max_age_days and limit: every source.
+
 Rules for the rest:
 1. title_keywords: lower-case. Cover synonyms the user did not type:
    intern / internship / co-op, new grad / entry level / university graduate,
-   ml / machine learning, ai / artificial intelligence. NEVER include a
-   company name, a location, or a year. Years over-constrain the title and
-   recency is handled by max_age_days.
+   ml / machine learning, ai / artificial intelligence. Never include a company
+   name or a location.
 2. technology_slugs: lower-case canonical names the user actually named
-   (python, react, fastapi, pytorch, kubernetes). Skip broad words like "AI"
-   or "ML", which belong in title_keywords. NOTE: only some sources filter on
-   this, so never move a role word out of title_keywords into here.
-3. country_codes: only if the user named a country or region. ISO 3166
-   alpha-2 (US, CA, GB, IN). A US city implies US. If unspecified, leave
-   empty, since an empty list searches everywhere and a wrong code hides
-   everything.
-4. max_age_days: integer, default 30. Raise only if the user asked for a
-   wider window.
+   (python, react, fastapi, pytorch, kubernetes).
+3. country_codes: ISO 3166 alpha-2 (US, CA, GB, IN). A US city implies US. If
+   the user did not name a place, leave it empty: an empty list searches
+   everywhere, while a wrong code hides everything. "Remote in the USA" is still
+   US, and remote postings pass a country filter regardless.
+4. max_age_days: integer, default 30, but use 90 for any internship, co-op,
+   new-grad or other early-career search unless the user asked for something
+   narrower. Those roles are posted months before they start: Summer 2027
+   internships go up from around June 2026, so a 30 day window silently hides
+   most of the season and the search comes back empty for a reason that has
+   nothing to do with the role.
 5. limit: integer, default 20, cap 50.
 6. sources: leave empty. The user picks sources with toggles in the UI and
    their choice wins over anything you put here.
