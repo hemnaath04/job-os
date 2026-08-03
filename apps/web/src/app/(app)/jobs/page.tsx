@@ -994,7 +994,12 @@ function FitBadge({ fit }: { fit: FitResult }) {
   return (
     <span
       className={`shrink-0 self-start rounded-full border px-2 py-0.5 text-[11px] font-semibold tabular-nums ${tone}`}
-      title={`Fit to your profile: you match ${fit.matched.length} of ${total} skills this role names`}
+      title={
+        `Fit to your profile: you match ${fit.matched.length} of the ${total} skills this role names. ` +
+        (total < 8
+          ? "This posting names few skills, so the score is held down: there is not much here to judge on."
+          : "")
+      }
     >
       {fit.score}% fit
     </span>

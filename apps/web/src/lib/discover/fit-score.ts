@@ -254,6 +254,21 @@ function jobKeyTerms(
 
 const MIN_TERMS_FOR_CONFIDENCE = 3;
 
+/**
+ * Smallest denominator the score may use.
+ *
+ * A raw matched/named ratio rewards a posting for saying little. A mechanical
+ * engineering internship that happens to name computer vision, git and R scored
+ * 100% against a backend profile, because all three matched and there was
+ * nothing else to miss, which ranked it above roles that are genuinely a fit.
+ *
+ * Dividing by at least this many terms turns "few signals" into "low
+ * confidence" rather than "perfect match". A posting that names eight or more
+ * skills is scored on its own terms; a thinner one is capped in proportion to
+ * how little it actually told us.
+ */
+const MIN_SCORE_DENOMINATOR = 8;
+
 export function scoreJob(result: DiscoveryResult, vocab: ProfileVocab): FitResult {
   if (!vocab.ready) {
     return { score: 0, matched: [], gaps: [], confident: false };
@@ -275,7 +290,9 @@ export function scoreJob(result: DiscoveryResult, vocab: ProfileVocab): FitResul
     else gaps.push(displayOf(t));
   }
 
-  const score = Math.round((matched.length / key.size) * 100);
+  const score = Math.round(
+    (matched.length / Math.max(key.size, MIN_SCORE_DENOMINATOR)) * 100,
+  );
   return {
     score,
     matched: dedupe(matched),

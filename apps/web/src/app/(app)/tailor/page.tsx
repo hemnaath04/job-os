@@ -937,7 +937,8 @@ function reviewNeedsRetry(result: TailorResponse): boolean {
 
 function ResultView({
   result,
-  resumeName,
+  // resumeName is still accepted so callers need no change, but it is not read:
+  // it is derived from the company and job title this header already shows.
   jobTitle,
   companyName,
   reviewing,
@@ -1010,11 +1011,11 @@ function ResultView({
 
       <header className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-medium tracking-tight">
-            {resumeName}{" "}
-            <span className="text-[color:var(--color-text-dim)]">·</span>{" "}
-            <span className="font-normal">{jobTitle}</span>
-          </h1>
+          {/* The job title alone. `resumeName` is derived as
+              "{company} - {title}", so pairing it with the title printed the
+              title twice and the company twice over, once here and again in the
+              row below. The resume's name is what the library is for. */}
+          <h1 className="text-2xl font-medium tracking-tight">{jobTitle}</h1>
           <div className="mt-1 flex items-center gap-2 text-sm text-[color:var(--color-text-muted)]">
             {companyName && (
               <span className="inline-flex items-center gap-1">
@@ -1145,12 +1146,12 @@ function ResultView({
           </>
         ) : (
           <>
+            {/* "/100" only belongs after a number. Appending it
+                unconditionally produced "Quality review pending/100". */}
             <span className="font-semibold">
-              Quality review{" "}
               {result.review_score !== null
-                ? Math.round(Number(result.review_score))
-                : "pending"}
-              /100
+                ? `Quality review ${Math.round(Number(result.review_score))}/100`
+                : "Quality review pending"}
             </span>
             <span className="notice-detail">
               {result.review_report?.passed
@@ -1756,13 +1757,29 @@ function Entry({
             const original = prov ? originalBulletText[prov.fact_bullet_id] : undefined;
             const edited = original !== undefined && original !== h;
             return (
-              <li key={i} className="text-sm leading-relaxed">
+              <li key={i} className="group text-sm leading-relaxed">
                 <div className="flex gap-2">
                   <span className="mt-1.5 size-1 shrink-0 rounded-full bg-[color:var(--color-text-muted)]" />
-                  <div>
-                    <div>{h}</div>
+                  <div className="min-w-0">
+                    <div>
+                      {h}
+                      {/* A quiet marker that this line was rewritten. The
+                          original used to sit under every edited bullet
+                          permanently, which doubled the length of the page and
+                          made the preview read as duplicated text rather than
+                          as a resume. It is still one hover away, which is
+                          where a provenance detail belongs. */}
+                      {edited && original && (
+                        <span
+                          className="ml-1.5 align-middle text-[10px] uppercase tracking-wide text-[color:var(--color-text-dim)]"
+                          title={`Your original wording: ${original}`}
+                        >
+                          edited
+                        </span>
+                      )}
+                    </div>
                     {edited && original && (
-                      <div className="mt-0.5 text-xs text-[color:var(--color-text-dim)] line-through opacity-60">
+                      <div className="mt-0.5 hidden text-xs text-[color:var(--color-text-dim)] line-through opacity-60 group-focus-within:block group-hover:block">
                         {original}
                       </div>
                     )}
