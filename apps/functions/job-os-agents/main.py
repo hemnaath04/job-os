@@ -420,7 +420,7 @@ class Workspace:
                         "owner_id": self.user_id,
                         "day": day,
                         "action": action,
-                        "count": 1,
+                        "count": "1",
                     },
                     permissions=self.permissions,
                 )
@@ -446,7 +446,7 @@ class Workspace:
                 self.database_id,
                 self.usage_table,
                 row_id,
-                {"count": used + 1},
+                {"count": str(used + 1)},
             )
         except AppwriteException as exc:
             print(f"[quota] increment failed, allowing: {exc!r}")
