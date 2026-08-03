@@ -396,6 +396,25 @@ export async function fetchCustomSource(
     throw new Error("endpoint did not return JSON");
   }
 
+  return mapJobsPayload(payload, {
+    source: `custom:${cfg.id}`,
+    sourceLabel: cfg.name,
+  });
+}
+
+/**
+ * Turn any JSON payload into DiscoveryResults, without being told its shape.
+ *
+ * Exported because this is the interesting half of the custom-source work and it
+ * generalises: a board-wide job feed poses exactly the same problem as a
+ * user-supplied endpoint, which is an unknown wrapper key and unknown field
+ * names. Sharing it means a new feed is a line of config rather than a new
+ * parser, and it inherits every alias and nesting case already handled here.
+ */
+export function mapJobsPayload(
+  payload: unknown,
+  opts: { source: string; sourceLabel: string | null },
+): DiscoveryResult[] {
   const rows = findRows(payload);
   if (!rows.length) {
     // Distinguishing "nothing matched your filters" from "I could not read
@@ -417,8 +436,8 @@ export async function fetchCustomSource(
 
     const country = pickText(index, COUNTRY_KEYS);
     out.push({
-      source: `custom:${cfg.id}`,
-      source_label: cfg.name,
+      source: opts.source,
+      source_label: opts.sourceLabel,
       source_id: pickText(index, ID_KEYS) ?? jobUrl,
       source_url: jobUrl,
       title,

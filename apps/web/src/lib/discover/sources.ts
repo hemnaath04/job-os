@@ -25,12 +25,27 @@ import type { DiscoveryKeys } from "./keys";
 
 export const BACKEND_SOURCES: DiscoverySource[] = ["theirstack", "github"];
 
+/**
+ * Board-wide feeds. Every company on the board, no slug list.
+ *
+ * Listed apart from the ATS sources because the difference matters to the user:
+ * Greenhouse and friends only ever show the companies in ./ats-companies, while
+ * these return whatever the board has. When a search comes back thin, these are
+ * the ones worth turning on.
+ */
+export const FEED_SOURCES: DiscoverySource[] = [
+  "feed:himalayas",
+  "feed:jobicy",
+  "feed:arbeitnow",
+];
+
 export const NO_KEY_SOURCES: DiscoverySource[] = [
   "greenhouse",
   "lever",
   "ashby",
   "remotive",
   "remoteok",
+  ...FEED_SOURCES,
 ];
 
 /** Served by /api/discover, but only once the user has pasted a key. */
@@ -96,6 +111,18 @@ export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
   remoteok: {
     label: "RemoteOK",
     hint: "Remote roles, newest first",
+  },
+  "feed:himalayas": {
+    label: "Himalayas",
+    hint: "Every company on the board, not a fixed list",
+  },
+  "feed:jobicy": {
+    label: "Jobicy",
+    hint: "Remote board, all companies",
+  },
+  "feed:arbeitnow": {
+    label: "Arbeitnow",
+    hint: "Open board feed, Europe-weighted",
   },
   theirstack: {
     label: "TheirStack",

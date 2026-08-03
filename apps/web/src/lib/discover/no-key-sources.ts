@@ -931,6 +931,26 @@ export async function discoverNoKey(
     }
   }
 
+  // --- board-wide feeds ---------------------------------------------------
+  // The ATS loop above can only see the companies in ./ats-companies. These
+  // feeds carry every company on their board, so they are where coverage
+  // actually comes from. Still passed through keep(), because only one of them
+  // filters server-side and even that one takes a single term.
+  const feedIds = [...enabled].filter((s) => s.startsWith("feed:"));
+  if (feedIds.length > 0) {
+    const { fetchBoardFeeds } = await import("./board-feeds");
+    const feeds = await fetchBoardFeeds(feedIds, {
+      keywords,
+      limit,
+      countryCodes,
+      timeoutMs,
+    });
+    collected.push(...feeds.results.filter(keep));
+    for (const err of feeds.errors) {
+      failuresByProvider.set(err.source, [err.message]);
+    }
+  }
+
   // --- bring-your-own-key APIs --------------------------------------------
   // These two filter server-side, so keep() would double-filter and over-drop:
   // the provider decides what "software engineer" matches, and the titles it

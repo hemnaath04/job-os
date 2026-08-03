@@ -406,7 +406,14 @@ export type DiscoverySource =
   | "remotive"
   | "remoteok"
   | "jsearch"
-  | "adzuna";
+  | "adzuna"
+  // Board-wide feeds, prefixed so the orchestrator can route them by shape
+  // rather than by an ever-growing list of names. Unlike the ATS entries above,
+  // these carry every company on their board, so coverage does not depend on a
+  // slug list. Registered in ./discover/board-feeds.
+  | "feed:himalayas"
+  | "feed:jobicy"
+  | "feed:arbeitnow";
 
 export interface DiscoveryResult {
   source: DiscoverySource | string;
