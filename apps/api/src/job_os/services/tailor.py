@@ -270,6 +270,17 @@ BULLET WRITING (this is what a human reader judges):
   always allowed and usually improves it. Growing one is how padding gets in.
 - No first person. No "I", "my", "we", "our".
 - No em dashes, en dashes or double hyphens. Use commas, colons or periods.
+- Banned words, with no exceptions: leveraged, utilized, spearheaded,
+  cutting-edge, state-of-the-art, innovative, robust, seamlessly, synergized,
+  revolutionized, facilitated, enabled, end-to-end. They are the vocabulary of a
+  brochure, and a reader who has seen twenty resumes today reads them as filler
+  or as machine-written. Say the plain verb: built, wrote, tested, migrated,
+  measured, fixed. "Utilized Python to facilitate data ingestion" is
+  "Wrote a Python ingestion job".
+- Prefer the constraint over the technique. "Running the big model on every
+  image cost too much, so it labelled a small set and a smaller model scored the
+  rest" beats "implemented knowledge distillation": it shows the judgement, which
+  is the part an interviewer asks about.
 - Vary the opening verb. Three bullets in a row starting "Built" reads as
   machine-written.
 - Where two bullets in the profile describe the SAME work in different words,

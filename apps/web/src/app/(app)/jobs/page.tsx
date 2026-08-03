@@ -14,6 +14,7 @@ import {
   Plug,
   Radar,
   Search,
+  ShieldAlert,
   Sparkles,
   Wand2,
   X,
@@ -32,6 +33,7 @@ import {
   type FitResult,
   type ProfileVocab,
 } from "@/lib/discover/fit-score";
+import { detectEligibilityFlags } from "@/lib/discover/work-auth";
 import { reportFailure } from "@/lib/errors";
 import {
   CUSTOM_SOURCES_CHANGED_EVENT,
@@ -1019,6 +1021,11 @@ function ResultCard({
   onTailored: (jobId: string) => void;
   onGoToApplications: () => void;
 }) {
+  // Read off the posting's own words, so it costs nothing and cannot be wrong
+  // about what the employer said. Computed per render because it is a few
+  // regexes over text already in memory.
+  const eligibility = detectEligibilityFlags(result);
+
   const importPayload = () => ({
     source: result.source,
     source_id: result.source_id,
@@ -1144,6 +1151,24 @@ function ResultCard({
           {result.description.slice(0, 240)}
           {result.description.length > 240 ? "…" : ""}
         </p>
+      )}
+
+      {/* Above the skills, because it outranks them: no amount of skill overlap
+          makes a cleared or ITAR role winnable on a student visa, and this is
+          the cheaper question to answer before tailoring anything. */}
+      {eligibility.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {eligibility.map((flag) => (
+            <span
+              key={flag.kind}
+              title={flag.detail}
+              className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-rose-ink)]/35 bg-[color:var(--color-rose)]/10 px-2 py-0.5 text-[10px] font-medium text-[color:var(--color-rose-ink)]"
+            >
+              <ShieldAlert className="size-3" aria-hidden="true" />
+              {flag.label}
+            </span>
+          ))}
+        </div>
       )}
 
       {fit && fit.confident && (fit.matched.length > 0 || fit.gaps.length > 0) ? (
