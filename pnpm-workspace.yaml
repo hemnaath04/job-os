@@ -1,3 +1,11 @@
 packages:
   - "apps/web"
   - "packages/*"
+
+# pnpm 10 refuses to run a dependency's install scripts unless it is named here.
+# @sentry/cli is the one that matters: its postinstall fetches the binary that
+# uploads source maps during the build, and without it every production stack
+# trace stays minified, which is most of the reason to have error reporting at
+# all. The failure is quiet, so it is worth being explicit.
+onlyBuiltDependencies:
+  - "@sentry/cli"
