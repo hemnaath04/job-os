@@ -135,11 +135,19 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     cache: "no-store",
   });
   if (!res.ok) {
-    let detail: unknown;
+    // Read the body once, as text: a Response's body can only be consumed a
+    // single time, and a failed res.json() still consumes the stream on its
+    // way to throwing. A second read (the old `catch { res.text() }` fallback)
+    // then throws "body already used" / "Body is disturbed or locked" and
+    // replaces the real error with a confusing one, which is exactly what a
+    // non-JSON error page (an upstream's own platform error page, for example)
+    // used to trigger here.
+    const text = await res.text();
+    let detail: unknown = text;
     try {
-      detail = await res.json();
+      detail = JSON.parse(text);
     } catch {
-      detail = await res.text();
+      /* not JSON, keep the raw text */
     }
     throw new Error(`${res.status}: ${JSON.stringify(detail)}`);
   }
