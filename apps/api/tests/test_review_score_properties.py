@@ -13,6 +13,8 @@ import random
 from decimal import Decimal
 
 import pytest
+
+from job_os.schemas.resumes import ResumeReviewIssue
 from job_os.services.resume_engine import (
     _BLOCKING_PENALTY,
     _MAX_SUGGESTION_PENALTY,
@@ -21,7 +23,6 @@ from job_os.services.resume_engine import (
     PASS_SCORE,
     _score_from_issues,
 )
-from job_os.schemas.resumes import ResumeReviewIssue
 
 
 def issue(severity: str, code: str = "x", message: str = "m") -> ResumeReviewIssue:
@@ -31,7 +32,7 @@ def issue(severity: str, code: str = "x", message: str = "m") -> ResumeReviewIss
 def test_weights_are_what_findings_recorded() -> None:
     assert (_BLOCKING_PENALTY, _WARNING_PENALTY, _SUGGESTION_PENALTY) == (20, 5, 1)
     assert _MAX_SUGGESTION_PENALTY == 5
-    assert PASS_SCORE == Decimal("75")
+    assert Decimal("75") == PASS_SCORE
 
 
 def test_same_issue_list_100_times_is_one_distinct_score() -> None:
@@ -51,10 +52,9 @@ def test_score_is_order_independent() -> None:
 
 def test_duplicate_issues_are_double_counted() -> None:
     """Documents the actual behaviour: identical issues each deduct."""
-    one = _score_from_issues([issue("warning", code="same", message="same")])[0]
-    two = _score_from_issues(
-        [issue("warning", code="same", message="same"), issue("warning", code="same", message="same")]
-    )[0]
+    same = issue("warning", code="same", message="same")
+    one = _score_from_issues([same])[0]
+    two = _score_from_issues([same, same])[0]
     assert one == Decimal(95)
     assert two == Decimal(90), "duplicates deduct twice; not deduplicated by code+message"
 
@@ -85,7 +85,9 @@ def test_boundary_scale(blocking: int, warning: int, suggestion: int, expected: 
 
 
 def test_never_below_zero_or_above_100_on_random_lists() -> None:
-    rng = random.Random(1234)
+    # Seeded, deterministic, and generating issue severities -- not a security
+    # context, which is what S311 is guarding against.
+    rng = random.Random(1234)  # noqa: S311
     for _ in range(500):
         issues = [
             issue(rng.choice(["blocking", "warning", "suggestion"]))

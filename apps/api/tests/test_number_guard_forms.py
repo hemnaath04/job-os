@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 
 import pytest
+
 from job_os.services.resume_engine import (
     NUMBER_RE,
     _resume_text,
