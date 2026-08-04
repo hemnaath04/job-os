@@ -1,0 +1,73 @@
+name: api-health
+
+# Formerly keep-warm. It was three defects in fifty-nine lines:
+#
+#   1. it pinged https://job-os-api.vercel.app, which is not the API. The API runs
+#      on Heroku (app `job-os`). That Vercel project is a retired half-finished
+#      deploy and currently answers 500 to everything, so the real production API
+#      has never been warmed or checked by this workflow at all.
+#   2. every non-200 was downgraded to ::warning:: with exit 0, so it could not go
+#      red. It reported green throughout while curling a 500.
+#   3. its own "Validate config" step hard-coded https://*.vercel.app, so pointing
+#      it at the correct Heroku origin would have failed validation. The guard
+#      actively prevented the fix.
+#
+# The warming premise is also void: the dyno is Basic, not Eco, and sleeping after
+# 30 minutes of inactivity is Eco-specific. There is no cold start to prevent.
+#
+# So this is now an honest health check rather than a warmer: correct origin, a
+# non-200 fails the run, no sleep loop, and a 15-minute cadence instead of 5.
+
+on:
+  schedule:
+    - cron: "7/15 * * * *"    # every 15 minutes, offset from the hour
+  workflow_dispatch:
+
+concurrency:
+  group: api-health
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      # The Heroku origin. Overridable as a repo variable so moving the API does
+      # not require editing this file -- which is what made defect 3 above stick.
+      API_ORIGIN: ${{ vars.API_ORIGIN || 'https://job-os-328bbf87b8ba.herokuapp.com' }}
+    steps:
+      - name: Check /health
+        run: |
+          set -uo pipefail
+          status=$(curl -sS -o /tmp/body -w '%{http_code}' \
+            --max-time 30 --retry 2 --retry-delay 5 \
+            "$API_ORIGIN/health" || echo "curl-failed")
+
+          echo "GET $API_ORIGIN/health -> $status"
+          echo "body: $(head -c 200 /tmp/body 2>/dev/null)"
+
+          if [ "$status" != "200" ]; then
+            echo "::error::API health check failed with status $status"
+            exit 1
+          fi
+
+      - name: Check /health/ready
+        run: |
+          set -uo pipefail
+          # /health/ready touches the database, so this is the check that catches
+          # a live container talking to a dead Postgres -- the failure /health
+          # alone cannot see.
+          status=$(curl -sS -o /tmp/ready -w '%{http_code}' \
+            --max-time 30 --retry 2 --retry-delay 5 \
+            "$API_ORIGIN/health/ready" || echo "curl-failed")
+
+          echo "GET $API_ORIGIN/health/ready -> $status"
+          echo "body: $(head -c 200 /tmp/ready 2>/dev/null)"
+
+          if [ "$status" != "200" ]; then
+            echo "::error::API readiness check failed with status $status"
+            exit 1
+          fi
