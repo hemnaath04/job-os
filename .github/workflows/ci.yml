@@ -1,0 +1,133 @@
+name: ci
+
+# The repo's first real CI. Before this, .github/workflows/ contained exactly one
+# file -- a cron that curled /health -- so the 349 tests in apps/api had never been
+# run by any automation, and neither had ruff, mypy, tsc or the web build. A commit
+# that broke an honesty guard reached main green because "green" did not exist.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    # 07:12 UTC. Offset from the hour because schedulers are busiest there.
+    - cron: "12 7 * * *"
+
+# A new push to the same branch makes the previous run's answer irrelevant.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  api:
+    name: api (pytest, ruff, mypy)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        # pgvector rather than plain postgres: the first migration runs
+        # CREATE EXTENSION IF NOT EXISTS vector, so stock postgres cannot migrate.
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: job_os
+          POSTGRES_PASSWORD: job_os
+          POSTGRES_DB: job_os
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://job_os:job_os@localhost:5432/job_os
+      APP_ENV: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Sync dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      - name: Alembic migrations
+        working-directory: apps/api
+        run: uv run alembic upgrade head
+
+      - name: pytest
+        working-directory: apps/api
+        run: uv run pytest -q
+
+      - name: ruff + mypy ratchet
+        run: ./scripts/lint-ratchet.sh
+
+  web:
+    name: web (lint, typecheck, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Dummy values. The build inlines NEXT_PUBLIC_* at compile time and fails
+      # without them; none of these reach a real service.
+      NEXT_PUBLIC_APPWRITE_PROJECT_ID: ci-dummy-project
+      NEXT_PUBLIC_APPWRITE_ENDPOINT: https://ci.invalid/v1
+      NEXT_PUBLIC_APPWRITE_DATABASE_ID: ci-dummy-db
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk
+      NEXT_PUBLIC_PIPELINE_BACKEND: legacy
+      NEXT_PUBLIC_WORKSPACE_BACKEND: legacy
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Build
+        run: pnpm build
+
+  # The render tests do ~20 real Tectonic compiles and take about ten minutes,
+  # which is too slow for every push but too valuable to run never -- they are the
+  # only coverage of the actual LaTeX path. Nightly, plus on demand.
+  slow-render:
+    name: slow render tests (nightly)
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No DATABASE_URL and no postgres service: the render tests never open a
+    # connection, and tests/conftest.py setdefault()s a placeholder so import
+    # time does not fail. Declaring a URL for a database that is not running
+    # would be a lie that happens to work.
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+      - name: Install Tectonic
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends tectonic
+      - working-directory: apps/api
+        run: uv sync --frozen
+      - name: pytest -m slow
+        working-directory: apps/api
+        run: uv run pytest -q -m slow
