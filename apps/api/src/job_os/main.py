@@ -19,7 +19,7 @@ from job_os.routers import (
     profile,
     resumes,
 )
-from job_os.settings import get_settings
+from job_os.settings import Settings, get_settings
 
 log = structlog.get_logger()
 
@@ -38,10 +38,32 @@ async def lifespan(_app: FastAPI):
     log.info("api.shutdown")
 
 
+def docs_urls(settings: Settings) -> dict[str, str | None]:
+    """Where to serve the interactive docs, or None to not serve them.
+
+    /docs, /redoc and /openapi.json all answered 200 unauthenticated on the
+    production API: 90 KB of schema, 48 paths, 63 models. The routes themselves are
+    correctly 401, so this leaked shape rather than data -- but it handed anyone
+    probing a complete map of the surface for free, which is the reconnaissance step
+    for everything else. Served in development only.
+    """
+    if not settings.is_dev:
+        return {"docs_url": None, "redoc_url": None, "openapi_url": None}
+    return {"docs_url": "/docs", "redoc_url": "/redoc", "openapi_url": "/openapi.json"}
+
+
+_DOCS = docs_urls(get_settings())
+
 app = FastAPI(
     title="job.os API",
     version=__version__,
     lifespan=lifespan,
+    # Passed explicitly rather than splatted. A `**dict[str, str | None]` cannot be
+    # checked against FastAPI's signature and produced sixteen mypy errors on one
+    # line; three named arguments are both type-safe and easier to read.
+    docs_url=_DOCS["docs_url"],
+    redoc_url=_DOCS["redoc_url"],
+    openapi_url=_DOCS["openapi_url"],
 )
 
 # CORS allow-list. Append production origins via WEB_ORIGINS env var
