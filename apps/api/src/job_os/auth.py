@@ -109,7 +109,11 @@ async def get_current_user(
     settings = get_settings()
 
     if not settings.clerk_secret_key or not settings.clerk_jwks_url:
-        if not settings.is_dev:
+        # Fail closed. Unconfigured authentication is an unknown, and an unknown is
+        # not a pass. Minting the shared `dev-local` user needs BOTH
+        # APP_ENV=development and ALLOW_ANONYMOUS_DEV_USER=true; anything less is a
+        # 503, including the previous default of neither being set.
+        if not settings.dev_user_enabled:
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                 detail="Authentication is not configured for this deployment.",

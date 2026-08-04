@@ -37,8 +37,21 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
-    app_env: str = Field(default="development")
+    # Defaults to production deliberately. This used to default to "development",
+    # which made the 503 fail-safe in auth.get_current_user unreachable: that guard
+    # is skipped when is_dev is true, so a deployment with no APP_ENV and no Clerk
+    # configuration served every route to anyone as one shared `dev-local` account,
+    # and an anonymous request wrote a users row. heroku.yml declares no env at all,
+    # so the default is what a fresh deploy gets. An unsafe default that has to be
+    # overridden to become safe is backwards.
+    app_env: str = Field(default="production")
     log_level: str = Field(default="info")
+
+    # Second, deliberate opt-in for the anonymous dev user. APP_ENV=development on
+    # its own is not enough, because that is the kind of value that gets set by
+    # accident in a dashboard or inherited from a copied .env. Both signals or no
+    # dev user.
+    allow_anonymous_dev_user: bool = Field(default=False)
 
     database_url: str = Field(..., description="postgresql+asyncpg://...")
     db_pool_size: int = Field(default=5, ge=1)
@@ -114,7 +127,21 @@ class Settings(BaseSettings):
 
     @property
     def is_dev(self) -> bool:
+        """Which environment this is. Exact and case-sensitive, so neither "dev" nor
+        "Development" counts."""
         return self.app_env == "development"
+
+    @property
+    def dev_user_enabled(self) -> bool:
+        """Whether `get_current_user` may mint the anonymous `dev-local` user.
+
+        Deliberately separate from `is_dev`. The other is_dev consumer
+        (routers/profile.py, which gates importing a resume from an arbitrary path on
+        the server's filesystem) is a different capability, and folding both behind a
+        flag named after the dev user would mean enabling one silently enables the
+        other.
+        """
+        return self.is_dev and self.allow_anonymous_dev_user
 
 
 @lru_cache
