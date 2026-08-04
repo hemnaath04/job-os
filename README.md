@@ -8,11 +8,55 @@ It does three things:
    board or work it in a table.
 2. **Tailors resumes.** An agent rewrites a master resume against one specific
    posting, grounded strictly in facts the resume or profile already verifies.
-3. **Finds roles.** Discovery pulls postings from TheirStack and the SimplifyJobs
-   GitHub lists. A single job page imports through Firecrawl, with a direct HTTP
-   fallback.
+3. **Finds roles, and scores them against you.** Discovery reads 85 company job
+   boards across Greenhouse, Lever and Ashby, three board-wide feeds that carry
+   every employer on them, the SimplifyJobs new-grad lists, and any endpoint you
+   point it at yourself. Every result is scored against your verified profile, so
+   the page leads with what fits rather than what is newest.
 
 The tracker is a tracker. The tailoring engine is the part worth reading.
+
+## Finding roles
+
+Two shapes of source, and the difference decides coverage.
+
+**Per-company boards.** Greenhouse, Lever and Ashby publish a JSON endpoint per
+employer, so reaching them means holding a list of companies. That gives clean,
+first-party data and a hard ceiling: a role at a company not on the list is
+invisible. The list is 85 boards, every slug verified live before it was added.
+
+**Board-wide feeds** invert that. One request returns postings from every company
+on the board, so coverage stops depending on how long a list is. These are read
+through a single shape adapter rather than a parser per provider: it locates the
+job array under any of a dozen wrapper keys and maps fields by alias, so
+`job_title`, `jobTitle` and `position` all resolve, and adding a feed is a line
+of config. The same adapter reads a custom endpoint you host, POST or GET.
+
+### Fit scoring
+
+Each posting is scored on the skills it names against the skills your profile
+verifies, with aliases so `k8s` matches Kubernetes and `retrieval augmented
+generation` matches RAG. It is deterministic and runs in the browser, so a whole
+page ranks instantly and costs nothing.
+
+Two details matter more than the number:
+
+- **A thin posting cannot score highly.** Dividing by the skills a posting names
+  rewards it for naming few, and a mechanical engineering role that mentions
+  three things you happen to know is not a perfect match. The denominator has a
+  floor, so few signals reads as low confidence rather than a high score.
+- **A posting with no description says so.** Some sources list a title and a link
+  and nothing else. Those are marked rather than scored, because a title alone is
+  not enough to judge honestly.
+
+### Eligibility flags
+
+Fit answers whether you could do the job. It says nothing about whether the
+employer may hire you, and that is the cheaper question. Postings are read for
+their own words on sponsorship, citizenship, security clearance and export
+control, and flagged before you spend a tailoring run on a role that cannot be
+won. Every pattern is quoted employer language rather than an inference, because
+a false positive hides a job you could have had.
 
 ## The tailoring engine
 
@@ -178,14 +222,15 @@ browser reads.
 | Layer         | Choice                                                    |
 | ------------- | --------------------------------------------------------- |
 | Web           | Next.js App Router, TypeScript, Tailwind, shadcn/ui        |
-| API           | FastAPI, LangGraph, async SQLAlchemy, Tectonic             |
+| API           | FastAPI, LangGraph, async SQLAlchemy, Typst and Tectonic   |
 | Workspace     | Appwrite TablesDB, Storage, Python Functions               |
 | Jobs and vectors | Postgres with pgvector                                  |
 | Auth          | Clerk                                                      |
 | Models        | Claude, routed through a Manifest gateway                  |
-| Discovery     | TheirStack, SimplifyJobs GitHub data                       |
-| Job import    | Firecrawl, with a direct HTTP fallback                     |
-| Hosting       | Vercel, Appwrite Cloud                                     |
+| Discovery     | 85 Greenhouse, Lever and Ashby boards, board-wide feeds, SimplifyJobs, custom endpoints |
+| Job import    | Firecrawl, with a guarded direct HTTP fallback              |
+| Observability | Sentry across web, API and the agent function               |
+| Hosting       | Vercel for the web app, Heroku for the API, Appwrite Cloud  |
 
 ## Running it locally
 
