@@ -476,15 +476,16 @@ def main() -> None:
     table_id = config.applications_table_id
 
     ignore_conflict(lambda: tables.create(database_id, "job-os", enabled=True))
-    ignore_conflict(
-        lambda: tables.create_table(
-            database_id,
-            table_id,
-            "Application cards",
-            permissions=[Permission.create(Role.users())],
-            row_security=True,
-            enabled=True,
-        )
+    # Through the helper like every other table. This used to write the same
+    # permissions out by hand here, which meant the rule that keeps one user's
+    # rows away from another's lived in two places. They agreed, but only by
+    # coincidence, and the next table added beside this one would have been
+    # copied from whichever version the author happened to be looking at.
+    ensure_private_table(
+        tables,
+        database_id=database_id,
+        table_id=table_id,
+        name="Application cards",
     )
 
     ensure_column(
