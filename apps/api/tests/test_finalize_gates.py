@@ -16,6 +16,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+
 from job_os.services.resume_engine import (
     PASS_SCORE,
     _score_from_issues,
