@@ -119,6 +119,14 @@ RUN /app/.venv/bin/python -m job_os.scripts.check_typst_templates
 # the fallback if the Typst binary is ever unavailable.
 ENV RENDER_ENGINE=typst
 
+# The commit this image was built from, surfaced on /health so the api-health
+# workflow can tell whether the running image matches main's tip. The API deploys
+# by a manual `heroku container:push`, so drift is silent otherwise -- working out
+# what production was running took a whole triage phase once already.
+# Pass it: docker build --build-arg GIT_SHA=$(git rev-parse HEAD) ...
+ARG GIT_SHA=unknown
+ENV GIT_SHA=${GIT_SHA}
+
 # Vercel supplies PORT (80 by default). Migrations intentionally do not run
 # here: autoscaling can start multiple instances concurrently. Run Alembic
 # once as a release step before switching production traffic.
