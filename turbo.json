@@ -1,6 +1,21 @@
 {
   "$schema": "https://turbo.build/schema.json",
   "globalDependencies": [".env"],
+  // Only variables turbo does NOT infer belong here. Framework inference detects
+  // `nextjs` and hashes every NEXT_PUBLIC_* var into the task hash on its own
+  // (verified: `turbo run build --dry=json` lists all 16 of them under
+  // "inferred" while "configured" is empty), so a NEXT_PUBLIC_* entry would be
+  // redundant. These four are not prefixed and so are not inferred, yet they
+  // change build output: the three SENTRY_ ones decide whether source maps
+  // upload, which is the difference between a readable production stack trace
+  // and a minified one, and a cached build made before they were set would
+  // otherwise be replayed after.
+  "globalEnv": [
+    "SENTRY_ORG",
+    "SENTRY_PROJECT",
+    "SENTRY_AUTH_TOKEN",
+    "VERCEL_ENV"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -13,6 +28,10 @@
     "lint": {},
     "typecheck": {
       "dependsOn": ["^build"]
+    },
+    "test": {
+      "dependsOn": ["^build"],
+      "outputs": []
     }
   }
 }
