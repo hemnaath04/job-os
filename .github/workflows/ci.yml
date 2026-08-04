@@ -44,7 +44,9 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://job_os:job_os@localhost:5432/job_os
-      APP_ENV: test
+      # No APP_ENV. It defaults to "production", which is the right posture for a
+      # test run, and setting it here made an ambient value leak into a test that
+      # was asserting what the *default* is.
     steps:
       - uses: actions/checkout@v4
 

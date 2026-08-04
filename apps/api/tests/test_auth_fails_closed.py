@@ -18,14 +18,36 @@ The fix inverts the default and requires two deliberate opt-ins for the dev user
 """
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 from fastapi import HTTPException
 
 from job_os.settings import Settings
 
+#: Every setting this module reasons about. Cleared before constructing a Settings so
+#: an ambient value cannot decide the outcome -- `_env_file=None` suppresses the .env
+#: file but NOT the process environment, which is how the first version of this suite
+#: passed locally and failed in CI (the api job sets APP_ENV, so the "what is the
+#: default" test was really measuring "what is in the environment").
+_RELEVANT_ENV = (
+    "APP_ENV",
+    "ALLOW_ANONYMOUS_DEV_USER",
+    "CLERK_SECRET_KEY",
+    "CLERK_JWKS_URL",
+)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in _RELEVANT_ENV:
+        monkeypatch.delenv(name, raising=False)
+
 
 def settings_for(**overrides: object) -> Settings:
-    """A Settings built from explicit values only, ignoring the developer's .env."""
+    """A Settings built from explicit values only: no .env file, and the relevant
+    process environment cleared by the autouse fixture above."""
     base: dict[str, object] = {
         "database_url": "postgresql+asyncpg://u:p@localhost/db",
         "_env_file": None,
@@ -35,6 +57,12 @@ def settings_for(**overrides: object) -> Settings:
 
 
 # --- the default -----------------------------------------------------------
+
+def test_the_declared_default_is_production() -> None:
+    """Asserted on the field declaration, so no environment can affect it."""
+    assert Settings.model_fields["app_env"].default == "production"
+    assert Settings.model_fields["allow_anonymous_dev_user"].default is False
+
 
 def test_app_env_defaults_to_production() -> None:
     """An unset APP_ENV must not select the mode that bypasses authentication."""
@@ -148,4 +176,65 @@ def test_docs_are_disabled_unless_dev() -> None:
 
     dev = docs_urls(settings_for(app_env="development", allow_anonymous_dev_user=True))
     assert dev["docs_url"] == "/docs"
+    assert dev["redoc_url"] == "/redoc"
     assert dev["openapi_url"] == "/openapi.json"
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({"APP_ENV": "production"}, "None None None"),
+        ({"APP_ENV": "development"}, "/docs /redoc /openapi.json"),
+        # No "APP_ENV absent" case. `Settings` finds REPO_ROOT/.env by module path,
+        # not by cwd, so on a developer machine with a .env the absent case reads
+        # whatever that file says -- it would pass in CI and fail locally, which is
+        # the same environment-dependence this suite already tripped over twice.
+        # "absent means production" is covered deterministically by
+        # test_the_declared_default_is_production instead.
+    ],
+)
+def test_the_app_really_does_not_mount_docs_in_production(
+    env: dict[str, str], expected: str, tmp_path: Path
+) -> None:
+    """Asserts on the real `app` object under a controlled environment.
+
+    In a subprocess, deliberately, and this took three attempts to get right --
+    worth recording because each failure was a test that passed while the app was
+    broken:
+
+      1. comparing `app.*` against a fresh `docs_urls(get_settings())` failed,
+         because `get_settings()` is lru_cached and the recomputed settings could
+         differ from the ones used at import.
+      2. comparing against the module-level `_DOCS` also failed, because the autouse
+         env-isolation fixture deletes APP_ENV before the lazy import, so the module
+         loaded with .env's APP_ENV=development -- whose URLs happen to equal
+         FastAPI's own defaults, so a dropped argument was invisible.
+
+    `app` is constructed at import time, so the only honest way to test what a given
+    environment produces is to import it in that environment. A bare `cwd` and an
+    explicit env also stop the developer's .env from leaking in.
+    """
+    import subprocess
+    import sys
+
+    script = (
+        "from job_os.main import app; "
+        "print(app.docs_url, app.redoc_url, app.openapi_url)"
+    )
+    # S603: the command is sys.executable and a literal script defined above. No
+    # caller-supplied input reaches it.
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", script],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,  # away from the repo, so REPO_ROOT/.env is not found
+        env={
+            "PATH": os.environ["PATH"],
+            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "DATABASE_URL": "postgresql+asyncpg://u:p@localhost/db",
+            **env,
+        },
+        check=False,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip().splitlines()[-1] == expected, proc.stdout
