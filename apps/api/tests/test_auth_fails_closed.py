@@ -185,12 +185,6 @@ def test_docs_are_disabled_unless_dev() -> None:
     [
         ({"APP_ENV": "production"}, "None None None"),
         ({"APP_ENV": "development"}, "/docs /redoc /openapi.json"),
-        # No "APP_ENV absent" case. `Settings` finds REPO_ROOT/.env by module path,
-        # not by cwd, so on a developer machine with a .env the absent case reads
-        # whatever that file says -- it would pass in CI and fail locally, which is
-        # the same environment-dependence this suite already tripped over twice.
-        # "absent means production" is covered deterministically by
-        # test_the_declared_default_is_production instead.
     ],
 )
 def test_the_app_really_does_not_mount_docs_in_production(
@@ -211,9 +205,41 @@ def test_the_app_really_does_not_mount_docs_in_production(
          FastAPI's own defaults, so a dropped argument was invisible.
 
     `app` is constructed at import time, so the only honest way to test what a given
-    environment produces is to import it in that environment. A bare `cwd` and an
-    explicit env also stop the developer's .env from leaking in.
+    environment produces is to import it in that environment.
     """
+    assert _run_app_import(tmp_path, env) == expected
+
+
+def _isolated_package(tmp_path: Path) -> Path:
+    """Copy the job_os package somewhere with no repo markers, and return the dir to
+    put on PYTHONPATH.
+
+    This is what makes the "APP_ENV absent" case testable. `settings._find_repo_root`
+    walks up from settings.py's own `__file__` looking for pnpm-workspace.yaml, then
+    for pyproject.toml + alembic.ini -- it does not consult cwd, so running the
+    subprocess elsewhere does not stop it finding the developer's .env. Under a
+    marker-less tmp dir the search falls through to the filesystem root, `env_file`
+    becomes ("/.env", "/.env.local") which do not exist, and the settings are built
+    from the process environment and the declared defaults alone.
+
+    Deterministic in CI and locally, which is the point: the alternative was a
+    skipif that only ran where there is no .env, and the absent case is precisely
+    the guarantee worth testing -- a deploy target that FORGETS to set APP_ENV must
+    get production behaviour. Heroku happens to set it. The next target might not.
+    """
+    import shutil
+
+    source = Path(__file__).resolve().parents[1] / "src" / "job_os"
+    dest = tmp_path / "pkg" / "job_os"
+    shutil.copytree(
+        source, dest, ignore=shutil.ignore_patterns("__pycache__", "*.pyc")
+    )
+    for marker in ("pnpm-workspace.yaml", "pyproject.toml", "alembic.ini"):
+        assert not (tmp_path / "pkg" / marker).exists(), f"{marker} would defeat this"
+    return tmp_path / "pkg"
+
+
+def _run_app_import(tmp_path: Path, env: dict[str, str]) -> str:
     import subprocess
     import sys
 
@@ -227,14 +253,25 @@ def test_the_app_really_does_not_mount_docs_in_production(
         [sys.executable, "-c", script],
         capture_output=True,
         text=True,
-        cwd=tmp_path,  # away from the repo, so REPO_ROOT/.env is not found
+        cwd=tmp_path,
         env={
             "PATH": os.environ["PATH"],
-            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
+            "PYTHONPATH": str(_isolated_package(tmp_path)),
             "DATABASE_URL": "postgresql+asyncpg://u:p@localhost/db",
             **env,
         },
         check=False,
     )
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.strip().splitlines()[-1] == expected, proc.stdout
+    return proc.stdout.strip().splitlines()[-1]
+
+
+def test_a_deploy_target_that_forgets_app_env_gets_production(tmp_path: Path) -> None:
+    """THE case that matters: no APP_ENV set anywhere, no .env reachable.
+
+    This is the entire point of inverting the default. If a deploy target omits
+    APP_ENV it must behave as production -- docs unmounted, and (per the unit tests
+    above) the dev user refused. Heroku sets APP_ENV today; nothing guarantees the
+    next target will.
+    """
+    assert _run_app_import(tmp_path, {}) == "None None None"
