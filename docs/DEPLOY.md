@@ -1,86 +1,141 @@
 # Production deployment
 
-The current production setup separates the latency-sensitive application board
-from the heavier Python agent workloads:
+Current, verified 2026-08-04. Everything below was checked against the live
+platforms rather than transcribed from intent.
 
-- Vercel serves the Next.js web app at `jobs.hemnaath.tech`.
-- Appwrite TablesDB serves application-board reads and writes without a sleeping
-  backend hop.
-- Render serves FastAPI for profile, discovery, PDF, and AI-agent work.
-- Neon remains the durable rollback copy while Appwrite changes are dual-written.
+| piece | where | how it deploys |
+| --- | --- | --- |
+| Next.js web app | Vercel project `job-app-manager` → `jobs.hemnaath.tech` | automatic on push to `main` |
+| FastAPI API | Heroku app `job-os` → `https://job-os-328bbf87b8ba.herokuapp.com` | **manual** `container:push`, see below |
+| Application board, resumes, agent work | Appwrite project `6a6552db0034a120b320`, region `nyc` | `appwrite push functions` |
+| Durable job/application data | Neon Postgres, via the API's `DATABASE_URL` | migrations run manually |
 
-## Backend → Render
+Production runs `NEXT_PUBLIC_PIPELINE_BACKEND=appwrite` and
+`NEXT_PUBLIC_WORKSPACE_BACKEND=appwrite`, so resume review and finalize execute in
+the **Appwrite function**, not in the FastAPI container. The container serves jobs,
+applications, discovery and profile. Knowing which is which matters: the function
+ships no LaTeX engine.
 
-`render.yaml` is the source of truth for the backend service. It builds the
-Docker image in `infra/fly/Dockerfile.api`, runs Alembic migrations at startup,
-and deploys pushes to the default branch automatically.
+Not deployment targets, despite still being in the tree: `render.yaml`, `fly.toml`,
+`infra/fly/api.fly.toml`. They are queued for deletion. The Vercel project
+`job-os-api` is a retired half-finished deploy that currently answers 500 or times
+out; ignore it.
 
-Configure these values in the Render service:
+---
 
-- `DATABASE_URL`
-- `CLERK_SECRET_KEY`
-- `CLERK_PUBLISHABLE_KEY`
-- `CLERK_JWKS_URL`
-- `ANTHROPIC_API_KEY`
-- `ANTHROPIC_BASE_URL`
-- `WEB_ORIGINS=https://jobs.hemnaath.tech`
+## API → Heroku (manual, and the only way it ships)
 
-Optional features use `FIRECRAWL_API_KEY`, `THEIRSTACK_API_KEY`, and the `R2_*`
-values documented in `.env.example`.
+**Owner: whoever merges the change.** There is no CD for the API. A merge to `main`
+deploys the web app and does nothing to the API, so main and production drift
+silently until someone runs this. `/health` reports the deployed commit
+(`git_sha`) and the `api-health` workflow warns when it does not match main's tip.
 
-Render's free web-service plan can still spin down, but it is no longer in the
-Kanban board's critical path. A cold start can affect resume or discovery tools,
-not routine board loads, moves, archives, or refreshes.
+### Prerequisites
 
-## Backend → Vercel container
+- `heroku` CLI, logged in (`heroku auth:whoami`)
+- a Docker daemon. On Apple Silicon: `colima start --cpu 4 --memory 6 --disk 30`
+- **the image must be `linux/amd64`.** Heroku's container registry is x86_64-only
+  (<https://devcenter.heroku.com/changelog-items/2718>), and Docker on Apple Silicon
+  defaults to arm64. Omitting `--platform` produces an image Heroku rejects.
 
-Create a second Vercel project from this repository with **Root Directory**
-set to `apps/api`. Do not change the existing web project's root directory.
+### The commands
 
-Copy the backend environment variables listed above and add:
+```sh
+cd apps/api
 
-- `DB_POOL_SIZE=2`
-- `DB_MAX_OVERFLOW=3`
-- `WEB_ORIGINS=https://jobs.hemnaath.tech`
+# 1. Cross-build for amd64, tagging the registry directly, and bake in the commit.
+#    Context is apps/api because Heroku sets the build context to the Dockerfile's
+#    own directory and cannot be configured otherwise.
+docker build \
+  --platform linux/amd64 \
+  --build-arg GIT_SHA="$(git rev-parse HEAD)" \
+  -f Dockerfile.vercel \
+  -t registry.heroku.com/job-os/web \
+  .
 
-The container command does not run Alembic automatically because multiple
-instances can start concurrently. Apply migrations once from a trusted release
-environment before pointing the frontend at the Vercel backend.
-
-After the new backend passes `/health`, `/health/ready`, authenticated API, and
-PDF smoke tests, update the web project's `API_BASE_URL` to the new backend URL
-and redeploy. Keep Render available until the production smoke test passes.
-
-Vercel containers scale to zero. In the July 2026 cutover, the first request to
-a new instance took roughly 8 seconds; warm health requests were around 150 ms.
-Use an always-on Render or Fly instance if eliminating every cold start matters
-more than scale-to-zero cost savings.
-
-## Web → Vercel
-
-The Vercel project uses `infra/vercel/vercel.json` and should have:
-
-- `API_BASE_URL=https://job-os-api.onrender.com`
-- `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`
-- `CLERK_SECRET_KEY`
-- `NEXT_PUBLIC_APPWRITE_ENDPOINT`
-- `NEXT_PUBLIC_APPWRITE_PROJECT_ID`
-- `NEXT_PUBLIC_APPWRITE_DATABASE_ID=job-os`
-- `NEXT_PUBLIC_APPWRITE_APPLICATIONS_TABLE_ID=application_cards`
-- `APPWRITE_API_KEY` (server-only and marked sensitive)
-- `NEXT_PUBLIC_PIPELINE_BACKEND=appwrite`
-
-The applications board uses Appwrite after the Next.js session bridge exchanges
-the Clerk identity for a short-lived Appwrite token. Other routes continue
-through `/api/backend/*` to FastAPI.
-
-## Smoke test
-
-```bash
-curl https://job-os-api.onrender.com/health
-# {"status":"ok","version":"0.0.1"}
+# 2. Push and release.
+heroku container:login
+docker push registry.heroku.com/job-os/web
+heroku container:release web -a job-os
 ```
 
-Then open `https://jobs.hemnaath.tech`, sign in, and confirm the Applications
-board loads immediately, a card move survives refresh, and resume/profile tools
-still wake the Python backend when needed.
+Expect the build to be slow on Apple Silicon: every layer runs under emulation, and
+the image compiles all six LaTeX templates to warm the Tectonic cache.
+
+`Dockerfile.vercel` is named for a platform that no longer builds it. Renaming it
+means editing `heroku.yml` in the same commit; tracked in
+`_artifacts/qa/followups.md`.
+
+### Migrations
+
+The container deliberately does **not** run Alembic on boot, because several
+instances can start at once. Run it once, before releasing a migration:
+
+```sh
+heroku run -a job-os -- /app/.venv/bin/python -m alembic upgrade head
+```
+
+### Verify, every time
+
+```sh
+H=https://job-os-328bbf87b8ba.herokuapp.com
+
+heroku releases -a job-os -n 3          # the release number must have incremented
+curl -s $H/health                       # {"status":"ok","version":"...","git_sha":"<the commit you built>"}
+curl -s -o /dev/null -w '%{http_code}\n' $H/health/ready              # 200
+curl -s -o /dev/null -w '%{http_code}\n' $H/api/v1/applications       # 401
+curl -s -o /dev/null -w '%{http_code}\n' $H/docs                      # 404 in production
+```
+
+`401` on an authenticated route is the check that matters: it proves Clerk
+verification is configured. A `200` there would mean the API is serving everyone as
+one shared account, and a `503` would mean auth configuration is missing entirely.
+Both are stop-and-investigate.
+
+`/docs` returning `404` is correct in production. It returned `200` until
+2026-08-04 and served the full schema anonymously.
+
+### Config vars
+
+Set in Heroku, not in this repo (`heroku config -a job-os` to list names):
+`DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_JWKS_URL`,
+`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `SENTRY_DSN`, `FIRECRAWL_API_KEY`,
+`WEB_ORIGINS`, `APP_ENV`.
+
+`APP_ENV=production` is set, and since 2026-08-04 that is also the code default, so
+omitting it is safe. **Never set `ALLOW_ANONYMOUS_DEV_USER` on a deployed target.**
+It is not a convenience flag there; with Clerk unconfigured it serves every request
+as one shared account.
+
+`RENDER_ENGINE=typst` is baked into the image rather than set as a config var.
+
+---
+
+## Web → Vercel (automatic)
+
+Project `job-app-manager`, deploys on push to `main`. Environment variables live in
+the Vercel dashboard; `vercel env ls production` lists the names.
+
+`API_BASE_URL` points at the Heroku origin. The browser never calls it directly —
+`apps/web/next.config.mjs` has no rewrites, and `/api/backend/*` is handled by an
+auth-injecting Route Handler that forwards server-side. `NEXT_PUBLIC_API_BASE_URL`
+appears in `.env.example` and is read by nothing.
+
+## Appwrite function
+
+```sh
+appwrite push functions
+```
+
+Deploys `apps/functions/job-os-agents`. Its environment is configured in the
+Appwrite console, under names that differ from the `NEXT_PUBLIC_APPWRITE_*` ones in
+`.env.example` — see the Phase 0 finding in `_artifacts/qa/findings.md`.
+
+## Smoke test after any deploy
+
+```sh
+curl -s https://job-os-328bbf87b8ba.herokuapp.com/health
+```
+
+Then open `https://jobs.hemnaath.tech`, sign in, and confirm the Applications board
+loads, a card move survives a refresh, and a resume opens.

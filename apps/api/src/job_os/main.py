@@ -80,9 +80,20 @@ app.add_middleware(
 )
 
 
+#: The commit this image was built from, baked in at build time via a build arg.
+#: "unknown" when the image was built without one, which is itself informative.
+#:
+#: Exists because "is production running main?" took an entire triage phase to
+#: answer: the API deploys by a manual `heroku container:push`, so main and the
+#: running image drift silently and nothing reports it. With the SHA on /health the
+#: api-health workflow can compare it against main's tip and warn on drift, which
+#: turns a research question into a monitor.
+GIT_SHA = os.environ.get("GIT_SHA", "unknown")
+
+
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:
-    return {"status": "ok", "version": __version__}
+    return {"status": "ok", "version": __version__, "git_sha": GIT_SHA}
 
 
 @app.get("/health/ready", tags=["meta"])

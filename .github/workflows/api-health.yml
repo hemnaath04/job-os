@@ -54,6 +54,28 @@ jobs:
             exit 1
           fi
 
+      - name: Warn if the deployed commit has drifted from main
+        run: |
+          set -uo pipefail
+          # WARNS, does not fail. Drift is normal for a while after a merge because
+          # the API deploys manually, and a red run for "not deployed yet" would
+          # train everyone to ignore this workflow -- which is the defect this file
+          # used to have, pointed the other way.
+          deployed=$(curl -sS --max-time 30 "$API_ORIGIN/health" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin).get("git_sha","unknown"))' \
+            2>/dev/null || echo "unreadable")
+          echo "deployed git_sha : $deployed"
+          echo "main tip         : $GITHUB_SHA"
+
+          case "$deployed" in
+            unknown|unreadable)
+              echo "::warning::/health reports no git_sha. The running image predates the build arg, so drift cannot be checked." ;;
+            "$GITHUB_SHA")
+              echo "production matches main" ;;
+            *)
+              echo "::warning::production is running $deployed but main is at $GITHUB_SHA. See docs/DEPLOY.md." ;;
+          esac
+
       - name: Check /health/ready
         run: |
           set -uo pipefail
