@@ -163,6 +163,16 @@ def _header(req: Any, name: str) -> str:
     return str(headers.get(name) or headers.get(name.lower()) or "")
 
 
+def _error_text(exc: BaseException) -> str:
+    """What to store on a failed job row, for exceptions that stringify to "".
+
+    `httpx.ReadError('')` is the real case: a tailor run died on one, the row was
+    written with `str(exc)`, and the user got a toast reading "The agent failed."
+    with nothing under it. The class name alone is worth more than that.
+    """
+    return str(exc) or repr(exc) or type(exc).__name__
+
+
 def _read_payload(req: Any) -> dict[str, Any]:
     """Read the JSON request payload defensively across runtime versions.
 
@@ -1243,7 +1253,7 @@ async def main(context: Any) -> Any:
                 workspace, context.req.path, payload, job_id=job_id
             )
         except Exception as exc:
-            workspace.update_job(job_id, status="failed", error=str(exc)[:2000])
+            workspace.update_job(job_id, status="failed", error=_error_text(exc)[:2000])
             context.error(f"agent dispatch failed: {exc!r}")
             raise
         workspace.update_job(job_id, status="succeeded", output=result)

@@ -48,8 +48,45 @@ class _Messages:
         return _Stream(self._answer)
 
 
+class _BrokenStream:
+    """A stream that opens and then dies part way through the reply.
+
+    This is the shape of the real failure, and it is not the same as raising from
+    `stream()`: the gateway had already answered 200, the SDK had already handed
+    the body back to be read as it arrived, and its own retry was finished. The
+    error surfaces raw from `get_final_message`, past every anthropic class.
+    """
+
+    def __init__(self, error: Exception) -> None:
+        self._error = error
+
+    async def __aenter__(self) -> _BrokenStream:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    async def get_final_message(self) -> Any:
+        raise self._error
+
+
+class _MidStreamMessages:
+    """A gateway that starts answering, then drops the connection."""
+
+    def __init__(self, errors: list[Exception], answer: str = "ok") -> None:
+        self._errors = list(errors)
+        self._answer = answer
+        self.calls = 0
+
+    def stream(self, **_kwargs: Any) -> Any:
+        self.calls += 1
+        if self._errors:
+            return _BrokenStream(self._errors.pop(0))
+        return _Stream(self._answer)
+
+
 class _Client:
-    def __init__(self, messages: _Messages) -> None:
+    def __init__(self, messages: _Messages | _MidStreamMessages) -> None:
         self.messages = messages
 
 
@@ -137,3 +174,63 @@ async def test_a_clean_call_never_sleeps(slept: list[float]) -> None:
     assert await llm_json.create_message(_Client(messages)) == "ok"
     assert messages.calls == 1
     assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_dies_mid_reply_is_retried(slept: list[float]) -> None:
+    # The real failure: a tailor run lost its compose pass to `ReadError('')` 164
+    # seconds into the stream and the whole job died, because a raw transport
+    # error matched no branch of the retry.
+    messages = _MidStreamMessages([httpx.ReadError("")])
+    assert await llm_json.create_message(_Client(messages)) == "ok"
+    assert messages.calls == 2
+    assert len(slept) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_protocol_error_mid_reply_is_retried_too(slept: list[float]) -> None:
+    messages = _MidStreamMessages([httpx.RemoteProtocolError("peer closed")])
+    assert await llm_json.create_message(_Client(messages)) == "ok"
+    assert messages.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_connection_error_is_retried(slept: list[float]) -> None:
+    request = httpx.Request("POST", "https://gateway.test/v1/messages")
+    messages = _MidStreamMessages([anthropic.APIConnectionError(request=request)])
+    assert await llm_json.create_message(_Client(messages)) == "ok"
+    assert messages.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_a_read_timeout_is_not_retried(slept: list[float]) -> None:
+    # A timeout is the gateway going quiet, not the socket glitching, and the
+    # SDK's budget for one is 600s against the function's 900s ceiling. Retrying
+    # would trade a clean failure for a killed run whose job row never leaves
+    # "running".
+    messages = _MidStreamMessages([httpx.ReadTimeout("too slow")])
+    with pytest.raises(httpx.ReadTimeout):
+        await llm_json.create_message(_Client(messages))
+    assert messages.calls == 1
+    assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_the_sdk_timeout_class_is_not_retried_either(slept: list[float]) -> None:
+    # `anthropic.APITimeoutError` subclasses `APIConnectionError`, so it reaches
+    # the retryable branch and has to be turned away inside it.
+    request = httpx.Request("POST", "https://gateway.test/v1/messages")
+    messages = _MidStreamMessages([anthropic.APITimeoutError(request=request)])
+    with pytest.raises(anthropic.APITimeoutError):
+        await llm_json.create_message(_Client(messages))
+    assert messages.calls == 1
+    assert slept == []
+
+
+@pytest.mark.asyncio
+async def test_a_broken_stream_still_gives_up_eventually(slept: list[float]) -> None:
+    messages = _MidStreamMessages([httpx.ReadError("") for _ in range(10)])
+    with pytest.raises(httpx.ReadError):
+        await llm_json.create_message(_Client(messages))
+    assert messages.calls == len(llm_json._RETRY_BACKOFF_SECONDS) + 1
+    assert len(slept) == len(llm_json._RETRY_BACKOFF_SECONDS)

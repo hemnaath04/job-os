@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
 import anthropic
+import httpx
 import structlog
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
@@ -794,16 +795,20 @@ async def run_tailor(
                 messages=state["messages"],
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
             )
-        except anthropic.APIError as exc:
+        except (anthropic.APIError, httpx.HTTPError) as exc:
             # A refine pass is an improvement on something that already works, so a
             # transient gateway failure on one must never throw away the passes that
             # succeeded. A real run reached 78.3 over three good passes and then lost
             # all of it to a 429 on the fourth, which is the opposite of the point:
             # running the loop harder should not make the whole call more fragile.
+            #
+            # `httpx.HTTPError` because a stream that dies mid-reply raises the
+            # transport error raw, past every anthropic class, and a run that lost
+            # a good pass to one would be this comment's own failure again.
             log.warning(
                 "tailor.pass_failed_keeping_best",
                 iteration=iteration,
-                error=str(exc)[:200],
+                error=repr(exc)[:200],
                 have_best=state["best_agent"] is not None,
             )
             if state["best_agent"] is not None:
@@ -2753,8 +2758,11 @@ async def _analyse_requirements(
         )
         _log_prompt_cache("analyst", 1, msg)
         analysis = parse_model_json(TailorAnalysis, response_text(msg))
-    except (anthropic.APIError, ValidationError) as exc:
-        log.warning("tailor.analysis_failed", error=str(exc)[:200])
+    except (anthropic.APIError, httpx.HTTPError, ValidationError) as exc:
+        # An empty analysis is a planned degradation: `analysis_settled` downstream
+        # knows the gaps were never checked. A dropped stream has to land here too,
+        # or the one step that is allowed to fail softly takes the run down with it.
+        log.warning("tailor.analysis_failed", error=repr(exc)[:200])
         return TailorAnalysis()
     # A bullet id the analyst invented would send the writer looking for evidence
     # that does not exist, so it never reaches the writer.
