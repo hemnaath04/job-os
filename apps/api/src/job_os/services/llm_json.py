@@ -20,6 +20,7 @@ import re
 from typing import Any
 
 import anthropic
+import httpx
 import structlog
 from pydantic import BaseModel
 
@@ -65,6 +66,20 @@ _MAX_RETRY_AFTER_SECONDS = 60.0
 # thing to us: the request was never processed, so re-sending it is safe and is
 # not a duplicate side effect.
 _RETRYABLE_STATUSES = frozenset({429, 529})
+# A stream that breaks after the gateway has already answered 200 arrives as a
+# raw httpx transport error rather than an anthropic one, because
+# `messages.stream` reads the body as it comes and the SDK's own retry is long
+# finished by the time the socket dies. A real tailor run lost its compose pass
+# to `ReadError('')` 164 seconds into the stream; no branch here matched it, so
+# the whole job failed. Re-sending is safe for the same reason a 429 is: a reply
+# that never finished arriving was never used.
+_RETRYABLE_TRANSPORT_ERRORS = (httpx.TransportError, anthropic.APIConnectionError)
+# Timeouts are deliberately excluded. The SDK's default budget is 600s and the
+# Appwrite function is killed at 900s, so retrying one would trade a clean
+# failure for a killed run whose job row never leaves "running". A timeout also
+# means the gateway stopped answering rather than the connection glitching, which
+# a second identical request is unlikely to fix.
+_NON_RETRYABLE_TRANSPORT_ERRORS = (httpx.TimeoutException, anthropic.APITimeoutError)
 # Indirected so a test can shorten the wait by patching this name alone. Patching
 # `asyncio.sleep` itself would reach every coroutine in the process, which is a
 # much bigger blast radius than "do not really wait forty-five seconds".
@@ -101,19 +116,37 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
     ceiling without switching to streaming took every tailoring call down.
 
     Retries a rate-limited or overloaded gateway on a schedule long enough to
-    outlast it. Every agent in this codebase goes through here, so a transient
-    429 stops being the difference between a finished edit and an error the user
-    reads as the feature being broken. Nothing else is retried: a 400 is a bad
-    request that will fail again, and a 500 has already been retried by the SDK.
+    outlast it, and retries a connection that breaks part way through a reply.
+    Every agent in this codebase goes through here, so a transient 429 or a
+    dropped socket stops being the difference between a finished edit and an
+    error the user reads as the feature being broken. Nothing else is retried: a
+    400 is a bad request that will fail again, a 500 has already been retried by
+    the SDK, and a timeout means the gateway stopped answering.
 
     The caller gets the same object `messages.create` would have returned, so
     `response_text` and `response_diagnostics` work unchanged.
     """
-    last_error: anthropic.APIStatusError | None = None
+    last_error: Exception | None = None
     for attempt, backoff in enumerate((*_RETRY_BACKOFF_SECONDS, None)):
         try:
             async with client.messages.stream(**kwargs) as stream:
                 return await stream.get_final_message()
+        except _RETRYABLE_TRANSPORT_ERRORS as exc:
+            if isinstance(exc, _NON_RETRYABLE_TRANSPORT_ERRORS) or backoff is None:
+                raise
+            last_error = exc
+            jitter = random.uniform(0.8, 1.2)  # noqa: S311
+            wait = backoff * jitter
+            # `repr`, not `str`: `httpx.ReadError('')` stringifies to nothing at
+            # all, which is how the failure this guards against reached a user as
+            # a blank error message.
+            log.warning(
+                "llm.stream_broken_retrying",
+                attempt=attempt + 1,
+                waiting_seconds=round(wait, 1),
+                error=repr(exc)[:200],
+            )
+            await _sleep(wait)
         except anthropic.APIStatusError as exc:
             if exc.status_code not in _RETRYABLE_STATUSES or backoff is None:
                 raise

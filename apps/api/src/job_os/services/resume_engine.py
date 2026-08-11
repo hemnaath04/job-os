@@ -873,8 +873,17 @@ async def review_resume(
                     **response_diagnostics(retry_response),
                 )
                 raise
-    except (ValidationError, json.JSONDecodeError, anthropic.APIError, RuntimeError) as exc:
-        log.warning("resume.review_model_failed", error=str(exc))
+    except (
+        ValidationError,
+        json.JSONDecodeError,
+        anthropic.APIError,
+        httpx.HTTPError,
+        RuntimeError,
+    ) as exc:
+        # `httpx.HTTPError` for a stream that dies mid-reply: it arrives raw, past
+        # every anthropic class, and the point of this block is that a missing
+        # model review is a warning on a real review rather than a failed request.
+        log.warning("resume.review_model_failed", error=repr(exc))
         rule_issues.append(
             ResumeReviewIssue(
                 severity="warning",
