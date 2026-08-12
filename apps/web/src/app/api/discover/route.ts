@@ -23,10 +23,14 @@ const VALID_SOURCES: NoKeySource[] = [
 ];
 
 // Node runtime: the orchestrator relies on AbortController timeouts across
-// ~30 outbound requests and parses multi-hundred-KB JSON payloads.
+// ~150 outbound requests (one per curated board, plus the feeds) and parses
+// multi-MB JSON payloads. The count is a property of the curated list, so it
+// grows with ./discover/ats-companies rather than staying put: the `timings` in
+// the response is the number to trust, not this comment.
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-// Worst case is a few waves of 6s timeouts plus description hydration.
+// Worst case is every board timing out at 2.5s in a single concurrent wave,
+// plus description hydration when the caller asks for it.
 export const maxDuration = 60;
 
 interface DiscoverRequestBody {
@@ -39,6 +43,7 @@ interface DiscoverRequestBody {
   limit?: unknown;
   companies?: unknown;
   include_remote_boards?: unknown;
+  hydrate_descriptions?: unknown;
   keys?: unknown;
   custom_sources?: unknown;
 }
@@ -113,6 +118,7 @@ export async function POST(req: NextRequest): Promise<Response> {
     // An empty body is a valid "show me everything recent" search.
   }
 
+  const startedAt = Date.now();
   try {
     const payload = await discoverNoKey({
       sources: toSources(body.sources),
@@ -128,12 +134,36 @@ export async function POST(req: NextRequest): Promise<Response> {
         typeof body.include_remote_boards === "boolean"
           ? body.include_remote_boards
           : undefined,
+      // Off unless asked for: it is an extra request per Greenhouse row.
+      hydrateDescriptions:
+        typeof body.hydrate_descriptions === "boolean"
+          ? body.hydrate_descriptions
+          : undefined,
       keys: toKeys(body.keys),
       customSources: toCustomSources(body.custom_sources),
     });
-    return NextResponse.json(payload, {
-      headers: { "cache-control": "no-store" },
+
+    const timings = { ...payload.timings, route_ms: Date.now() - startedAt };
+    // One structured line per search, because latency here is a property of how
+    // many boards answered and how big they were, and that is only knowable
+    // after the fact. Labels are provider/slug, never URLs, so no key can ride
+    // along into the log.
+    console.log("[discover]", {
+      route_ms: timings.route_ms,
+      total_ms: timings.total_ms,
+      phases: timings.phases,
+      requests: timings.requests,
+      kb: Math.round(timings.bytes / 1024),
+      skipped_kb: Math.round(timings.skipped_bytes / 1024),
+      results: payload.results.length,
+      oversized: timings.oversized,
+      slowest: timings.slowest,
+      heaviest: timings.heaviest,
     });
+    return NextResponse.json(
+      { ...payload, timings },
+      { headers: { "cache-control": "no-store" } },
+    );
   } catch (e) {
     // discoverNoKey swallows per-source failures, so reaching here means
     // something structural broke.

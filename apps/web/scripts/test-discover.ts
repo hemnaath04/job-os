@@ -55,15 +55,13 @@ async function probeSingleSources(): Promise<void> {
   console.log(`\nfetchAshby(linear): ${ashbyJobs.length} jobs`);
   if (ashbyJobs[0]) preview(ashbyJobs[0]);
 
-  // No Lever companies are in the curated dataset yet, so exercise the
-  // function against a live Lever board directly.
-  const leverJobs = await fetchLever({
-    slug: "palantir",
-    name: "Palantir",
-    domain: "palantir.com",
-    ats: "lever",
-  });
-  console.log(`\nfetchLever(palantir, ad-hoc): ${leverJobs.length} jobs`);
+  // Wealthfront rather than one of the big Lever boards on purpose: Palantir,
+  // Veeva, Gopuff and Shield AI all answer with several MB of uncompressed JSON
+  // and are now refused by the MAX_PAYLOAD_BYTES guard, which the orchestrator
+  // reports as an error row further down. This probe is about the mapping.
+  const lever = findCompany("wealthfront")!;
+  const leverJobs = await fetchLever(lever);
+  console.log(`\nfetchLever(wealthfront): ${leverJobs.length} jobs`);
   if (leverJobs[0]) preview(leverJobs[0]);
 
   const remotive = await fetchRemotive("engineer", { limit: 20 });
@@ -83,7 +81,7 @@ async function main(): Promise<void> {
   line();
 
   const t0 = Date.now();
-  const { results, source_counts, errors } = await discoverNoKey({
+  const { results, source_counts, errors, timings } = await discoverNoKey({
     titleKeywords: ["engineer", "intern"],
     limit: 50,
   });
@@ -92,6 +90,7 @@ async function main(): Promise<void> {
   console.log(`took ${ms}ms  results=${results.length}`);
   console.log("source_counts:", JSON.stringify(source_counts));
   console.log("errors:", errors.length ? JSON.stringify(errors, null, 2) : "none");
+  console.log("timings:", JSON.stringify(timings, null, 2));
 
   const withDescription = results.filter((r) => r.description.length > 0).length;
   const withCountry = results.filter((r) => r.country_code).length;

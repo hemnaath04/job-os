@@ -19,7 +19,11 @@
 // their `url` as source_url and setting source_label to their name; keep it
 // that way.
 
-import type { DiscoveryResult, DiscoverySourceError } from "../types";
+import type {
+  DiscoveryResult,
+  DiscoverySourceError,
+  DiscoveryTimings,
+} from "../types";
 import { ATS_COMPANIES, type AtsCompany, type AtsProvider } from "./ats-companies";
 import { fetchCustomSource, type CustomFetchInput } from "./custom-fetch";
 import { fetchAdzuna, fetchJSearch } from "./keyed-sources";
@@ -43,8 +47,15 @@ const SOURCE_LABELS: Record<NoKeySource, string> = {
   adzuna: "Adzuna",
 };
 
-/** One slow board must never hold up the whole search. */
-const DEFAULT_TIMEOUT_MS = 6_000;
+/**
+ * One slow board must never hold up the whole search. Measured across the
+ * curated list: a board that answers answers in a few hundred ms, so most of a
+ * multi-second budget was spent waiting on sources that were never going to
+ * reply. The trade is real though: under a wide fan-out a board or two per
+ * search now misses a cut it would have made at 6s, and it reports as a
+ * timeout error row rather than as missing rows.
+ */
+const DEFAULT_TIMEOUT_MS = 2_500;
 /** The keyed APIs search their whole index per call, so they run slower. */
 const KEYED_TIMEOUT_MS = 9_000;
 const DEFAULT_LIMIT = 60;
@@ -56,22 +67,79 @@ const MAX_TECHNOLOGIES = 8;
  *  a bounded pool keeps peak memory sane on a serverless function. */
 const FETCH_CONCURRENCY = 8;
 
+/**
+ * Ceiling on one JSON payload. A handful of boards answer with megabytes of
+ * postings we then filter down to a couple of rows, and the download plus the
+ * parse cost more than the source is worth: lever/veeva alone is 11.8MB.
+ */
+export const MAX_PAYLOAD_BYTES = 1_048_576;
+
 const USER_AGENT =
   "job-os/1.0 (+https://github.com/hemnaath04/job-os) discovery-bot";
+
+// ---------------------------------------------------------------------------
+// instrumentation
+//
+// Every fetcher here reports what it cost, because the thing that makes this
+// route slow is not any one line of code: it is how many boards answer, how
+// big they are and which of them stall. That is only visible if it is measured.
+// ---------------------------------------------------------------------------
+
+/** What one outbound request cost. */
+export interface FetchTiming {
+  /**
+   * Provider and board ("lever/veeva"), never a URL: a source URL can carry a
+   * key in its query string and this ends up in a log line and in the response.
+   */
+  source: string;
+  ms: number;
+  /** Decoded response bytes, or the declared size when skipped as oversized. */
+  bytes: number;
+  outcome: "ok" | "error" | "oversized";
+}
+
+/**
+ * Where fetchJson writes its measurements. Passed down through the options
+ * rather than kept in a module global, so two searches running in the same
+ * function instance cannot pollute each other's numbers.
+ */
+export interface FetchTimings {
+  requests: FetchTiming[];
+}
+
+export interface FetchOptions {
+  timeoutMs?: number;
+  headers?: Record<string, string>;
+  /** Redacted label for the timing row. Falls back to the URL's host. */
+  label?: string;
+  timings?: FetchTimings;
+}
+
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "unknown";
+  }
+}
+
+function formatBytes(bytes: number): string {
+  if (bytes >= 1_048_576) return `${(bytes / 1_048_576).toFixed(1)}MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)}KB`;
+  return `${bytes}B`;
+}
 
 // ---------------------------------------------------------------------------
 // low-level helpers
 // ---------------------------------------------------------------------------
 
-async function fetchJson<T>(
-  url: string,
-  opts: { timeoutMs?: number; headers?: Record<string, string> } = {},
-): Promise<T> {
+async function fetchJson<T>(url: string, opts: FetchOptions = {}): Promise<T> {
+  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const controller = new AbortController();
-  const timer = setTimeout(
-    () => controller.abort(),
-    opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-  );
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const startedAt = Date.now();
+  let bytes = 0;
+  let outcome: FetchTiming["outcome"] = "error";
   try {
     const res = await fetch(url, {
       signal: controller.signal,
@@ -84,15 +152,48 @@ async function fetchJson<T>(
       },
     });
     if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`);
-    return (await res.json()) as T;
+
+    // Bail before reading a byte of a body we already know is too big. The
+    // caller turns this into an error row for that one source, so an 11.8MB
+    // board costs a warning instead of a download.
+    const declared = Number(res.headers.get("content-length"));
+    if (Number.isFinite(declared) && declared > MAX_PAYLOAD_BYTES) {
+      bytes = declared;
+      outcome = "oversized";
+      controller.abort();
+      throw new Error(
+        `payload too large: ${formatBytes(declared)} over the ` +
+          `${formatBytes(MAX_PAYLOAD_BYTES)} cap`,
+      );
+    }
+
+    // content-length is optional and plenty of these boards omit it: Greenhouse,
+    // Ashby and RemoteOK all answer gzipped and chunked. Those are read anyway,
+    // deliberately. Capping them would mean counting the decompressed stream,
+    // and that punishes a board for compressing well: Ashby's openai board is
+    // 12.6MB of JSON inside 1.3MB on the wire, so a decompressed cap would drop
+    // it while its actual cost is one of the cheapest here. The payloads this
+    // guard exists for are the uncompressed multi-MB ones, and those declare a
+    // length. Reading the text first also gives us the byte count for free.
+    const text = await res.text();
+    bytes = Buffer.byteLength(text);
+    const parsed = JSON.parse(text) as T;
+    outcome = "ok";
+    return parsed;
   } catch (e) {
     const err = e as Error;
     if (err.name === "AbortError" || err.name === "TimeoutError") {
-      throw new Error(`timed out after ${opts.timeoutMs ?? DEFAULT_TIMEOUT_MS}ms`);
+      throw new Error(`timed out after ${timeoutMs}ms`);
     }
     throw err;
   } finally {
     clearTimeout(timer);
+    opts.timings?.requests.push({
+      source: opts.label ?? hostOf(url),
+      ms: Date.now() - startedAt,
+      bytes,
+      outcome,
+    });
   }
 }
 
@@ -332,12 +433,15 @@ interface GreenhouseJob {
  */
 export async function fetchGreenhouse(
   company: AtsCompany,
-  opts: { timeoutMs?: number; content?: boolean } = {},
+  opts: FetchOptions & { content?: boolean } = {},
 ): Promise<DiscoveryResult[]> {
   const url =
     `https://boards-api.greenhouse.io/v1/boards/${company.slug}/jobs` +
     (opts.content ? "?content=true" : "");
-  const payload = await fetchJson<{ jobs?: GreenhouseJob[] }>(url, opts);
+  const payload = await fetchJson<{ jobs?: GreenhouseJob[] }>(url, {
+    label: `greenhouse/${company.slug}`,
+    ...opts,
+  });
   const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
 
   return jobs.map((job) => {
@@ -384,10 +488,13 @@ interface LeverPosting {
  */
 export async function fetchLever(
   company: AtsCompany,
-  opts: { timeoutMs?: number } = {},
+  opts: FetchOptions = {},
 ): Promise<DiscoveryResult[]> {
   const url = `https://api.lever.co/v0/postings/${company.slug}?mode=json`;
-  const payload = await fetchJson<LeverPosting[] | { error?: string }>(url, opts);
+  const payload = await fetchJson<LeverPosting[] | { error?: string }>(url, {
+    label: `lever/${company.slug}`,
+    ...opts,
+  });
   if (!Array.isArray(payload)) {
     const message =
       typeof payload?.error === "string" ? payload.error : "unexpected payload";
@@ -435,12 +542,15 @@ interface AshbyJob {
 
 export async function fetchAshby(
   company: AtsCompany,
-  opts: { timeoutMs?: number } = {},
+  opts: FetchOptions = {},
 ): Promise<DiscoveryResult[]> {
   const url =
     `https://api.ashbyhq.com/posting-api/job-board/${company.slug}` +
     "?includeCompensation=true";
-  const payload = await fetchJson<{ jobs?: AshbyJob[] }>(url, opts);
+  const payload = await fetchJson<{ jobs?: AshbyJob[] }>(url, {
+    label: `ashby/${company.slug}`,
+    ...opts,
+  });
   const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
 
   return jobs
@@ -491,14 +601,14 @@ interface RemotiveJob {
 
 export async function fetchRemotive(
   query: string,
-  opts: { timeoutMs?: number; limit?: number } = {},
+  opts: FetchOptions & { limit?: number } = {},
 ): Promise<DiscoveryResult[]> {
   const params = new URLSearchParams();
   if (query.trim()) params.set("search", query.trim());
   params.set("limit", String(opts.limit ?? 100));
   const payload = await fetchJson<{ jobs?: RemotiveJob[] }>(
     `https://remotive.com/api/remote-jobs?${params.toString()}`,
-    opts,
+    { label: "remotive", ...opts },
   );
   const jobs = Array.isArray(payload?.jobs) ? payload.jobs : [];
 
@@ -542,9 +652,12 @@ interface RemoteOkJob {
  * mandatory here; without one the endpoint returns 403.
  */
 export async function fetchRemoteOK(
-  opts: { timeoutMs?: number } = {},
+  opts: FetchOptions = {},
 ): Promise<DiscoveryResult[]> {
-  const payload = await fetchJson<RemoteOkJob[]>("https://remoteok.com/api", opts);
+  const payload = await fetchJson<RemoteOkJob[]>("https://remoteok.com/api", {
+    label: "remoteok",
+    ...opts,
+  });
   const jobs = Array.isArray(payload) ? payload : [];
 
   return jobs
@@ -573,10 +686,14 @@ export async function fetchRemoteOK(
  * Fill in descriptions for Greenhouse rows fetched from the light index.
  * One small request per posting (~6KB, ~75ms) beats pulling `content=true`
  * for every board, and it only runs on the results we are about to return.
+ *
+ * Still one request per row, though, which on a full page is up to 60 of them
+ * and around 0.7s of the search's wall time, so the orchestrator only does this
+ * when the caller asks for it (see `hydrateDescriptions`).
  */
 async function hydrateGreenhouseContent(
   results: DiscoveryResult[],
-  opts: { timeoutMs?: number } = {},
+  opts: FetchOptions = {},
 ): Promise<void> {
   const pending = results.filter(
     (r) => r.source === "greenhouse" && !r.description,
@@ -589,7 +706,7 @@ async function hydrateGreenhouseContent(
     try {
       const job = await fetchJson<GreenhouseJob>(
         `https://boards-api.greenhouse.io/v1/boards/${slug}/jobs/${id}`,
-        opts,
+        { label: `greenhouse-content/${slug}`, ...opts },
       );
       result.description = htmlToText(job.content);
     } catch {
@@ -620,7 +737,12 @@ export interface DiscoverNoKeyOptions {
   companies?: string[];
   /** Skip the remote aggregators and search only the curated ATS boards. */
   includeRemoteBoards?: boolean;
-  /** Fetch Greenhouse descriptions for the final result set. Default true. */
+  /**
+   * Fetch Greenhouse descriptions for the final result set. Opt-in, default
+   * off: it is one extra request per Greenhouse row on the critical path, and
+   * the search returns rows either way. A caller that shows the description or
+   * scores against it should pass true and pay for it knowingly.
+   */
   hydrateDescriptions?: boolean;
   timeoutMs?: number;
   /**
@@ -644,6 +766,59 @@ export interface DiscoverNoKeyResponse {
   /** Keyed by NoKeySource plus one "custom:<id>" per custom endpoint. */
   source_counts: Record<string, number>;
   errors: DiscoverySourceError[];
+  /** Where the time and the bytes went. See DiscoveryTimings. */
+  timings: DiscoveryTimings;
+}
+
+/** What one fan-out phase of discoverNoKey contributes. */
+interface PhaseOutcome {
+  rows: DiscoveryResult[];
+  /** [provider, messages] pairs, in the order the phase found them. */
+  failures: [string, string[]][];
+}
+
+/** How many request rows the response carries. Enough to name a bad board. */
+const SLOWEST_REPORTED = 5;
+
+function summarizeTimings(
+  timings: FetchTimings,
+  phases: Record<string, number>,
+  totalMs: number,
+): DiscoveryTimings {
+  // Downloaded and declined are counted apart on purpose. Adding them up is how
+  // a guard that skips 34MB looks like it changed nothing.
+  let bytes = 0;
+  let skipped = 0;
+  for (const r of timings.requests) {
+    if (r.outcome === "oversized") skipped += r.bytes;
+    else bytes += r.bytes;
+  }
+  const top = (
+    rows: FetchTiming[],
+    rank: (a: FetchTiming, b: FetchTiming) => number,
+  ): { source: string; ms: number; bytes: number }[] =>
+    [...rows]
+      .sort(rank)
+      .slice(0, SLOWEST_REPORTED)
+      .map((r) => ({ source: r.source, ms: r.ms, bytes: r.bytes }));
+  return {
+    total_ms: totalMs,
+    phases,
+    requests: timings.requests.length,
+    bytes,
+    skipped_bytes: skipped,
+    oversized: timings.requests
+      .filter((r) => r.outcome === "oversized")
+      .map((r) => ({ source: r.source, bytes: r.bytes })),
+    slowest: top(timings.requests, (a, b) => b.ms - a.ms),
+    // Only what was actually read: a payload the guard refused is already listed
+    // under `oversized`, and ranking it here would credit it with a download
+    // that never happened.
+    heaviest: top(
+      timings.requests.filter((r) => r.outcome !== "oversized"),
+      (a, b) => b.bytes - a.bytes,
+    ),
+  };
 }
 
 const REMOTE_PATTERN = /\b(remote|anywhere|worldwide|distributed)\b/i;
@@ -841,6 +1016,20 @@ export async function discoverNoKey(
     (c) => enabled.has(c.ats) && (!wanted || wanted.has(c.slug.toLowerCase())),
   );
 
+  const startedAt = Date.now();
+  const timings: FetchTimings = { requests: [] };
+  const phaseMs: Record<string, number> = {};
+  const timed = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
+    const at = Date.now();
+    try {
+      return await run();
+    } finally {
+      phaseMs[name] = Date.now() - at;
+    }
+  };
+  /** Handed to every instrumented fetcher, so all of them report their cost. */
+  const fetchOpts: FetchOptions = { timeoutMs, timings };
+
   const errors: DiscoverySourceError[] = [];
   // Keyed by NoKeySource, plus "custom:<id>" for a user's own endpoint.
   const failuresByProvider = new Map<string, string[]>();
@@ -864,40 +1053,55 @@ export async function discoverNoKey(
     return true;
   };
 
-  // --- curated ATS boards -------------------------------------------------
-  const boardResults = await mapPool(companies, FETCH_CONCURRENCY, (company) => {
-    switch (company.ats) {
-      case "greenhouse":
-        return fetchGreenhouse(company, { timeoutMs });
-      case "lever":
-        return fetchLever(company, { timeoutMs });
-      case "ashby":
-        return fetchAshby(company, { timeoutMs });
-    }
-  });
+  const customSources = options.customSources ?? [];
 
-  boardResults.forEach((settled, i) => {
-    const company = companies[i];
-    if (settled.status === "rejected") {
-      const list = failuresByProvider.get(company.ats) ?? [];
-      list.push(`${company.slug}: ${(settled.reason as Error)?.message ?? "failed"}`);
-      failuresByProvider.set(company.ats, list);
-      return;
-    }
-    const matched = settled.value.filter(keep).sort(newestFirst);
-    collected.push(...matched.slice(0, MAX_PER_COMPANY));
-  });
+  // --- curated ATS boards -------------------------------------------------
+  const runBoards = async (): Promise<PhaseOutcome> => {
+    const rows: DiscoveryResult[] = [];
+    const failures = new Map<string, string[]>();
+    const boardResults = await mapPool(
+      companies,
+      FETCH_CONCURRENCY,
+      (company) => {
+        switch (company.ats) {
+          case "greenhouse":
+            return fetchGreenhouse(company, fetchOpts);
+          case "lever":
+            return fetchLever(company, fetchOpts);
+          case "ashby":
+            return fetchAshby(company, fetchOpts);
+        }
+      },
+    );
+
+    boardResults.forEach((settled, i) => {
+      const company = companies[i];
+      if (settled.status === "rejected") {
+        const list = failures.get(company.ats) ?? [];
+        list.push(`${company.slug}: ${(settled.reason as Error)?.message ?? "failed"}`);
+        failures.set(company.ats, list);
+        return;
+      }
+      const matched = settled.value.filter(keep).sort(newestFirst);
+      rows.push(...matched.slice(0, MAX_PER_COMPANY));
+    });
+    return { rows, failures: [...failures] };
+  };
 
   // --- remote aggregators -------------------------------------------------
-  if (includeRemoteBoards) {
+  const runAggregators = async (): Promise<PhaseOutcome> => {
+    const rows: DiscoveryResult[] = [];
+    const failures: [string, string[]][] = [];
+    if (!includeRemoteBoards) return { rows, failures };
+
     // Remotive's `search` takes a single string, so run one query per keyword
     // (capped) to honour the ANY-keyword semantics the ATS path gets locally.
     const queries = keywords.length ? keywords.slice(0, 3) : [""];
     const [remotive, remoteok] = await Promise.allSettled([
       mapPool(queries, queries.length, (q) =>
-        fetchRemotive(q, { timeoutMs, limit: 100 }),
+        fetchRemotive(q, { ...fetchOpts, limit: 100 }),
       ),
-      fetchRemoteOK({ timeoutMs }),
+      fetchRemoteOK(fetchOpts),
     ]);
 
     if (remotive.status === "fulfilled") {
@@ -909,35 +1113,42 @@ export async function discoverNoKey(
           );
           return;
         }
-        collected.push(...settled.value.filter(keep));
+        rows.push(...settled.value.filter(keep));
       });
       // Only surface an error if every query failed; a partial result is
       // still a useful result.
       if (failed.length === queries.length) {
-        failuresByProvider.set("remotive", failed);
+        failures.push(["remotive", failed]);
       }
     } else {
-      failuresByProvider.set("remotive", [
-        (remotive.reason as Error)?.message ?? "failed",
+      failures.push([
+        "remotive",
+        [(remotive.reason as Error)?.message ?? "failed"],
       ]);
     }
 
     if (remoteok.status === "fulfilled") {
-      collected.push(...remoteok.value.filter(keep));
+      rows.push(...remoteok.value.filter(keep));
     } else {
-      failuresByProvider.set("remoteok", [
-        (remoteok.reason as Error)?.message ?? "failed",
+      failures.push([
+        "remoteok",
+        [(remoteok.reason as Error)?.message ?? "failed"],
       ]);
     }
-  }
+    return { rows, failures };
+  };
 
   // --- board-wide feeds ---------------------------------------------------
-  // The ATS loop above can only see the companies in ./ats-companies. These
-  // feeds carry every company on their board, so they are where coverage
-  // actually comes from. Still passed through keep(), because only one of them
-  // filters server-side and even that one takes a single term.
-  const feedIds = [...enabled].filter((s) => s.startsWith("feed:"));
-  if (feedIds.length > 0) {
+  // The ATS fan-out can only see the companies in ./ats-companies. These feeds
+  // carry every company on their board, so they are where coverage actually
+  // comes from. Still passed through keep(), because only one of them filters
+  // server-side and even that one takes a single term.
+  const runFeeds = async (): Promise<PhaseOutcome> => {
+    const rows: DiscoveryResult[] = [];
+    const failures: [string, string[]][] = [];
+    const feedIds = [...enabled].filter((s) => s.startsWith("feed:"));
+    if (feedIds.length === 0) return { rows, failures };
+
     const { fetchBoardFeeds } = await import("./board-feeds");
     const feeds = await fetchBoardFeeds(feedIds, {
       keywords,
@@ -945,93 +1156,102 @@ export async function discoverNoKey(
       countryCodes,
       timeoutMs,
     });
-    collected.push(...feeds.results.filter(keep));
-    for (const err of feeds.errors) {
-      failuresByProvider.set(err.source, [err.message]);
-    }
-  }
+    rows.push(...feeds.results.filter(keep));
+    for (const err of feeds.errors) failures.push([err.source, [err.message]]);
+    return { rows, failures };
+  };
 
   // --- bring-your-own-key APIs --------------------------------------------
   // These two filter server-side, so keep() would double-filter and over-drop:
   // the provider decides what "software engineer" matches, and the titles it
   // returns are whatever the originating board wrote. Age and the remote flag
   // are the only local filters that still make sense.
-  const keepKeyed = (result: DiscoveryResult): boolean => {
-    if (!result.title || !result.source_url) return false;
-    if (cutoff && result.posted_at && Date.parse(result.posted_at) < cutoff) {
-      return false;
+  const runKeyed = async (): Promise<PhaseOutcome> => {
+    const rows: DiscoveryResult[] = [];
+    const failures: [string, string[]][] = [];
+    const keepKeyed = (result: DiscoveryResult): boolean => {
+      if (!result.title || !result.source_url) return false;
+      if (cutoff && result.posted_at && Date.parse(result.posted_at) < cutoff) {
+        return false;
+      }
+      if (options.remote === true && !isRemoteResult(result)) return false;
+      return true;
+    };
+
+    const keyedQuery = keywords.join(" ").trim();
+    const keyedOptions = {
+      query: keyedQuery,
+      countryCode: countryCodes[0],
+      location: options.location,
+      datePostedDays: options.maxAgeDays,
+      limit,
+      timeoutMs: options.timeoutMs ?? KEYED_TIMEOUT_MS,
+    };
+    const keyedTasks: {
+      source: NoKeySource;
+      run: () => Promise<DiscoveryResult[]>;
+    }[] = [];
+
+    if (enabled.has("jsearch")) {
+      const key = nonEmpty(options.keys?.jsearch);
+      if (!key) {
+        failures.push(["jsearch", ["add a key to enable this source"]]);
+      } else if (!keyedQuery && !locationFilter) {
+        // The endpoint rejects an empty `query`, so say what is missing rather
+        // than surfacing a 400.
+        failures.push([
+          "jsearch",
+          ["add a title keyword or a location: this source needs a query"],
+        ]);
+      } else {
+        keyedTasks.push({
+          source: "jsearch",
+          run: () => fetchJSearch(key, keyedOptions),
+        });
+      }
     }
-    if (options.remote === true && !isRemoteResult(result)) return false;
-    return true;
-  };
 
-  const keyedQuery = keywords.join(" ").trim();
-  const keyedOptions = {
-    query: keyedQuery,
-    countryCode: countryCodes[0],
-    location: options.location,
-    datePostedDays: options.maxAgeDays,
-    limit,
-    timeoutMs: options.timeoutMs ?? KEYED_TIMEOUT_MS,
-  };
-  const keyedTasks: {
-    source: NoKeySource;
-    run: () => Promise<DiscoveryResult[]>;
-  }[] = [];
-
-  if (enabled.has("jsearch")) {
-    const key = nonEmpty(options.keys?.jsearch);
-    if (!key) {
-      failuresByProvider.set("jsearch", ["add a key to enable this source"]);
-    } else if (!keyedQuery && !locationFilter) {
-      // The endpoint rejects an empty `query`, so say what is missing rather
-      // than surfacing a 400.
-      failuresByProvider.set("jsearch", [
-        "add a title keyword or a location: this source needs a query",
-      ]);
-    } else {
-      keyedTasks.push({
-        source: "jsearch",
-        run: () => fetchJSearch(key, keyedOptions),
-      });
+    if (enabled.has("adzuna")) {
+      const appId = nonEmpty(options.keys?.adzunaAppId);
+      const appKey = nonEmpty(options.keys?.adzunaAppKey);
+      if (!appId || !appKey) {
+        failures.push(["adzuna", ["add a key to enable this source"]]);
+      } else {
+        keyedTasks.push({
+          source: "adzuna",
+          run: () => fetchAdzuna(appId, appKey, keyedOptions),
+        });
+      }
     }
-  }
 
-  if (enabled.has("adzuna")) {
-    const appId = nonEmpty(options.keys?.adzunaAppId);
-    const appKey = nonEmpty(options.keys?.adzunaAppKey);
-    if (!appId || !appKey) {
-      failuresByProvider.set("adzuna", ["add a key to enable this source"]);
-    } else {
-      keyedTasks.push({
-        source: "adzuna",
-        run: () => fetchAdzuna(appId, appKey, keyedOptions),
-      });
-    }
-  }
+    if (keyedTasks.length === 0) return { rows, failures };
 
-  if (keyedTasks.length > 0) {
     const keyed = await mapPool(keyedTasks, keyedTasks.length, (task) =>
       task.run(),
     );
     keyed.forEach((settled, i) => {
       const { source } = keyedTasks[i];
       if (settled.status === "rejected") {
-        failuresByProvider.set(source, [
-          (settled.reason as Error)?.message ?? "failed",
+        failures.push([
+          source,
+          [(settled.reason as Error)?.message ?? "failed"],
         ]);
         return;
       }
-      collected.push(...settled.value.filter(keepKeyed));
+      rows.push(...settled.value.filter(keepKeyed));
     });
-  }
+    return { rows, failures };
+  };
 
   // --- custom endpoints ---------------------------------------------------
   // Unlike the keyed APIs these get the full keep() treatment: the contract
   // says a source may return a whole board and let job.os narrow it, so the
   // title, location, country and age filters have to run locally.
-  const customSources = options.customSources ?? [];
-  if (customSources.length > 0) {
+  const runCustom = async (): Promise<PhaseOutcome> => {
+    const rows: DiscoveryResult[] = [];
+    const failures: [string, string[]][] = [];
+    if (customSources.length === 0) return { rows, failures };
+
     const custom = await mapPool(customSources, customSources.length, (cfg) =>
       fetchCustomSource(
         cfg,
@@ -1048,13 +1268,36 @@ export async function discoverNoKey(
     custom.forEach((settled, i) => {
       const source = `custom:${customSources[i].id}`;
       if (settled.status === "rejected") {
-        failuresByProvider.set(source, [
-          (settled.reason as Error)?.message ?? "failed",
+        failures.push([
+          source,
+          [(settled.reason as Error)?.message ?? "failed"],
         ]);
         return;
       }
-      collected.push(...settled.value.filter(keep));
+      rows.push(...settled.value.filter(keep));
     });
+    return { rows, failures };
+  };
+
+  // The five phases above ask five different sets of hosts and share nothing,
+  // so they run at once: the wall time is now the slowest phase rather than the
+  // sum of all of them. Each keeps its own rows and its own failures and they
+  // merge in a fixed order below, so which board answers first still cannot
+  // reorder the results or the error list. A phase with nothing to do returns
+  // immediately, which is what keeps "no boards selected, one custom source" a
+  // search of that source alone.
+  const phases = await Promise.all([
+    timed("boards", runBoards),
+    timed("aggregators", runAggregators),
+    timed("feeds", runFeeds),
+    timed("keyed", runKeyed),
+    timed("custom", runCustom),
+  ]);
+  for (const phase of phases) {
+    collected.push(...phase.rows);
+    for (const [source, messages] of phase.failures) {
+      failuresByProvider.set(source, messages);
+    }
   }
 
   for (const [source, messages] of failuresByProvider) {
@@ -1066,8 +1309,11 @@ export async function discoverNoKey(
   const deduped = dedupe(collected.sort(newestFirst));
   const results = selectAcrossSources(deduped, limit).sort(newestFirst);
 
-  if (options.hydrateDescriptions !== false) {
-    await hydrateGreenhouseContent(results, { timeoutMs });
+  // Opt-in, and off by default: this is up to one more request per Greenhouse
+  // row, serialized after every board has answered, so it lands entirely on the
+  // wait the user sits through. The rows are complete without it.
+  if (options.hydrateDescriptions === true) {
+    await timed("hydrate", () => hydrateGreenhouseContent(results, fetchOpts));
   }
 
   const source_counts: Record<string, number> = {
@@ -1086,5 +1332,10 @@ export async function discoverNoKey(
     if (r.source in source_counts) source_counts[r.source] += 1;
   }
 
-  return { results, source_counts, errors };
+  return {
+    results,
+    source_counts,
+    errors,
+    timings: summarizeTimings(timings, phaseMs, Date.now() - startedAt),
+  };
 }

@@ -44,6 +44,12 @@ export type DiscoverNoKeyRequest = {
   companies?: string[];
   include_remote_boards?: boolean;
   /**
+   * Ask the route to fill in Greenhouse descriptions before it answers. Off by
+   * default because it costs one more request per Greenhouse row on the wait
+   * the user sits through; worth it for a caller that shows or scores the text.
+   */
+  hydrate_descriptions?: boolean;
+  /**
    * Bring-your-own-key credentials, read from localStorage at call time. They
    * ride along with the request instead of living on the server.
    */

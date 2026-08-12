@@ -464,10 +464,41 @@ export interface DiscoverySourceError {
   message: string;
 }
 
+/**
+ * Where a discovery search spent its time, measured rather than guessed.
+ *
+ * Only /api/discover fills this in: it is the route that fans out to dozens of
+ * boards itself, so it is the one whose latency needs an explanation. Labels
+ * are redacted to provider/slug, never a URL, because a source URL can carry a
+ * key in its query string.
+ */
+export interface DiscoveryTimings {
+  /** Wall time inside the orchestrator. */
+  total_ms: number;
+  /** Wall time of the whole route handler, orchestrator included. */
+  route_ms?: number;
+  /** Per phase. The phases run concurrently, so these overlap by design. */
+  phases: Record<string, number>;
+  /** Outbound requests the instrumented fetchers made. */
+  requests: number;
+  /** Decoded response bytes actually read. Excludes anything skipped. */
+  bytes: number;
+  /** Bytes the payload guard declined to download. */
+  skipped_bytes: number;
+  /** Sources skipped by the payload guard, with the size they declared. */
+  oversized: { source: string; bytes: number }[];
+  /** The slowest few requests, so one bad board is nameable from a log line. */
+  slowest: { source: string; ms: number; bytes: number }[];
+  /** The few biggest downloads, which is where the bytes above actually went. */
+  heaviest: { source: string; ms: number; bytes: number }[];
+}
+
 export interface DiscoverySearchResponse {
   results: DiscoveryResult[];
   source_counts: Record<string, number>;
   errors: DiscoverySourceError[];
+  /** Present on /api/discover responses only. */
+  timings?: DiscoveryTimings;
 }
 
 export interface Application {
