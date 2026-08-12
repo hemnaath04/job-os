@@ -11,6 +11,7 @@ from job_os import __version__
 from job_os.db.session import engine
 from job_os.observability import setup_observability
 from job_os.routers import (
+    alerts,
     applications,
     calendar,
     discovery,
@@ -108,6 +109,7 @@ async def readiness() -> dict[str, str | int]:
         "database_ms": round((perf_counter() - started) * 1_000),
     }
 
+app.include_router(alerts.router, prefix="/api/v1", tags=["alerts"])
 app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
 app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
 app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
