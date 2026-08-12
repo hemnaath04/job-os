@@ -4,9 +4,12 @@ import type {
   CalendarEntry,
   DiscoverySearchRequest,
   DiscoverySearchResponse,
+  InterviewPrep,
+  InterviewQuestion,
   Job,
   MeRead,
   ProfileFact,
+  QuestionConfidence,
   Resume,
   ResumeChatResponse,
   ResumeImportItem,
@@ -194,6 +197,14 @@ const WARM_TIMEOUT_MS = 12 * 1_000;
  * platform returns when it tears a function down mid-flight.
  */
 const TEMPLATE_TIMEOUT_MS = 290 * 1_000;
+/**
+ * One prep pack: a single model pass over the JD, the vault and the resume,
+ * with one retry when the reply comes back unusable. Sized like the review
+ * rather than the tailor, since it is one call and not a graph, and capped just
+ * under the proxy route's own maxDuration of 300s so an overrun surfaces as the
+ * message above rather than as a torn-down function.
+ */
+const PREP_TIMEOUT_MS = 290 * 1_000;
 
 /**
  * Wake the API container before a call that would otherwise pay for the cold
@@ -284,6 +295,68 @@ async function verifiedFactsForReview(): Promise<ReviewFact[]> {
       }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * The vault an interview prep pack may cite, in the server's `VaultFact` shape.
+ *
+ * Distinct from `verifiedFactsForReview` above rather than shared with it,
+ * because the two contracts want different things and merging them would break
+ * one of the two. A reviewer only reads the wording, so it takes no ids. A prep
+ * pack CITES the vault: every scaffolded answer names the fact and fact bullet
+ * it was built from, and the server drops any citation whose id it cannot
+ * resolve, so a payload without ids would produce a pack with no groundable
+ * answers at all.
+ *
+ * `verified` is sent rather than filtered on here for the same reason: the
+ * server applies the filter itself, and sending the flag lets it be the one
+ * making the decision.
+ *
+ * A read failure returns null, which means "I have no vault to offer" and lets
+ * the server fall back to its own rows. Sending [] would instead assert that
+ * the user has no verified history, which would score them at zero.
+ */
+async function verifiedFactsForPrep(): Promise<
+  | {
+      id: string;
+      kind: string;
+      title: string;
+      org: string | null;
+      start_date: string | null;
+      end_date: string | null;
+      location: string | null;
+      source_url: string | null;
+      payload: Record<string, unknown>;
+      verified: boolean;
+      bullets: { id: string; text: string; metric_verified: boolean }[];
+    }[]
+  | null
+> {
+  if (!isAppwriteWorkspaceEnabled) return null;
+  try {
+    const facts = await appwriteWorkspace.listFacts();
+    return facts
+      .filter((fact) => fact.verified)
+      .map((fact) => ({
+        id: fact.id,
+        kind: fact.kind,
+        title: fact.title,
+        org: fact.org,
+        start_date: fact.start_date,
+        end_date: fact.end_date,
+        location: fact.location,
+        source_url: fact.source_url,
+        payload: fact.payload,
+        verified: fact.verified,
+        bullets: fact.bullets.map((bullet) => ({
+          id: bullet.id,
+          text: bullet.text,
+          metric_verified: bullet.metric_verified,
+        })),
+      }));
+  } catch {
+    return null;
   }
 }
 
@@ -574,6 +647,65 @@ const legacyApi = {
   createFact: (body: ProfileFactCreate) =>
     request<ProfileFact>("/profile/facts", {
       method: "POST",
+      body: JSON.stringify(body),
+    }),
+
+  /**
+   * Generate an interview prep pack for one application.
+   *
+   * Slow, and deliberately warmed first: one model pass over the parsed JD, the
+   * verified vault and the tailored resume. The readiness half of the pack is
+   * computed by rules and comes back even when the model call fails, so a 201
+   * with no questions is a real answer rather than a swallowed error and the
+   * page has to render it as one.
+   *
+   * The vault rides along for the same reason it does on render-review: the
+   * user's facts live in the Appwrite workspace, so a pack built from the
+   * Postgres rows alone would read an empty vault, call every requirement a gap
+   * and score a well-prepared candidate at zero. The server drops anything
+   * unverified whatever this sends, so the honesty contract does not rest on
+   * this filter being right.
+   */
+  generateInterviewPrep: async (applicationId: string) => {
+    const verifiedFacts = await verifiedFactsForPrep();
+    await warmBackend();
+    return withTimeout(
+      request<InterviewPrep>("/interview-prep/generate", {
+        method: "POST",
+        body: JSON.stringify({
+          application_id: applicationId,
+          verified_facts: verifiedFacts,
+        }),
+      }),
+      PREP_TIMEOUT_MS,
+      "Generating the prep pack timed out. The API container may be waking up, try again in a moment.",
+    );
+  },
+
+  /**
+   * The newest pack for an application. Resolves to null on a 404 rather than
+   * throwing: "none generated yet" is the ordinary first state of this page, not
+   * an error, and making the caller pattern-match an error string to find that
+   * out is how a real failure gets rendered as an empty state.
+   */
+  latestInterviewPrep: async (applicationId: string) => {
+    try {
+      return await request<InterviewPrep>(
+        `/interview-prep/latest?application_id=${encodeURIComponent(applicationId)}`,
+      );
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith("404:")) return null;
+      throw error;
+    }
+  },
+
+  /** Flag a question for drilling, or record how a practice attempt went. */
+  patchInterviewQuestion: (
+    questionId: string,
+    body: { flagged?: boolean; confidence?: QuestionConfidence },
+  ) =>
+    request<InterviewQuestion>(`/interview-prep/questions/${questionId}`, {
+      method: "PATCH",
       body: JSON.stringify(body),
     }),
 };

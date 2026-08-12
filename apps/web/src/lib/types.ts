@@ -484,3 +484,110 @@ export interface Application {
   created_at: string;
   updated_at: string;
 }
+
+// ── Interview prep ─────────────────────────────────────────────────────────
+// Mirrors apps/api/src/job_os/schemas/interviews.py. A pack is generated from
+// the parsed job description and the candidate's own verified fact vault, so
+// every scaffolded answer arrives with the rows it was built from and every
+// unanswerable question arrives as a declared gap.
+
+export type QuestionCategory =
+  | "technical"
+  | "behavioral"
+  | "resume_probe"
+  | "candidate_ask";
+
+export type ReadinessBand = "strong" | "mixed" | "thin" | "not_scored";
+
+export type QuestionConfidence = "shaky" | "workable" | "solid";
+
+/** One verified row behind a scaffolded answer. `text` is the vault's own wording. */
+export interface EvidenceCitation {
+  fact_id: string;
+  fact_bullet_id: string | null;
+  label: string;
+  text: string;
+}
+
+export interface AnswerScaffold {
+  situation: string;
+  task: string;
+  action: string;
+  result: string;
+}
+
+export interface TopicReadiness {
+  topic: string;
+  preferred: boolean;
+  status: "evidenced" | "gap";
+  citations: string[];
+  alternatives: string[];
+}
+
+export interface DefenceRisk {
+  text: string;
+  where: string;
+  reason: string;
+}
+
+/**
+ * Why the readiness number is what it is.
+ *
+ * `score` is derived by the server from must-have coverage and is the grade.
+ * `model_estimate` is the generating model's own guess, carried for context and
+ * never authoritative, which is the same split `ResumeReviewResult` makes. The
+ * UI has to keep them visually distinct or the distinction stops existing.
+ */
+export interface ReadinessReport {
+  score: string | number | null;
+  band: ReadinessBand;
+  scored_topics: number;
+  evidenced_topics: number;
+  topics: TopicReadiness[];
+  defence_risks: DefenceRisk[];
+  unscored_requirements: string[];
+  formula: string;
+  thresholds: Record<string, number>;
+  model_estimate: number | null;
+}
+
+export interface InterviewQuestion {
+  id: string;
+  prep_id: string;
+  category: QuestionCategory;
+  position: number;
+  question: string;
+  topic: string | null;
+  difficulty: string;
+  why_asked: string;
+  scaffold: AnswerScaffold | null;
+  evidence: EvidenceCitation[];
+  gap: boolean;
+  gap_note: string | null;
+  removed_claims: string[];
+  flagged: boolean;
+  confidence: string | null;
+  times_reviewed: number;
+  last_reviewed_at: string | null;
+  next_review_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface InterviewPrep {
+  id: string;
+  application_id: string;
+  job_id: string | null;
+  resume_version_id: string | null;
+  // Numeric(4,1) crosses the wire as a JSON string from the FastAPI side, so it
+  // is widened here rather than being parsed at three call sites.
+  readiness_score: string | number | null;
+  model_estimate: number | null;
+  note: string;
+  readiness_report: Partial<ReadinessReport>;
+  questions: InterviewQuestion[];
+  job_title: string | null;
+  company_name: string | null;
+  created_at: string;
+  updated_at: string;
+}
