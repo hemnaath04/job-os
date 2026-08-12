@@ -220,6 +220,10 @@ async function runSplitSearch(
           limit: query.limit,
           keys,
           custom_sources: toCustomPayload(custom),
+          // The feed renders a description clamp and fit-score reads the same
+          // text, so browsing needs it. Ingest and alerts do not, which is why
+          // this is opt-in per caller rather than on by default.
+          hydrate_descriptions: true,
         })
       : Promise.resolve(emptyDiscoveryResponse()),
   ]);
@@ -451,6 +455,7 @@ export default function DiscoverPage() {
               limit: s.query.limit,
               keys: savedKeys,
               custom_sources: toCustomPayload(custom),
+              hydrate_descriptions: true,
             })
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
