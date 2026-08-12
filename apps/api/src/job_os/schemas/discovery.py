@@ -4,21 +4,74 @@ Search results are NOT persisted to `jobs` — they're just rendered to the user
 Import is an explicit follow-up call that creates a `Job` row, dedup'd by the
 (source, source_id) pair.
 
-Sources today:
+Sources this API queries itself:
 - `theirstack` — TheirStack /v1/jobs/search (aggregates LinkedIn / Lever /
   Greenhouse / Ashby / Workday; charges 1 credit per result).
 - `github` — SimplifyJobs intern + new-grad README tables (free, cached 5min).
   Honors title_keywords + max_age_days; ignores country/tech filters.
+
+`sources` accepts more than those two. The rest of discovery is fetched by the
+web app's own /api/discover route, and while this API never runs those sources it
+does have to *store* them: a saved search holds the user's whole selection, and a
+selection is not split by which backend serves it. Accepting only the two it runs
+is what forced the web app to strip the others out of a saved search and keep them
+in localStorage instead, where they are invisible to any other device.
 """
+import re
 from datetime import datetime
-from typing import Literal
+from typing import Annotated
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import AfterValidator, Field
 
 from job_os.schemas.common import ORMModel
 
-DiscoverySource = Literal["theirstack", "github"]
+BACKEND_SOURCES = frozenset({"theirstack", "github"})
+"""The ones with a runner in routers.discovery. Everything else validates but is
+not fetched here."""
+
+WEB_SOURCES = frozenset(
+    {
+        # ATS boards, one company list each.
+        "greenhouse",
+        "lever",
+        "ashby",
+        # Remote boards.
+        "remotive",
+        "remoteok",
+        # Board-wide feeds, prefixed so they route by shape rather than by name.
+        "feed:himalayas",
+        "feed:jobicy",
+        "feed:arbeitnow",
+        # Aggregators on a key the user pastes into their own browser.
+        "jsearch",
+        "adzuna",
+    }
+)
+"""Served by the web app's /api/discover. Kept in step with
+apps/web/src/lib/discover/sources.ts by hand, since the two runtimes share no
+code; adding one here without adding it there is harmless, the reverse is a 422."""
+
+KNOWN_SOURCES = BACKEND_SOURCES | WEB_SOURCES
+
+_CUSTOM_SOURCE = re.compile(r"^custom:[A-Za-z0-9._~-]{1,64}$")
+"""A user's own endpoint, registered in the browser. The id half cannot be
+enumerated by any union, which is the other reason the old Literal could not hold
+a real selection."""
+
+
+def _known_source(value: str) -> str:
+    if value in KNOWN_SOURCES or _CUSTOM_SOURCE.match(value):
+        return value
+    raise ValueError(
+        f"unknown source {value!r}; expected one of "
+        f"{', '.join(sorted(KNOWN_SOURCES))}, or custom:<id>"
+    )
+
+
+DiscoverySource = Annotated[str, AfterValidator(_known_source)]
+"""A checked string rather than a Literal. Still rejects a typo with a 422; no
+longer rejects a source this API simply does not happen to run."""
 
 
 def _default_sources() -> list[DiscoverySource]:

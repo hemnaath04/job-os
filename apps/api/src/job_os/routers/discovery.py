@@ -63,13 +63,26 @@ async def _run_search(
         "theirstack": _search_theirstack,
         "github": _search_github,
     }
-    tasks = [runners[s](payload) for s in requested if s in runners]
-    gathered = await asyncio.gather(*tasks, return_exceptions=True)
+    # Only the sources with a runner are fetched. The rest of the accepted set is
+    # served by the web app's own route (see schemas.discovery) and reaches this
+    # function inside a saved search, so it is reported at zero rather than as an
+    # error: the caller's other half fills the count in, and an error here would
+    # put a red banner on a search that worked.
+    #
+    # Pairing the served list with `gathered` rather than `requested` is load
+    # bearing, not tidying: `strict=True` raises the moment the two lengths
+    # differ, so one unserved source would have turned the whole search into a
+    # 500. Unreachable while `sources` was a two-value Literal, reachable now.
+    served = [s for s in requested if s in runners]
+    unserved = [s for s in requested if s not in runners]
+    gathered = await asyncio.gather(
+        *(runners[s](payload) for s in served), return_exceptions=True
+    )
 
     combined: list[DiscoveryResult] = []
     errors: list[DiscoverySourceError] = []
-    source_counts: dict[str, int] = {}
-    for src, res in zip(requested, gathered, strict=True):
+    source_counts: dict[str, int] = dict.fromkeys(unserved, 0)
+    for src, res in zip(served, gathered, strict=True):
         if isinstance(res, BaseException):
             errors.append(DiscoverySourceError(source=src, message=str(res)))
             source_counts[src] = 0

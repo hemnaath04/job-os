@@ -375,13 +375,64 @@ export interface CalendarEntry {
   company_name: string | null;
 }
 
+/**
+ * The candidate's own eligibility status, which is the half a posting cannot
+ * tell you. `lib/discover/work-auth.ts` reads the employer's half off the
+ * posting; on its own that can only warn, because "does not sponsor" is
+ * disqualifying for one user and irrelevant to the next.
+ *
+ * `null` and "other" are different: null is never asked, and nothing should be
+ * inferred from it.
+ */
+export type WorkAuthorization =
+  | "us_citizen"
+  | "permanent_resident"
+  | "visa_holder_needs_transfer"
+  | "needs_sponsorship"
+  | "other";
+
+export type SeniorityLevel = "intern" | "new-grad" | "mid" | "senior" | "staff";
+
+export type WorkModel = "onsite" | "hybrid" | "remote";
+
+/** Inclusive band. Either end may be null, meaning no bound on that side. */
+export interface SeniorityRange {
+  min: SeniorityLevel | null;
+  max: SeniorityLevel | null;
+}
+
 export interface UserSettings {
   theme: "system" | "dark" | "light";
   default_resume_id: string | null;
   default_function: string | null;
   default_level: string | null;
+  /**
+   * Superseded by `locations`, and still live: the Job Finder reads it to decide
+   * what counts as local. The API keeps the two in step, and the Settings page
+   * sends the first location here on save, so nothing reading it goes stale.
+   */
   default_location: string | null;
   timezone: string | null;
+  /**
+   * Roles to search for, most wanted first. Plain strings today; a canonical
+   * title taxonomy will own these ids later.
+   */
+  target_titles: string[];
+  work_authorization: WorkAuthorization | null;
+  /** Lowest acceptable base pay per year, in `salary_currency`. */
+  salary_floor: number | null;
+  /** ISO-4217 alpha-3, upper case. */
+  salary_currency: string;
+  seniority_range: SeniorityRange;
+  /** Empty means all three are acceptable, not none of them. */
+  work_models: WorkModel[];
+  /** Surfaced first. Not a whitelist: it ranks, it does not gate. */
+  target_companies: string[];
+  /** Dropped outright. This one does gate. */
+  excluded_companies: string[];
+  max_job_age_days: number;
+  /** Cities, regions, or "Remote". Empty means anywhere. */
+  locations: string[];
 }
 
 export type UserSettingsPatch = Partial<UserSettings>;
