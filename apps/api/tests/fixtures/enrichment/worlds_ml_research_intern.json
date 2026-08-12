@@ -1,0 +1,246 @@
+{
+  "commitment": [
+    "internship",
+    "temporary"
+  ],
+  "company_domains": [
+    "AI platforms",
+    "Computer vision"
+  ],
+  "company_industry": "Information Technology",
+  "compensation": {
+    "bi_weekly_max": 2400,
+    "bi_weekly_min": 2400,
+    "bonus_mentioned": false,
+    "currency": "USD",
+    "daily_max": 240,
+    "daily_min": 240,
+    "equity_mentioned": false,
+    "hourly_max": 30,
+    "hourly_min": 30,
+    "is_transparent": true,
+    "listed_frequency": "yearly",
+    "listed_max": 62400.0,
+    "listed_min": 62400.0,
+    "monthly_max": 5200,
+    "monthly_min": 5200,
+    "weekly_max": 1200,
+    "weekly_min": 1200,
+    "yearly_max": 62400,
+    "yearly_min": 62400
+  },
+  "core_job_title": "Machine Learning Research Intern",
+  "education": {
+    "associates": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "bachelors": {
+      "fields_of_study": [],
+      "status": "required"
+    },
+    "doctorate": {
+      "fields_of_study": [
+        "Computer Science",
+        "Artificial Intelligence",
+        "Machine Learning"
+      ],
+      "status": "required"
+    },
+    "enrolled_student_ok": true,
+    "high_school_required": true,
+    "masters": {
+      "fields_of_study": [
+        "Computer Science",
+        "Artificial Intelligence",
+        "Machine Learning"
+      ],
+      "status": "required"
+    }
+  },
+  "eligibility": {
+    "certifications": [],
+    "citizenship_required": false,
+    "driver_license_required": false,
+    "fair_chance": false,
+    "security_clearance": "not-mentioned",
+    "visa_sponsorship": "not-mentioned",
+    "work_authorization_required": false
+  },
+  "enriched_at": null,
+  "estimated_publish_date": "2026-08-12T03:59:50.292000Z",
+  "extraction_gaps": [],
+  "job_family": "machine-learning-ai",
+  "max_years_experience": null,
+  "min_years_experience": null,
+  "model": null,
+  "publish_date_is_estimated": true,
+  "requirements_prose": {
+    "must_have": [],
+    "preferred": []
+  },
+  "requirements_summary": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+  "responsibilities": [],
+  "role_type": "individual-contributor",
+  "schema_version": 1,
+  "seniority_level": "new-grad",
+  "skills": [
+    {
+      "canonical": "python",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 3,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Python"
+    },
+    {
+      "canonical": "java",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Java"
+    },
+    {
+      "canonical": "javascript",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "JavaScript"
+    },
+    {
+      "canonical": "mistral",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Mistral"
+    },
+    {
+      "canonical": "gemma",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Gemma"
+    },
+    {
+      "canonical": "llama",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 3,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "LLaMA"
+    },
+    {
+      "canonical": "yolo",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "YOLO"
+    },
+    {
+      "canonical": "rt detr",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "RT-DETR"
+    },
+    {
+      "canonical": "clip",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "CLIP"
+    },
+    {
+      "canonical": "vector db",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Qdrant"
+    },
+    {
+      "canonical": "mlflow",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "MLflow"
+    },
+    {
+      "canonical": "zenml",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "ZenML"
+    },
+    {
+      "canonical": "metaflow",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Metaflow"
+    },
+    {
+      "canonical": "llava",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "LLaVA"
+    },
+    {
+      "canonical": "molmo",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "MoLMo"
+    },
+    {
+      "canonical": "gemma vision",
+      "evidence": "Currently pursuing an MS or PhD in a related field; requires strong Python, machine learning, model evaluation, LLM fine-tuning, large pre-trained models, and statistical evaluation skills.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Gemma Vision"
+    }
+  ],
+  "specialization": "Research and Development (R&D)",
+  "technical_tools": [
+    "Python",
+    "Java",
+    "JavaScript",
+    "Mistral",
+    "Gemma",
+    "LLaMA",
+    "YOLO",
+    "RT-DETR",
+    "CLIP",
+    "Qdrant",
+    "FAISS",
+    "MLflow",
+    "ZenML",
+    "Metaflow",
+    "LLaVA",
+    "MoLMo",
+    "Gemma Vision"
+  ],
+  "workplace": {
+    "location_count": 0,
+    "locations": [],
+    "relocation_assistance": false,
+    "remote_anywhere": false,
+    "remote_countries": [],
+    "workplace_type": "remote"
+  },
+  "years_experience_mentioned": false
+}

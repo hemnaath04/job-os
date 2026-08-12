@@ -1,0 +1,109 @@
+{
+  "commitment": [
+    "internship",
+    "seasonal",
+    "part-time"
+  ],
+  "company_domains": [
+    "youth development",
+    "golf instruction"
+  ],
+  "company_industry": "Non-Profit Organizations and NGOs",
+  "compensation": {
+    "bi_weekly_max": 1200,
+    "bi_weekly_min": 1200,
+    "bonus_mentioned": false,
+    "currency": "USD",
+    "daily_max": 120,
+    "daily_min": 120,
+    "equity_mentioned": false,
+    "hourly_max": 15,
+    "hourly_min": 15,
+    "is_transparent": true,
+    "listed_frequency": "yearly",
+    "listed_max": 31200.0,
+    "listed_min": 31200.0,
+    "monthly_max": 2600,
+    "monthly_min": 2600,
+    "weekly_max": 600,
+    "weekly_min": 600,
+    "yearly_max": 31200,
+    "yearly_min": 31200
+  },
+  "core_job_title": "Play 9 Intern",
+  "education": {
+    "associates": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "bachelors": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "doctorate": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "enrolled_student_ok": false,
+    "high_school_required": false,
+    "masters": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    }
+  },
+  "eligibility": {
+    "certifications": [],
+    "citizenship_required": false,
+    "driver_license_required": false,
+    "fair_chance": true,
+    "security_clearance": "not-mentioned",
+    "visa_sponsorship": "not-mentioned",
+    "work_authorization_required": false
+  },
+  "enriched_at": null,
+  "estimated_publish_date": "2026-08-12T04:00:30.682000Z",
+  "extraction_gaps": [],
+  "job_family": "other",
+  "max_years_experience": null,
+  "min_years_experience": null,
+  "model": null,
+  "publish_date_is_estimated": true,
+  "requirements_prose": {
+    "must_have": [],
+    "preferred": []
+  },
+  "requirements_summary": "Passion for youth development, golf experience and rules knowledge, strong communication and organizational skills, reliability, outdoor stamina, transportation across Kent County, background check, and Safesport training.",
+  "responsibilities": [],
+  "role_type": "individual-contributor",
+  "schema_version": 1,
+  "seniority_level": "new-grad",
+  "skills": [
+    {
+      "canonical": "golf simulator",
+      "evidence": "Passion for youth development, golf experience and rules knowledge, strong communication and organizational skills, reliability, outdoor stamina, transportation across Kent County, background check, and Safesport training.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "golf simulators"
+    }
+  ],
+  "specialization": "Education services",
+  "technical_tools": [
+    "golf simulators"
+  ],
+  "workplace": {
+    "location_count": 1,
+    "locations": [
+      {
+        "city": "Grand Rapids",
+        "country": "US",
+        "state": "Michigan"
+      }
+    ],
+    "relocation_assistance": false,
+    "remote_anywhere": false,
+    "remote_countries": [],
+    "workplace_type": "field"
+  },
+  "years_experience_mentioned": false
+}

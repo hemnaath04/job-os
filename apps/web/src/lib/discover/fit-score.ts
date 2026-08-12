@@ -1,5 +1,36 @@
 // Profile-aware fit scoring for discovery results.
 //
+// STATUS: this is now the FALLBACK path, not the path of record.
+//
+// The authoritative scorer is server-side, in
+// `apps/api/src/job_os/services/job_match.py`. It reads the precomputed fields
+// one LLM pass attaches to each job at ingest time, produces four axes plus an
+// overall, and attributes every point to a named reason. See
+// `docs/job-enrichment.md`.
+//
+// This module stays because enrichment is O(jobs) against a corpus that grows
+// continuously, so there is always a backlog of jobs with no enrichment yet, and
+// a job with no score at all is worse for the user than a job with a rough one.
+// The handoff, one job at a time:
+//
+//   - `jd_parsed.enrichment` present and its schema_version current: the server
+//     score wins and the client renders its breakdown. Authoritative.
+//   - Otherwise: this module, presented as a rough estimate.
+//
+// The two must never both render for the same job.
+//
+// The floor-8 denominator below (MIN_SCORE_DENOMINATOR) is ported to the server
+// scorer as MIN_SKILL_WEIGHT_POOL, where the deduction it implies became a named
+// line item rather than a silent divisor. Do not change one without the other
+// while both paths are live.
+//
+// The LEXICON below did two jobs. Enumerating which skills exist is obsolete: the
+// model reads them off the posting now, so no list has to be guessed in advance.
+// Recording which surface forms mean the same skill is still essential, and lives
+// on in SKILL_ALIASES in `apps/api/src/job_os/schemas/enrichment.py`. That is
+// knowledge duplicated in two languages and it will drift; the fix when this
+// fallback stops mattering is to delete this file, not to sync them.
+//
 // The Job Finder feed used to be ordered by recency and, at best, re-sorted by
 // whether the words the user typed appeared in the posting. That answers "is
 // this the search I asked for", not "is this a job I am a fit for". This module

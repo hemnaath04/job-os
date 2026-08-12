@@ -1,0 +1,152 @@
+{
+  "commitment": [
+    "full-time"
+  ],
+  "company_domains": [
+    "software development",
+    "product development"
+  ],
+  "company_industry": "Information Technology",
+  "compensation": {
+    "bi_weekly_max": null,
+    "bi_weekly_min": null,
+    "bonus_mentioned": false,
+    "currency": "USD",
+    "daily_max": null,
+    "daily_min": null,
+    "equity_mentioned": false,
+    "hourly_max": null,
+    "hourly_min": null,
+    "is_transparent": false,
+    "listed_frequency": null,
+    "listed_max": null,
+    "listed_min": null,
+    "monthly_max": null,
+    "monthly_min": null,
+    "weekly_max": null,
+    "weekly_min": null,
+    "yearly_max": null,
+    "yearly_min": null
+  },
+  "core_job_title": "Full Stack Engineer",
+  "education": {
+    "associates": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "bachelors": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "doctorate": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    },
+    "enrolled_student_ok": false,
+    "high_school_required": false,
+    "masters": {
+      "fields_of_study": [],
+      "status": "not-mentioned"
+    }
+  },
+  "eligibility": {
+    "certifications": [],
+    "citizenship_required": false,
+    "driver_license_required": false,
+    "fair_chance": false,
+    "security_clearance": "not-mentioned",
+    "visa_sponsorship": "not-mentioned",
+    "work_authorization_required": false
+  },
+  "enriched_at": null,
+  "estimated_publish_date": "2026-08-12T03:59:58.519000Z",
+  "extraction_gaps": [],
+  "job_family": "software-engineering",
+  "max_years_experience": null,
+  "min_years_experience": null,
+  "model": null,
+  "publish_date_is_estimated": true,
+  "requirements_prose": {
+    "must_have": [],
+    "preferred": []
+  },
+  "requirements_summary": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+  "responsibilities": [],
+  "role_type": "individual-contributor",
+  "schema_version": 1,
+  "seniority_level": "mid",
+  "skills": [
+    {
+      "canonical": "javascript",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 3,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "JavaScript"
+    },
+    {
+      "canonical": "typescript",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 3,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "TypeScript"
+    },
+    {
+      "canonical": "react",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 3,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "React"
+    },
+    {
+      "canonical": "redux",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Redux"
+    },
+    {
+      "canonical": "node js",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Node"
+    },
+    {
+      "canonical": "postgresql",
+      "evidence": "Fluent JavaScript/TypeScript developer with React experience who has designed and built applications; Redux and Node/Postgres experience are bonus qualifications.",
+      "importance": 2,
+      "kind": "hard",
+      "necessity": "required",
+      "skill": "Postgres"
+    }
+  ],
+  "specialization": "Software Development",
+  "technical_tools": [
+    "JavaScript",
+    "TypeScript",
+    "React",
+    "Redux",
+    "Node",
+    "Postgres"
+  ],
+  "workplace": {
+    "location_count": 1,
+    "locations": [
+      {
+        "city": "New York City",
+        "country": "US",
+        "state": "New York"
+      }
+    ],
+    "relocation_assistance": false,
+    "remote_anywhere": false,
+    "remote_countries": [],
+    "workplace_type": "hybrid"
+  },
+  "years_experience_mentioned": false
+}
