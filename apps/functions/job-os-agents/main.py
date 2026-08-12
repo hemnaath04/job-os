@@ -937,11 +937,25 @@ async def _review_resume(
 ) -> dict[str, Any]:
     version_id = str(payload["version_id"])
     version = _snapshot(workspace.owned_row(workspace.versions_table, version_id))
+    # The PDF is rendered before we are called and handed over by file id, because
+    # this runtime has no Typst or Tectonic binary and never will. Without it the
+    # review scores `b""` and reports "0 pages · selectable text issue" on every
+    # resume, which is the quality gate's two load-bearing checks quietly not
+    # running. The browser renders it first through /resumes/render, which answers
+    # in well under a second, and attaches it here.
+    pdf_file_id = payload.get("pdf_file_id")
+    rendered_pdf: bytes | None = None
+    if pdf_file_id:
+        rendered_pdf = workspace.storage.get_file_download(
+            workspace.files_bucket, str(pdf_file_id)
+        )
     # The reviewer needs the evidence vault to tell a verified claim from an
     # invented one. Without it, it graded the candidate's own job title and
     # coursework as fabrications.
     report, pdf_bytes = await review_resume(
-        version["json_resume"], verified_facts=workspace.verified_facts()
+        version["json_resume"],
+        verified_facts=workspace.verified_facts(),
+        rendered_pdf=rendered_pdf,
     )
     now = _now()
     version.update(
@@ -953,18 +967,24 @@ async def _review_resume(
     if finalize:
         if not report.passed:
             raise ValueError("Resume did not pass the final quality gate.")
-        pdf_file_id = ID.unique()
-        workspace.storage.create_file(
-            workspace.files_bucket,
-            pdf_file_id,
-            InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
-            permissions=workspace.permissions,
-        )
+        # A PDF handed in by file id is already in the bucket and is byte for byte
+        # what was just reviewed, so store the id rather than a second copy of the
+        # same document. Only a review that rendered its own bytes needs a file.
+        if pdf_file_id:
+            stored_pdf_id = str(pdf_file_id)
+        else:
+            stored_pdf_id = ID.unique()
+            workspace.storage.create_file(
+                workspace.files_bucket,
+                stored_pdf_id,
+                InputFile.from_bytes(pdf_bytes, f"{version_id}.pdf"),
+                permissions=workspace.permissions,
+            )
         version.update(
             approved_by_user=True,
             finalized_at=now,
             latex_source=generate_latex_source(version["json_resume"]),
-            pdf_file_id=pdf_file_id,
+            pdf_file_id=stored_pdf_id,
         )
     workspace.update_snapshot(
         workspace.versions_table,

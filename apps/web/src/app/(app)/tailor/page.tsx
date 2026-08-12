@@ -229,14 +229,15 @@ function TailorInner() {
   });
 
   /**
-   * Finish the quality pass on the FastAPI container.
+   * Finish the quality pass on a freshly tailored version.
    *
-   * The Appwrite agent function cannot render PDFs (its runtime has no LaTeX
-   * engine), so a fresh tailored version arrives with no PDF and a placeholder
-   * review, which leaves Finalize and Download dead. The container ships
-   * Tectonic, so hand it the document, then persist the review and PDF onto the
-   * Appwrite version. Best effort and non-blocking: the tailored resume is
-   * already readable without it, so a failure here only costs the PDF.
+   * A tailored version arrives with no PDF and a placeholder review, which leaves
+   * Finalize and Download dead, so this renders it on the container (fast, and
+   * the only runtime with the engine) and then scores it as an agent job. It used
+   * to do both inline through /resumes/render-review, which is the call that
+   * H12'd on Heroku every time: minutes of work against a 30 second router
+   * timeout. Best effort and non-blocking either way, since the tailored resume
+   * is already readable without it.
    */
   const runReview = useCallback(
     async (version: TailorResponse, look?: string) => {
@@ -245,17 +246,18 @@ function TailorInner() {
       if (stored.pdf_file_id) return;
       setReviewing(true);
       try {
-        const rendered = await api.renderReviewDraft(version.json_resume, {
-          templateId: look ?? null,
-        });
-        const reviewed = await appwriteWorkspace.attachReview(version.id, rendered);
+        const { version: reviewed, review } = await api.renderAndReviewVersion(
+          version.id,
+          version.json_resume,
+          { templateId: look ?? null },
+        );
         setResult((current) =>
           current && current.id === version.id
             ? ({ ...current, ...reviewed } as TailorResponse)
             : current,
         );
         toast.success(
-          rendered.review.passed
+          review.passed
             ? "Quality review passed. You can finalize now."
             : "Quality review done. See the issues before finalizing.",
         );

@@ -1002,11 +1002,33 @@ export const appwriteWorkspace = {
     });
   },
 
-  // No reviewResume/finalizeResume here on purpose. The agent function renders
-  // the PDF before reviewing, and its runtime cannot load WeasyPrint's native
-  // libs, so those paths could never succeed. Review and finalize go through the
-  // container instead: see api.reviewVersion and api.finalizeVersion, which pair
-  // /resumes/render-review with attachReview below.
+  /**
+   * Queue the agent function to review a version against an already-rendered PDF.
+   *
+   * These used to be absent on purpose, because the function renders before it
+   * reviews and its runtime has no engine to render with. Handing the PDF over by
+   * file id removes that reason: the browser already has real bytes from
+   * `/resumes/render`, which answers in well under a second.
+   *
+   * Running it here rather than inline on the container is what makes it work at
+   * all. `/resumes/render-review` fetches GitHub READMEs and waits on a model, so
+   * it runs for minutes, and Heroku's router drops any request still open at 30
+   * seconds with an H12. Every review and finalize since the move to Heroku died
+   * that way: the dyno kept working, finished, and had nobody left to answer. The
+   * function has a 900s budget and the job row survives a closed tab.
+   *
+   * Always `/resume/review`, never `/resume/finalize`, even when the caller is
+   * finalizing. The finalize path raises when the gate fails, which would surface
+   * as a failed job carrying a message instead of the review, and the browser
+   * needs the review itself to show what blocked it. Scoring here and deciding
+   * there keeps that decision where it already lives.
+   */
+  reviewResume(versionId: string, pdfFileId: string): Promise<AgentJob> {
+    return createAgentJob("resume_review", "/resume/review", {
+      version_id: versionId,
+      pdf_file_id: pdfFileId,
+    });
+  },
 
   tailorResume(
     resumeId: string,
@@ -1028,68 +1050,11 @@ export const appwriteWorkspace = {
     return rememberVersionFile(version);
   },
 
-  /**
-   * Store a review and its rendered PDF against an existing version.
-   *
-   * The agent function can produce a tailored document but not a PDF, so the
-   * browser gets both from the FastAPI container and persists them here. Writes
-   * the PDF to the resume bucket, then patches the version snapshot so the
-   * editor, Download, and Finalize all see a fully reviewed version.
-   */
-  async attachReview(
-    versionId: string,
-    result: {
-      review: ResumeReviewResult;
-      latex_source: string;
-      pdf_base64: string;
-    },
-  ): Promise<ResumeVersion> {
-    await ensureAppwriteSession();
-    const config = requirePublicAppwriteConfig();
-    const { tables, storage } = getAppwriteServices();
-    const ownerId = getCurrentAppwriteUserId();
-
-    const row = await tables.getRow<VersionRow>({
-      databaseId: config.databaseId,
-      tableId: config.resumeVersionsTableId,
-      rowId: versionId,
-    });
-
-    const pdfFileId = ID.unique();
-    await storage.createFile({
-      bucketId: config.resumeFilesBucketId,
-      fileId: pdfFileId,
-      file: new File([decodeBase64(result.pdf_base64)], `${versionId}.pdf`, {
-        type: "application/pdf",
-      }),
-      permissions: ownerPermissions(ownerId),
-    });
-
-    const status = result.review.passed ? "reviewed" : "needs_changes";
-    const version: ResumeVersion = {
-      ...parseSnapshot<ResumeVersion>(row),
-      status,
-      review_score: result.review.score,
-      review_report: result.review,
-      latex_source: result.latex_source,
-      updated_at: now(),
-    };
-    (version as StoredResumeVersion).pdf_file_id = pdfFileId;
-
-    await tables.updateRow<VersionRow>({
-      databaseId: config.databaseId,
-      tableId: config.resumeVersionsTableId,
-      rowId: versionId,
-      data: {
-        // The status column is a strict enum without "needs_changes"; the
-        // snapshot above carries the precise status the UI reads.
-        status: versionStatusColumn(status),
-        source_updated_at: version.updated_at,
-        snapshot: JSON.stringify(version),
-      },
-    });
-    return rememberVersionFile(version);
-  },
+  // No attachReview here any more. It existed to write back a review the browser
+  // had fetched from the container, and the browser no longer fetches one: the
+  // agent function scores the version and persists the result itself, the same
+  // way the tailor already did. attachPdf below is still the browser's job,
+  // because rendering is the one part only the container can do.
 
   /**
    * Store a rendered PDF against a version WITHOUT a review.

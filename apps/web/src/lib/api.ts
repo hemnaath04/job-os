@@ -10,6 +10,7 @@ import type {
   Resume,
   ResumeChatResponse,
   ResumeImportItem,
+  JsonResume,
   ResumeReviewResult,
   RevisionMessage,
   ResumeVersion,
@@ -64,13 +65,6 @@ export type DiscoverNoKeyRequest = {
     auth_header?: string;
     auth_value?: string;
   }[];
-};
-
-/** Response from the container's stateless render + review endpoint. */
-export type RenderReviewResult = {
-  review: ResumeReviewResult;
-  latex_source: string;
-  pdf_base64: string;
 };
 
 /**
@@ -185,6 +179,15 @@ const RENDER_TIMEOUT_MS = 2 * 60 * 1_000;
  * result is reachable even past this.
  */
 const REVISE_TIMEOUT_MS = 8 * 60 * 1_000;
+/**
+ * The quality review fetches every GitHub README the resume links to, then waits
+ * on a model pass over the whole document. Measured runs sit past two minutes,
+ * which is why it can no longer run inline: Heroku's router drops a request at 30
+ * seconds. As an agent job it has the function's 900s budget behind it, so this
+ * only caps how long the page itself waits before pointing at the operations
+ * tracker, which follows the same job independently.
+ */
+const REVIEW_TIMEOUT_MS = 8 * 60 * 1_000;
 const WARM_TIMEOUT_MS = 12 * 1_000;
 /**
  * Building a template is the slowest call in the app: a cold start, a model
@@ -238,54 +241,55 @@ async function waitForAgentJob<T>(
   throw new Error("The agent is still running. Refresh shortly to see its result.");
 }
 
-/** A verified fact in the shape the container reviewer's _compact_facts reads. */
-type ReviewFact = {
-  kind: string;
-  title: string;
-  org: string | null;
-  start_date: string | null;
-  end_date: string | null;
-  location: string | null;
-  source_url: string | null;
-  payload: Record<string, unknown>;
-  bullets: { text: string }[];
-};
-
 /**
- * The verified Profile facts the container reviewer grades a resume against.
+ * Render a version to PDF, attach it, then score it as an agent job.
  *
- * Without them the reviewer reads real, verified history, a job title, the
- * coursework, a metric that is present in a verified bullet, as invented, and
- * scores an honest resume in the twenties instead of the sixties. The Appwrite
- * agent reads these server-side when it tailors, but the render-review container
- * is stateless and has no workspace, so the browser has to send them itself.
+ * Every caller that needs a reviewed version wants exactly this sequence, and
+ * all three used to get it by calling `/resumes/render-review` inline. That
+ * cannot work on Heroku: the endpoint fetches GitHub READMEs and waits on a model
+ * pass, so it runs for minutes, and the router hangs up on any request still open
+ * at 30 seconds. Every review and finalize since the migration returned a 503
+ * while the dyno quietly finished the work and found nobody to hand it to.
  *
- * Only verified facts are sent, matching the server's own vault: an unverified
- * fact cannot justify a claim. A read failure degrades to an unfacted review
- * rather than blocking the whole thing, since a review with no facts is still
- * more useful than no review at all.
+ * Split by what each side is actually for. Rendering needs the container's Typst
+ * binary and takes well under a second, so it stays a request. Scoring needs
+ * time, so it becomes an agent job with the function's 900s budget, which also
+ * means it survives a closed tab and shows up in the operations tracker. Handing
+ * the rendered PDF over by file id is what lets the function score it at all:
+ * before this it reviewed empty bytes and reported "0 pages" every time.
  */
-async function verifiedFactsForReview(): Promise<ReviewFact[]> {
-  if (!isAppwriteWorkspaceEnabled) return [];
-  try {
-    const facts = await appwriteWorkspace.listFacts();
-    return facts
-      .filter((fact) => fact.verified)
-      .map((fact) => ({
-        kind: fact.kind,
-        title: fact.title,
-        org: fact.org,
-        start_date: fact.start_date,
-        end_date: fact.end_date,
-        location: fact.location,
-        source_url: fact.source_url,
-        payload: fact.payload,
-        bullets: fact.bullets.map((bullet) => ({ text: bullet.text })),
-      }));
-  } catch {
-    return [];
+async function renderAndReview(
+  versionId: string,
+  jsonResume: JsonResume,
+  {
+    templateId,
+    onPdfReady,
+  }: { templateId?: string | null; onPdfReady?: () => void } = {},
+): Promise<{ version: ResumeVersion; review: ResumeReviewResult }> {
+  const draft = await legacyApi.render(jsonResume, { templateId });
+  const withPdf = await appwriteWorkspace.attachPdf(versionId, draft);
+  onPdfReady?.();
+  const pdfFileId = (withPdf as ResumeVersion & { pdf_file_id?: string | null })
+    .pdf_file_id;
+  if (!pdfFileId) {
+    throw new Error("The rendered PDF could not be attached for review.");
   }
+  const job = await appwriteWorkspace.reviewResume(versionId, pdfFileId);
+  const output = await waitForAgentJob<{
+    version: ResumeVersion;
+    review: ResumeReviewResult;
+  }>(job, { timeoutMs: REVIEW_TIMEOUT_MS });
+  return {
+    version: appwriteWorkspace.registerVersionFile(output.version),
+    review: output.review,
+  };
 }
+
+// The browser no longer ships verified facts up for review. It had to when the
+// reviewer was the stateless container, which has no workspace to read them from,
+// and getting them wrong scored an honest resume in the twenties by reading real
+// history as invented. The agent function reads the vault server-side, so the
+// facts now come from the same place the tailor already reads them.
 
 const legacyApi = {
   listApplications: (params?: { status?: AppStatus; q?: string }) => {
@@ -440,49 +444,17 @@ const legacyApi = {
       body: JSON.stringify({ job_id: jobId }),
     }),
 
-  /**
-   * Render and review an unsaved document on the FastAPI container.
-   *
-   * The Appwrite agent function cannot render PDFs: its python runtime has no
-   * LaTeX engine, so a tailored version comes back with no PDF and no page
-   * count. The container ships Tectonic and a warm package cache, so the browser
-   * sends the document here and writes the result back to Appwrite itself.
-   * Stateless, so it works for versions that only exist in Appwrite and have no
-   * row in Postgres.
-   */
-  renderReviewDraft: async (
-    jsonResume: object,
-    { templateId }: { templateId?: string | null } = {},
-  ) => {
-    // A template supplies the look only. Fetched here rather than held in page
-    // state so the render always uses what is actually stored. The verified
-    // facts ride along so the stateless reviewer can tell real history from an
-    // invented claim; both reads run in parallel since neither needs the other.
-    const [look, verifiedFacts] = await Promise.all([
-      templateId ? appwriteWorkspace.getTemplateSource(templateId) : Promise.resolve(null),
-      verifiedFactsForReview(),
-    ]);
-    await warmBackend();
-    return withTimeout(
-      request<RenderReviewResult>("/resumes/render-review", {
-        method: "POST",
-        body: JSON.stringify({
-          json_resume: jsonResume,
-          template_key: look?.template_key ?? null,
-          latex_source: look?.latex_source ?? null,
-          verified_facts: verifiedFacts,
-        }),
-      }),
-      RENDER_TIMEOUT_MS,
-      "The quality review timed out. The API container may be waking up, try again in a moment.",
-    );
-  },
+  // No renderReviewDraft here any more. It called /resumes/render-review, which
+  // cannot complete on Heroku: the review runs for minutes and the router hangs
+  // up at 30 seconds, so every caller got a 503. The review is an agent job now,
+  // and the verified facts it needs are read server-side from the real vault
+  // rather than shipped up from the browser. See renderAndReview above.
 
   /**
    * Render an unsaved document to a PDF on the container without the model
-   * review. Used to put a downloadable PDF in front of the user in ~17s while
-   * the ~80s quality review runs separately. Same template resolution and
-   * request body as renderReviewDraft, just the render-only endpoint.
+   * review. The container is the only runtime with the engine, and this is the
+   * fast half: it answers in well under a second, so Download lights up straight
+   * away while the review is scored separately as an agent job.
    */
   render: async (
     jsonResume: object,
@@ -832,11 +804,25 @@ export const api = {
       return legacyApi.reviewVersion(resumeId, versionId);
     }
     const version = await appwriteWorkspace.getVersion(versionId);
-    const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
+    const { review } = await renderAndReview(versionId, version.json_resume, {
       templateId,
     });
-    await appwriteWorkspace.attachReview(versionId, rendered);
-    return rendered.review;
+    return review;
+  },
+
+  /**
+   * Render, attach and score a version, returning the updated row as well.
+   *
+   * For callers that already hold the document and need the reviewed row back,
+   * rather than just the score `reviewVersion` returns. The tailor page is the
+   * one: it folds the result straight into the page it is already showing.
+   */
+  renderAndReviewVersion(
+    versionId: string,
+    jsonResume: JsonResume,
+    { templateId }: { templateId?: string | null } = {},
+  ) {
+    return renderAndReview(versionId, jsonResume, { templateId });
   },
 
   async chatEditVersion(
@@ -887,20 +873,11 @@ export const api = {
       messageId,
     );
     if (!proposal.version) return proposal;
-    // Review the new version on the container for the same reason as
-    // reviewVersion: the agent function cannot render a PDF.
-    const rendered = await legacyApi.renderReviewDraft(
+    const { version: reviewed, review } = await renderAndReview(
+      proposal.version.id,
       proposal.version.json_resume,
     );
-    const reviewed = await appwriteWorkspace.attachReview(
-      proposal.version.id,
-      rendered,
-    );
-    return {
-      ...proposal,
-      version: reviewed,
-      review: rendered.review,
-    };
+    return { ...proposal, version: reviewed, review };
   },
 
   listRevisionMessages: (resumeId: string, versionId: string) =>
@@ -974,17 +951,15 @@ export const api = {
     // that decides whether this finalizes. The fast PDF is a convenience and
     // does not weaken the review gate: the same review still runs and still
     // blocks a failing finalize.
-    const draft = await legacyApi.render(version.json_resume, { templateId });
-    await appwriteWorkspace.attachPdf(versionId, draft);
-    onPdfReady?.();
-
-    const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
-      templateId,
-    });
-    // Persist the review either way, so the issues stay visible afterwards.
-    const reviewed = await appwriteWorkspace.attachReview(versionId, rendered);
-    if (!rendered.review.passed && !force) {
-      return { status: "blocked", review: rendered.review, version: reviewed };
+    // The authoritative review. It persists the score onto the version itself, so
+    // there is no attachReview to follow: the row the job returns already has it.
+    const { version: reviewed, review } = await renderAndReview(
+      versionId,
+      version.json_resume,
+      { templateId, onPdfReady },
+    );
+    if (!review.passed && !force) {
+      return { status: "blocked", review, version: reviewed };
     }
     return {
       status: "finalized",

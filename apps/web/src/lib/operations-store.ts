@@ -119,6 +119,16 @@ const KIND_META: Record<string, KindMeta> = {
     failed: "Reading your resume did not finish",
     origin: () => "/profile",
   },
+  resume_review: {
+    running: "Running quality review",
+    done: "Quality review ready",
+    doneDetail: "Open the scored resume",
+    failed: "The quality review did not finish",
+    origin: (input) =>
+      input.resumeId && input.versionId
+        ? `/resumes/${input.resumeId}/${input.versionId}`
+        : "/resumes",
+  },
 };
 
 const FALLBACK_META: KindMeta = {
