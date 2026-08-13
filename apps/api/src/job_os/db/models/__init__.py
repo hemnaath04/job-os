@@ -12,6 +12,7 @@ from job_os.db.models.ingest import AtsBoardToken, CrawlRun, CrawlStatus, TokenS
 from job_os.db.models.interview import InterviewPrep, InterviewQuestion
 from job_os.db.models.job import Job
 from job_os.db.models.job_posting import JobPosting
+from job_os.db.models.outreach import ContactRelationship, EmailSource, OutreachContact
 from job_os.db.models.profile import FactBullet, ProfileFact
 from job_os.db.models.resume import Resume, ResumeRevisionMessage, ResumeVersion
 from job_os.db.models.saved_search import SavedSearch
@@ -28,15 +29,18 @@ __all__ = [
     "ApplicationEvent",
     "AtsBoardToken",
     "Company",
+    "ContactRelationship",
     "CoverLetter",
     "CoverLetterVersion",
     "CrawlRun",
     "CrawlStatus",
+    "EmailSource",
     "FactBullet",
     "InterviewPrep",
     "InterviewQuestion",
     "Job",
     "JobPosting",
+    "OutreachContact",
     "ProfileFact",
     "Resume",
     "ResumeRevisionMessage",
