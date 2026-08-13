@@ -26,6 +26,15 @@
         --radius-nested: 0.375rem;
         --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
         --dur: 190ms;
+
+        /* Three type sizes, and only three. The first draft used 14/13/12,
+           which are close enough (ratios around 1.08) that they read as one
+           size set slightly wrong rather than as a hierarchy. These step at
+           about 1.15, which is legible at this scale. Emphasis inside a step
+           is carried by weight and colour, not by another half-pixel. */
+        --text-title: 15px;
+        --text-body: 13px;
+        --text-meta: 11px;
       }
 
       * { box-sizing: border-box; }
@@ -37,12 +46,22 @@
         background: var(--bg);
         color: var(--text);
         font-family: "Manrope", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
-        font-size: 13px;
+        font-size: var(--text-body);
         -webkit-font-smoothing: antialiased;
       }
 
-      h1 { margin: 0 0 2px; font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
-      .sub { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+      h1 {
+        margin: 0 0 2px;
+        font-size: var(--text-title);
+        font-weight: 700;
+        letter-spacing: -0.015em;
+      }
+      .sub {
+        margin: 0 0 12px;
+        font-size: var(--text-meta);
+        line-height: 1.45;
+        color: var(--text-dim);
+      }
 
       .card {
         background: var(--surface-1);
@@ -52,7 +71,7 @@
         margin-bottom: 10px;
       }
 
-      #status { font-size: 12px; color: var(--text-muted); }
+      #status { font-size: var(--text-body); color: var(--text-muted); }
       #status.good { color: var(--mint-ink); }
       #status.bad { color: var(--rose-ink); }
 
@@ -63,7 +82,7 @@
         background: var(--accent);
         color: var(--on-accent);
         font-family: inherit;
-        font-size: 13px;
+        font-size: var(--text-body);
         font-weight: 700;
         padding: 10px 12px;
         border-radius: var(--radius-control);
@@ -78,7 +97,7 @@
       details { margin-top: 10px; }
       summary {
         cursor: pointer;
-        font-size: 12px;
+        font-size: var(--text-body);
         font-weight: 600;
         color: var(--text-muted);
         list-style: none;
@@ -89,8 +108,8 @@
 
       .eeo-note {
         margin: 8px 0 8px;
-        font-size: 11.5px;
-        line-height: 1.45;
+        font-size: var(--text-meta);
+        line-height: 1.5;
         color: var(--text-dim);
       }
 
@@ -98,8 +117,8 @@
         display: flex;
         align-items: center;
         gap: 8px;
-        padding: 6px 0;
-        font-size: 12px;
+        padding: 7px 0;
+        font-size: var(--text-body);
         border-top: 1px solid var(--border);
       }
       label.toggle:first-of-type { border-top: none; }
@@ -111,8 +130,8 @@
         background: var(--surface-2);
         border: 1px solid var(--border);
         border-radius: var(--radius-nested);
-        font-size: 11.5px;
-        line-height: 1.5;
+        font-size: var(--text-meta);
+        line-height: 1.55;
         color: var(--text-muted);
       }
       .pledge b { color: var(--accent-ink); }
@@ -132,8 +151,8 @@
       <summary>Demographic questions</summary>
       <p class="eeo-note">
         Every one of these is off. Nothing is shared until you turn on that
-        specific question here. Leaving them off is a normal answer and
-        employers cannot treat it as one.
+        specific question here. Declining to answer is a normal choice, and
+        employers are not allowed to hold it against you.
       </p>
       <label class="toggle"><input type="checkbox" data-key="eeo_gender" /> Gender</label>
       <label class="toggle"><input type="checkbox" data-key="eeo_race" /> Race</label>

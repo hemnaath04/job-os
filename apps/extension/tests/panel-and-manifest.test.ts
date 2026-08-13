@@ -135,6 +135,21 @@ test("no remotely hosted code, which MV3 review rejects outright", () => {
   }
 });
 
+test("the popup sizes type from the scale rather than ad hoc pixels", () => {
+  // The first draft used 14px, 13px and 12px, which sit close enough together
+  // (ratios around 1.08) to read as one size applied inconsistently rather than
+  // as a hierarchy. Three tokens replaced them; this keeps a stray literal from
+  // creeping back in and flattening it again.
+  const popup = readFileSync(path.join(SRC, "popup/popup.html"), "utf8");
+
+  const literals = [...popup.matchAll(/font-size:\s*([0-9.]+px)/g)].map((m) => m[1]);
+  assert.deepEqual(literals, [], "every font-size comes from a --text-* token");
+
+  for (const token of ["--text-title", "--text-body", "--text-meta"]) {
+    assert.ok(popup.includes(`${token}:`), `${token} is defined`);
+  }
+});
+
 test("no em dashes anywhere in the extension source", () => {
   const files: string[] = [];
   const walk = (dir: string): void => {
