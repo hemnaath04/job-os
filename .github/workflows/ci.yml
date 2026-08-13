@@ -103,6 +103,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The web package's own tests, which until the title taxonomy landed did
+      # not exist. They run on Node's built-in TypeScript support, so they need
+      # no build step and no transpiler, and they are pure functions over
+      # generated data, so they need no services.
+      - name: Test
+        run: pnpm --filter @job-os/web test
+
       - name: Build
         run: pnpm build
 

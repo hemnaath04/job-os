@@ -11,6 +11,11 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // The taxonomy modules and their tests run directly on Node's built-in
+    // TypeScript support (`node --test src/lib/taxonomy`), and Node's ESM
+    // resolver needs the real file extension in the specifier. Safe here
+    // because noEmit is on, so nothing ever ships a `.ts` import.
+    "allowImportingTsExtensions": true,
     "jsx": "preserve",
     "incremental": true,
     "plugins": [{ "name": "next" }],

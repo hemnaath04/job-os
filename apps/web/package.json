@@ -7,7 +7,9 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test \"src/**/*.test.ts\"",
+    "taxonomy:build": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/build-taxonomy.ts"
   },
   "dependencies": {
     "@clerk/nextjs": "^6.7.0",
