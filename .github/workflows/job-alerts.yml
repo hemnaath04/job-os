@@ -18,8 +18,8 @@ name: job-alerts
 # tick would collapse every timezone onto whatever hour UTC the cron fired.
 
 on:
-  # schedule:
-  #   - cron: "17 * * * *"    # hourly, offset off the hour to miss the stampede
+  schedule:
+    - cron: "17 * * * *"    # hourly, offset off the hour to miss the stampede
   workflow_dispatch:
     inputs:
       mode:
