@@ -42,8 +42,8 @@ def _key(kind: str, org: str | None, title: str) -> tuple[str, str, str]:
 def _contact_fact(doc: dict[str, Any]) -> ProfileFact | None:
     """One `contact` fact carrying JSON Resume `basics`.
 
-    Everything an application form asks for before it asks anything interesting
-    — name, email, phone, address, LinkedIn, GitHub — lives here, so the
+    Everything an application form asks for before it asks anything interesting,
+    including name, email, phone, address, LinkedIn, GitHub, lives here, so the
     autofill extension can read it from the same vault as everything else and
     get the same `verified` gate for free. Values are copied verbatim; the
     `profiles[]` array is flattened to network -> url because picking a format
