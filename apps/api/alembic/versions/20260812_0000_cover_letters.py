@@ -1,6 +1,6 @@
 """Add cover letters and their versions
 
-Revision ID: 0007_cover_letters_feat_cover_letters
+Revision ID: cover_letters_20260812
 Revises: 0006_resume_engine
 Create Date: 2026-08-12
 
@@ -12,8 +12,18 @@ WHY THIS REVISION ID IS NOT `0007_cover_letters`. Four feature branches came off
 claiming `0007_...` are only distinct if the suffixes differ, and two branches
 that picked the same short suffix would produce a migration directory that
 cannot be loaded at all: `alembic` raises on a duplicate revision id before it
-runs anything. Naming this one after the branch that wrote it makes the
-collision impossible rather than unlikely.
+runs anything. Naming this one after the branch that wrote it, and the date,
+makes the collision impossible rather than unlikely.
+
+CORRECTION 2026-08-13: the first attempt at that name was
+`0007_cover_letters_feat_cover_letters`, 37 characters. Alembic's own
+`alembic_version.version_num` column is `VARCHAR(32)` by default, so that id
+upgraded cleanly in every local and CI run (sqlite and a freshly-created
+Postgres both happened not to enforce the width) and then failed on the first
+real deploy with `StringDataRightTruncationError`, rolling back the entire
+multi-branch `upgrade head` as one transaction. Collision-proofing a revision
+id is worth nothing if the id does not fit in the column that stores it; stay
+well under 32 characters, not just unique.
 
 `down_revision` deliberately stays at the current head. These branches are
 genuine siblings: each adds its own tables and none reads another's, so they are
@@ -30,7 +40,7 @@ import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
-revision: str = "0007_cover_letters_feat_cover_letters"
+revision: str = "cover_letters_20260812"
 down_revision: str | Sequence[str] | None = "0006_resume_engine"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
