@@ -1,0 +1,105 @@
+name: job-alerts
+
+# The cron entrypoint for job alert digests. It is NOT scheduled.
+#
+# The `schedule:` block below is commented out on purpose and enabling it is a
+# deliberate, reviewable edit rather than something that starts happening when
+# this branch merges. Nothing else about the feature is armed either: sending
+# additionally requires ALERTS_ENABLED=true, a real EMAIL_PROVIDER, a signing
+# secret and a postal address, none of which have defaults. See docs/ALERTS.md
+# for the checklist and the order to do it in.
+#
+# Until then this runs on workflow_dispatch only, and the default input is a dry
+# run, which renders every due digest and sends nothing.
+#
+# When the cron is enabled: run hourly, not daily. Each subscription decides for
+# itself whether its own local send hour has arrived, so an hourly tick is what
+# lets a user in Tokyo and a user in Boston both get 08:00 local mail. A daily
+# tick would collapse every timezone onto whatever hour UTC the cron fired.
+
+on:
+  # schedule:
+  #   - cron: "17 * * * *"    # hourly, offset off the hour to miss the stampede
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run renders and sends nothing. send actually mails users."
+        type: choice
+        default: dry-run
+        options:
+          - dry-run
+          - send
+      force:
+        description: "Ignore cadence and treat every subscription as due. Dedupe still applies."
+        type: boolean
+        default: false
+
+concurrency:
+  # Never two digest runs at once. The sent log is what stops a job being mailed
+  # twice, and two overlapping runs can both read it before either writes.
+  group: job-alerts
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/api
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      ALERTS_ENABLED: ${{ vars.ALERTS_ENABLED || 'false' }}
+      EMAIL_PROVIDER: ${{ vars.EMAIL_PROVIDER || 'console' }}
+      EMAIL_FROM: ${{ vars.EMAIL_FROM }}
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+      ALERT_UNSUBSCRIBE_SECRET: ${{ secrets.ALERT_UNSUBSCRIBE_SECRET }}
+      ALERT_LINK_BASE_URL: ${{ vars.ALERT_LINK_BASE_URL }}
+      ALERT_APP_BASE_URL: ${{ vars.ALERT_APP_BASE_URL }}
+      ALERT_POSTAL_ADDRESS: ${{ vars.ALERT_POSTAL_ADDRESS }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Refuse to send from a manual run that did not ask to
+        # `--send` is the only way to turn off the dry run, and this makes the
+        # scheduled path explicit about it too. A workflow that mails users when
+        # someone clicks Run with the defaults would be the wrong default.
+        if: github.event.inputs.mode == 'send'
+        run: echo "Mode is send. ALERTS_ENABLED and the provider still have to be configured."
+
+      - name: Run the digest
+        run: |
+          ARGS=""
+          if [ "${{ github.event.inputs.mode }}" = "send" ]; then
+            ARGS="--send"
+          else
+            ARGS="--dry-run"
+          fi
+          if [ "${{ github.event.inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
+          fi
+          uv run python -m job_os.scripts.run_job_alerts $ARGS --out "$RUNNER_TEMP/digest.txt" --html-out "$RUNNER_TEMP/digest.html"
+
+      - name: Keep the rendered digests for review
+        # The whole point of the dry run. Download the artifact and read what
+        # would have gone out before arming anything.
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rendered-digests
+          path: |
+            ${{ runner.temp }}/digest.txt
+            ${{ runner.temp }}/digest.html
+          if-no-files-found: ignore
+          retention-days: 7

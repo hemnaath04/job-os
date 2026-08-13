@@ -107,6 +107,66 @@ class Settings(BaseSettings):
     reactive_resume_base_url: str | None = None
     reactive_resume_api_key: str | None = None
 
+    # ---- Email transport -----------------------------------------------------
+    #
+    # "console" writes the rendered message to a stream and sends nothing, which
+    # is the only default that cannot mail a stranger by accident. Switching to
+    # "resend" is a deliberate act that also requires a key and a from address.
+    email_provider: str = Field(default="console")
+    email_from: str | None = Field(
+        default=None, description='Envelope sender, e.g. "job.os alerts <alerts@example.com>"'
+    )
+    email_reply_to: str | None = None
+    resend_api_key: str | None = None
+    resend_api_base: str = "https://api.resend.com"
+
+    # ---- Job alerts ----------------------------------------------------------
+    #
+    # Master switch, separate from `email_provider`, for the same reason
+    # `allow_anonymous_dev_user` is separate from `app_env`: a provider gets
+    # configured for one feature (a password reset, say) and would otherwise
+    # silently arm a scheduled sender that mails every user on the table.
+    alerts_enabled: bool = Field(default=False)
+    #: HMAC key for unsubscribe links. No default and no fallback: an
+    #: unguessable-by-construction token that everyone can forge is worse than a
+    #: feature that refuses to run, so the digest run fails closed without it.
+    alert_unsubscribe_secret: str | None = None
+    #: Public origin that serves GET/POST /api/v1/alerts/unsubscribe. The link
+    #: has to work with no session, so it points at the API, not the Next.js
+    #: proxy, which requires a Clerk cookie.
+    alert_link_base_url: str | None = None
+    #: Origin of the web app, for the "turn alerts back on" link on the
+    #: unsubscribe confirmation page. A different value from
+    #: `alert_link_base_url`: that one is the API, this one is where a signed-in
+    #: user manages their alerts.
+    alert_app_base_url: str | None = None
+    #: CAN-SPAM requires a valid physical postal address in every commercial
+    #: message. Unset means the digest will not send.
+    alert_postal_address: str | None = None
+    #: Floor between two `immediate` sends, so a source that republishes a batch
+    #: every few minutes cannot turn into a mail loop.
+    alert_immediate_min_interval_minutes: int = Field(default=60, ge=1)
+    #: Cap on rows in one digest email. Beyond this the email says how many more
+    #: were found rather than growing without bound.
+    alert_max_jobs_per_digest: int = Field(default=25, ge=1, le=200)
+
+    @field_validator("email_provider")
+    @classmethod
+    def _known_email_provider(cls, value: str) -> str:
+        """Reject an unknown provider at startup rather than at send time.
+
+        A typo in EMAIL_PROVIDER used to be the kind of thing you discover when
+        the first digest run logs "unknown provider" and drops the send, hours
+        after the deploy that caused it.
+        """
+        normalized = value.strip().lower()
+        allowed = {"console", "resend"}
+        if normalized not in allowed:
+            raise ValueError(
+                f"EMAIL_PROVIDER must be one of {sorted(allowed)}, got {value!r}"
+            )
+        return normalized
+
     @field_validator("anthropic_base_url")
     @classmethod
     def _normalize_anthropic_base_url(cls, value: str | None) -> str | None:
