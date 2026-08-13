@@ -1,0 +1,117 @@
+# Continuous ATS ingest. NOT ENABLED.
+#
+# This file ends in `.disabled` on purpose, so GitHub Actions does not pick it up.
+# Turning a crawler loose on other people's public APIs is a decision for a person,
+# not a side effect of merging a branch, and the numbers below should be read
+# before anyone makes it.
+#
+# TO ENABLE
+#   1. git mv .github/workflows/ingest.yml.disabled .github/workflows/ingest.yml
+#   2. Add a repository secret INGEST_DATABASE_URL pointing at the Postgres that
+#      serves /api/v1/index/search. It must already be migrated to head.
+#   3. Push. The first run seeds 15,874 tokens and crawls the 400 most valuable.
+#
+# WHAT ONE RUN COSTS, measured on this branch at concurrency 8
+#   400 tokens is roughly 40 seconds of wall clock and 250MB of transfer on a cold
+#   corpus. Re-crawls are far cheaper: conditional GET turned a 200-board Greenhouse
+#   re-crawl from 71.9MB into about 2KB, because 139 of those boards answered 304
+#   with an empty body. So steady-state cost is dominated by boards that actually
+#   changed, which is the right thing to be paying for.
+#
+# WHY 400 AND NOT THE WHOLE CORPUS
+#   A full Greenhouse sweep of 8,333 tokens measured 11.5 minutes on its own, and
+#   the whole corpus is 15,874. Coverage is meant to accumulate across runs rather
+#   than be forced into one: `ats_board_tokens.next_check_after` schedules live
+#   boards every 6 hours, curated companies every 2, empty ones every 3 days and
+#   dead ones every 30, so a run that only gets through 400 still gets through the
+#   400 that mattered most. Raise --limit if you want more per run and can afford
+#   the minutes.
+#
+# POLITENESS
+#   Every request carries a descriptive User-Agent with a contact URL, concurrency
+#   is capped per host, 429s are honoured via Retry-After, and 404s are never
+#   retried. All four endpoints are the vendors' documented public job-board APIs
+#   (Greenhouse, Lever, Ashby, SmartRecruiters), which exist to be syndicated.
+#   If you raise concurrency, raise it slowly and watch tokens_error.
+#
+# ALTERNATIVE SCHEDULERS
+#   Nothing here is Actions-specific. `python -m job_os.ingest.cli sweep` is the
+#   whole interface. On Heroku, where job-os-api already runs, this is a Scheduler
+#   add-on job with the same command. Vercel Cron cannot host it: the sweep runs
+#   well past the function timeout.
+
+name: ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      providers:
+        description: "Space-separated subset, or blank for all"
+        required: false
+        default: ""
+      limit:
+        description: "Tokens this run may crawl"
+        required: false
+        default: "400"
+  schedule:
+    # Every six hours, offset off the hour because schedulers are busiest there.
+    # Matches the LIVE recheck interval in ingest/liveness.py.
+    - cron: "17 */6 * * *"
+
+# A sweep that overlaps itself would double the load on every vendor for no gain,
+# and the second one would find every token already claimed as not-yet-due.
+concurrency:
+  group: ingest
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    name: crawl the boards that are due
+    runs-on: ubuntu-latest
+    # Generous against the 400-token default so a slow vendor cannot strand the
+    # run mid-group; the worker commits per group and the next run resumes.
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: ${{ secrets.INGEST_DATABASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/api/uv.lock
+
+      - name: Sync dependencies
+        working-directory: apps/api
+        run: uv sync --frozen
+
+      # Fail before the first request rather than after 400 of them. Without this
+      # a missing secret produces a run that crawls four vendors' APIs and then
+      # discards everything it learned at the first database write.
+      - name: Refuse to crawl without somewhere to put the result
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::INGEST_DATABASE_URL is not set. Refusing to crawl" \
+                 "public APIs and throw the answer away."
+            exit 1
+          fi
+
+      # Deliberately not `alembic upgrade head`. A crawler should not migrate the
+      # database it writes to; deploys own that. If the schema is behind, the
+      # sweep should fail loudly rather than quietly changing it at 3am.
+      - name: Crawl
+        working-directory: apps/api
+        run: |
+          uv run python -m job_os.ingest.cli sweep \
+            --limit "${{ github.event.inputs.limit || 400 }}" \
+            --concurrency 8 \
+            ${{ github.event.inputs.providers && format('--providers {0}', github.event.inputs.providers) || '' }}
+
+      - name: Report index state
+        if: always()
+        working-directory: apps/api
+        run: uv run python -m job_os.ingest.cli status

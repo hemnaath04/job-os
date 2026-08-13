@@ -1,0 +1,9 @@
+BoschGroup
+Equinox
+Omio
+Picnic
+PublicStorage
+Splice
+Visa
+Wayfair
+WesternDigital
