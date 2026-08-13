@@ -265,7 +265,22 @@ def test_a_backed_school_claim_is_allowed_through() -> None:
     assert unbacked_shared_claims("I also studied at Northeastern.", allowed) == []
 
 
-def test_a_backed_school_does_not_license_an_unbacked_employer() -> None:
+@pytest.mark.parametrize(
+    "sentence",
+    [
+        "I also worked at Stripe.",
+        # Every one of these names an organisation while phrasing the claim in
+        # the first person plural. The unnamed rules wave a claim through once
+        # the ledger holds anything at all, so a phrasing that reaches only those
+        # rules turns one true shared school into a licence to invent an
+        # employer. Found on a sample draft rather than in a test.
+        "I saw we both worked at Stripe.",
+        "We both were at Stripe before this.",
+        "You and I both studied at Stanford.",
+        "We are both from Stripe originally.",
+    ],
+)
+def test_a_backed_school_does_not_license_an_unbacked_employer(sentence: str) -> None:
     """One piece of real common ground is not a licence for a second, invented
     one. This is the failure mode where a true alumni opener smuggles a false
     shared employer through behind it."""
@@ -273,7 +288,17 @@ def test_a_backed_school_does_not_license_an_unbacked_employer() -> None:
         facts=FACTS,
         target=OutreachTarget(full_name="Priya Raman", shared_school="Northeastern"),
     )
-    assert unbacked_shared_claims("I also worked at Stripe.", allowed)
+    assert allowed, "the fixture needs real common ground for this to prove anything"
+    assert unbacked_shared_claims(sentence, allowed)
+
+
+def test_the_school_that_is_backed_still_passes_in_the_plural_phrasing() -> None:
+    """The new patterns must not reject the true claim they were added around."""
+    allowed = shared_context(
+        facts=FACTS,
+        target=OutreachTarget(full_name="Priya Raman", shared_school="Northeastern"),
+    )
+    assert unbacked_shared_claims("We both studied at Northeastern.", allowed) == []
 
 
 def test_citing_a_shared_context_id_that_does_not_exist_is_refused() -> None:

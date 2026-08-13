@@ -192,6 +192,24 @@ _SHARED_CLAIM_PATTERNS: tuple[re.Pattern[str], ...] = (
     ),
     re.compile(r"\bfellow\s+(?P<org>[^.,;!?]{2,40})", re.I),
     re.compile(r"\balum(?:nus|na|ni)? of\s+(?P<org>[^.,;!?]{2,60})", re.I),
+    # "We both worked at X". These have to capture the organisation, not fall
+    # through to the unnamed rules below, and the difference is not cosmetic: the
+    # unnamed rules pass anything through once the ledger holds ANY entry, so a
+    # verified shared school was enough to wave "I saw we both worked at Northwind
+    # Pay" straight into a message. Caught on a sample draft, not in a test.
+    re.compile(
+        r"\b(?:we|you and i) (?:both|also) (?:worked|were|interned)\s+(?:at|for|in|on)\s+"
+        r"(?P<org>[^.,;!?]{2,60})",
+        re.I,
+    ),
+    re.compile(
+        r"\b(?:we|you and i) (?:both|also) "
+        r"(?:went to|studied at|attended|graduated from|did)\s+(?P<org>[^.,;!?]{2,60})",
+        re.I,
+    ),
+    re.compile(
+        r"\bwe(?:'?re| are|'?ve been) both (?:at|from)\s+(?P<org>[^.,;!?]{2,60})", re.I
+    ),
     # Common ground asserted with no organisation named.
     re.compile(r"\b(?:we|you and i) (?:both|also)\b", re.I),
     re.compile(r"\bwe (?:overlapped|crossed paths|worked together)\b", re.I),
