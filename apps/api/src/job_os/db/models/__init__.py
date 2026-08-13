@@ -7,6 +7,7 @@ from job_os.db.models.alert import (
 )
 from job_os.db.models.application import Application, ApplicationEvent, AppStatus
 from job_os.db.models.company import Company
+from job_os.db.models.cover_letter import CoverLetter, CoverLetterVersion
 from job_os.db.models.ingest import AtsBoardToken, CrawlRun, CrawlStatus, TokenStatus
 from job_os.db.models.job import Job
 from job_os.db.models.job_posting import JobPosting
@@ -26,6 +27,8 @@ __all__ = [
     "ApplicationEvent",
     "AtsBoardToken",
     "Company",
+    "CoverLetter",
+    "CoverLetterVersion",
     "CrawlRun",
     "CrawlStatus",
     "FactBullet",

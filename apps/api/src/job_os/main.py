@@ -14,6 +14,7 @@ from job_os.routers import (
     alerts,
     applications,
     calendar,
+    cover_letters,
     discovery,
     job_index,
     jobs,
@@ -113,6 +114,7 @@ async def readiness() -> dict[str, str | int]:
 app.include_router(alerts.router, prefix="/api/v1", tags=["alerts"])
 app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
 app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
+app.include_router(cover_letters.router, prefix="/api/v1", tags=["cover-letters"])
 app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
 # Indexed search, served from the crawled `job_postings` table. Added alongside
 # /discovery/search rather than replacing it; the swap-over is a documented step.
