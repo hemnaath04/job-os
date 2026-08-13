@@ -1,5 +1,6 @@
 packages:
   - "apps/web"
+  - "apps/extension"
   - "packages/*"
 
 # pnpm 10 refuses to run a dependency's install scripts unless it is named here.
@@ -9,3 +10,7 @@ packages:
 # all. The failure is quiet, so it is worth being explicit.
 onlyBuiltDependencies:
   - "@sentry/cli"
+  # esbuild bundles the extension. Its postinstall fetches the platform binary,
+  # and without it `pnpm --filter @job-os/extension build` fails on a missing
+  # executable rather than on anything to do with the code.
+  - "esbuild"

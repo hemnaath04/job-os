@@ -1,0 +1,153 @@
+<!doctype html>
+<!--
+  SYNTHESIZED FIXTURE, not a live capture.
+
+  Workday puts its application form behind account creation, and this build does
+  not create accounts on employer systems. So this file is written from
+  Workday's publicly documented `data-automation-id` contract, the same hooks
+  Workday's own end-to-end tests and every published Workday automation guide
+  rely on. It reproduces the shapes that matter to the adapter:
+
+    - text inputs carrying data-automation-id, with the label in a sibling
+      element rather than a <label for>, which is why the adapter needs the
+      wrapper walk in resolveRawLabel
+    - button-plus-listbox dropdowns (aria-haspopup="listbox"), whose options do
+      not exist until opened
+    - split date spinbuttons, which deliberately map to no canonical key
+    - the wizard advance button, which must never be clicked
+    - a free-text employer question
+
+  Treat assertions against this file as testing the adapter's contract, not as
+  evidence that a live Workday tenant renders exactly this.
+-->
+<html>
+  <head><meta charset="utf-8" /><title>Workday fixture</title></head>
+  <body>
+    <div data-automation-id="applyFlowPage">
+      <form>
+        <div data-automation-id="formField-legalNameSection_firstName">
+          <label>First Name<abbr title="required">*</abbr></label>
+          <input data-automation-id="legalNameSection_firstName" type="text" aria-required="true" value="" />
+        </div>
+
+        <div data-automation-id="formField-legalNameSection_lastName">
+          <label>Last Name<abbr title="required">*</abbr></label>
+          <input data-automation-id="legalNameSection_lastName" type="text" aria-required="true" value="" />
+        </div>
+
+        <div data-automation-id="formField-email">
+          <label>Email Address<abbr title="required">*</abbr></label>
+          <input data-automation-id="email" type="text" aria-required="true" value="" />
+        </div>
+
+        <div data-automation-id="formField-phone-number">
+          <label>Phone Number</label>
+          <input data-automation-id="phone-number" type="text" value="" />
+        </div>
+
+        <div data-automation-id="formField-addressSection_addressLine1">
+          <label>Address Line 1</label>
+          <input data-automation-id="addressSection_addressLine1" type="text" value="" />
+        </div>
+
+        <div data-automation-id="formField-addressSection_city">
+          <label>City</label>
+          <input data-automation-id="addressSection_city" type="text" value="" />
+        </div>
+
+        <div data-automation-id="formField-addressSection_postalCode">
+          <label>Postal Code</label>
+          <input data-automation-id="addressSection_postalCode" type="text" value="" />
+        </div>
+
+        <!-- A Workday dropdown: a button that opens a portalled listbox. The
+             options below are what appears after the click. -->
+        <div data-automation-id="formField-country">
+          <label id="country-label">Country<abbr title="required">*</abbr></label>
+          <button
+            type="button"
+            data-automation-id="countryDropdown"
+            aria-haspopup="listbox"
+            aria-labelledby="country-label"
+            aria-controls="country-listbox"
+            aria-required="true"
+          >
+            Select One
+          </button>
+        </div>
+
+        <!-- Repeating experience section: ids are prefixed per entry. -->
+        <div data-automation-id="workExperience-1">
+          <div data-automation-id="formField-jobTitle">
+            <label>Job Title</label>
+            <input data-automation-id="workExperience-1--jobTitle" type="text" value="" />
+          </div>
+          <div data-automation-id="formField-company">
+            <label>Company</label>
+            <input data-automation-id="workExperience-1--company" type="text" value="" />
+          </div>
+        </div>
+
+        <!-- Repeating education section. -->
+        <div data-automation-id="education-1">
+          <div data-automation-id="formField-school">
+            <label>School or University</label>
+            <input data-automation-id="education-1--school" type="text" value="" />
+          </div>
+          <div data-automation-id="formField-field-of-study">
+            <label>Field of Study</label>
+            <input data-automation-id="education-1--field-of-study" type="text" value="" />
+          </div>
+        </div>
+
+        <!-- Split date control. Three spinbuttons, no canonical key. -->
+        <div data-automation-id="formField-graduationDate">
+          <label>Graduation Date</label>
+          <div data-automation-id="dateInputWrapper">
+            <input data-automation-id="dateSectionMonth-input" aria-label="Month" type="text" value="" />
+            <input data-automation-id="dateSectionDay-input" aria-label="Day" type="text" value="" />
+            <input data-automation-id="dateSectionYear-input" aria-label="Year" type="text" value="" />
+          </div>
+        </div>
+
+        <!-- An employer's own question. Must never be answered. -->
+        <div data-automation-id="formField-customQuestion1">
+          <label>Please describe a time you led a project through a significant setback.<abbr title="required">*</abbr></label>
+          <textarea data-automation-id="customQuestion1" aria-required="true"></textarea>
+        </div>
+
+        <!-- Work authorization, asked as a native select here. -->
+        <div data-automation-id="formField-workAuthorization">
+          <label for="wd-work-auth">Are you legally authorized to work in the country of employment?<abbr title="required">*</abbr></label>
+          <select id="wd-work-auth" data-automation-id="workAuthorization" aria-required="true">
+            <option value=""></option>
+            <option value="Yes">Yes</option>
+            <option value="No">No</option>
+          </select>
+        </div>
+
+        <!-- Self-identification step. Off unless opted in per field. -->
+        <div data-automation-id="selfIdentifiedDisabilityData">
+          <label for="wd-gender">Gender</label>
+          <select id="wd-gender" data-automation-id="personalInfoUS--gender">
+            <option value=""></option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Decline">I do not wish to answer</option>
+          </select>
+        </div>
+
+        <!-- The wizard advance. Clicking this is how an incomplete Workday
+             application gets marked submitted. -->
+        <button type="button" data-automation-id="bottom-navigation-next-button">Save and Continue</button>
+      </form>
+    </div>
+
+    <!-- The listbox the country dropdown controls, rendered into a portal. -->
+    <div id="country-listbox" role="listbox">
+      <div role="option" data-value="US">United States of America</div>
+      <div role="option" data-value="IN">India</div>
+      <div role="option" data-value="CA">Canada</div>
+    </div>
+  </body>
+</html>

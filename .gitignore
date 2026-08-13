@@ -50,3 +50,6 @@ coverage/
 .coverage
 htmlcov/
 .vercel
+
+# Design-review hook scratch state, not part of the build.
+.impeccable/
