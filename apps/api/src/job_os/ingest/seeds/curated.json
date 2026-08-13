@@ -1,0 +1,512 @@
+[
+  {
+    "token": "stripe",
+    "name": "Stripe",
+    "domain": "stripe.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "airbnb",
+    "name": "Airbnb",
+    "domain": "airbnb.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "coinbase",
+    "name": "Coinbase",
+    "domain": "coinbase.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "databricks",
+    "name": "Databricks",
+    "domain": "databricks.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "robinhood",
+    "name": "Robinhood",
+    "domain": "robinhood.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "dropbox",
+    "name": "Dropbox",
+    "domain": "dropbox.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "brex",
+    "name": "Brex",
+    "domain": "brex.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "figma",
+    "name": "Figma",
+    "domain": "figma.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "discord",
+    "name": "Discord",
+    "domain": "discord.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "reddit",
+    "name": "Reddit",
+    "domain": "reddit.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "cloudflare",
+    "name": "Cloudflare",
+    "domain": "cloudflare.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "gitlab",
+    "name": "GitLab",
+    "domain": "gitlab.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "mongodb",
+    "name": "MongoDB",
+    "domain": "mongodb.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "datadog",
+    "name": "Datadog",
+    "domain": "datadoghq.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "anthropic",
+    "name": "Anthropic",
+    "domain": "anthropic.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "mercury",
+    "name": "Mercury",
+    "domain": "mercury.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "vercel",
+    "name": "Vercel",
+    "domain": "vercel.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "chime",
+    "name": "Chime",
+    "domain": "chime.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "affirm",
+    "name": "Affirm",
+    "domain": "affirm.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "imc",
+    "name": "IMC",
+    "domain": "imc.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "andurilindustries",
+    "name": "Anduril Industries",
+    "domain": "anduril.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "gleanwork",
+    "name": "Glean",
+    "domain": "glean.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "sambanovasystems",
+    "name": "SambaNova Systems",
+    "domain": "sambanova.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "togetherai",
+    "name": "Together AI",
+    "domain": "together.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "scaleai",
+    "name": "Scale AI",
+    "domain": "scale.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "coreweave",
+    "name": "CoreWeave",
+    "domain": "coreweave.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "figureai",
+    "name": "Figure",
+    "domain": "figure.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "nuro",
+    "name": "Nuro",
+    "domain": "nuro.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "waymo",
+    "name": "Waymo",
+    "domain": "waymo.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "wayve",
+    "name": "Wayve",
+    "domain": "wayve.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "vannevarlabs",
+    "name": "Vannevar Labs",
+    "domain": "vannevarlabs.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "snorkelai",
+    "name": "Snorkel AI",
+    "domain": "snorkel.ai",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "arizeai",
+    "name": "Arize AI",
+    "domain": "arize.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "labelbox",
+    "name": "Labelbox",
+    "domain": "labelbox.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "fireblocks",
+    "name": "Fireblocks",
+    "domain": "fireblocks.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "verkada",
+    "name": "Verkada",
+    "domain": "verkada.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "cockroachlabs",
+    "name": "Cockroach Labs",
+    "domain": "cockroachlabs.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "elastic",
+    "name": "Elastic",
+    "domain": "elastic.co",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "grafanalabs",
+    "name": "Grafana Labs",
+    "domain": "grafana.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "tailscale",
+    "name": "Tailscale",
+    "domain": "tailscale.com",
+    "provider": "greenhouse"
+  },
+  {
+    "token": "palantir",
+    "name": "Palantir",
+    "domain": "palantir.com",
+    "provider": "lever"
+  },
+  {
+    "token": "veeva",
+    "name": "Veeva Systems",
+    "domain": "veeva.com",
+    "provider": "lever"
+  },
+  {
+    "token": "gopuff",
+    "name": "Gopuff",
+    "domain": "gopuff.com",
+    "provider": "lever"
+  },
+  {
+    "token": "wealthfront",
+    "name": "Wealthfront",
+    "domain": "wealthfront.com",
+    "provider": "lever"
+  },
+  {
+    "token": "shieldai",
+    "name": "Shield AI",
+    "domain": "shield.ai",
+    "provider": "lever"
+  },
+  {
+    "token": "waabi",
+    "name": "Waabi",
+    "domain": "waabi.ai",
+    "provider": "lever"
+  },
+  {
+    "token": "dexterity",
+    "name": "Dexterity",
+    "domain": "dexterity.ai",
+    "provider": "lever"
+  },
+  {
+    "token": "zilliz",
+    "name": "Zilliz",
+    "domain": "zilliz.com",
+    "provider": "lever"
+  },
+  {
+    "token": "metabase",
+    "name": "Metabase",
+    "domain": "metabase.com",
+    "provider": "lever"
+  },
+  {
+    "token": "plaid",
+    "name": "Plaid",
+    "domain": "plaid.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "ramp",
+    "name": "Ramp",
+    "domain": "ramp.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "notion",
+    "name": "Notion",
+    "domain": "notion.so",
+    "provider": "ashby"
+  },
+  {
+    "token": "openai",
+    "name": "OpenAI",
+    "domain": "openai.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "benchling",
+    "name": "Benchling",
+    "domain": "benchling.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "linear",
+    "name": "Linear",
+    "domain": "linear.app",
+    "provider": "ashby"
+  },
+  {
+    "token": "replit",
+    "name": "Replit",
+    "domain": "replit.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "posthog",
+    "name": "PostHog",
+    "domain": "posthog.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "cohere",
+    "name": "Cohere",
+    "domain": "cohere.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "runway",
+    "name": "Runway",
+    "domain": "runwayml.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "cerebras",
+    "name": "Cerebras Systems",
+    "domain": "cerebras.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "perplexity",
+    "name": "Perplexity",
+    "domain": "perplexity.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "harvey",
+    "name": "Harvey",
+    "domain": "harvey.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "sierra",
+    "name": "Sierra",
+    "domain": "sierra.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "writer",
+    "name": "Writer",
+    "domain": "writer.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "elevenlabs",
+    "name": "ElevenLabs",
+    "domain": "elevenlabs.io",
+    "provider": "ashby"
+  },
+  {
+    "token": "deepgram",
+    "name": "Deepgram",
+    "domain": "deepgram.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "langchain",
+    "name": "LangChain",
+    "domain": "langchain.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "llamaindex",
+    "name": "LlamaIndex",
+    "domain": "llamaindex.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "crusoe",
+    "name": "Crusoe",
+    "domain": "crusoe.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "lambda",
+    "name": "Lambda",
+    "domain": "lambdalabs.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "cursor",
+    "name": "Cursor",
+    "domain": "cursor.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "baseten",
+    "name": "Baseten",
+    "domain": "baseten.co",
+    "provider": "ashby"
+  },
+  {
+    "token": "modal",
+    "name": "Modal",
+    "domain": "modal.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "fireworks",
+    "name": "Fireworks AI",
+    "domain": "fireworks.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "pinecone",
+    "name": "Pinecone",
+    "domain": "pinecone.io",
+    "provider": "ashby"
+  },
+  {
+    "token": "weaviate",
+    "name": "Weaviate",
+    "domain": "weaviate.io",
+    "provider": "ashby"
+  },
+  {
+    "token": "decagon",
+    "name": "Decagon",
+    "domain": "decagon.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "cartesia",
+    "name": "Cartesia",
+    "domain": "cartesia.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "distyl",
+    "name": "Distyl AI",
+    "domain": "distyl.ai",
+    "provider": "ashby"
+  },
+  {
+    "token": "physicalintelligence",
+    "name": "Physical Intelligence",
+    "domain": "physicalintelligence.company",
+    "provider": "ashby"
+  },
+  {
+    "token": "saronic",
+    "name": "Saronic",
+    "domain": "saronic.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "standardbots",
+    "name": "Standard Bots",
+    "domain": "standardbots.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "vanta",
+    "name": "Vanta",
+    "domain": "vanta.com",
+    "provider": "ashby"
+  },
+  {
+    "token": "confluent",
+    "name": "Confluent",
+    "domain": "confluent.io",
+    "provider": "ashby"
+  },
+  {
+    "token": "sentry",
+    "name": "Sentry",
+    "domain": "sentry.io",
+    "provider": "ashby"
+  }
+]
