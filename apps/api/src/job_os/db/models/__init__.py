@@ -9,6 +9,7 @@ from job_os.db.models.application import Application, ApplicationEvent, AppStatu
 from job_os.db.models.company import Company
 from job_os.db.models.cover_letter import CoverLetter, CoverLetterVersion
 from job_os.db.models.ingest import AtsBoardToken, CrawlRun, CrawlStatus, TokenStatus
+from job_os.db.models.interview import InterviewPrep, InterviewQuestion
 from job_os.db.models.job import Job
 from job_os.db.models.job_posting import JobPosting
 from job_os.db.models.profile import FactBullet, ProfileFact
@@ -32,6 +33,8 @@ __all__ = [
     "CrawlRun",
     "CrawlStatus",
     "FactBullet",
+    "InterviewPrep",
+    "InterviewQuestion",
     "Job",
     "JobPosting",
     "ProfileFact",

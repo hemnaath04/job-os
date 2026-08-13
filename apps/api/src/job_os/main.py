@@ -16,6 +16,7 @@ from job_os.routers import (
     calendar,
     cover_letters,
     discovery,
+    interviews,
     job_index,
     jobs,
     me,
@@ -116,6 +117,7 @@ app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
 app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
 app.include_router(cover_letters.router, prefix="/api/v1", tags=["cover-letters"])
 app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
+app.include_router(interviews.router, prefix="/api/v1", tags=["interviews"])
 # Indexed search, served from the crawled `job_postings` table. Added alongside
 # /discovery/search rather than replacing it; the swap-over is a documented step.
 app.include_router(job_index.router, prefix="/api/v1", tags=["index"])
