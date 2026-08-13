@@ -13,6 +13,7 @@ from job_os.observability import setup_observability
 from job_os.routers import (
     applications,
     calendar,
+    cover_letters,
     discovery,
     jobs,
     me,
@@ -110,6 +111,7 @@ async def readiness() -> dict[str, str | int]:
 
 app.include_router(applications.router, prefix="/api/v1", tags=["applications"])
 app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
+app.include_router(cover_letters.router, prefix="/api/v1", tags=["cover-letters"])
 app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
 app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"])
 app.include_router(me.router, prefix="/api/v1", tags=["me"])

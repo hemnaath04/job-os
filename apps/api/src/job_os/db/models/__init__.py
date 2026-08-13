@@ -1,5 +1,6 @@
 from job_os.db.models.application import Application, ApplicationEvent, AppStatus
 from job_os.db.models.company import Company
+from job_os.db.models.cover_letter import CoverLetter, CoverLetterVersion
 from job_os.db.models.job import Job
 from job_os.db.models.profile import FactBullet, ProfileFact
 from job_os.db.models.resume import Resume, ResumeRevisionMessage, ResumeVersion
@@ -11,6 +12,8 @@ __all__ = [
     "Application",
     "ApplicationEvent",
     "Company",
+    "CoverLetter",
+    "CoverLetterVersion",
     "FactBullet",
     "Job",
     "ProfileFact",

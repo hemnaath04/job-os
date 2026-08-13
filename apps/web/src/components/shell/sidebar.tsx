@@ -8,6 +8,7 @@ import {
   CalendarDays,
   ChevronsLeft,
   ChevronsRight,
+  FileSignature,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -37,6 +38,7 @@ const NAV: NavItem[] = [
   { href: "/tailor", label: "AI Resume Tailor", icon: Sparkles, section: "Pipeline" },
   { href: "/jobs", label: "Job Finder", icon: Radar, section: "Pipeline" },
   { href: "/resumes", label: "Resumes", icon: FileText, section: "Documents" },
+  { href: "/cover-letters", label: "Cover Letters", icon: FileSignature, section: "Documents" },
   { href: "/profile", label: "Profile", icon: UserSquare2, section: "Documents" },
   { href: "/calendar", label: "Calendar", icon: CalendarDays, section: "Other" },
 ];
