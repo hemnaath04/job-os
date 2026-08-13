@@ -1,11 +1,13 @@
 "use client";
 
 import { formatDistanceToNow } from "date-fns";
-import { ExternalLink, Sparkles, Trash2 } from "lucide-react";
+import { ExternalLink, Send, Sparkles, Trash2 } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
 import { toast } from "sonner";
 import { reportFailure } from "@/lib/errors";
 import { CompanyAvatar } from "@/components/company-avatar";
+import { OutreachPanel } from "@/components/outreach-panel";
 import { StatusPill } from "@/components/status-pill";
 import type { Application } from "@/lib/types";
 
@@ -18,6 +20,11 @@ export function ApplicationsTable({
   onArchive: (id: string) => Promise<unknown>;
   onRestore: (application: Application) => Promise<unknown>;
 }) {
+  // One panel for the whole table rather than one per row: it is a modal, so
+  // only ever one can be open, and mounting a hundred of them to show one is
+  // a hundred idle queries.
+  const [outreachFor, setOutreachFor] = useState<Application | null>(null);
+
   function openJD(url: string | null | undefined) {
     if (!url) return;
     window.open(url, "_blank", "noopener,noreferrer");
@@ -122,6 +129,17 @@ export function ApplicationsTable({
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
+                      setOutreachFor(a);
+                    }}
+                    onDoubleClick={(e) => e.stopPropagation()}
+                    title="Draft outreach for this role"
+                    className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2 py-1 text-xs font-medium text-[color:var(--color-text-muted)] transition hover:text-[color:var(--color-text)]"
+                  >
+                    <Send className="size-3" /> Outreach
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
                       onDelete(a);
                     }}
                     onDoubleClick={(e) => e.stopPropagation()}
@@ -137,6 +155,15 @@ export function ApplicationsTable({
           ))}
         </tbody>
       </table>
+      {outreachFor && (
+        <OutreachPanel
+          application={outreachFor}
+          open
+          onOpenChange={(next) => {
+            if (!next) setOutreachFor(null);
+          }}
+        />
+      )}
     </div>
   );
 }

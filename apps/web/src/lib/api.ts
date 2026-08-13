@@ -6,6 +6,12 @@ import type {
   DiscoverySearchResponse,
   Job,
   MeRead,
+  OutreachContact,
+  OutreachContactCreate,
+  OutreachDraft,
+  OutreachHistoryRow,
+  OutreachStatus,
+  OutreachVariant,
   ProfileFact,
   Resume,
   ResumeChatResponse,
@@ -306,6 +312,52 @@ const legacyApi = {
     }),
   archiveApplication: (id: string) =>
     request<void>(`/applications/${id}`, { method: "DELETE" }),
+
+  listOutreachContacts: (applicationId: string) =>
+    request<OutreachContact[]>(`/outreach/applications/${applicationId}/contacts`),
+  addOutreachContact: (applicationId: string, body: OutreachContactCreate) =>
+    request<OutreachContact>(`/outreach/applications/${applicationId}/contacts`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  patchOutreachContact: (contactId: string, body: Partial<OutreachContactCreate> & { do_not_contact?: boolean }) =>
+    request<OutreachContact>(`/outreach/contacts/${contactId}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteOutreachContact: (contactId: string) =>
+    request<void>(`/outreach/contacts/${contactId}`, { method: "DELETE" }),
+  outreachStatus: (contactId: string) =>
+    request<OutreachStatus>(`/outreach/contacts/${contactId}/status`),
+  /**
+   * One drafting run. Slower than an ordinary call because it is a model pass
+   * plus, when the first draft breaks a rule, a repair pass, so it borrows the
+   * revision timeout rather than the default.
+   */
+  draftOutreach: (contactId: string, body: { variant: OutreachVariant; note?: string }) =>
+    withTimeout(
+      request<OutreachDraft>(`/outreach/contacts/${contactId}/draft`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
+      REVISE_TIMEOUT_MS,
+      "The draft is taking longer than expected. Try again in a moment.",
+    ),
+  /**
+   * The user telling us the message actually went. Nothing in this app sends
+   * anything, so this is the only thing that makes a send a fact, and it is
+   * what every later double-message check reads.
+   */
+  logOutreachSent: (
+    contactId: string,
+    body: { variant: OutreachVariant; channel?: string; subject?: string; body?: string },
+  ) =>
+    request<OutreachHistoryRow>(`/outreach/contacts/${contactId}/sent`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  outreachHistory: (applicationId: string) =>
+    request<OutreachHistoryRow[]>(`/outreach/applications/${applicationId}/history`),
 
   listJobs: () => request<Job[]>("/jobs"),
   getJob: (id: string) => request<Job>(`/jobs/${id}`),

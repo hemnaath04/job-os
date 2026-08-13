@@ -16,6 +16,7 @@ from job_os.routers import (
     discovery,
     jobs,
     me,
+    outreach,
     profile,
     resumes,
 )
@@ -113,5 +114,6 @@ app.include_router(calendar.router, prefix="/api/v1", tags=["calendar"])
 app.include_router(discovery.router, prefix="/api/v1", tags=["discovery"])
 app.include_router(jobs.router, prefix="/api/v1", tags=["jobs"])
 app.include_router(me.router, prefix="/api/v1", tags=["me"])
+app.include_router(outreach.router, prefix="/api/v1", tags=["outreach"])
 app.include_router(profile.router, prefix="/api/v1", tags=["profile"])
 app.include_router(resumes.router, prefix="/api/v1", tags=["resumes"])

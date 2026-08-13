@@ -484,3 +484,116 @@ export interface Application {
   created_at: string;
   updated_at: string;
 }
+
+/** The four situations a job search actually produces. */
+export type OutreachVariant =
+  | "cold_hiring_manager"
+  | "referral_ask"
+  | "alumni"
+  | "post_application_followup";
+
+export type ContactRelationship =
+  | "hiring_manager"
+  | "recruiter"
+  | "engineer"
+  | "alumni"
+  | "other";
+
+export interface OutreachContact {
+  id: string;
+  application_id: string;
+  full_name: string;
+  title: string | null;
+  company_name: string | null;
+  email: string | null;
+  /**
+   * Where the address came from. Shown to the user rather than smoothed away:
+   * an address they read off a company page and one a provider inferred from a
+   * domain pattern are different bets, and the bounce is theirs to accept.
+   */
+  email_source: string | null;
+  confidence: number | null;
+  linkedin_url: string | null;
+  evidence_url: string | null;
+  relationship_kind: ContactRelationship;
+  provider: string;
+  /**
+   * What the user asserts they share with this person. Filling these in does
+   * NOT license the message to say it: the API intersects them with the
+   * verified fact vault first, and an assertion with no matching verified fact
+   * produces nothing the draft may claim.
+   */
+  shared_school: string | null;
+  shared_employer: string | null;
+  referred_by: string | null;
+  do_not_contact: boolean;
+  notes: string | null;
+  messages_sent: number;
+  last_sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface OutreachContactCreate {
+  full_name: string;
+  title?: string | null;
+  company_name?: string | null;
+  email?: string | null;
+  linkedin_url?: string | null;
+  evidence_url?: string | null;
+  relationship_kind?: ContactRelationship;
+  shared_school?: string | null;
+  shared_employer?: string | null;
+  referred_by?: string | null;
+  notes?: string | null;
+}
+
+/** One phrase in the message and the verified row that backs it. */
+export interface OutreachProvenanceRow {
+  phrase: string;
+  evidence_kind: string;
+  evidence_id: string;
+  evidence_text: string;
+}
+
+export interface OutreachSharedContextRow {
+  id: string;
+  kind: string;
+  claim: string;
+}
+
+export interface OutreachFollowUp {
+  suggested_at: string | null;
+  label: string;
+  is_final: boolean;
+}
+
+export interface OutreachDraft {
+  contact_id: string;
+  variant: OutreachVariant;
+  subject: string;
+  body: string;
+  word_count: number;
+  word_cap: number;
+  provenance: OutreachProvenanceRow[];
+  shared_context_used: OutreachSharedContextRow[];
+  follow_up: OutreachFollowUp;
+  warnings: string[];
+  note: string;
+}
+
+export interface OutreachStatus {
+  can_draft: boolean;
+  blocked_reason: string | null;
+  messages_sent: number;
+}
+
+export interface OutreachHistoryRow {
+  kind: string;
+  occurred_at: string;
+  contact_id: string | null;
+  contact_name: string | null;
+  variant: string | null;
+  channel: string | null;
+  subject: string | null;
+}
