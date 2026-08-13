@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>job.os Autofill</title>
+    <style>
+      /* Tokens lifted from apps/web/src/app/globals.css so the popup reads as
+         part of job.os rather than as a browser dialog. */
+      :root {
+        --bg: #f1efe3;
+        --surface-1: #ffffff;
+        --surface-2: #f7f5eb;
+        --surface-3: #efecdd;
+        --border: #e5e1d1;
+        --text: #2a2530;
+        --text-muted: #635c68;
+        --text-dim: #837b6e;
+        --accent: #ffe787;
+        --accent-hover: #f8d64f;
+        --accent-border: #e9c64a;
+        --accent-ink: #8a6d12;
+        --on-accent: #221f0e;
+        --rose-ink: #a14750;
+        --mint-ink: #3e6e4c;
+        --radius-control: 0.7rem;
+        --radius-nested: 0.375rem;
+        --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+        --dur: 190ms;
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        width: 340px;
+        margin: 0;
+        padding: 14px;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Manrope", "Avenir Next", ui-sans-serif, system-ui, sans-serif;
+        font-size: 13px;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      h1 { margin: 0 0 2px; font-size: 14px; font-weight: 700; letter-spacing: -0.01em; }
+      .sub { margin: 0 0 12px; font-size: 12px; color: var(--text-muted); }
+
+      .card {
+        background: var(--surface-1);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-control);
+        padding: 11px 12px;
+        margin-bottom: 10px;
+      }
+
+      #status { font-size: 12px; color: var(--text-muted); }
+      #status.good { color: var(--mint-ink); }
+      #status.bad { color: var(--rose-ink); }
+
+      button.primary {
+        width: 100%;
+        appearance: none;
+        border: 1px solid var(--accent-border);
+        background: var(--accent);
+        color: var(--on-accent);
+        font-family: inherit;
+        font-size: 13px;
+        font-weight: 700;
+        padding: 10px 12px;
+        border-radius: var(--radius-control);
+        cursor: pointer;
+        transition: background var(--dur) var(--ease-out), transform var(--dur) var(--ease-out);
+      }
+      button.primary:hover:not(:disabled) { background: var(--accent-hover); }
+      button.primary:active:not(:disabled) { transform: translateY(1px); }
+      button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+      button.primary:focus-visible { outline: 2px solid var(--accent-ink); outline-offset: 2px; }
+
+      details { margin-top: 10px; }
+      summary {
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--text-muted);
+        list-style: none;
+      }
+      summary::-webkit-details-marker { display: none; }
+      summary::before { content: "▸ "; color: var(--text-dim); }
+      details[open] summary::before { content: "▾ "; }
+
+      .eeo-note {
+        margin: 8px 0 8px;
+        font-size: 11.5px;
+        line-height: 1.45;
+        color: var(--text-dim);
+      }
+
+      label.toggle {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 0;
+        font-size: 12px;
+        border-top: 1px solid var(--border);
+      }
+      label.toggle:first-of-type { border-top: none; }
+      label.toggle input { accent-color: var(--accent-ink); margin: 0; }
+
+      .pledge {
+        margin: 10px 0 0;
+        padding: 9px 10px;
+        background: var(--surface-2);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-nested);
+        font-size: 11.5px;
+        line-height: 1.5;
+        color: var(--text-muted);
+      }
+      .pledge b { color: var(--accent-ink); }
+    </style>
+  </head>
+  <body>
+    <h1>job.os Autofill</h1>
+    <p class="sub">Fills only what your verified profile already says.</p>
+
+    <div class="card">
+      <div id="status">Checking your session...</div>
+    </div>
+
+    <button class="primary" id="fill" type="button" disabled>Fill this application</button>
+
+    <details>
+      <summary>Demographic questions</summary>
+      <p class="eeo-note">
+        Every one of these is off. Nothing is shared until you turn on that
+        specific question here. Leaving them off is a normal answer and
+        employers cannot treat it as one.
+      </p>
+      <label class="toggle"><input type="checkbox" data-key="eeo_gender" /> Gender</label>
+      <label class="toggle"><input type="checkbox" data-key="eeo_race" /> Race</label>
+      <label class="toggle"><input type="checkbox" data-key="eeo_hispanic" /> Hispanic or Latino origin</label>
+      <label class="toggle"><input type="checkbox" data-key="eeo_veteran" /> Veteran status</label>
+      <label class="toggle"><input type="checkbox" data-key="eeo_disability" /> Disability status</label>
+    </details>
+
+    <p class="pledge">
+      <b>This extension never submits.</b> It fills what it can quote from your
+      profile, tells you what it left blank and why, and stops. You send the
+      application.
+    </p>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

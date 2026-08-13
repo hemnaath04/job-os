@@ -39,9 +39,62 @@ def _key(kind: str, org: str | None, title: str) -> tuple[str, str, str]:
     return (kind, (org or "").strip().lower(), title.strip().lower())
 
 
+def _contact_fact(doc: dict[str, Any]) -> ProfileFact | None:
+    """One `contact` fact carrying JSON Resume `basics`.
+
+    Everything an application form asks for before it asks anything interesting
+    — name, email, phone, address, LinkedIn, GitHub — lives here, so the
+    autofill extension can read it from the same vault as everything else and
+    get the same `verified` gate for free. Values are copied verbatim; the
+    `profiles[]` array is flattened to network -> url because picking a format
+    for a URL we did not receive would be inventing one.
+
+    Returns None when `basics` has no name, since a contact card with no owner
+    is not worth a row.
+    """
+    basics = doc.get("basics") or {}
+    name = (basics.get("name") or "").strip()
+    if not name:
+        return None
+
+    location = basics.get("location") or {}
+    profiles: dict[str, str] = {}
+    for entry in basics.get("profiles", []) or []:
+        network = (entry.get("network") or "").strip().lower()
+        url = (entry.get("url") or "").strip()
+        if network and url:
+            profiles[network] = url
+
+    return ProfileFact(
+        kind="contact",
+        title=name,
+        org=None,
+        location=location.get("city"),
+        source_url=(basics.get("url") or "").strip() or None,
+        payload={
+            "name": name,
+            "label": basics.get("label"),
+            "email": basics.get("email"),
+            "phone": basics.get("phone"),
+            "url": basics.get("url"),
+            "address": location.get("address"),
+            "city": location.get("city"),
+            "region": location.get("region"),
+            "postalCode": location.get("postalCode"),
+            "countryCode": location.get("countryCode"),
+            "profiles": profiles,
+        },
+    )
+
+
 def _facts_from_json_resume(doc: dict[str, Any]) -> list[tuple[ProfileFact, list[str]]]:
     """Yield (fact, bullets[]) pairs. Skills get one fact each, no bullets."""
     out: list[tuple[ProfileFact, list[str]]] = []
+
+    # Contact card (JSON Resume `basics`)
+    contact = _contact_fact(doc)
+    if contact is not None:
+        out.append((contact, []))
 
     # Education
     for entry in doc.get("education", []) or []:

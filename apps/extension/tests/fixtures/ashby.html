@@ -1,0 +1,84 @@
+<!doctype html>
+<!--
+  SYNTHESIZED FIXTURE, not a live capture.
+
+  Ashby renders its application form client side, so a plain GET returns an
+  empty React shell with no `_systemfield_` ids in it. Driving a headless
+  browser to render it was attempted and abandoned rather than pursued harder.
+  This file is therefore written from Ashby's documented field contract:
+  `_systemfield_*` ids for the fields Ashby defines itself, UUID names for the
+  employer's own questions, and proper `<label for>` wiring throughout, which is
+  the thing Ashby genuinely does well.
+
+  What it exercises: system field ids resolving by hint, a UUID-named custom
+  question resolving to nothing, and a demographic block that stays blank.
+-->
+<html>
+  <head><meta charset="utf-8" /><title>Ashby fixture</title></head>
+  <body>
+    <form class="ashby-application-form">
+      <div class="ashby-application-form-field-entry">
+        <label for="_systemfield_name">Name<span aria-hidden="true">*</span></label>
+        <input id="_systemfield_name" name="_systemfield_name" type="text" required value="" />
+      </div>
+
+      <div class="ashby-application-form-field-entry">
+        <label for="_systemfield_email">Email<span aria-hidden="true">*</span></label>
+        <input id="_systemfield_email" name="_systemfield_email" type="email" required value="" />
+      </div>
+
+      <div class="ashby-application-form-field-entry">
+        <label for="_systemfield_phone">Phone</label>
+        <input id="_systemfield_phone" name="_systemfield_phone" type="tel" value="" />
+      </div>
+
+      <div class="ashby-application-form-field-entry">
+        <label for="_systemfield_resume">Resume<span aria-hidden="true">*</span></label>
+        <input id="_systemfield_resume" name="_systemfield_resume" type="file" required />
+      </div>
+
+      <div class="ashby-application-form-field-entry">
+        <label for="_systemfield_linkedin">LinkedIn</label>
+        <input id="_systemfield_linkedin" name="_systemfield_linkedin" type="text" value="" />
+      </div>
+
+      <!-- An employer question. The name is a UUID and carries no meaning, so
+           the only signal is the label, and the label is prose. -->
+      <div class="ashby-application-form-field-entry">
+        <label for="f4c1b2a0-91d3-4e77-9a15-2b6c8de0f331">
+          Please provide an example of your exceptional ability.<span aria-hidden="true">*</span>
+        </label>
+        <textarea
+          id="f4c1b2a0-91d3-4e77-9a15-2b6c8de0f331"
+          name="f4c1b2a0-91d3-4e77-9a15-2b6c8de0f331"
+          required
+        ></textarea>
+      </div>
+
+      <!-- A short custom question that is still not answerable from a profile. -->
+      <div class="ashby-application-form-field-entry">
+        <label for="a1d7c3e9-55b2-4c18-8f30-77e9a1c4b202">How did you hear about us?</label>
+        <input
+          id="a1d7c3e9-55b2-4c18-8f30-77e9a1c4b202"
+          name="a1d7c3e9-55b2-4c18-8f30-77e9a1c4b202"
+          type="text"
+          value=""
+        />
+      </div>
+
+      <div data-testid="eeoc">
+        <div class="ashby-application-form-field-entry">
+          <label for="eeoc-gender">Gender</label>
+          <select id="eeoc-gender" name="eeoc-gender">
+            <option value=""></option>
+            <option value="Male">Male</option>
+            <option value="Female">Female</option>
+            <option value="Decline">Decline to self identify</option>
+          </select>
+        </div>
+      </div>
+
+      <button type="submit" class="ashby-application-form-submit-button">Submit Application</button>
+    </form>
+  </body>
+</html>

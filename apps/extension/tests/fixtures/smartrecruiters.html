@@ -1,0 +1,83 @@
+<!doctype html>
+<!--
+  SYNTHESIZED FIXTURE, not a live capture.
+
+  jobs.smartrecruiters.com redirects to a marketing site, and the application
+  form itself sits behind bot protection that serves a challenge to anything
+  scripted. Working around that was not attempted. This file is written from
+  SmartRecruiters' documented field names and `data-test` hooks.
+
+  What it exercises: camelCase name resolution, the `field-<name>` data-test
+  pattern, a native country select, and a custom question left blank.
+-->
+<html>
+  <head><meta charset="utf-8" /><title>SmartRecruiters fixture</title></head>
+  <body>
+    <div data-test="application-form">
+      <form id="sr-application-form">
+        <div class="field">
+          <label for="firstName">First name<span class="required">*</span></label>
+          <input id="firstName" name="firstName" data-test="field-firstName" type="text" required value="" />
+        </div>
+
+        <div class="field">
+          <label for="lastName">Last name<span class="required">*</span></label>
+          <input id="lastName" name="lastName" data-test="field-lastName" type="text" required value="" />
+        </div>
+
+        <div class="field">
+          <label for="email">Email<span class="required">*</span></label>
+          <input id="email" name="email" data-test="field-email" type="email" required value="" />
+        </div>
+
+        <div class="field">
+          <label for="phoneNumber">Phone number</label>
+          <input id="phoneNumber" name="phoneNumber" data-test="field-phoneNumber" type="tel" value="" />
+        </div>
+
+        <div class="field">
+          <label for="street">Street address</label>
+          <input id="street" name="street" data-test="field-street" type="text" value="" />
+        </div>
+
+        <div class="field">
+          <label for="city">City</label>
+          <input id="city" name="city" data-test="field-city" type="text" value="" />
+        </div>
+
+        <div class="field">
+          <label for="postalCode">Postal code</label>
+          <input id="postalCode" name="postalCode" data-test="field-postalCode" type="text" value="" />
+        </div>
+
+        <div class="field">
+          <label for="country">Country</label>
+          <select id="country" name="country" data-test="field-country">
+            <option value=""></option>
+            <option value="US">United States</option>
+            <option value="IN">India</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label for="linkedinProfileUrl">LinkedIn profile</label>
+          <input
+            id="linkedinProfileUrl"
+            name="linkedinProfileUrl"
+            data-test="field-linkedinProfileUrl"
+            type="text"
+            value=""
+          />
+        </div>
+
+        <!-- Employer question. Prose, so it stays blank. -->
+        <div class="field">
+          <label for="q-motivation">Why do you want to work here?<span class="required">*</span></label>
+          <textarea id="q-motivation" name="q-motivation" required></textarea>
+        </div>
+
+        <button type="submit" data-test="button-submit">Submit application</button>
+      </form>
+    </div>
+  </body>
+</html>
