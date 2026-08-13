@@ -194,6 +194,70 @@ def test_an_ownership_verb_the_evidence_uses_is_kept() -> None:
     assert "worked on" in scaffold.joined()
 
 
+def test_the_ownership_guard_reads_who_did_the_owning() -> None:
+    """The sentence this guard must never delete.
+
+    Scoping your own contribution against somebody else's ownership is the most
+    honest thing a candidate can say, and an earlier version of this guard
+    deleted it, because "owned" appeared anywhere in the sentence. A guard that
+    silently removes the good sentence is worse than no guard: the candidate
+    walks in believing they said something they did not.
+    """
+    scaffold, _evidence, _gap, _note, removed = _ground(
+        _question(
+            fact_bullet_ids=["b-epam-go"],
+            scaffold=AnswerScaffold(
+                situation="The platform team owned that service.",
+                action="I worked on the test suite over it and fixed the flaky cases.",
+            ),
+        )
+    )
+    assert scaffold is not None
+    assert removed == []
+    assert "platform team owned" in scaffold.joined()
+
+
+def test_ordinary_english_is_not_an_ownership_claim() -> None:
+    """"Led to", "drove the decision" and "managed to" are not claims to a title.
+
+    Every one of these was removed by the first version of the guard, measured
+    against the same evidence. They are causation and idiom, not ownership, and
+    they are common in exactly the spoken register a scaffold is written in.
+    """
+    scaffold, _evidence, _gap, _note, removed = _ground(
+        _question(
+            fact_bullet_ids=["b-js-concurrency"],
+            scaffold=AnswerScaffold(
+                situation="A slow source could stall the whole run.",
+                task="That drove the decision to bound the pool.",
+                action="I managed to get it bounded without a rewrite.",
+                result="The investigation led to a fix in the scraper.",
+            ),
+        )
+    )
+    assert scaffold is not None
+    assert removed == []
+    for phrase in ("drove the decision", "managed to", "led to"):
+        assert phrase in scaffold.joined()
+
+
+def test_first_person_ownership_the_evidence_does_not_record_is_stripped() -> None:
+    """The other half of the same rule: "I owned it" is a claim, and it needs proof."""
+    scaffold, _evidence, _gap, _note, removed = _ground(
+        _question(
+            fact_bullet_ids=["b-epam-go"],
+            scaffold=AnswerScaffold(
+                action="I investigated the failures and fixed the flaky tests.",
+                result="I owned the pricing engine end to end after that.",
+            ),
+        )
+    )
+    assert scaffold is not None
+    assert "I owned" not in scaffold.joined()
+    assert any("ownership or title claim" in item for item in removed)
+    assert "flaky" in scaffold.joined()
+
+
 def test_a_number_the_evidence_does_not_carry_is_stripped() -> None:
     scaffold, _evidence, _gap, _note, removed = _ground(
         _question(

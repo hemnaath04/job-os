@@ -159,6 +159,65 @@ def test_a_backed_bullet_is_not_a_defence_risk() -> None:
     assert report.defence_risks == []
 
 
+def test_a_resume_from_another_backend_is_not_reported_as_all_unbacked() -> None:
+    """The loudest possible way to be wrong, and it is reachable in production.
+
+    The resume version is always read from Postgres, and the vault can arrive
+    from the Appwrite workspace, where ids are 20-character tokens rather than
+    UUIDs. Every rule here compares ids, so with nothing in common every bullet
+    on the page comes back as "no longer in your verified profile". Telling a
+    user their whole resume is unbacked, because two backends spell ids
+    differently, is worse than telling them nothing.
+
+    The caller says so explicitly rather than this being inferred from the
+    overlap. Inferring it was tried first and is not sound: see the test below.
+    """
+    report = _report(
+        provenance_comparable=False,
+        resume_bullets=[
+            ResumeBullet(
+                section="work",
+                text="Migrated the suite's CI/CD pipeline.",
+                fact_bullet_id="68a1f2c9d4e5b6a7c8d9",
+                fact_id="68a1f2c9d4e5b6a7c8d0",
+            ),
+            ResumeBullet(
+                section="projects",
+                text="Built a FastAPI service over PostgreSQL.",
+                fact_bullet_id="68a1f2c9d4e5b6a7c8e1",
+                fact_id="68a1f2c9d4e5b6a7c8e0",
+            ),
+        ],
+    )
+    assert report.defence_risks == []
+    # The readiness half is unaffected: it matches on wording, not on ids.
+    assert report.score is not None
+
+
+def test_one_deleted_fact_looks_exactly_like_a_foreign_id_space() -> None:
+    """Why the switch above is a parameter and not a heuristic.
+
+    A single resume bullet whose source fact was deleted shares zero ids with the
+    vault, which is byte for byte what a foreign id space looks like. A guard that
+    inferred "incomparable" from zero overlap would silence this, the true
+    positive it exists to report. Same inputs as the case above, opposite answer,
+    and the only thing that differs is what the caller knows about where the two
+    sides came from.
+    """
+    report = _report(
+        resume_bullets=[
+            ResumeBullet(
+                section="work",
+                text="Cut pipeline runtime from 2 minutes to 10 seconds.",
+                fact_bullet_id="b-deleted",
+                fact_id="fact-epam",
+            )
+        ]
+    )
+    assert len(report.defence_risks) == 1
+    assert "no longer in your verified profile" in report.defence_risks[0].reason
+
+
 def test_defence_risks_stay_out_of_the_number() -> None:
     """Two different questions, two different answers, one number each.
 

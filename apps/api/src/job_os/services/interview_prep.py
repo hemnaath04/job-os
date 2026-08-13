@@ -176,24 +176,57 @@ _ACCOLADE_TERMS = (
 # This is the career-ops rule enforced one layer further out: prefer "worked on"
 # to "owned", "led" or "drove" unless a verified fact says otherwise. Accuracy
 # beats a stronger-sounding verb, and it beats it hardest out loud.
-_OWNERSHIP_TERMS = (
-    "led",
-    "leading",
+#
+# SPLIT IN TWO, because a flat list of these words was measured against ordinary
+# English and removed the wrong sentences. Matched anywhere in a sentence, "led"
+# deletes "the investigation led to a root cause", "drove" deletes "that drove
+# the decision", "managed" deletes "I managed to get the suite green", and,
+# worst of the four, "owned" deletes "the platform team owned that service, and
+# I contributed the test harness" -- which is the honest scoping sentence this
+# whole tool is trying to get a candidate to say. A guard that silently deletes
+# the good sentence is worse than no guard, because the candidate never sees
+# what went missing from their own answer.
+#
+# So the same rule `_ACCOLADE_TERMS` states for itself applies here: short and
+# specific, so false positives stay bounded.
+
+# Titles and sole-credit claims. Unambiguous in any sentence: there is no
+# innocent reading of "single-handedly" or "the team lead role".
+_OWNERSHIP_TITLES = (
     "team lead",
     "tech lead",
-    "owned",
-    "managed",
-    "supervised",
-    "directed",
-    "headed",
     "in charge",
-    "promoted",
-    "drove",
+    "supervised",
     "solely",
     "single-handedly",
     "by myself",
     "on my own",
 )
+
+# Verbs that claim ownership only when the candidate is the one doing them.
+# "The platform team owned it" is a scoping statement about somebody else and is
+# exactly what we want; "I owned it" is a claim about the candidate that the
+# evidence has to carry. Deliberately not "promoted", which `_ACCOLADE_TERMS`
+# already covers and which would otherwise report the same sentence twice.
+_OWNERSHIP_VERBS = ("led", "leading", "owned", "managed", "ran", "directed", "headed", "drove")
+
+# First person, plus the auxiliaries that still leave the candidate the subject.
+# `_OWNERSHIP_VERBS` only counts inside one of these.
+_FIRST_PERSON_SUBJECT = r"(?:i|we)(?:'ve|'d|\s+(?:have|had|also|then|personally))?\s+"
+
+# "managed to" is the idiom for "succeeded in", not a claim to have managed
+# anything or anyone. The only exclusion here, and it earns its place: it is
+# common in exactly the register a spoken interview answer is written in.
+_OWNERSHIP_IDIOMS = (re.compile(r"(?<!\w)managed\s+to(?!\w)"),)
+
+
+def _claims_ownership(sentence: str, term: str) -> bool:
+    """Whether `sentence` claims `term` for the speaker rather than mentioning it."""
+    if any(idiom.search(sentence) for idiom in _OWNERSHIP_IDIOMS) and term == "managed":
+        return False
+    return bool(
+        re.search(rf"(?<!\w){_FIRST_PERSON_SUBJECT}{re.escape(term)}(?!\w)", sentence)
+    )
 
 
 def _mentions_term(haystack: str, term: str) -> bool:
@@ -341,6 +374,7 @@ def readiness(
     resume_bullets: list[ResumeBullet] | None = None,
     unverified_metric_bullet_ids: frozenset[str] = frozenset(),
     model_estimate: int | None = None,
+    provenance_comparable: bool = True,
 ) -> ReadinessReport:
     """How much of what this posting asks about the candidate can evidence.
 
@@ -414,6 +448,7 @@ def readiness(
                 bullet.id for bullets in bullets_by_fact.values() for bullet in bullets
             ),
             unverified_metric_bullet_ids=unverified_metric_bullet_ids,
+            comparable=provenance_comparable,
         ),
         # Reported rather than dropped. A requirement sentence no resume and no
         # fact will ever word-match is still something the interview will cover,
@@ -436,6 +471,7 @@ def _defence_risks(
     *,
     verified_bullet_ids: frozenset[str],
     unverified_metric_bullet_ids: frozenset[str],
+    comparable: bool = True,
 ) -> list[DefenceRisk]:
     """Bullets already on the resume that the vault cannot currently back.
 
@@ -450,7 +486,27 @@ def _defence_risks(
     "can you speak to what they asked for"; this answers "what on your page will
     you be asked to defend". Averaging two different questions into one number is
     how a number stops meaning anything.
+
+    Both rules compare ids, so both are meaningless when the two sides mint ids
+    differently, and `comparable=False` says so. That is a real deployment and
+    not a hypothetical: the resume version is read from Postgres, the vault can
+    arrive from the Appwrite workspace, and a Postgres UUID never matches an
+    Appwrite token. Left unguarded, every bullet on the page comes back as "no
+    longer verified", which is the loudest possible way to be wrong.
+
+    The caller decides, rather than this function guessing from the overlap.
+    Guessing was tried and is not sound: with one bullet on the resume, zero
+    overlap is exactly what a single genuinely deleted fact looks like, so a
+    heuristic here silences the true positive it exists to report.
     """
+    if not comparable:
+        log.info(
+            "interview_prep.defence_risks_not_comparable",
+            reason="resume provenance and vault ids come from different backends",
+            resume_bullets=len(resume_bullets),
+        )
+        return []
+
     risks: list[DefenceRisk] = []
     for bullet in resume_bullets:
         where = f"{bullet.section}: {bullet.text[:80]}"
@@ -665,8 +721,14 @@ def _unsupported_sentences(
             reasons.append(f"claim the evidence does not record ({', '.join(accolades)})")
         ownership = [
             term
-            for term in _OWNERSHIP_TERMS
+            for term in _OWNERSHIP_TITLES
             if _mentions_term(lowered, term) and not _mentions_term(haystack, term)
+        ] + [
+            # The verb half is gated on the candidate being the subject, so
+            # describing somebody else's ownership is not a claim to it.
+            term
+            for term in _OWNERSHIP_VERBS
+            if _claims_ownership(lowered, term) and not _mentions_term(haystack, term)
         ]
         if ownership:
             reasons.append(
@@ -881,6 +943,7 @@ async def generate_prep(
     bullets_by_fact: dict[str, list[TailorBullet]],
     resume_bullets: list[ResumeBullet] | None = None,
     unverified_metric_bullet_ids: frozenset[str] = frozenset(),
+    provenance_comparable: bool = True,
 ) -> PrepResult:
     """Build one prep pack. Backend agnostic: no ORM, no session, no IO but the model call.
 
@@ -901,6 +964,7 @@ async def generate_prep(
         bullets_by_fact=bullets_by_fact,
         resume_bullets=resume_bullets,
         unverified_metric_bullet_ids=unverified_metric_bullet_ids,
+        provenance_comparable=provenance_comparable,
     )
     index = _evidence_index(facts, bullets_by_fact)
     settings = get_settings()
@@ -1241,6 +1305,11 @@ async def prep_for_application(
         bullets_by_fact=bullets_by_fact,
         resume_bullets=resume_bullets,
         unverified_metric_bullet_ids=frozenset(unverified_metrics),
+        # The resume version is always read from Postgres. When the vault came
+        # from the caller instead, the two sides mint ids differently and no
+        # comparison between them means anything, so the defence-risk half is
+        # switched off rather than allowed to report every bullet as unbacked.
+        provenance_comparable=supplied_facts is None,
     )
 
     prep = InterviewPrep(
