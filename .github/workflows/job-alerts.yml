@@ -71,6 +71,18 @@ jobs:
       - name: Install dependencies
         run: uv sync --frozen
 
+      # Without this, a missing secret produced a raw SQLAlchemy traceback
+      # ("Could not parse SQLAlchemy URL from given URL string") on every
+      # single scheduled tick instead of a message anyone could act on.
+      # Matches the same guard in ingest.yml.
+      - name: Refuse to run without somewhere to read subscriptions from
+        run: |
+          if [ -z "${DATABASE_URL}" ]; then
+            echo "::error::DATABASE_URL is not set. Add it as a repository secret" \
+                 "(the same Postgres the API already uses) before this can run."
+            exit 1
+          fi
+
       - name: Refuse to send from a manual run that did not ask to
         # `--send` is the only way to turn off the dry run, and this makes the
         # scheduled path explicit about it too. A workflow that mails users when
