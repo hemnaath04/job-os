@@ -21,32 +21,32 @@ const themeInit = `try{if(localStorage.getItem('theme')==='dark'){document.docum
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <ClerkProvider
-      localization={clerkLocalization}
-      // Tokens, not literals. These were hardcoded light hex values, so every
-      // Clerk surface outside the auth pages, the account menu in the sidebar
-      // most visibly, stayed white after the theme flipped to dark. Custom
-      // properties resolve at paint time and follow the theme for free.
-      appearance={{
-        variables: {
-          colorPrimary: "var(--color-accent-ink)",
-          colorPrimaryForeground: "var(--color-on-accent)",
-          colorBackground: "var(--color-surface-1)",
-          colorInputBackground: "var(--color-surface-2)",
-          colorInputText: "var(--color-text)",
-          colorText: "var(--color-text)",
-          colorTextSecondary: "var(--color-text-muted)",
-          colorNeutral: "var(--color-text)",
-          borderRadius: "var(--radius-control)",
-        },
-      }}
-    >
-      <html lang="en" suppressHydrationWarning className={manrope.variable}>
-        <body className="min-h-screen antialiased">
+    <html lang="en" suppressHydrationWarning className={manrope.variable}>
+      <body className="min-h-screen antialiased">
+        <ClerkProvider
+          localization={clerkLocalization}
+          // Tokens, not literals. These were hardcoded light hex values, so every
+          // Clerk surface outside the auth pages, the account menu in the sidebar
+          // most visibly, stayed white after the theme flipped to dark. Custom
+          // properties resolve at paint time and follow the theme for free.
+          appearance={{
+            variables: {
+              colorPrimary: "var(--color-accent-ink)",
+              colorPrimaryForeground: "var(--color-on-accent)",
+              colorBackground: "var(--color-surface-1)",
+              colorInput: "var(--color-surface-2)",
+              colorInputForeground: "var(--color-text)",
+              colorForeground: "var(--color-text)",
+              colorMutedForeground: "var(--color-text-muted)",
+              colorNeutral: "var(--color-text)",
+              borderRadius: "var(--radius-control)",
+            },
+          }}
+        >
           <script dangerouslySetInnerHTML={{ __html: themeInit }} />
           {children}
-        </body>
-      </html>
-    </ClerkProvider>
+        </ClerkProvider>
+      </body>
+    </html>
   );
 }

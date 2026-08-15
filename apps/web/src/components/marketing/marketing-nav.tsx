@@ -9,7 +9,7 @@ import { ThemeToggle } from "@/components/shell/theme-toggle";
 
 const LINKS = [
   { href: "#how", label: "How it works" },
-  { href: "#honest", label: "Why it stays honest" },
+  { href: "/docs", label: "Docs" },
   { href: "https://github.com/hemnaath04/job-os", label: "GitHub", external: true },
 ];
 
