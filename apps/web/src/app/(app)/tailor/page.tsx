@@ -571,6 +571,7 @@ function TailorInner() {
         pct={progress?.pct ?? 0.02}
         jobTitle={job?.title ?? "the selected role"}
         resumeName={runResumeName}
+        startedAt={active.startedAt}
         onCancel={() => {
           // Stop watching and return to the form. The server run cannot be
           // aborted mid-execution, so it may still finish and save a version;
@@ -747,6 +748,71 @@ const TAILOR_STEPS: { step: string; label: string; optional?: boolean }[] = [
 ];
 
 /**
+ * Rough relative weight of each REQUIRED step, for the estimated fallback
+ * below. Not measured durations, just an ordering of "fast" vs "slow" from
+ * the same knowledge already in this file's own comments: composing is a
+ * single model call that can run well over a minute, the claim-check that
+ * follows it does real work too, and the rest is bookkeeping around them.
+ * Optional steps (repair, check_repair) are excluded, same as the real
+ * checklist excludes them until a run actually reaches one.
+ */
+const TAILOR_ESTIMATE_WEIGHTS: Record<string, number> = {
+  load_profile: 1,
+  read_role: 1,
+  match_evidence: 2,
+  find_gaps: 2,
+  compose: 10,
+  check_claims: 4,
+  assemble: 1,
+  check_draft: 2,
+  save_draft: 1,
+  done: 1,
+};
+
+/**
+ * A step index synthesized from elapsed time alone, for the rare run where
+ * the agent's own progress writes never arrive (best-effort on that side; see
+ * update_job_progress). This exists so "click Tailor" never regresses to a
+ * bare spinner with no story, but it must never be confused for the real
+ * thing: callers only use this before any real `progress.step` has been
+ * seen, and switch to real data permanently the moment one arrives.
+ */
+function useEstimatedStep(startedAt: string): {
+  index: number;
+  label: string;
+} {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const required = TAILOR_STEPS.filter((entry) => !entry.optional);
+  const totalWeight = required.reduce(
+    (sum, entry) => sum + (TAILOR_ESTIMATE_WEIGHTS[entry.step] ?? 1),
+    0,
+  );
+  // Calibrated so the weighted midpoint (compose, the heaviest step) lands
+  // around 45s in, matching this run's own documented "well over a minute"
+  // for that one step without claiming false precision for the rest.
+  const secondsPerWeightUnit = 4.5;
+  const elapsedSeconds = Math.max(0, (now - Date.parse(startedAt)) / 1_000);
+
+  let consumed = 0;
+  let index = 0;
+  for (let i = 0; i < required.length; i += 1) {
+    const weight = TAILOR_ESTIMATE_WEIGHTS[required[i].step] ?? 1;
+    const stepSeconds = weight * secondsPerWeightUnit;
+    if (elapsedSeconds < consumed + stepSeconds || i === required.length - 1) {
+      index = TAILOR_STEPS.findIndex((entry) => entry.step === required[i].step);
+      break;
+    }
+    consumed += stepSeconds;
+  }
+  return { index, label: TAILOR_STEPS[index]?.label ?? "" };
+}
+
+/**
  * How long the current step has been running, in whole seconds.
  *
  * A composing step is a single model call that can take well over a minute, and
@@ -783,6 +849,7 @@ function TailorProgress({
   pct,
   jobTitle,
   resumeName,
+  startedAt,
   onCancel,
 }: {
   stage: string;
@@ -791,11 +858,26 @@ function TailorProgress({
   pct: number;
   jobTitle: string;
   resumeName: string | null;
+  startedAt: string;
   onCancel: () => void;
 }) {
-  const percent = Math.round(Math.max(0, Math.min(1, pct)) * 100);
-  const elapsed = useStepElapsed(step);
-  const currentIndex = TAILOR_STEPS.findIndex((entry) => entry.step === step);
+  // The agent's own progress writes are best-effort (see update_job_progress)
+  // and can go missing for a whole run. `step` is null the entire time when
+  // that happens, which is the one case this falls back to elapsed-time
+  // estimation instead of the real thing. The moment a real step name shows
+  // up, this stops being consulted at all -- there is no path back to
+  // estimating once truth is available.
+  const hasRealSignal = step !== null;
+  const estimated = useEstimatedStep(startedAt);
+  const currentIndex = hasRealSignal
+    ? TAILOR_STEPS.findIndex((entry) => entry.step === step)
+    : estimated.index;
+  const displayStage = hasRealSignal ? stage : estimated.label;
+  const requiredCount = TAILOR_STEPS.filter((entry) => !entry.optional).length;
+  const percent = hasRealSignal
+    ? Math.round(Math.max(0, Math.min(1, pct)) * 100)
+    : Math.round(Math.max(2, Math.min(96, (currentIndex / requiredCount) * 100)));
+  const elapsed = useStepElapsed(hasRealSignal ? step : estimated.label);
   // An optional step is only real once the run has reached it. Hiding the rest
   // keeps the list a description of this run rather than of every possible run.
   const rows = TAILOR_STEPS.map((entry, index) => ({ ...entry, index })).filter(
@@ -822,15 +904,19 @@ function TailorProgress({
             aria-hidden="true"
           />
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{stage}</div>
-            {detail && (
+            <div className="truncate text-sm font-medium">{displayStage}</div>
+            {hasRealSignal && detail ? (
               <div className="truncate text-xs text-[color:var(--color-text-muted)]">
                 {detail}
               </div>
-            )}
+            ) : !hasRealSignal ? (
+              <div className="truncate text-xs text-[color:var(--color-text-dim)]">
+                Estimated from typical run timing, not a live update
+              </div>
+            ) : null}
           </div>
           <div className="ml-auto text-sm tabular-nums text-[color:var(--color-text-muted)]">
-            {percent}%
+            {percent}%{!hasRealSignal && <span className="ml-1 text-[10px] align-top">est.</span>}
           </div>
         </div>
         <div
@@ -886,9 +972,9 @@ function TailorProgress({
                             : "text-[color:var(--color-text-dim)]"
                       }
                     >
-                      {current ? stage : entry.label}
+                      {current ? displayStage : entry.label}
                     </div>
-                    {current && detail && (
+                    {current && hasRealSignal && detail && (
                       <p className="mt-0.5 text-xs text-[color:var(--color-text-muted)]">
                         {detail}
                       </p>
@@ -981,6 +1067,7 @@ function ResultView({
   const [blockedReview, setBlockedReview] = useState<ResumeReviewResult | null>(
     null,
   );
+  const [showAllBlockedIssues, setShowAllBlockedIssues] = useState(false);
   const approve = useMutation({
     mutationFn: (force: boolean) =>
       // Same look the review rendered with, so the finalized PDF matches what
@@ -1026,12 +1113,15 @@ function ResultView({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={onReset}
-            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)]"
-          >
-            <RefreshCw className="size-3" /> Re-tailor
-          </button>
+          {/* "Re-tailor" used to live here calling the same onReset as the
+              "Tailor another" link above, two labels for one action. Kept the
+              top link, since it says what onReset actually does: go back to
+              picking a job, not regenerate this one in place. */}
+          <QualityStatus
+            reviewing={reviewing}
+            result={result}
+            onRunReview={onRunReview}
+          />
           <button
             onClick={() =>
               downloadPdf(downloadUrl, `resume_${result.id.slice(0, 8)}.pdf`)
@@ -1081,8 +1171,10 @@ function ResultView({
           <div className="flex items-center gap-2">
             <AlertCircle className="size-4 shrink-0" />
             <span className="font-semibold">
-              The review scored this {Math.round(Number(blockedReview.score))}/100
-              and flagged {blockedReview.issues.length} issue
+              {/* The score itself lives on the Quality Review status next to
+                  Finalize, one line up. Restating it here just made the same
+                  number the first thing you'd read twice in a row. */}
+              The review flagged {blockedReview.issues.length} issue
               {blockedReview.issues.length === 1 ? "" : "s"}
             </span>
           </div>
@@ -1091,7 +1183,10 @@ function ResultView({
             or finalize as is.
           </p>
           <ul className="mt-2.5 space-y-1">
-            {blockedReview.issues.slice(0, 6).map((issue, index) => (
+            {(showAllBlockedIssues
+              ? blockedReview.issues
+              : blockedReview.issues.slice(0, 6)
+            ).map((issue, index) => (
               <li key={index} className="flex gap-2">
                 <span className="shrink-0 font-mono text-[10px] uppercase opacity-60">
                   {issue.severity}
@@ -1100,10 +1195,13 @@ function ResultView({
               </li>
             ))}
           </ul>
-          {blockedReview.issues.length > 6 && (
-            <div className="notice-detail mt-1">
-              and {blockedReview.issues.length - 6} more
-            </div>
+          {!showAllBlockedIssues && blockedReview.issues.length > 6 && (
+            <button
+              onClick={() => setShowAllBlockedIssues(true)}
+              className="notice-detail mt-1 underline decoration-dotted hover:text-[color:var(--color-text)]"
+            >
+              show {blockedReview.issues.length - 6} more
+            </button>
           )}
           <div className="mt-3 flex items-center gap-2">
             <button
@@ -1123,54 +1221,6 @@ function ResultView({
           </div>
         </div>
       )}
-
-      <div
-        className={`notice mt-5 flex flex-wrap items-center gap-3 px-4 py-3 text-xs ${
-          reviewing ? "" : result.review_report?.passed ? "notice-positive" : "notice-caution"
-        }`}
-      >
-        {reviewing ? (
-          <Loader2 className="size-4 animate-spin" />
-        ) : result.review_report?.passed ? (
-          <CheckCircle2 className="size-4" />
-        ) : (
-          <AlertCircle className="size-4" />
-        )}
-        {reviewing ? (
-          <>
-            <span className="font-semibold">Running quality review</span>
-            <span className="text-[color:var(--color-text-dim)]">
-              Rendering the PDF and scoring the draft. The resume below is ready
-              to read meanwhile.
-            </span>
-          </>
-        ) : (
-          <>
-            {/* "/100" only belongs after a number. Appending it
-                unconditionally produced "Quality review pending/100". */}
-            <span className="font-semibold">
-              {result.review_score !== null
-                ? `Quality review ${Math.round(Number(result.review_score))}/100`
-                : "Quality review pending"}
-            </span>
-            <span className="notice-detail">
-              {result.review_report?.passed
-                ? "Passed. You can finalize now."
-                : reviewNeedsRetry(result)
-                  ? "The review could not complete. Run it again to enable Finalize and the PDF."
-                  : "Open Edit with AI to resolve the review suggestions before finalizing."}
-            </span>
-            {!result.review_report?.passed && (
-              <button
-                onClick={onRunReview}
-                className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
-              >
-                <RefreshCw className="size-3" /> Run review
-              </button>
-            )}
-          </>
-        )}
-      </div>
 
       {result.agent_note && (
         <div className="workspace-panel mt-6 border-[color:var(--color-accent-border)] p-5">
@@ -1210,6 +1260,66 @@ function PageShell({ loading = false }: { loading?: boolean }) {
     <div className="workspace-page max-w-6xl">
       {loading && <div className="loading-surface" />}
     </div>
+  );
+}
+
+// Used to be a full-width `notice` banner sitting between the header and the
+// resume, the same visual weight as the Job Match ring above it and the
+// blocked-review notice below it — three things reading as competing grades
+// on one scroll. It carries real information (in-progress state, pass/fail,
+// a retry action) so nothing here was cut, only shrunk and moved next to the
+// button it is actually a pre-flight check for.
+function QualityStatus({
+  reviewing,
+  result,
+  onRunReview,
+}: {
+  reviewing: boolean;
+  result: TailorResponse;
+  onRunReview: () => void;
+}) {
+  if (reviewing) {
+    return (
+      <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
+        <Loader2 className="size-3.5 animate-spin" /> Reviewing…
+      </span>
+    );
+  }
+  const passed = result.review_report?.passed;
+  const label =
+    result.review_score !== null
+      ? `Review ${Math.round(Number(result.review_score))}/100`
+      : "Review pending";
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 text-xs ${
+        passed
+          ? "text-[color:var(--color-mint-ink)]"
+          : "text-[color:var(--color-text-muted)]"
+      }`}
+      title={
+        passed
+          ? "Passed. You can finalize now."
+          : reviewNeedsRetry(result)
+            ? "The review could not complete. Run it again to enable Finalize and the PDF."
+            : "Open Edit with AI to resolve the review suggestions before finalizing."
+      }
+    >
+      {passed ? (
+        <CheckCircle2 className="size-3.5" />
+      ) : (
+        <AlertCircle className="size-3.5" />
+      )}
+      {label}
+      {!passed && (
+        <button
+          onClick={onRunReview}
+          className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] px-2 py-0.5 text-[10px] hover:bg-[color:var(--color-surface-hover)]"
+        >
+          <RefreshCw className="size-2.5" /> Run
+        </button>
+      )}
+    </span>
   );
 }
 

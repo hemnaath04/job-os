@@ -100,10 +100,10 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     assert gaps == []
     # The repair pass did not beat the draft, so the draft is what ships. Keeping
     # the later pass regardless is how a padded rewrite used to win a tie.
-    assert note == (
-        "first pass\n(Job Match 0.0 against a target of 80 after 2 passes: "
-        "-3 -> -3.)"
-    )
+    # The score and pass trail are not in the note text: both are already on
+    # the page as `report["iterations"]` (asserted above) and the Job Match
+    # ring, so the note only says what those two do not.
+    assert note == "first pass\n(Did not reach the Job Match target after 2 passes.)"
     # The repair turn must hand back measurements, not the model's own numbers.
     refine_turn = calls[1]["messages"][-1]["content"]
     assert "not from your own" in refine_turn

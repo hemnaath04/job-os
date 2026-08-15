@@ -1060,30 +1060,23 @@ async def run_tailor(
         label for label in final_missing if label not in still_reachable
     ]
 
+    # The score and the pass-by-pass trail are not repeated here. Both are
+    # already on the page: the score as the Job Match ring, the trail as
+    # `ats_report["iterations"]` above, sent structurally rather than as
+    # prose. A note that restated them was the same number appearing a
+    # third and fourth time on one screen.
     note = agent.agent_note
     passes = len(iteration_scores)
-    trail = " -> ".join(f"{s:.0f}" for s in iteration_scores)
     if ats_score >= TARGET_ATS_SCORE:
-        note += (
-            f"\n(Hit the Job Match target of {TARGET_ATS_SCORE:.0f} in "
-            f"{_plural(passes, 'pass')}"
-            + (f": {trail})" if passes > 1 else ".)")
-        )
+        note += f"\n(Hit the Job Match target in {_plural(passes, 'pass')}.)"
     elif ats_report["missing_needs_new_facts"] and not still_reachable:
         note += (
-            f"\n(Job Match {ats_score} against a target of {TARGET_ATS_SCORE:.0f} "
-            f"after {_plural(passes, 'pass')}"
-            + (f" ({trail}). " if passes > 1 else ". ")
-            + "Every requirement still missing is one your verified profile does "
-            "not hold, so another pass cannot close it. Add the evidence on your "
-            "Profile and run this again.)"
+            "\n(Every requirement still missing is one your verified profile "
+            "does not hold, so another pass cannot close it. Add the evidence "
+            "on your Profile and run this again.)"
         )
     else:
-        note += (
-            f"\n(Job Match {ats_score} against a target of {TARGET_ATS_SCORE:.0f} "
-            f"after {_plural(passes, 'pass')}"
-            + (f": {trail}.)" if passes > 1 else ".)")
-        )
+        note += f"\n(Did not reach the Job Match target after {_plural(passes, 'pass')}.)"
 
     return (
         json_resume,

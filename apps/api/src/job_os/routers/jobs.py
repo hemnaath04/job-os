@@ -102,6 +102,22 @@ async def create_from_url(
     from job_os.services.jd_parse import parse_jd
 
     url = str(payload.url)
+
+    # Same dedup this app already does correctly for discovery imports
+    # (discovery.py's import_result, keyed on source_id there). A URL paste
+    # has no vendor id to key on, so source_url is the equivalent identity.
+    # Without this, `source_id IS NULL` on every row here, and Postgres does
+    # not treat NULL = NULL, so the unique constraint on (source, source_id)
+    # never once caught a repeat paste of the same link.
+    existing_q = await session.execute(
+        select(Job)
+        .options(joinedload(Job.company))
+        .where(Job.source == "url", Job.source_url == url)
+    )
+    existing = existing_q.unique().scalar_one_or_none()
+    if existing:
+        return existing
+
     fetched = await fetch_url_markdown(url)
     parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
 
@@ -138,6 +154,26 @@ async def create_from_text(
     session: AsyncSession = Depends(get_session),
 ) -> Job:
     from job_os.services.jd_parse import parse_jd
+
+    source_url = str(payload.source_url) if payload.source_url else None
+
+    # Same reasoning as create_from_url: source_id is never set here either,
+    # so the DB constraint alone never caught a repeat paste. A source_url,
+    # when the user gave one, is the strongest identity available. Lacking
+    # that, the pasted text itself is the only identity a raw JD paste has.
+    dedup_clause = (
+        Job.source_url == source_url
+        if source_url
+        else Job.jd_clean == payload.jd_text
+    )
+    existing_q = await session.execute(
+        select(Job)
+        .options(joinedload(Job.company))
+        .where(Job.source == "text", dedup_clause)
+    )
+    existing = existing_q.unique().scalar_one_or_none()
+    if existing:
+        return existing
 
     parsed = await parse_jd(payload.jd_text)
     company = await upsert_company(
