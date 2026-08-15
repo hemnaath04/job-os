@@ -1,0 +1,23 @@
+{
+  "name": "job-os",
+  "owner": { "name": "hemnaath04" },
+  "metadata": {
+    "description": "job.os: a personal job-search tracker, resume tailor, and discovery feed, exposed as MCP tools."
+  },
+  "plugins": [
+    {
+      "name": "job-os",
+      "source": ".",
+      "displayName": "job.os",
+      "description": "Job search tracker, resume tailoring, and job discovery, exposed as MCP tools over your own job.os account.",
+      "homepage": "https://jobs.hemnaath.tech/docs",
+      "repository": "https://github.com/hemnaath04/job-os",
+      "license": "MIT",
+      "keywords": ["job search", "resume", "career", "applications", "ats"],
+      "category": "productivity",
+      "mcpServers": {
+        "job-os": { "type": "http", "url": "https://jobs.hemnaath.tech/mcp" }
+      }
+    }
+  ]
+}

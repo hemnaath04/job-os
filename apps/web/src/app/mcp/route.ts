@@ -39,8 +39,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "whoami",
       {
+        title: "Who Am I",
         description: "The signed-in job.os user this connector is acting as.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
@@ -54,8 +56,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "list_jobs",
       {
+        title: "List Jobs",
         description: "List jobs already imported into this user's job.os workspace.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
@@ -69,8 +73,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_job",
       {
+        title: "Get Job",
         description: "Get one imported job by id, including its full parsed description.",
         inputSchema: z.object({ job_id: z.string().uuid() }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (args, ctx) => {
         try {
@@ -84,9 +90,16 @@ const handler = createMcpHandler(
     server.registerTool(
       "add_job_from_url",
       {
+        title: "Add Job from URL",
         description:
           "Fetch a job posting URL, parse it, and add it to job.os as a Job (not yet in the pipeline). Returns the created job; pass its id to create_application to add it to the Wishlist.",
         inputSchema: z.object({ url: z.string().url() }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: true,
+        },
       },
       async (args, ctx) => {
         try {
@@ -102,6 +115,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "search_jobs",
       {
+        title: "Search Jobs",
         description:
           "Search job boards for new postings (not yet imported). Merges results across sources and sorts by recency.",
         inputSchema: z.object({
@@ -111,6 +125,9 @@ const handler = createMcpHandler(
           max_age_days: z.number().int().min(1).max(180).optional(),
           limit: z.number().int().min(1).max(50).optional(),
         }),
+        // POST at the HTTP layer, but it only queries job boards and never
+        // writes anything to the user's account.
+        annotations: { readOnlyHint: true, openWorldHint: true },
       },
       async (args, ctx) => {
         try {
@@ -124,8 +141,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "list_applications",
       {
+        title: "List Applications",
         description: "List this user's pipeline: every job they're tracking, with its status.",
         inputSchema: z.object({ status: STATUS.optional(), archived: z.boolean().optional() }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (args, ctx) => {
         try {
@@ -145,8 +164,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_application",
       {
+        title: "Get Application",
         description: "Get one pipeline entry by id.",
         inputSchema: z.object({ application_id: z.string().uuid() }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (args, ctx) => {
         try {
@@ -162,8 +183,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_application_timeline",
       {
+        title: "Get Application Timeline",
         description: "Get the status-change history for one pipeline entry.",
         inputSchema: z.object({ application_id: z.string().uuid() }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (args, ctx) => {
         try {
@@ -179,6 +202,7 @@ const handler = createMcpHandler(
     server.registerTool(
       "create_application",
       {
+        title: "Create Application",
         description:
           "Add a job (already imported via add_job_from_url or search_jobs + import) to this user's pipeline.",
         inputSchema: z.object({
@@ -186,6 +210,14 @@ const handler = createMcpHandler(
           status: STATUS.optional(),
           notes: z.string().optional(),
         }),
+        // Not idempotent: the backend 409s on a repeat call for the same job_id
+        // rather than silently no-op'ing.
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
       },
       async (args, ctx) => {
         try {
@@ -199,12 +231,19 @@ const handler = createMcpHandler(
     server.registerTool(
       "update_application_status",
       {
+        title: "Update Application Status",
         description: "Move a pipeline entry to a new status, e.g. after an interview or offer.",
         inputSchema: z.object({
           application_id: z.string().uuid(),
           status: STATUS,
           notes: z.string().optional(),
         }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
       },
       async (args, ctx) => {
         try {
@@ -221,9 +260,11 @@ const handler = createMcpHandler(
     server.registerTool(
       "list_resumes",
       {
+        title: "List Resumes",
         description:
           "List this user's source resumes (data, not templates) and their tailored versions summary.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
@@ -237,9 +278,11 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_profile_facts",
       {
+        title: "Get Profile Facts",
         description:
           "The user's verified career facts (experience, projects, skills, education, certifications). This is the only evidence job.os is allowed to cite when it generates a resume, cover letter, or interview answer.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
@@ -253,8 +296,10 @@ const handler = createMcpHandler(
     server.registerTool(
       "list_cover_letters",
       {
+        title: "List Cover Letters",
         description: "List cover letters this user has generated, one per job.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
@@ -268,9 +313,11 @@ const handler = createMcpHandler(
     server.registerTool(
       "get_upcoming_calendar",
       {
+        title: "Get Upcoming Calendar",
         description:
           "The user's next-action follow-up timeline (overdue, today, this week, later), derived from each application's next-action date.",
         inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (_args, ctx) => {
         try {
