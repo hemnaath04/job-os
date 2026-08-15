@@ -1226,6 +1226,7 @@ function ResultCard({
           <button
             onClick={() => importJob.mutate()}
             disabled={importJob.isPending || tailorJob.isPending}
+            title="Fetches and parses the posting, usually 5-10s"
             className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] hover:bg-[color:var(--color-surface-hover)] disabled:opacity-50"
           >
             {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}

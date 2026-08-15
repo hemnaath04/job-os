@@ -92,7 +92,12 @@ async def fetch_url_markdown(url: str) -> FetchedPage:
 
 
 async def _fetch_firecrawl(url: str, api_key: str) -> FetchedPage:
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    # A user is waiting on this synchronously (see routers/jobs.py's
+    # create_from_url and discovery.py's import_result), so 60s was too
+    # generous a ceiling for a single page fetch. Firecrawl's own waitFor
+    # below is 1.5s; a scrape that has not returned well inside 20s is not
+    # going to feel fast even if it eventually succeeds.
+    async with httpx.AsyncClient(timeout=20.0) as client:
         resp = await client.post(
             "https://api.firecrawl.dev/v1/scrape",
             headers={"Authorization": f"Bearer {api_key}"},
@@ -122,7 +127,10 @@ async def _fetch_plain(url: str) -> FetchedPage:
     # our own network directly. Reachable whenever FIRECRAWL_API_KEY is unset.
     _assert_fetchable_url(url)
 
-    async with httpx.AsyncClient(timeout=30.0, follow_redirects=True) as client:
+    # Same reasoning as _fetch_firecrawl: a raw GET with no rendering wait
+    # should be faster than the Firecrawl path, not slower, so it gets a
+    # tighter ceiling.
+    async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
         resp = await client.get(url, headers={"User-Agent": "job-os/0.1"})
         resp.raise_for_status()
         html = resp.text

@@ -148,6 +148,14 @@ export function AddJobDialog({
                   />
                 </>
               )}
+              {/* Fetching the page and parsing it both happen synchronously
+                  here, so the wait is real, not a hang. Naming a range keeps
+                  it from reading as broken partway through. */}
+              {loading && (
+                <p className="text-xs text-[color:var(--color-text-dim)]">
+                  Usually 5-10s. A slow or JS-heavy posting page can take longer.
+                </p>
+              )}
               <div className="mt-2 flex justify-end gap-2">
                 <Dialog.Close className="product-button product-button-secondary">
                   Cancel

@@ -54,9 +54,14 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         log.warning("jd_parse.no_anthropic_key")
         return {"title": title_hint} if title_hint else {}
 
+    # The SDK's own default timeout is ten minutes, which is fine for a
+    # background pass but not for a request a user is sitting in front of.
+    # A structured-output call over one job description has no business
+    # taking longer than this even on a slow day.
     client = anthropic.AsyncAnthropic(
         auth_token=settings.anthropic_api_key,
         base_url=settings.anthropic_base_url or None,
+        timeout=30.0,
     )
 
     user_prompt = (
