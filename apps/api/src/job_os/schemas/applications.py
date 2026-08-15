@@ -68,3 +68,16 @@ class CalendarEntry(ORMModel):
     job_id: UUID
     job_title: str
     company_name: str | None = None
+
+
+class CalendarHistoryEntry(ORMModel):
+    """One past status change for the calendar's history view — when an
+    application actually moved to applied, rejected, an offer, etc., sourced
+    from ApplicationEvent rather than the forward-looking next_action_at."""
+
+    application_id: UUID
+    occurred_at: datetime
+    status: AppStatus
+    job_id: UUID
+    job_title: str
+    company_name: str | None = None

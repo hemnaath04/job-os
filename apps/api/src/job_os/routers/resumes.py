@@ -52,7 +52,24 @@ async def list_resumes(
         .where(Resume.user_id == user.id, Resume.archived_at.is_(None))
         .order_by(Resume.is_master.desc(), Resume.name)
     )
-    return list(result.scalars().all())
+    resumes = list(result.scalars().all())
+
+    # How many versions under each resume were actually tailored for a job,
+    # vs. just generic drafts — the frontend uses this to surface the
+    # resumes doing real work in a search over the ones that aren't.
+    counts_result = await session.execute(
+        select(ResumeVersion.resume_id, func.count(ResumeVersion.id))
+        .where(
+            ResumeVersion.resume_id.in_([r.id for r in resumes]),
+            ResumeVersion.spawned_from_job_id.is_not(None),
+            ResumeVersion.archived_at.is_(None),
+        )
+        .group_by(ResumeVersion.resume_id)
+    )
+    counts = dict(counts_result.all())
+    for resume in resumes:
+        resume.tailored_count = counts.get(resume.id, 0)
+    return resumes
 
 
 @router.post("", response_model=ResumeRead, status_code=201)

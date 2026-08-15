@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import io
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import HTTPException, UploadFile
 
-from job_os.db.models import Application, AppStatus, Job, Resume, User
+from job_os.db.models import Application, AppStatus, Job, Resume, ResumeVersion, User
 from job_os.routers.resumes import (
     download_version,
+    list_resumes,
     list_versions_by_application,
     upload_version,
 )
@@ -120,3 +122,36 @@ async def test_list_versions_by_application_404s_for_another_users_application(
     with pytest.raises(HTTPException) as exc_info:
         await list_versions_by_application(application.id, user=other, session=db_session)
     assert exc_info.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_list_resumes_counts_only_job_tailored_versions(db_session) -> None:
+    user = await _make_user(db_session, "tailored-count")
+    resume = await _make_resume(db_session, user)
+    other_resume = await _make_resume(db_session, user)
+
+    job = Job(title="Backend Engineer", jd_raw="jd", jd_clean="jd", source="url", source_url=None)
+    db_session.add(job)
+    await db_session.flush()
+
+    db_session.add_all(
+        [
+            ResumeVersion(resume_id=resume.id, json_resume={}, spawned_from_job_id=job.id),
+            ResumeVersion(resume_id=resume.id, json_resume={}, spawned_from_job_id=job.id),
+            # Generic, never tailored for any job — should not count.
+            ResumeVersion(resume_id=resume.id, json_resume={}),
+            # Archived tailored version — should not count either.
+            ResumeVersion(
+                resume_id=resume.id,
+                json_resume={},
+                spawned_from_job_id=job.id,
+                archived_at=datetime.now(UTC),
+            ),
+        ]
+    )
+    await db_session.flush()
+
+    resumes = await list_resumes(user=user, session=db_session)
+    by_id = {r.id: r for r in resumes}
+    assert by_id[resume.id].tailored_count == 2
+    assert by_id[other_resume.id].tailored_count == 0

@@ -14,9 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from job_os.auth import get_current_user
-from job_os.db.models import Application, Job, User
+from job_os.db.models import Application, ApplicationEvent, Job, User
 from job_os.db.session import get_session
-from job_os.schemas.applications import CalendarEntry
+from job_os.schemas.applications import CalendarEntry, CalendarHistoryEntry
 
 router = APIRouter(prefix="/calendar")
 
@@ -64,6 +64,50 @@ async def upcoming(
                 job_id=a.job.id,
                 job_title=a.job.title,
                 company_name=a.job.company.name if a.job.company else None,
+            )
+        )
+    return entries
+
+
+@router.get("/history", response_model=list[CalendarHistoryEntry])
+async def history(
+    *,
+    days: int = Query(
+        default=90, ge=1, le=365, description="How many days back to look, from today."
+    ),
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[CalendarHistoryEntry]:
+    """Every past status change — applied, rejected, offer, etc. — plotted by
+    the date it actually happened (ApplicationEvent.occurred_at), not the
+    forward-looking next_action_at /upcoming reads."""
+    earliest = datetime.now(UTC) - timedelta(days=days)
+
+    stmt = (
+        select(ApplicationEvent, Application, Job)
+        .join(Application, ApplicationEvent.application_id == Application.id)
+        .join(Job, Application.job_id == Job.id)
+        .options(joinedload(Job.company))
+        .where(
+            Application.user_id == user.id,
+            ApplicationEvent.kind == "status_change",
+            ApplicationEvent.to_status.is_not(None),
+            ApplicationEvent.occurred_at >= earliest,
+        )
+        .order_by(ApplicationEvent.occurred_at.desc())
+    )
+    result = await session.execute(stmt)
+
+    entries: list[CalendarHistoryEntry] = []
+    for event, application, job in result.unique().all():
+        entries.append(
+            CalendarHistoryEntry(
+                application_id=application.id,
+                occurred_at=event.occurred_at,
+                status=event.to_status,
+                job_id=job.id,
+                job_title=job.title,
+                company_name=job.company.name if job.company else None,
             )
         )
     return entries

@@ -16,6 +16,7 @@ class ResumeRead(TimestampedRead):
     is_master: bool
     source_kind: str | None = None
     source_label: str | None = None
+    tailored_count: int = 0
     archived_at: datetime | None = None
 
 
