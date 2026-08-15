@@ -2,6 +2,7 @@ import type {
   Application,
   AppStatus,
   CalendarEntry,
+  CalendarHistoryEntry,
   DiscoverySearchRequest,
   DiscoverySearchResponse,
   InterviewPrep,
@@ -647,6 +648,14 @@ const legacyApi = {
     );
   },
 
+  listCalendarHistory: (params?: { days?: number }) => {
+    const qs = new URLSearchParams();
+    if (params?.days !== undefined) qs.set("days", String(params.days));
+    return request<CalendarHistoryEntry[]>(
+      `/calendar/history${qs.toString() ? "?" + qs : ""}`,
+    );
+  },
+
   getMe: () => request<MeRead>("/me"),
   getSettings: () => request<UserSettings>("/me/settings"),
   patchSettings: (body: UserSettingsPatch) =>
@@ -1248,6 +1257,15 @@ export const api = {
         }),
       )
       .sort((left, right) => left.when.localeCompare(right.when));
+  },
+
+  async listCalendarHistory(params?: { days?: number }) {
+    // Status-change history reads ApplicationEvent, which only exists on the
+    // Postgres/FastAPI path. The Appwrite application pipeline has no
+    // equivalent event log to reconstruct it from, so this returns nothing
+    // there rather than guessing from whatever fields happen to be present.
+    if (isAppwritePipelineEnabled) return [];
+    return legacyApi.listCalendarHistory(params);
   },
 
   listApplications: (params?: { status?: AppStatus; q?: string }) =>

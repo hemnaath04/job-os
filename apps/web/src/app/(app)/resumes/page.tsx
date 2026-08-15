@@ -45,9 +45,10 @@ function resumeTimestamp(resume: Resume): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-type ResumeSort = "newest" | "oldest" | "name";
+type ResumeSort = "priority" | "newest" | "oldest" | "name";
 
 const RESUME_SORT_OPTIONS: { value: ResumeSort; label: string }[] = [
+  { value: "priority", label: "Most tailored first" },
   { value: "newest", label: "Newest first" },
   { value: "oldest", label: "Oldest first" },
   { value: "name", label: "Name A to Z" },
@@ -71,11 +72,23 @@ function ResumesInner() {
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
   });
-  const [sort, setSort] = useState<ResumeSort>("newest");
+  const [sort, setSort] = useState<ResumeSort>("priority");
+  // The master is pinned as its own preview above these, so this list is
+  // everything else — company-tailored resumes first by default, since
+  // those are the ones actually doing work in an active search.
+  const master = resumes.find((r) => r.is_master);
   const sorted = useMemo(() => {
-    const rows = [...resumes];
+    const rows = resumes.filter((r) => !r.is_master);
     if (sort === "name") {
       return rows.sort((left, right) => left.name.localeCompare(right.name));
+    }
+    if (sort === "priority") {
+      return rows.sort((left, right) => {
+        if (right.tailored_count !== left.tailored_count) {
+          return right.tailored_count - left.tailored_count;
+        }
+        return resumeTimestamp(right) - resumeTimestamp(left);
+      });
     }
     const direction = sort === "newest" ? -1 : 1;
     return rows.sort(
@@ -406,6 +419,18 @@ function ResumesInner() {
             </label>
           </div>
 
+          {master && (
+            <MasterResumePreview
+              resume={master}
+              defaultOpen={master.id === openId}
+              hasOriginal={originals[master.id] ?? false}
+              onDragStart={setDragging}
+              onDragEnd={() => setDragging(null)}
+              onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
+              building={buildFromResume.isPending && buildFromResume.variables?.id === master.id}
+            />
+          )}
+
           <TemplatesSection
             templates={templates}
             onRemove={(id) => removeTemplate.mutate(id)}
@@ -445,6 +470,28 @@ function buildDescription(built: { attempts: number; repairs: string[] }): strin
 }
 
 /**
+ * The master, pinned above everything else rather than buried in the Source
+ * resumes list at whatever position its sort key lands it — it's the one
+ * resume every tailored version ultimately traces back to, so it reads as a
+ * preview of "the canonical you," not just another row.
+ */
+function MasterResumePreview(
+  props: Omit<Parameters<typeof ResumeRow>[0], "resume"> & { resume: Resume },
+) {
+  return (
+    <section className="mt-6">
+      <div className="flex items-center gap-2">
+        <Crown className="size-4 shrink-0 text-[color:var(--color-amber)]" />
+        <h2 className="text-sm font-semibold">Master resume</h2>
+      </div>
+      <div className="workspace-panel mt-3 overflow-hidden ring-1 ring-[color:var(--color-amber)]/25">
+        <ResumeRow {...props} />
+      </div>
+    </section>
+  );
+}
+
+/**
  * The looks available to render with: the six that ship with the app, plus any
  * built from the user's own uploads. A template holds LaTeX only, never resume
  * data.
@@ -474,6 +521,9 @@ function TemplatesSection({
   building: boolean;
 }) {
   const [over, setOver] = useState(false);
+  // Closed by default: the look isn't something you need in front of you
+  // every visit, only when you're actually choosing or adding one.
+  const [open, setOpen] = useState(false);
   const uploadInput = useRef<HTMLInputElement>(null);
   const active = accepts && over;
   const busy = uploading || building;
@@ -487,6 +537,7 @@ function TemplatesSection({
         // Marking the event handled is what makes this a valid drop target.
         event.preventDefault();
         setOver(true);
+        setOpen(true);
       }}
       onDragLeave={(event) => {
         if (event.currentTarget.contains(event.relatedTarget as Node)) return;
@@ -500,12 +551,23 @@ function TemplatesSection({
       }}
     >
       <div className="flex flex-wrap items-baseline gap-2">
-        <LayoutTemplate className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
-        <h2 className="text-sm font-semibold">Templates</h2>
-        <span className="text-xs text-[color:var(--color-text-dim)]">
-          {templates.length}
-          {mine > 0 ? `, ${mine} yours` : ""}
-        </span>
+        <button
+          onClick={() => setOpen((current) => !current)}
+          aria-expanded={open}
+          className="flex min-w-0 items-baseline gap-2 text-left"
+        >
+          <ChevronRight
+            className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
+              open ? "rotate-90" : ""
+            }`}
+          />
+          <LayoutTemplate className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
+          <h2 className="text-sm font-semibold">Templates</h2>
+          <span className="text-xs text-[color:var(--color-text-dim)]">
+            {templates.length}
+            {mine > 0 ? `, ${mine} yours` : ""}
+          </span>
+        </button>
         {active && (
           <span className="text-xs text-[color:var(--color-violet)]">
             Drop to rebuild this resume&apos;s design as a template
@@ -529,13 +591,23 @@ function TemplatesSection({
           }}
         />
         <button
-          onClick={() => uploadInput.current?.click()}
+          onClick={() => {
+            setOpen(true);
+            uploadInput.current?.click();
+          }}
           disabled={busy}
           className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
         >
           <FileUp className="size-3" /> Add your own
         </button>
       </div>
+      {!open && !active && (
+        <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
+          {templates.length} available. Open to browse or add your own.
+        </p>
+      )}
+      {(open || active) && (
+        <>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
         The look, not the data. Every preview is a real render of invented sample
         data. Add your own by uploading a <strong>.tex</strong>, which keeps the
@@ -569,6 +641,8 @@ function TemplatesSection({
           removingId={removingId}
         />
       </div>
+        </>
+      )}
     </section>
   );
 }
@@ -591,15 +665,36 @@ function SourceResumesSection({
   onUseAsTemplate: (resume: Resume) => void;
   buildingId: string | null;
 }) {
+  // Closed by default, except when a specific resume was linked to (from the
+  // tailor flow's ?open= param) — that one needs to actually be visible, not
+  // hidden behind a dropdown the deep link was supposed to skip past.
+  const [open, setOpen] = useState(resumes.some((r) => r.id === openId));
+
   return (
     <section className="mt-6">
-      <div className="flex items-baseline gap-2">
-        <FolderOpen className="size-4 shrink-0 text-[color:var(--color-text-muted)]" />
+      <button
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="flex items-baseline gap-2 text-left"
+      >
+        <ChevronRight
+          className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
+            open ? "rotate-90" : ""
+          }`}
+        />
+        <FolderOpen className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
         <h2 className="text-sm font-semibold">Source resumes</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {resumes.length}
         </span>
-      </div>
+      </button>
+      {!open ? (
+        <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
+          {resumes.length} other resume{resumes.length === 1 ? "" : "s"}. Open to see
+          versions and tailored history.
+        </p>
+      ) : (
+        <>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
         The data. Tailored versions are saved here, under the resume they came
         from. Drag one up to Templates to reuse its design.
@@ -623,6 +718,8 @@ function SourceResumesSection({
             />
           ))}
         </div>
+      )}
+        </>
       )}
     </section>
   );

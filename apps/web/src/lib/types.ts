@@ -175,6 +175,8 @@ export interface Resume {
   archived_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Non-archived versions with spawned_from_job_id set — real tailored output. */
+  tailored_count: number;
 }
 
 export interface ResumeVersionSummary {
@@ -369,6 +371,16 @@ export interface CalendarEntry {
   application_id: string;
   when: string; // ISO datetime
   label: string;
+  status: AppStatus;
+  job_id: string;
+  job_title: string;
+  company_name: string | null;
+}
+
+/** One past status change (applied, rejected, ...), for the calendar's month view. */
+export interface CalendarHistoryEntry {
+  application_id: string;
+  occurred_at: string; // ISO datetime
   status: AppStatus;
   job_id: string;
   job_title: string;

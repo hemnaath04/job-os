@@ -284,6 +284,7 @@ export const appwriteWorkspace = {
       archived_at: null,
       created_at: timestamp,
       updated_at: timestamp,
+      tailored_count: 0,
     };
     await getAppwriteServices().tables.createRow<ResumeRow>({
       databaseId: config.databaseId,

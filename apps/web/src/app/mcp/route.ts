@@ -396,13 +396,32 @@ const handler = createMcpHandler(
           form.set("file", new Blob([new Uint8Array(bytes)]), args.filename);
           if (args.note) form.set("note", args.note);
           if (args.application_id) form.set("application_id", args.application_id);
-          return toolText(
-            await callBackendMultipart(
-              token(ctx),
-              `/resumes/${args.resume_id}/versions/upload`,
-              form,
-            ),
+          const version = await callBackendMultipart(
+            token(ctx),
+            `/resumes/${args.resume_id}/versions/upload`,
+            form,
           );
+
+          if (!args.application_id) return toolText(version);
+
+          // Echo back which job/company this actually landed on, in plain
+          // words, not just the application_id that was passed in — a wrong
+          // or stale ID silently attaches to someone else's pipeline entry
+          // otherwise, with nothing in the response to make that obvious.
+          const application = (await callBackend(
+            token(ctx),
+            "GET",
+            `/applications/${args.application_id}`,
+          )) as { job?: { title?: string; company?: { name?: string } }; status?: string };
+          return toolText({
+            version,
+            attached_to: {
+              application_id: args.application_id,
+              job_title: application.job?.title,
+              company: application.job?.company?.name,
+              status: application.status,
+            },
+          });
         } catch (e) {
           return toolError(e);
         }
