@@ -58,6 +58,17 @@ async def upload(key: str, content: bytes, content_type: str) -> UploadResult | 
     return UploadResult(key=key, public_url=public_url)
 
 
+async def download(key: str) -> bytes | None:
+    client, bucket = _client()
+    if not client:
+        return None
+
+    def _get():
+        return client.get_object(Bucket=bucket, Key=key)["Body"].read()
+
+    return await run_in_threadpool(_get)
+
+
 async def presign_get(key: str, expires_seconds: int = 3600) -> str | None:
     client, bucket = _client()
     if not client:

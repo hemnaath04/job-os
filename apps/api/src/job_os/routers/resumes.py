@@ -11,7 +11,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.auth import get_current_user
-from job_os.db.models import Job, Resume, ResumeRevisionMessage, ResumeVersion, User
+from job_os.db.models import Application, Job, Resume, ResumeRevisionMessage, ResumeVersion, User
 from job_os.db.session import get_session
 from job_os.schemas.resumes import (
     BuiltinTemplateSummary,
@@ -91,6 +91,31 @@ async def create_resume(
     session.add(resume)
     await session.flush()
     return resume
+
+
+@router.get("/versions/by-application/{application_id}", response_model=list[ResumeVersionRead])
+async def list_versions_by_application(
+    application_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> list[ResumeVersion]:
+    """Every resume version attached to one application — tailor-generated or
+    uploaded — newest first. Ownership is checked through the application,
+    not the version, since a version's own resume may belong to a resume the
+    caller can otherwise no longer see (e.g. archived)."""
+    application = await session.get(Application, application_id)
+    if application is None or application.user_id != user.id:
+        raise HTTPException(404, "application not found")
+
+    result = await session.execute(
+        select(ResumeVersion)
+        .where(
+            ResumeVersion.spawned_from_application_id == application_id,
+            ResumeVersion.archived_at.is_(None),
+        )
+        .order_by(ResumeVersion.created_at.desc())
+    )
+    return list(result.scalars().all())
 
 
 @router.post("/import", response_model=ResumeImportResult, status_code=201)
@@ -915,6 +940,25 @@ async def download_version(
 
     if version.pdf_bytes:
         pdf_bytes = bytes(version.pdf_bytes)
+    elif version.pdf_r2_key:
+        # An uploaded (not tailor-rendered) version: the bytes are the
+        # actual artifact the user built, stored verbatim in R2 — or, with
+        # no R2 configured, on local disk under the same key's local://
+        # path (see upload_version). Never render json_resume for these;
+        # it's only the {"uploaded": True, ...} stub, not a real document.
+        if version.pdf_r2_key.startswith("local://"):
+            pdf_bytes = Path(version.pdf_r2_key.removeprefix("local://")).read_bytes()
+        else:
+            from job_os.integrations import r2
+
+            fetched = await r2.download(version.pdf_r2_key)
+            if fetched is None:
+                raise HTTPException(502, "Could not fetch the uploaded PDF from storage.")
+            pdf_bytes = fetched
+        # Persist for subsequent clicks. flush() not commit — the session
+        # middleware commits at request end.
+        version.pdf_bytes = pdf_bytes
+        await session.flush()
     else:
         from job_os.services.latex_render import render_resume_pdf
 
@@ -939,6 +983,7 @@ async def upload_version(
     resume_id: UUID,
     file: UploadFile = File(...),
     note: str = Form(default=""),
+    application_id: UUID | None = Form(default=None),
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> ResumeVersion:
@@ -947,10 +992,19 @@ async def upload_version(
     The file is stored verbatim in R2 (if configured); `json_resume` is set to
     a minimal stub `{ "uploaded": True, "filename": ... }` since we don't
     extract on upload — the user provided the final artifact and we trust it.
+    Trusting it means treating it as done: unlike a tailor-pipeline draft,
+    an upload has no independent quality gate to pass, so it goes straight
+    to `final` rather than sitting unreachable behind /approve (which
+    requires a `review_report` uploads never have).
     """
     from job_os.integrations import r2
 
     await _load_resume(session, resume_id, user)
+    if application_id is not None:
+        application = await session.get(Application, application_id)
+        if application is None or application.user_id != user.id:
+            raise HTTPException(404, "application not found")
+
     content = await file.read()
     if not content:
         raise HTTPException(400, "empty file")
@@ -969,6 +1023,9 @@ async def upload_version(
         resume_id=resume_id,
         json_resume={"uploaded": True, "filename": file.filename, "note": note},
         approved_by_user=True,
+        status="final",
+        finalized_at=datetime.now(UTC),
+        spawned_from_application_id=application_id,
     )
     session.add(version)
     await session.flush()
