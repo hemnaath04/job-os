@@ -16,13 +16,20 @@ function Code({ children }: { children: string }) {
 }
 
 const TOOL_GROUPS = [
-  { title: "Jobs", tools: "list_jobs, get_job, add_job_from_url, search_jobs" },
+  {
+    title: "Jobs",
+    tools: "list_jobs, get_job, add_job_from_url, add_job_from_text, search_jobs",
+  },
   {
     title: "Applications",
     tools:
       "list_applications, get_application, get_application_timeline, create_application, update_application_status",
   },
-  { title: "Documents", tools: "list_resumes, get_profile_facts, list_cover_letters" },
+  {
+    title: "Documents",
+    tools:
+      "list_resumes, create_resume, upload_resume_version, get_application_resume_versions, get_profile_facts, list_cover_letters",
+  },
   { title: "Other", tools: "whoami, get_upcoming_calendar" },
 ];
 
@@ -57,10 +64,14 @@ export default function McpDocsPage() {
 
         <H2 id="tools">What&rsquo;s exposed</H2>
         <p>
-          Fourteen tools, covering jobs, applications, resumes, profile facts, cover letters, and
-          calendar. Eleven are pure reads; the three writes (<code>add_job_from_url</code>,{" "}
-          <code>create_application</code>, <code>update_application_status</code>) are additive or
-          reversible &mdash; nothing destructive.
+          Eighteen tools, covering jobs, applications, resumes, profile facts, cover letters, and
+          calendar. Most are pure reads; the writes (<code>add_job_from_url</code>,{" "}
+          <code>add_job_from_text</code>, <code>create_application</code>,{" "}
+          <code>update_application_status</code>, <code>create_resume</code>,{" "}
+          <code>upload_resume_version</code>) are additive or reversible &mdash; nothing destructive.
+          Both <code>add_job_from_url</code> and <code>add_job_from_text</code> take an optional{" "}
+          <code>status</code> to create the pipeline entry in the same call, matching the web
+          app&rsquo;s &ldquo;Add to wishlist&rdquo; button.
         </p>
         <div className="not-prose grid gap-3 sm:grid-cols-2">
           {TOOL_GROUPS.map((g) => (

@@ -40,6 +40,28 @@ function token(ctx: { http?: { authInfo?: { token: string } } }): string {
   return t;
 }
 
+/**
+ * Mirrors what the web app's "Add job" dialog does on submit: create the Job,
+ * then (only if the caller wants it in the pipeline right away) a second call
+ * to create the Application. Shared by add_job_from_url and add_job_from_text
+ * so both take the same optional `status` shortcut instead of forcing every
+ * caller into a separate create_application round trip.
+ */
+async function createJobAndMaybeApply(
+  jwt: string,
+  jobPath: string,
+  jobBody: Record<string, unknown>,
+  status: string | undefined,
+) {
+  const job = (await callBackend(jwt, "POST", jobPath, jobBody)) as { id: string };
+  if (!status) return job;
+  const application = await callBackend(jwt, "POST", "/applications", {
+    job_id: job.id,
+    status,
+  });
+  return { job, application };
+}
+
 const handler = createMcpHandler(
   (server) => {
     server.registerTool(
@@ -98,8 +120,8 @@ const handler = createMcpHandler(
       {
         title: "Add Job from URL",
         description:
-          "Fetch a job posting URL, parse it, and add it to job.os as a Job (not yet in the pipeline). Returns the created job; pass its id to create_application to add it to the Wishlist.",
-        inputSchema: z.object({ url: z.string().url() }),
+          "Fetch a job posting URL, parse it, and add it to job.os as a Job. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call, matching the web app's 'Add to wishlist' button; omit it to get back just the job and call create_application yourself later.",
+        inputSchema: z.object({ url: z.string().url(), status: STATUS.optional() }),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,
@@ -110,7 +132,46 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           return toolText(
-            await callBackend(token(ctx), "POST", "/jobs/from-url", { url: args.url }),
+            await createJobAndMaybeApply(
+              token(ctx),
+              "/jobs/from-url",
+              { url: args.url },
+              args.status,
+            ),
+          );
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "add_job_from_text",
+      {
+        title: "Add Job from Text",
+        description:
+          "Add a job posting job.os can't fetch by URL — behind a login, emailed to you, a screenshot you transcribed — by pasting the description text directly. Mirrors the web app's 'Paste the description' tab. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call; omit it to get back just the job and call create_application yourself later.",
+        inputSchema: z.object({
+          description: z.string(),
+          company: z.string().optional(),
+          status: STATUS.optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          return toolText(
+            await createJobAndMaybeApply(
+              token(ctx),
+              "/jobs/from-text",
+              { jd_text: args.description, company_hint: args.company },
+              args.status,
+            ),
           );
         } catch (e) {
           return toolError(e);
