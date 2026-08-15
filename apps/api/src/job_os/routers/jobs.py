@@ -1,5 +1,6 @@
 from uuid import UUID
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,6 +11,8 @@ from job_os.db.models import Job, User
 from job_os.db.session import get_session
 from job_os.schemas.jobs import JobCreateManual, JobFromText, JobFromUrl, JobRead
 from job_os.services.companies import upsert_company
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/jobs")
 
@@ -118,7 +121,17 @@ async def create_from_url(
     if existing:
         return existing
 
-    fetched = await fetch_url_markdown(url)
+    try:
+        fetched = await fetch_url_markdown(url)
+    except Exception as e:
+        log.warning("jobs.from_url.fetch_failed", url=url, error=str(e))
+        raise HTTPException(
+            502,
+            "Could not fetch that job posting right now — the fetch service is "
+            "temporarily unavailable. Try again in a moment, or use "
+            "'Paste the description' instead.",
+        ) from e
+
     parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
 
     company_name = parsed.get("company") or fetched.company_hint or "Unknown"

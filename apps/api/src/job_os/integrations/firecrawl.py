@@ -77,18 +77,38 @@ class FetchedPage:
     company_hint: str | None
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
 async def fetch_url_markdown(url: str) -> FetchedPage:
     """Fetch a job posting URL and return cleaned markdown.
 
     Uses Firecrawl when an API key is configured; otherwise falls back to a plain
     httpx + BeautifulSoup fetch. Both paths return the same FetchedPage shape.
+
+    Firecrawl itself has occasional 5xx blips (their own docs say to retry
+    these); after retrying, if it's still down, this falls through to the
+    plain fetch rather than failing outright — it won't render JS-heavy
+    postings, but it recovers plenty of ordinary HTML pages Firecrawl would
+    have handled, and a partial result beats none. Only if both paths fail
+    does the original Firecrawl error propagate, since a plain-fetch failure
+    (network error, blocked host) is usually a symptom of the same root cause.
     """
     settings = get_settings()
-    if settings.firecrawl_api_key:
-        return await _fetch_firecrawl(url, settings.firecrawl_api_key)
-    log.warning("firecrawl.fallback.no_key", url=url)
-    return await _fetch_plain(url)
+    if not settings.firecrawl_api_key:
+        log.warning("firecrawl.fallback.no_key", url=url)
+        return await _fetch_plain(url)
+
+    try:
+        return await _fetch_firecrawl_retrying(url, settings.firecrawl_api_key)
+    except Exception as e:
+        log.warning("firecrawl.fallback.upstream_error", url=url, error=str(e))
+        try:
+            return await _fetch_plain(url)
+        except Exception:
+            raise e from None
+
+
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=8), reraise=True)
+async def _fetch_firecrawl_retrying(url: str, api_key: str) -> FetchedPage:
+    return await _fetch_firecrawl(url, api_key)
 
 
 async def _fetch_firecrawl(url: str, api_key: str) -> FetchedPage:
