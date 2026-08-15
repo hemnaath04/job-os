@@ -45,6 +45,27 @@ export async function callBackend(
   return data;
 }
 
+export async function callBackendMultipart(
+  token: string,
+  path: string,
+  form: FormData,
+): Promise<unknown> {
+  const resp = await fetch(`${API}/api/v1${path}`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}` },
+    body: form,
+  });
+
+  const text = await resp.text();
+  const data = text ? JSON.parse(text) : null;
+
+  if (!resp.ok) {
+    const detail = (data as { detail?: string } | null)?.detail ?? resp.statusText;
+    throw new BackendError(resp.status, detail);
+  }
+  return data;
+}
+
 export function toolText(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }

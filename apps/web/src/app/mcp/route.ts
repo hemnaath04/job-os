@@ -5,7 +5,13 @@ import { createMcpHandler, withMcpAuth } from "mcp-handler";
 // (jsonSchema support). The rest of the app is on Zod v3 for @hookform/resolvers,
 // so this is a separately aliased dependency, scoped to this one route.
 import { z } from "zod4";
-import { BackendError, callBackend, toolError, toolText } from "@/lib/mcp/backend";
+import {
+  BackendError,
+  callBackend,
+  callBackendMultipart,
+  toolError,
+  toolText,
+} from "@/lib/mcp/backend";
 
 // Resume tailoring calls Claude and can run long; give tool calls the same
 // ceiling the browser's own proxy gets.
@@ -269,6 +275,97 @@ const handler = createMcpHandler(
       async (_args, ctx) => {
         try {
           return toolText(await callBackend(token(ctx), "GET", "/resumes"));
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "create_resume",
+      {
+        title: "Create Resume",
+        description:
+          "Create a new, empty resume container to hold versions (e.g. one you'll upload with upload_resume_version). This is the data identity — 'SWE resume', 'Research resume' — not a file; list_resumes shows what already exists before creating another.",
+        inputSchema: z.object({
+          name: z.string(),
+          base_role: z.string().optional(),
+          is_master: z.boolean().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          return toolText(await callBackend(token(ctx), "POST", "/resumes", args));
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "upload_resume_version",
+      {
+        title: "Upload Resume Version",
+        description:
+          "Push an externally built PDF or DOCX (base64-encoded) into job.os as a new version under an existing resume (create one first with create_resume if list_resumes is empty). Treated as final immediately — no quality gate to pass, since the caller built and reviewed it themselves. Pass application_id to link it to a specific pipeline entry, retrievable later with get_application_resume_versions.",
+        inputSchema: z.object({
+          resume_id: z.string().uuid(),
+          filename: z.string(),
+          content_base64: z.string(),
+          note: z.string().optional(),
+          application_id: z.string().uuid().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          const bytes = Buffer.from(args.content_base64, "base64");
+          const form = new FormData();
+          form.set("file", new Blob([new Uint8Array(bytes)]), args.filename);
+          if (args.note) form.set("note", args.note);
+          if (args.application_id) form.set("application_id", args.application_id);
+          return toolText(
+            await callBackendMultipart(
+              token(ctx),
+              `/resumes/${args.resume_id}/versions/upload`,
+              form,
+            ),
+          );
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "get_application_resume_versions",
+      {
+        title: "Get Application Resume Versions",
+        description:
+          "List resume versions linked to one pipeline entry (tailor-generated or uploaded via upload_resume_version), newest first.",
+        inputSchema: z.object({ application_id: z.string().uuid() }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (args, ctx) => {
+        try {
+          return toolText(
+            await callBackend(
+              token(ctx),
+              "GET",
+              `/resumes/versions/by-application/${args.application_id}`,
+            ),
+          );
         } catch (e) {
           return toolError(e);
         }
