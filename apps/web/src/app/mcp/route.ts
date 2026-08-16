@@ -13,6 +13,13 @@ import {
   toolError,
   toolText,
 } from "@/lib/mcp/backend";
+import { isAppwritePipelineEnabled } from "@/lib/appwrite/config";
+import {
+  createApplicationCard,
+  patchApplicationCard,
+  resolveAppwriteUserId,
+} from "@/lib/mcp/appwrite";
+import type { Application } from "@/lib/types";
 
 // Resume tailoring calls Claude and can run long; give tool calls the same
 // ceiling the browser's own proxy gets.
@@ -39,6 +46,37 @@ function token(ctx: { http?: { authInfo?: { token: string } } }): string {
   const t = ctx.http?.authInfo?.token;
   if (!t) throw new BackendError(401, "missing verified access token");
   return t;
+}
+
+/**
+ * The verified Clerk user id, set by verifyClerkToken alongside the raw
+ * bearer token. Needed anywhere this route talks to Appwrite directly
+ * (bypassing the FastAPI backend), since Appwrite's own user id is derived
+ * from this, not from the bearer token itself.
+ */
+function clerkUserId(ctx: { http?: { authInfo?: { extra?: { userId?: string } } } }): string {
+  const id = ctx.http?.authInfo?.extra?.userId;
+  if (!id) throw new BackendError(401, "missing verified user id");
+  return id;
+}
+
+/**
+ * Mirrors a just-written Postgres application into Appwrite, the store the
+ * web app's pipeline view actually reads in production
+ * (NEXT_PUBLIC_PIPELINE_BACKEND=appwrite). Without this, a job added or
+ * moved through this MCP server lands durably in Postgres and never appears
+ * on jobs.hemnaath.tech — silently, since the write itself reports success.
+ * Best-effort by the same reasoning as the frontend's own dual-write: the
+ * Postgres row is the durable one, so a mirror failure here is logged and
+ * swallowed rather than failing the tool call.
+ */
+async function mirrorToAppwrite(op: () => Promise<unknown>, logContext: Record<string, unknown>) {
+  if (!isAppwritePipelineEnabled) return;
+  try {
+    await op();
+  } catch (error) {
+    console.error("[mcp-appwrite-mirror] failed", { ...logContext, error });
+  }
 }
 
 /**
@@ -80,13 +118,20 @@ async function createJobAndMaybeApply(
   jobPath: string,
   jobBody: Record<string, unknown>,
   status: string | undefined,
+  appwriteUserId: string | undefined,
 ) {
   const job = (await callBackend(jwt, "POST", jobPath, jobBody)) as { id: string };
   if (!status) return job;
-  const application = await callBackend(jwt, "POST", "/applications", {
+  const application = (await callBackend(jwt, "POST", "/applications", {
     job_id: job.id,
     status,
-  });
+  })) as Application;
+  if (appwriteUserId) {
+    await mirrorToAppwrite(() => createApplicationCard(appwriteUserId, application), {
+      tool: jobPath,
+      application_id: application.id,
+    });
+  }
   return { job, application };
 }
 
@@ -165,6 +210,7 @@ const handler = createMcpHandler(
               "/jobs/from-url",
               { url: args.url },
               args.status,
+              args.status ? resolveAppwriteUserId(clerkUserId(ctx)) : undefined,
             ),
           );
         } catch (e) {
@@ -199,6 +245,7 @@ const handler = createMcpHandler(
               "/jobs/from-text",
               { jd_text: args.description, company_hint: args.company },
               args.status,
+              args.status ? resolveAppwriteUserId(clerkUserId(ctx)) : undefined,
             ),
           );
         } catch (e) {
@@ -316,7 +363,17 @@ const handler = createMcpHandler(
       },
       async (args, ctx) => {
         try {
-          return toolText(await callBackend(token(ctx), "POST", "/applications", args));
+          const application = (await callBackend(
+            token(ctx),
+            "POST",
+            "/applications",
+            args,
+          )) as Application;
+          await mirrorToAppwrite(
+            () => createApplicationCard(resolveAppwriteUserId(clerkUserId(ctx)), application),
+            { tool: "create_application", application_id: application.id },
+          );
+          return toolText(application);
         } catch (e) {
           return toolError(e);
         }
@@ -343,9 +400,17 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           const { application_id, ...patch } = args;
-          return toolText(
-            await callBackend(token(ctx), "PATCH", `/applications/${application_id}`, patch),
+          const result = await callBackend(
+            token(ctx),
+            "PATCH",
+            `/applications/${application_id}`,
+            patch,
           );
+          await mirrorToAppwrite(
+            () => patchApplicationCard(resolveAppwriteUserId(clerkUserId(ctx)), application_id, patch),
+            { tool: "update_application_status", application_id },
+          );
+          return toolText(result);
         } catch (e) {
           return toolError(e);
         }
