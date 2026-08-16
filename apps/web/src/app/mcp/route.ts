@@ -48,6 +48,33 @@ function token(ctx: { http?: { authInfo?: { token: string } } }): string {
  * so both take the same optional `status` shortcut instead of forcing every
  * caller into a separate create_application round trip.
  */
+/**
+ * Wraps a just-created resume version with which job/company it actually
+ * attached to, in plain words — not just the application_id that was passed
+ * in. A wrong or stale ID otherwise attaches silently to someone else's
+ * pipeline entry with nothing in the response to make that obvious.
+ */
+async function withAttachmentEcho(
+  jwt: string,
+  version: unknown,
+  applicationId: string | undefined,
+) {
+  if (!applicationId) return toolText(version);
+  const application = (await callBackend(jwt, "GET", `/applications/${applicationId}`)) as {
+    job?: { title?: string; company?: { name?: string } };
+    status?: string;
+  };
+  return toolText({
+    version,
+    attached_to: {
+      application_id: applicationId,
+      job_title: application.job?.title,
+      company: application.job?.company?.name,
+      status: application.status,
+    },
+  });
+}
+
 async function createJobAndMaybeApply(
   jwt: string,
   jobPath: string,
@@ -409,27 +436,80 @@ const handler = createMcpHandler(
             `/resumes/${args.resume_id}/versions/upload`,
             form,
           );
+          return withAttachmentEcho(token(ctx), version, args.application_id);
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
 
-          if (!args.application_id) return toolText(version);
+    server.registerTool(
+      "create_resume_upload_url",
+      {
+        title: "Create Resume Upload URL",
+        description:
+          "Step 1 of pushing a local file into job.os without inlining it or hosting it yourself: returns a short-lived URL to PUT the raw file straight to job.os's storage — e.g. `curl -X PUT --data-binary @/path/to/resume.pdf '<upload_url>'` — plus a `key` to pass to confirm_resume_upload afterward. Prefer this over upload_resume_version's content_base64 for a real file the caller can reach with an outbound request but can't otherwise get to job.os (no public URL, no server of its own).",
+        inputSchema: z.object({
+          resume_id: z.string().uuid(),
+          filename: z.string(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          return toolText(
+            await callBackend(
+              token(ctx),
+              "POST",
+              `/resumes/${args.resume_id}/versions/presign-upload`,
+              { filename: args.filename },
+            ),
+          );
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
 
-          // Echo back which job/company this actually landed on, in plain
-          // words, not just the application_id that was passed in — a wrong
-          // or stale ID silently attaches to someone else's pipeline entry
-          // otherwise, with nothing in the response to make that obvious.
-          const application = (await callBackend(
+    server.registerTool(
+      "confirm_resume_upload",
+      {
+        title: "Confirm Resume Upload",
+        description:
+          "Step 2: after PUTting the file to the upload_url from create_resume_upload_url, call this with the same key to check the bytes actually landed and finalize the version — nothing is created until this confirms. Pass application_id to link it to a pipeline entry, same as upload_resume_version.",
+        inputSchema: z.object({
+          resume_id: z.string().uuid(),
+          key: z.string(),
+          filename: z.string(),
+          note: z.string().optional(),
+          application_id: z.string().uuid().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          const version = await callBackend(
             token(ctx),
-            "GET",
-            `/applications/${args.application_id}`,
-          )) as { job?: { title?: string; company?: { name?: string } }; status?: string };
-          return toolText({
-            version,
-            attached_to: {
+            "POST",
+            `/resumes/${args.resume_id}/versions/confirm-upload`,
+            {
+              key: args.key,
+              filename: args.filename,
+              note: args.note,
               application_id: args.application_id,
-              job_title: application.job?.title,
-              company: application.job?.company?.name,
-              status: application.status,
             },
-          });
+          );
+          return withAttachmentEcho(token(ctx), version, args.application_id);
         } catch (e) {
           return toolError(e);
         }

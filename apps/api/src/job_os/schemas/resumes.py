@@ -70,6 +70,23 @@ class ResumeVersionCreate(ORMModel):
     revision_note: str | None = None
 
 
+class PresignUploadRequest(ORMModel):
+    filename: str
+
+
+class PresignUploadResponse(ORMModel):
+    key: str
+    upload_url: str
+    expires_in: int
+
+
+class ConfirmUploadRequest(ORMModel):
+    key: str
+    filename: str
+    note: str = ""
+    application_id: UUID | None = None
+
+
 class ResumeDirectEditRequest(ORMModel):
     json_resume: dict[str, Any]
     note: str = "Manual edit"

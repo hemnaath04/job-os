@@ -82,3 +82,44 @@ async def presign_get(key: str, expires_seconds: int = 3600) -> str | None:
         )
 
     return await run_in_threadpool(_sign)
+
+
+async def presign_put(key: str, expires_seconds: int = 900) -> str | None:
+    """A URL a caller can PUT raw bytes to directly, without ever routing the
+    file through job.os's own request body — the fix for a client that has a
+    local file too large or awkward to inline as base64 in a tool call, and
+    no server of its own for job.os to fetch from instead.
+
+    Deliberately unsigned on Content-Type: a presigned PUT that binds it
+    requires the caller's request to send that exact header back, which a
+    plain `curl -X PUT --data-binary` has no reason to get right. The actual
+    extension/content-type is determined from the filename once the upload is
+    confirmed, same as a direct multipart upload already does.
+    """
+    client, bucket = _client()
+    if not client:
+        return None
+
+    def _sign():
+        return client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": bucket, "Key": key},
+            ExpiresIn=expires_seconds,
+        )
+
+    return await run_in_threadpool(_sign)
+
+
+async def exists(key: str) -> bool:
+    client, bucket = _client()
+    if not client:
+        return False
+
+    def _head() -> bool:
+        try:
+            client.head_object(Bucket=bucket, Key=key)
+            return True
+        except Exception:  # noqa: BLE001 — any failure means "not there yet"
+            return False
+
+    return await run_in_threadpool(_head)

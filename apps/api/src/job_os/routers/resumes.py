@@ -15,9 +15,12 @@ from job_os.db.models import Application, Job, Resume, ResumeRevisionMessage, Re
 from job_os.db.session import get_session
 from job_os.schemas.resumes import (
     BuiltinTemplateSummary,
+    ConfirmUploadRequest,
     ExportRequest,
     ExportResult,
     GeneratedTemplateResponse,
+    PresignUploadRequest,
+    PresignUploadResponse,
     ResumeChatRequest,
     ResumeChatResponse,
     ResumeCreate,
@@ -1059,6 +1062,81 @@ async def upload_version(
         setattr(version, f"{ext}_r2_key", f"local://{local}")
     else:
         setattr(version, f"{ext}_r2_key", key)
+    return version
+
+
+def _ext_for_filename(filename: str) -> str:
+    name = filename.lower()
+    if name.endswith(".pdf"):
+        return "pdf"
+    if name.endswith(".docx"):
+        return "docx"
+    raise HTTPException(400, "only .pdf or .docx accepted")
+
+
+@router.post("/{resume_id}/versions/presign-upload", response_model=PresignUploadResponse)
+async def presign_upload(
+    resume_id: UUID,
+    payload: PresignUploadRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> PresignUploadResponse:
+    """Step 1 of the no-inline-bytes upload path: a URL the caller PUTs the
+    raw file to directly, for a client that has the file locally but no
+    server of its own for job.os to fetch it from (the MCP connector's
+    situation exactly). Not tied to a ResumeVersion row yet — that's created
+    in confirm_upload, once the bytes are actually confirmed to be there."""
+    from job_os.integrations import r2
+
+    await _load_resume(session, resume_id, user)
+    ext = _ext_for_filename(payload.filename)
+    key = f"resumes/{user.id}/{resume_id}/uploaded/{uuid4().hex}.{ext}"
+    upload_url = await r2.presign_put(key)
+    if upload_url is None:
+        raise HTTPException(503, "Upload storage is not configured.")
+    return PresignUploadResponse(key=key, upload_url=upload_url, expires_in=900)
+
+
+@router.post(
+    "/{resume_id}/versions/confirm-upload", response_model=ResumeVersionRead, status_code=201
+)
+async def confirm_upload(
+    resume_id: UUID,
+    payload: ConfirmUploadRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeVersion:
+    """Step 2: the caller has PUT bytes to the URL from presign_upload:
+    confirm they actually landed before creating anything, so a version
+    row is never created for an upload that silently failed or was never
+    attempted."""
+    from job_os.integrations import r2
+
+    await _load_resume(session, resume_id, user)
+    if payload.application_id is not None:
+        application = await session.get(Application, payload.application_id)
+        if application is None or application.user_id != user.id:
+            raise HTTPException(404, "application not found")
+
+    # The key names this exact user and resume, so nothing lets one account
+    # confirm an upload into a key that was presigned for another.
+    if not payload.key.startswith(f"resumes/{user.id}/{resume_id}/"):
+        raise HTTPException(400, "key does not belong to this resume")
+    if not await r2.exists(payload.key):
+        raise HTTPException(409, "Nothing has been uploaded to that key yet.")
+
+    ext = _ext_for_filename(payload.filename)
+    version = ResumeVersion(
+        resume_id=resume_id,
+        json_resume={"uploaded": True, "filename": payload.filename, "note": payload.note},
+        approved_by_user=True,
+        status="final",
+        finalized_at=datetime.now(UTC),
+        spawned_from_application_id=payload.application_id,
+    )
+    setattr(version, f"{ext}_r2_key", payload.key)
+    session.add(version)
+    await session.flush()
     return version
 
 
