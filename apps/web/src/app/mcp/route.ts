@@ -9,6 +9,7 @@ import {
   BackendError,
   callBackend,
   callBackendMultipart,
+  fetchExternalFile,
   toolError,
   toolText,
 } from "@/lib/mcp/backend";
@@ -374,24 +375,31 @@ const handler = createMcpHandler(
       {
         title: "Upload Resume Version",
         description:
-          "Push an externally built PDF or DOCX (base64-encoded) into job.os as a new version under an existing resume (create one first with create_resume if list_resumes is empty). Treated as final immediately — no quality gate to pass, since the caller built and reviewed it themselves. Pass application_id to link it to a specific pipeline entry, retrievable later with get_application_resume_versions.",
-        inputSchema: z.object({
-          resume_id: z.string().uuid(),
-          filename: z.string(),
-          content_base64: z.string(),
-          note: z.string().optional(),
-          application_id: z.string().uuid().optional(),
-        }),
+          "Push an externally built PDF or DOCX into job.os as a new version under an existing resume (create one first with create_resume if list_resumes is empty). Provide exactly one of content_base64 (inline bytes — fine for small files, but a real PDF can be too large to reliably round-trip through the model's own context) or source_url (an https URL job.os fetches server-side, same pattern as add_job_from_url — use this for anything beyond trivial size). Treated as final immediately — no quality gate to pass, since the caller built and reviewed it themselves. Pass application_id to link it to a specific pipeline entry, retrievable later with get_application_resume_versions.",
+        inputSchema: z
+          .object({
+            resume_id: z.string().uuid(),
+            filename: z.string(),
+            content_base64: z.string().optional(),
+            source_url: z.string().url().optional(),
+            note: z.string().optional(),
+            application_id: z.string().uuid().optional(),
+          })
+          .refine((v) => Boolean(v.content_base64) !== Boolean(v.source_url), {
+            message: "Provide exactly one of content_base64 or source_url, not both or neither.",
+          }),
         annotations: {
           readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: false,
-          openWorldHint: false,
+          openWorldHint: true,
         },
       },
       async (args, ctx) => {
         try {
-          const bytes = Buffer.from(args.content_base64, "base64");
+          const bytes = args.source_url
+            ? (await fetchExternalFile(args.source_url)).bytes
+            : Buffer.from(args.content_base64!, "base64");
           const form = new FormData();
           form.set("file", new Blob([new Uint8Array(bytes)]), args.filename);
           if (args.note) form.set("note", args.note);

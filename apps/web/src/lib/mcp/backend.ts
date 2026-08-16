@@ -66,6 +66,75 @@ export async function callBackendMultipart(
   return data;
 }
 
+const MAX_FETCHED_FILE_BYTES = 25 * 1024 * 1024; // 25MB — a resume PDF/DOCX is nowhere near this.
+const FETCH_TIMEOUT_MS = 20_000;
+const BLOCKED_HOSTNAMES = new Set(["localhost", "metadata.google.internal", "169.254.169.254"]);
+
+/**
+ * Deliberate copy of the guard in lib/discover/custom-fetch.ts rather than an
+ * import from it — that module keeps its internals private on purpose, and
+ * this is a few lines. Same reasoning: https only, no loopback/private/
+ * link-local/cloud-metadata target, best-effort (checks the hostname as
+ * written, not resolve-then-pin).
+ */
+function assertFetchableUrl(raw: string): URL {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("must be an https URL");
+  }
+  if (url.protocol !== "https:") throw new Error("must be an https URL");
+  const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (BLOCKED_HOSTNAMES.has(host)) throw new Error("blocked host");
+  if (host.endsWith(".local") || host.endsWith(".internal")) throw new Error("blocked host");
+  const parts = host.split(".");
+  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {
+    const [a, b] = parts.map(Number);
+    if (a === 0 || a === 127 || a === 10 || (a === 169 && b === 254) || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) {
+      throw new Error("blocked host");
+    }
+  }
+  return url;
+}
+
+/**
+ * Fetch a resume file the caller already has hosted somewhere (they built it,
+ * uploaded it to their own storage, whatever) instead of requiring it be
+ * inlined as base64 in the tool call — the same reasoning add_job_from_url
+ * uses for job postings: the server does the fetching, so the caller never
+ * has to round-trip a large file through the model's own context.
+ */
+export async function fetchExternalFile(
+  rawUrl: string,
+): Promise<{ bytes: Uint8Array; contentType: string }> {
+  const url = assertFetchableUrl(rawUrl);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  try {
+    const resp = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    if (!resp.ok) throw new Error(`could not fetch source_url (HTTP ${resp.status})`);
+    const contentLength = resp.headers.get("content-length");
+    if (contentLength && Number(contentLength) > MAX_FETCHED_FILE_BYTES) {
+      throw new Error("file at source_url is too large (25MB limit)");
+    }
+    const buf = await resp.arrayBuffer();
+    if (buf.byteLength > MAX_FETCHED_FILE_BYTES) {
+      throw new Error("file at source_url is too large (25MB limit)");
+    }
+    return {
+      bytes: new Uint8Array(buf),
+      contentType: resp.headers.get("content-type") ?? "application/octet-stream",
+    };
+  } catch (e) {
+    const err = e as Error;
+    if (err.name === "AbortError") throw new Error(`timed out fetching source_url after ${FETCH_TIMEOUT_MS}ms`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export function toolText(data: unknown) {
   return { content: [{ type: "text" as const, text: JSON.stringify(data, null, 2) }] };
 }

@@ -73,6 +73,13 @@ export default function McpDocsPage() {
           <code>status</code> to create the pipeline entry in the same call, matching the web
           app&rsquo;s &ldquo;Add to wishlist&rdquo; button.
         </p>
+        <p>
+          <code>upload_resume_version</code> takes either <code>content_base64</code> (inline
+          bytes) or <code>source_url</code> (an https URL job.os fetches itself, same pattern as{" "}
+          <code>add_job_from_url</code>) &mdash; use <code>source_url</code> for anything beyond a
+          trivially small file, since inlining a real PDF as base64 can be too large to reliably
+          round-trip through a model&rsquo;s own context.
+        </p>
         <div className="not-prose grid gap-3 sm:grid-cols-2">
           {TOOL_GROUPS.map((g) => (
             <div
