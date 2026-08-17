@@ -1094,31 +1094,7 @@ function ResultCard({
       transition={{ duration: 0.2 }}
       className="workspace-panel workspace-panel-interactive flex h-full flex-col p-5"
     >
-      <div className="flex items-start gap-3">
-        <CompanyAvatar name={result.company_name ?? "?"} domain={result.company_domain} size={36} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-start gap-2">
-            <h3 className="line-clamp-2 text-sm font-medium leading-snug">
-              {result.title}
-            </h3>
-            {result.source_url && (
-              <a
-                href={result.source_url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label={`Open the ${result.title} posting`}
-                className="shrink-0 text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-              >
-                <ExternalLink className="size-3.5" aria-hidden="true" />
-              </a>
-            )}
-          </div>
-          {result.company_name && (
-            <div className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
-              {result.company_name}
-            </div>
-          )}
-        </div>
+      <div className="flex items-start justify-between gap-3">
         {fit?.confident ? (
           <FitBadge fit={fit} />
         ) : !result.description ? (
@@ -1132,10 +1108,27 @@ function ResultCard({
           >
             score on import
           </span>
-        ) : null}
+        ) : (
+          <span />
+        )}
+        {result.source_url && (
+          <a
+            href={result.source_url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label={`Open the ${result.title} posting`}
+            className="shrink-0 text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"
+          >
+            <ExternalLink className="size-4" aria-hidden="true" />
+          </a>
+        )}
       </div>
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-dim)]">
+      <h3 className="mt-3 line-clamp-2 text-lg font-medium leading-tight tracking-[-0.01em] text-[color:var(--color-text)]">
+        {result.title}
+      </h3>
+
+      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-[color:var(--color-text-dim)]">
         {result.location && (
           <span className="inline-flex items-center gap-1">
             <MapPin className="size-3" /> {result.location}
@@ -1217,35 +1210,51 @@ function ResultCard({
         </div>
       ) : null}
 
-      <div className="mt-auto flex items-center justify-between gap-2 pt-3">
-        {result.already_imported ? (
-          <span className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-mint)]/10 px-3 py-1 text-[11px] text-[color:var(--color-mint-ink)]">
-            <CheckCircle2 className="size-3" /> In Applications
-          </span>
-        ) : (
-          <button
-            onClick={() => importJob.mutate()}
-            disabled={importJob.isPending || tailorJob.isPending}
-            title="Fetches and parses the posting, usually 5-10s"
-            className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] hover:bg-[color:var(--color-surface-hover)] disabled:opacity-50"
-          >
-            {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
-            Import
-          </button>
-        )}
-        <button
-          onClick={() => tailorJob.mutate()}
-          disabled={tailorJob.isPending || importJob.isPending}
-          className="inline-flex items-center gap-1 rounded-full bg-gradient-brand px-3 py-1 text-[11px] font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
-          title="Import + create application + open the tailoring agent"
-        >
-          {tailorJob.isPending ? (
-            <Loader2 className="size-3 animate-spin" />
-          ) : (
-            <Sparkles className="size-3" />
-          )}
-          Tailor →
-        </button>
+      {/* The seam the reference card marks with a divider: content above is
+          about the role, everything below is about who's hiring and what to
+          do next. */}
+      <div className="mt-auto border-t border-[color:var(--color-border)] pt-3">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <CompanyAvatar name={result.company_name ?? "?"} domain={result.company_domain} size={36} />
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium text-[color:var(--color-text)]">
+                {result.company_name || "Unknown company"}
+              </p>
+              {result.already_imported && (
+                <p className="flex items-center gap-1 text-[11px] text-[color:var(--color-mint-ink)]">
+                  <CheckCircle2 className="size-3" /> In Applications
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            {!result.already_imported && (
+              <button
+                onClick={() => importJob.mutate()}
+                disabled={importJob.isPending || tailorJob.isPending}
+                title="Fetches and parses the posting, usually 5-10s"
+                className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-[11px] hover:bg-[color:var(--color-surface-hover)] disabled:opacity-50"
+              >
+                {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
+                Import
+              </button>
+            )}
+            <button
+              onClick={() => tailorJob.mutate()}
+              disabled={tailorJob.isPending || importJob.isPending}
+              className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-text)] px-3.5 py-1.5 text-[11px] font-medium text-[color:var(--color-bg)] transition enabled:hover:opacity-85 disabled:opacity-50"
+              title="Import + create application + open the tailoring agent"
+            >
+              {tailorJob.isPending ? (
+                <Loader2 className="size-3 animate-spin" />
+              ) : (
+                <Sparkles className="size-3" />
+              )}
+              Tailor
+            </button>
+          </div>
+        </div>
       </div>
     </motion.div>
   );
