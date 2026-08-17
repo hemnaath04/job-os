@@ -23,6 +23,7 @@ import {
   resolveAppwriteUserId,
   resumeCardExists,
   resumeVersionCardExists,
+  resyncResumeCard,
   retargetResumeVersionCard,
 } from "@/lib/mcp/appwrite";
 import type { Application, Resume, ResumeVersion } from "@/lib/types";
@@ -753,6 +754,36 @@ const handler = createMcpHandler(
               : null,
           );
           return toolText({ synced: true, resume_id: args.resume_id, version_id: args.version_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "resync_resume_to_appwrite",
+      {
+        title: "Resync Resume to Appwrite",
+        description:
+          "Repair tool: refreshes an already-mirrored resume's Appwrite snapshot from its current Postgres record. Only needed when the resume was corrected directly in Postgres after it was first mirrored (a backfill, a field that didn't exist yet) — the Appwrite copy is frozen at whatever it was when mirrorResumeCard last ran and won't pick up such a change on its own.",
+        inputSchema: z.object({ resume_id: z.string().uuid() }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolText({ synced: false, reason: "Appwrite workspace is not enabled" });
+          }
+          const resumes = (await callBackend(token(ctx), "GET", "/resumes")) as Resume[];
+          const resume = resumes.find((r) => r.id === args.resume_id);
+          if (!resume) throw new BackendError(404, "resume not found");
+          await resyncResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), resume);
+          return toolText({ synced: true, resume_id: args.resume_id });
         } catch (e) {
           return toolError(e);
         }

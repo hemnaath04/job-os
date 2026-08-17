@@ -260,6 +260,32 @@ export async function mirrorResumeCard(
 }
 
 /**
+ * Refreshes an already-mirrored resume card's snapshot from its current
+ * Postgres state. Needed because a direct Postgres correction (a backfill,
+ * a schema field added after the row was first mirrored) never reaches the
+ * frozen Appwrite snapshot on its own -- only a write through this module
+ * updates it, and mirrorResumeCard only creates, so a repeat call 409s
+ * instead of refreshing anything.
+ */
+export async function resyncResumeCard(appwriteUserId: string, resume: Resume): Promise<void> {
+  const { databaseId, resumesTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow({ databaseId, tableId: resumesTableId, rowId: resume.id });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume not found");
+  await tables.updateRow({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resume.id,
+    data: {
+      name: resume.name,
+      is_master: resume.is_master,
+      source_updated_at: resume.updated_at,
+      snapshot: JSON.stringify(resume),
+    },
+  });
+}
+
+/**
  * Mirrors one resume version, including its PDF.
  *
  * The Appwrite Resume Studio never reads pdf_r2_key (R2 is only reachable
