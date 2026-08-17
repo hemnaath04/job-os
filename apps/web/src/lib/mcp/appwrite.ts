@@ -15,7 +15,18 @@
  * session-based browser client gets for free from Appwrite's permission
  * system instead.
  */
-import { Client, ID, Permission, Query, Role, Storage, TablesDB, type Models } from "node-appwrite";
+import {
+  Client,
+  ExecutionMethod,
+  Functions,
+  ID,
+  Permission,
+  Query,
+  Role,
+  Storage,
+  TablesDB,
+  type Models,
+} from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { appwriteUserIdForClerk } from "@/lib/appwrite/user-id";
 import type { Application, Resume, ResumeVersion } from "@/lib/types";
@@ -39,6 +50,10 @@ function config() {
       process.env.NEXT_PUBLIC_APPWRITE_RESUME_VERSIONS_TABLE_ID ?? "resume_versions",
     resumeFilesBucketId:
       process.env.NEXT_PUBLIC_APPWRITE_RESUME_FILES_BUCKET_ID ?? "resume_files",
+    agentJobsTableId:
+      process.env.NEXT_PUBLIC_APPWRITE_AGENT_JOBS_TABLE_ID ?? "agent_jobs",
+    agentFunctionId:
+      process.env.NEXT_PUBLIC_APPWRITE_AGENT_FUNCTION_ID ?? "job-os-agents",
   };
 }
 
@@ -53,6 +68,10 @@ function tablesClient() {
 
 function storageClient() {
   return new Storage(client());
+}
+
+function functionsClient() {
+  return new Functions(client());
 }
 
 function ownerPermissions(appwriteUserId: string): string[] {
@@ -423,6 +442,156 @@ export async function retargetResumeVersionCard(
       snapshot: JSON.stringify(snapshot),
     },
   });
+}
+
+/**
+ * The Appwrite tailor agent, invoked the same way the browser does it
+ * (lib/appwrite/workspace.ts's createAgentJob) but from an API key instead of
+ * a session — the one thing an MCP call has none of. This is what lets an
+ * agent actually build a resume for a job through MCP rather than only
+ * managing resumes that already exist. Multiple calls run as independent
+ * agent jobs, each polled by its own id, so several builds genuinely run at
+ * once instead of one MCP call blocking behind another.
+ */
+export type AgentJobStatus = "queued" | "running" | "succeeded" | "failed";
+
+export interface AgentJobProgress {
+  stage: string;
+  pct: number;
+  updated_at: string;
+  step?: string | null;
+  detail?: string | null;
+}
+
+export interface AgentJobSnapshot<T = unknown> {
+  id: string;
+  kind: "resume_tailor";
+  status: AgentJobStatus;
+  input: Record<string, unknown>;
+  output: T | null;
+  error: string | null;
+  created_at: string;
+  updated_at: string;
+  progress?: AgentJobProgress | null;
+}
+
+interface AgentJobRow extends Models.Row {
+  owner_id: string;
+  kind: string;
+  status: string;
+  snapshot: string;
+}
+
+/**
+ * Dispatches the tailor agent for one resume against one job posting, and
+ * returns immediately with the agent job's id. The draft it produces lands as
+ * a new resume version, polled with getResumeTailorJobStatus below — mirrors
+ * the browser's tailorResume + getAgentJob split exactly, since that split is
+ * what already lets the web app poll without blocking.
+ */
+export async function startResumeTailorJob(
+  appwriteUserId: string,
+  resumeId: string,
+  jobPostingId: string,
+  jdParsed: Record<string, unknown>,
+  jdClean: string,
+): Promise<{ id: string }> {
+  const { databaseId, resumesTableId, agentJobsTableId, agentFunctionId } = config();
+  const tables = tablesClient();
+
+  const resumeRow = await tables.getRow({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resumeId,
+  });
+  if (resumeRow.owner_id !== appwriteUserId) {
+    throw new Error("resume not found");
+  }
+
+  const id = ID.unique();
+  const createdAt = new Date().toISOString();
+  const input = {
+    resume_id: resumeId,
+    spawned_from_job_id: jobPostingId,
+    jd_parsed: jdParsed,
+    jd_clean: jdClean,
+  };
+  const snapshot: AgentJobSnapshot = {
+    id,
+    kind: "resume_tailor",
+    status: "queued",
+    input,
+    output: null,
+    error: null,
+    created_at: createdAt,
+    updated_at: createdAt,
+  };
+
+  await tables.createRow({
+    databaseId,
+    tableId: agentJobsTableId,
+    rowId: id,
+    data: {
+      owner_id: appwriteUserId,
+      kind: "resume_tailor",
+      status: "queued",
+      source_updated_at: createdAt,
+      snapshot: JSON.stringify(snapshot),
+    },
+    permissions: ownerPermissions(appwriteUserId),
+  });
+
+  try {
+    await functionsClient().createExecution({
+      functionId: agentFunctionId,
+      body: JSON.stringify({ job_id: id, ...input }),
+      async: true,
+      xpath: "/resume/tailor",
+      method: ExecutionMethod.POST,
+    });
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    const failed: AgentJobSnapshot = {
+      ...snapshot,
+      status: "failed",
+      error: error instanceof Error ? error.message : "Could not queue agent",
+      updated_at: failedAt,
+    };
+    await tables.updateRow({
+      databaseId,
+      tableId: agentJobsTableId,
+      rowId: id,
+      data: {
+        status: "failed",
+        source_updated_at: failedAt,
+        snapshot: JSON.stringify(failed),
+      },
+    });
+    throw error;
+  }
+
+  return { id };
+}
+
+/**
+ * Reads one tailor agent job's current state, the same row the Appwrite
+ * Function itself updates as it runs. Owner-checked explicitly since an API
+ * key has no session-based row permissions to fall back on.
+ */
+export async function getResumeTailorJobStatus(
+  appwriteUserId: string,
+  jobId: string,
+): Promise<AgentJobSnapshot> {
+  const { databaseId, agentJobsTableId } = config();
+  const row = await tablesClient().getRow<AgentJobRow>({
+    databaseId,
+    tableId: agentJobsTableId,
+    rowId: jobId,
+  });
+  if (row.owner_id !== appwriteUserId) {
+    throw new Error("tailor job not found");
+  }
+  return JSON.parse(row.snapshot) as AgentJobSnapshot;
 }
 
 export { ID };

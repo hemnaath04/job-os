@@ -18,6 +18,7 @@ import { isAppwritePipelineEnabled, isAppwriteWorkspaceEnabled } from "@/lib/app
 import {
   archiveResumeCard,
   createApplicationCard,
+  getResumeTailorJobStatus,
   listResumeCards,
   mirrorResumeCard,
   mirrorResumeVersionCard,
@@ -27,6 +28,7 @@ import {
   resumeVersionCardExists,
   resyncResumeCard,
   retargetResumeVersionCard,
+  startResumeTailorJob,
 } from "@/lib/mcp/appwrite";
 import type { Application, Resume, ResumeVersion } from "@/lib/types";
 
@@ -223,6 +225,71 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           return toolText(await callBackend(token(ctx), "GET", `/jobs/${args.job_id}`));
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "start_resume_tailor",
+      {
+        title: "Start Resume Tailor",
+        description:
+          "Kick off the AI tailoring agent for one resume against one job posting (from get_job/search_jobs/add_job_from_url), and return immediately with an agent_job_id rather than waiting for it to finish -- drafting a resume takes real time. Poll get_resume_tailor_status with that id to get the result. Call this as many times as you want for different resumes or jobs; each is its own independent agent job, so several builds genuinely run at once rather than queueing behind each other. The result is a draft resume version, not yet quality-reviewed or finalized.",
+        inputSchema: z.object({
+          resume_id: z.string().min(1).max(36),
+          job_id: z.string().uuid(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const job = (await callBackend(token(ctx), "GET", `/jobs/${args.job_id}`)) as {
+            jd_parsed?: Record<string, unknown>;
+          };
+          const { id } = await startResumeTailorJob(
+            resolveAppwriteUserId(clerkUserId(ctx)),
+            args.resume_id,
+            args.job_id,
+            job.jd_parsed ?? {},
+            "",
+          );
+          return toolText({ agent_job_id: id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "get_resume_tailor_status",
+      {
+        title: "Get Resume Tailor Status",
+        description:
+          "Poll an agent_job_id from start_resume_tailor. status is queued, running, succeeded, or failed; progress (when present) names the current step. On succeeded, output is the new draft resume version (matches the shape list_appwrite_resumes' versions take) -- still a draft, not yet run through the quality review or finalized.",
+        inputSchema: z.object({ agent_job_id: z.string().min(1).max(36) }),
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          return toolText(
+            await getResumeTailorJobStatus(
+              resolveAppwriteUserId(clerkUserId(ctx)),
+              args.agent_job_id,
+            ),
+          );
         } catch (e) {
           return toolError(e);
         }
