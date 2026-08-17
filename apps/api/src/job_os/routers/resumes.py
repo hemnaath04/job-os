@@ -69,9 +69,9 @@ async def list_resumes(
         )
         .group_by(ResumeVersion.resume_id)
     )
-    counts = dict(counts_result.all())
+    counts: dict[UUID, int] = dict(counts_result.all())  # type: ignore[arg-type]
     for resume in resumes:
-        resume.tailored_count = counts.get(resume.id, 0)
+        resume.tailored_count = counts.get(resume.id, 0)  # type: ignore[attr-defined]
     return resumes
 
 

@@ -145,11 +145,9 @@ async def _search_theirstack(payload: DiscoverySearchRequest) -> list[DiscoveryR
 
 
 _US_STATES = frozenset(
-    "AL AK AZ AR CA CO CT DE FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO "
-    "MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY "
-    "DC PR".split()
+    ["AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "FL", "GA", "HI", "ID", "IL", "IN", "IA", "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM", "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA", "WV", "WI", "WY", "DC", "PR"]
 )
-_CA_PROVINCES = frozenset("AB BC MB NB NL NS NT NU ON PE QC SK YT".split())
+_CA_PROVINCES = frozenset(["AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"])
 _SUBDIVISION_RE = re.compile(r",\s*([A-Z]{2})\b")
 _REMOTE_RE = re.compile(r"\b(remote|anywhere|worldwide)\b", re.I)
 _COUNTRY_HINTS = {

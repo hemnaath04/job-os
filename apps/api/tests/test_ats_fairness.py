@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from job_os.services.tailor import (
     _compute_ats_from_document,
-    _jd_requirements,
     _mentions,
     _skills_inside_prose,
 )

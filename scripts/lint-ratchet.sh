@@ -16,9 +16,12 @@
 # pull request.
 set -uo pipefail
 
-# Baseline recorded 2026-08-04 on fix/phase-b-ci, before any Phase C work.
-RUFF_CEILING=24
-MYPY_CEILING=46
+# Baseline recorded 2026-08-17, after clearing the backlog accumulated during
+# Phase C's Appwrite dual-write work (fix/phase-b-ci's 2026-08-04 numbers were
+# 24/46; this session's unpushed commits had drifted to 29/60 before any of it
+# had ever actually run through CI).
+RUFF_CEILING=14
+MYPY_CEILING=45
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 

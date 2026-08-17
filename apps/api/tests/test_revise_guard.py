@@ -19,13 +19,12 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
+from _fake_llm import StreamingFakeMessages  # noqa: E402
 from job_os.services import resume_engine  # noqa: E402
 from job_os.services.resume_engine import (  # noqa: E402
     REVISE_MAX_TOKENS,
     _strip_unverified_numbers,
 )
-
-from _fake_llm import StreamingFakeMessages  # noqa: E402
 
 BEFORE = {
     "basics": {"name": "A Candidate", "summary": "Backend engineer."},

@@ -14,9 +14,8 @@ os.environ.setdefault(
     "postgresql+asyncpg://job_os:job_os@localhost/job_os",
 )
 
-from job_os.services import tailor  # noqa: E402
-
 from _fake_llm import StreamingFakeMessages
+from job_os.services import tailor  # noqa: E402
 
 
 @pytest.mark.asyncio

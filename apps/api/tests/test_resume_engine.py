@@ -9,6 +9,7 @@ from uuid import uuid4
 import pytest
 from pypdf import PdfWriter
 
+from _fake_llm import StreamingFakeMessages
 from job_os.schemas.resumes import SelectedBullet
 from job_os.services.resume_engine import (
     _github_repositories,
@@ -18,8 +19,6 @@ from job_os.services.resume_engine import (
     validate_json_resume_document,
 )
 from job_os.services.tailor import _sanitize_selected_bullets
-
-from _fake_llm import StreamingFakeMessages
 
 
 def _blank_pdf(pages: int = 1) -> bytes:

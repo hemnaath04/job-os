@@ -21,10 +21,9 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
+from _fake_llm import StreamingFakeMessages
 from job_os.services import tailor  # noqa: E402
 from job_os.services.llm_json import EMPTY_REPLY_RETRY  # noqa: E402
-
-from _fake_llm import StreamingFakeMessages
 
 
 def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str, Any]]:

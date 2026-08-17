@@ -72,11 +72,7 @@ _WORD_RE = re.compile(r"[a-z0-9+#.]+")
 # Words that carry no meaning for a similarity test, so two bullets about the
 # same work are not judged different just because one says "the" more.
 _STOPWORDS = frozenset(
-    """a an and as at by for from in into onto of on or over under the to with
-    that which while across most new using via per each its their his her them
-    it was were are not this these those also than then such same other more
-    less many much some any all both own very just only after before during
-    directly""".split()
+    ["a", "an", "and", "as", "at", "by", "for", "from", "in", "into", "onto", "of", "on", "or", "over", "under", "the", "to", "with", "that", "which", "while", "across", "most", "new", "using", "via", "per", "each", "its", "their", "his", "her", "them", "it", "was", "were", "are", "not", "this", "these", "those", "also", "than", "then", "such", "same", "other", "more", "less", "many", "much", "some", "any", "all", "both", "own", "very", "just", "only", "after", "before", "during", "directly"]
 )
 
 # Padding a bullet with the JD's own soft-skill or culture wording is the failure

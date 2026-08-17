@@ -10,8 +10,9 @@ When R2 credentials are absent, uploads return None and the route reports
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any, cast
 
-import boto3
+import boto3  # type: ignore[import-untyped]
 import structlog
 from fastapi.concurrency import run_in_threadpool
 
@@ -26,7 +27,7 @@ class UploadResult:
     public_url: str | None
 
 
-def _client():
+def _client() -> tuple[Any, str | None]:
     s = get_settings()
     if not (s.r2_account_id and s.r2_access_key_id and s.r2_secret_access_key and s.r2_bucket):
         return None, None
@@ -48,7 +49,7 @@ async def upload(key: str, content: bytes, content_type: str) -> UploadResult | 
         return None
     s = get_settings()
 
-    def _put():
+    def _put() -> None:
         client.put_object(Bucket=bucket, Key=key, Body=content, ContentType=content_type)
 
     await run_in_threadpool(_put)
@@ -63,8 +64,8 @@ async def download(key: str) -> bytes | None:
     if not client:
         return None
 
-    def _get():
-        return client.get_object(Bucket=bucket, Key=key)["Body"].read()
+    def _get() -> bytes:
+        return cast(bytes, client.get_object(Bucket=bucket, Key=key)["Body"].read())
 
     return await run_in_threadpool(_get)
 
@@ -74,11 +75,14 @@ async def presign_get(key: str, expires_seconds: int = 3600) -> str | None:
     if not client:
         return None
 
-    def _sign():
-        return client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expires_seconds,
+    def _sign() -> str:
+        return cast(
+            str,
+            client.generate_presigned_url(
+                "get_object",
+                Params={"Bucket": bucket, "Key": key},
+                ExpiresIn=expires_seconds,
+            ),
         )
 
     return await run_in_threadpool(_sign)
@@ -100,11 +104,14 @@ async def presign_put(key: str, expires_seconds: int = 900) -> str | None:
     if not client:
         return None
 
-    def _sign():
-        return client.generate_presigned_url(
-            "put_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expires_seconds,
+    def _sign() -> str:
+        return cast(
+            str,
+            client.generate_presigned_url(
+                "put_object",
+                Params={"Bucket": bucket, "Key": key},
+                ExpiresIn=expires_seconds,
+            ),
         )
 
     return await run_in_threadpool(_sign)

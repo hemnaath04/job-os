@@ -10,7 +10,7 @@ from sqlalchemy.dialects.postgresql import ENUM as PgEnum
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from job_os.db.models._mixins import Timestamped, UUIDPK
+from job_os.db.models._mixins import UUIDPK, Timestamped
 from job_os.db.session import Base
 
 if TYPE_CHECKING:
@@ -68,7 +68,7 @@ class Application(UUIDPK, Timestamped, Base):
 
     archived: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
 
-    job: Mapped["Job"] = relationship(lazy="joined")
+    job: Mapped[Job] = relationship(lazy="joined")
 
 
 class ApplicationEvent(UUIDPK, Base):

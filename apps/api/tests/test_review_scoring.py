@@ -13,6 +13,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
+from _fake_llm import StreamingFakeMessages
 from job_os.schemas.resumes import ResumeReviewIssue
 from job_os.services import resume_engine
 from job_os.services.resume_engine import (
@@ -20,8 +21,6 @@ from job_os.services.resume_engine import (
     ModelReview,
     deterministic_review,
 )
-
-from _fake_llm import StreamingFakeMessages
 
 
 def _one_page_pdf() -> bytes:

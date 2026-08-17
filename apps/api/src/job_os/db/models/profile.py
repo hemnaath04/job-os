@@ -8,7 +8,7 @@ from sqlalchemy import Boolean, Date, ForeignKey, String, Text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from job_os.db.models._mixins import Timestamped, UUIDPK
+from job_os.db.models._mixins import UUIDPK, Timestamped
 from job_os.db.session import Base
 
 EMBEDDING_DIM = 1536
@@ -38,7 +38,7 @@ class ProfileFact(UUIDPK, Timestamped, Base):
     verified: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     source_url: Mapped[str | None] = mapped_column(String, nullable=True)
 
-    bullets: Mapped[list["FactBullet"]] = relationship(
+    bullets: Mapped[list[FactBullet]] = relationship(
         back_populates="fact",
         cascade="all, delete-orphan",
         lazy="selectin",
@@ -62,4 +62,4 @@ class FactBullet(UUIDPK, Timestamped, Base):
     metric_verified: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
     embedding: Mapped[list[float] | None] = mapped_column(Vector(EMBEDDING_DIM), nullable=True)
 
-    fact: Mapped["ProfileFact"] = relationship(back_populates="bullets")
+    fact: Mapped[ProfileFact] = relationship(back_populates="bullets")

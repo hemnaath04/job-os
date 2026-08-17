@@ -2,7 +2,7 @@ from sqlalchemy import String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
-from job_os.db.models._mixins import Timestamped, UUIDPK
+from job_os.db.models._mixins import UUIDPK, Timestamped
 from job_os.db.session import Base
 
 

@@ -9,7 +9,7 @@ from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, Uni
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from job_os.db.models._mixins import Timestamped, UUIDPK
+from job_os.db.models._mixins import UUIDPK, Timestamped
 from job_os.db.session import Base
 
 if TYPE_CHECKING:
@@ -57,4 +57,4 @@ class Job(UUIDPK, Timestamped, Base):
         DateTime(timezone=True), nullable=False, server_default="now()"
     )
 
-    company: Mapped["Company | None"] = relationship(lazy="joined")
+    company: Mapped[Company | None] = relationship(lazy="joined")

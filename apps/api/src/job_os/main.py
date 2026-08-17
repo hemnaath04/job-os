@@ -1,4 +1,5 @@
 import os
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from time import perf_counter
 
@@ -36,7 +37,7 @@ setup_observability("api")
 
 
 @asynccontextmanager
-async def lifespan(_app: FastAPI):
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     log.info("api.startup", env=settings.app_env, version=__version__)
     yield
