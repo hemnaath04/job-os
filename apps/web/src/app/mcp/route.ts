@@ -820,7 +820,10 @@ const handler = createMcpHandler(
         title: "Archive Resume",
         description:
           "Archives a resume directly in Appwrite (the store the browser reads), including resumes with no Postgres record — list_appwrite_resumes finds the id first. Refuses the master. The resume's versions and files are untouched and stay in storage; this only hides the resume from the active library.",
-        inputSchema: z.object({ resume_id: z.string().uuid() }),
+        // A resume mirrored from Postgres has a UUID id, but one that only ever
+        // existed in Appwrite (a bulk import, a browser-created tailor result)
+        // has Appwrite's own generated id instead — up to 36 chars, not a UUID.
+        inputSchema: z.object({ resume_id: z.string().min(1).max(36) }),
         annotations: {
           readOnlyHint: false,
           destructiveHint: true,
