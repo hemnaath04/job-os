@@ -259,6 +259,66 @@ export async function mirrorResumeCard(
   });
 }
 
+interface ResumeCardRow extends Models.Row {
+  owner_id: string;
+  name: string;
+  is_master: boolean;
+  archived: boolean;
+  source_updated_at: string;
+  snapshot: string;
+}
+
+/**
+ * Every non-archived resume this user has, straight from Appwrite. Needed
+ * for library cleanup: many resumes here (bulk imports, browser-only
+ * tailoring) were never mirrored from Postgres and have no Postgres id at
+ * all, so there is no way to enumerate or archive them through the backend
+ * — this is the only place that can see them.
+ */
+export async function listResumeCards(appwriteUserId: string): Promise<Resume[]> {
+  const { databaseId, resumesTableId } = config();
+  const result = await tablesClient().listRows<ResumeCardRow>({
+    databaseId,
+    tableId: resumesTableId,
+    queries: [
+      Query.equal("owner_id", appwriteUserId),
+      Query.equal("archived", false),
+      Query.orderDesc("source_updated_at"),
+      Query.limit(500),
+    ],
+  });
+  return result.rows.map((row) => JSON.parse(row.snapshot) as Resume);
+}
+
+/**
+ * Archives a resume directly in Appwrite — the only path available for a
+ * resume that was never mirrored from Postgres (see listResumeCards). Master
+ * is protected here too, mirroring the backend's own delete_resume guard.
+ */
+export async function archiveResumeCard(appwriteUserId: string, resumeId: string): Promise<void> {
+  const { databaseId, resumesTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<ResumeCardRow>({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resumeId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume not found");
+  if (row.is_master) throw new Error("The protected master cannot be archived.");
+  const now = new Date().toISOString();
+  const snapshot = { ...JSON.parse(row.snapshot), archived_at: now, updated_at: now };
+  await tables.updateRow({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resumeId,
+    data: {
+      archived: true,
+      source_updated_at: now,
+      snapshot: JSON.stringify(snapshot),
+    },
+  });
+}
+
 /**
  * Refreshes an already-mirrored resume card's snapshot from its current
  * Postgres state. Needed because a direct Postgres correction (a backfill,

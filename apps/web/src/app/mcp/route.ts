@@ -16,7 +16,9 @@ import {
 } from "@/lib/mcp/backend";
 import { isAppwritePipelineEnabled, isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import {
+  archiveResumeCard,
   createApplicationCard,
+  listResumeCards,
   mirrorResumeCard,
   mirrorResumeVersionCard,
   patchApplicationCard,
@@ -784,6 +786,55 @@ const handler = createMcpHandler(
           if (!resume) throw new BackendError(404, "resume not found");
           await resyncResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), resume);
           return toolText({ synced: true, resume_id: args.resume_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "list_appwrite_resumes",
+      {
+        title: "List Appwrite Resumes",
+        description:
+          "Library-cleanup tool: lists every resume Appwrite actually has for this user, including ones with no Postgres record at all (bulk imports, resumes the browser's own tailoring created directly) — list_resumes only sees Postgres, so it misses these entirely. Use this to find resumes archive_resume can act on.",
+        inputSchema: EMPTY,
+        annotations: { readOnlyHint: true, openWorldHint: false },
+      },
+      async (_args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolText({ enabled: false, resumes: [] });
+          }
+          const resumes = await listResumeCards(resolveAppwriteUserId(clerkUserId(ctx)));
+          return toolText(resumes);
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "archive_resume",
+      {
+        title: "Archive Resume",
+        description:
+          "Archives a resume directly in Appwrite (the store the browser reads), including resumes with no Postgres record — list_appwrite_resumes finds the id first. Refuses the master. The resume's versions and files are untouched and stay in storage; this only hides the resume from the active library.",
+        inputSchema: z.object({ resume_id: z.string().uuid() }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolText({ archived: false, reason: "Appwrite workspace is not enabled" });
+          }
+          await archiveResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), args.resume_id);
+          return toolText({ archived: true, resume_id: args.resume_id });
         } catch (e) {
           return toolError(e);
         }
