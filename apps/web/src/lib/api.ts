@@ -374,10 +374,11 @@ async function verifiedFactsForPrep(): Promise<
 }
 
 const legacyApi = {
-  listApplications: (params?: { status?: AppStatus; q?: string }) => {
+  listApplications: (params?: { status?: AppStatus; q?: string; archived?: boolean }) => {
     const qs = new URLSearchParams();
     if (params?.status) qs.set("status", params.status);
     if (params?.q) qs.set("q", params.q);
+    if (params?.archived) qs.set("archived", "true");
     return request<Application[]>(`/applications?${qs.toString()}`);
   },
   patchApplication: (id: string, body: Partial<Application>) =>
@@ -1287,7 +1288,7 @@ export const api = {
     return legacyApi.listCalendarHistory(params);
   },
 
-  listApplications: (params?: { status?: AppStatus; q?: string }) =>
+  listApplications: (params?: { status?: AppStatus; q?: string; archived?: boolean }) =>
     isAppwritePipelineEnabled
       ? appwritePipeline.listApplications(params)
       : legacyApi.listApplications(params),

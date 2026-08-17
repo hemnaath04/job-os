@@ -194,11 +194,12 @@ export const appwritePipeline = {
   async listApplications(params?: {
     status?: AppStatus;
     q?: string;
+    archived?: boolean;
   }): Promise<Application[]> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const queries = [
-      Query.equal("archived", false),
+      Query.equal("archived", params?.archived ?? false),
       Query.orderDesc("source_updated_at"),
       Query.limit(500),
     ];

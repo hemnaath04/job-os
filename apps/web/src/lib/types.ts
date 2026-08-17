@@ -68,6 +68,11 @@ export interface Job {
   function?: string | null;
   location?: string | null;
   remote?: string | null;
+  // The backend's JobRead has always returned these; they were never added
+  // here because nothing displayed salary until the Applications inspector.
+  salary_min?: number | null;
+  salary_max?: number | null;
+  salary_currency?: string;
   source: string;
   source_url?: string | null;
   posted_at?: string | null;
