@@ -23,6 +23,7 @@ import {
   resolveAppwriteUserId,
   resumeCardExists,
   resumeVersionCardExists,
+  retargetResumeVersionCard,
 } from "@/lib/mcp/appwrite";
 import type { Application, Resume, ResumeVersion } from "@/lib/types";
 
@@ -747,6 +748,46 @@ const handler = createMcpHandler(
               : null,
           );
           return toolText({ synced: true, resume_id: args.resume_id, version_id: args.version_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "move_resume_version",
+      {
+        title: "Move Resume Version",
+        description:
+          "Reassign one resume version to a different resume container the user owns — e.g. a company-tailored upload that landed under a generic shared resume instead of getting its own. Create the target first with create_resume if it doesn't exist yet. Does not touch the version's content, status, or attached application, only which resume it belongs to.",
+        inputSchema: z.object({
+          version_id: z.string().uuid(),
+          target_resume_id: z.string().uuid(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          const version = (await callBackend(
+            token(ctx),
+            "POST",
+            `/resumes/versions/${args.version_id}/move`,
+            { target_resume_id: args.target_resume_id },
+          )) as ResumeVersion;
+          await mirrorToAppwriteWorkspace(
+            async () => {
+              const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+              await ensureResumeCardMirrored(token(ctx), appwriteUserId, args.target_resume_id);
+              await retargetResumeVersionCard(appwriteUserId, args.version_id, args.target_resume_id);
+            },
+            { tool: "move_resume_version", version_id: args.version_id },
+          );
+          return toolText(version);
         } catch (e) {
           return toolError(e);
         }

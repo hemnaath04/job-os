@@ -307,4 +307,36 @@ export async function mirrorResumeVersionCard(
   });
 }
 
+/**
+ * Repoints an already-mirrored version at a different resume, in place.
+ * Used when a version was mirrored under the wrong resume entirely (e.g.
+ * several company-tailored uploads reused one generic container instead of
+ * getting their own) — the row and its PDF file stay put, only resume_id and
+ * the embedded snapshot change.
+ */
+export async function retargetResumeVersionCard(
+  appwriteUserId: string,
+  versionId: string,
+  newResumeId: string,
+): Promise<void> {
+  const { databaseId, resumeVersionsTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume version not found");
+  const snapshot = { ...JSON.parse(row.snapshot), resume_id: newResumeId };
+  await tables.updateRow({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+    data: {
+      resume_id: newResumeId,
+      snapshot: JSON.stringify(snapshot),
+    },
+  });
+}
+
 export { ID };

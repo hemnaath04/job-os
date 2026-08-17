@@ -19,6 +19,7 @@ from job_os.schemas.resumes import (
     ExportRequest,
     ExportResult,
     GeneratedTemplateResponse,
+    MoveVersionRequest,
     PresignUploadRequest,
     PresignUploadResponse,
     ResumeChatRequest,
@@ -136,6 +137,30 @@ async def list_versions_by_application(
         .order_by(ResumeVersion.created_at.desc())
     )
     return list(result.scalars().all())
+
+
+@router.post("/versions/{version_id}/move", response_model=ResumeVersionRead)
+async def move_version(
+    version_id: UUID,
+    payload: MoveVersionRequest,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> ResumeVersion:
+    """Reassign a version to a different resume the caller owns.
+
+    Exists for the case a version landed under the wrong resume container
+    entirely (e.g. several company-tailored uploads reusing one generic
+    resume instead of getting their own) — not for reparenting within a
+    resume's own revision history, which parent_version_id already tracks.
+    """
+    version = await session.get(ResumeVersion, version_id)
+    if version is None or version.archived_at is not None:
+        raise HTTPException(404, "version not found")
+    current_resume = await _load_resume(session, version.resume_id, user)
+    if payload.target_resume_id != current_resume.id:
+        await _load_resume(session, payload.target_resume_id, user)
+        version.resume_id = payload.target_resume_id
+    return version
 
 
 @router.post("/import", response_model=ResumeImportResult, status_code=201)

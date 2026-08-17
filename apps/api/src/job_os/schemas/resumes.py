@@ -87,6 +87,10 @@ class ConfirmUploadRequest(ORMModel):
     application_id: UUID | None = None
 
 
+class MoveVersionRequest(ORMModel):
+    target_resume_id: UUID
+
+
 class ResumeDirectEditRequest(ORMModel):
     json_resume: dict[str, Any]
     note: str = "Manual edit"
