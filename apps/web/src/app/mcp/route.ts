@@ -8,18 +8,23 @@ import { z } from "zod4";
 import {
   BackendError,
   callBackend,
+  callBackendBinary,
   callBackendMultipart,
   fetchExternalFile,
   toolError,
   toolText,
 } from "@/lib/mcp/backend";
-import { isAppwritePipelineEnabled } from "@/lib/appwrite/config";
+import { isAppwritePipelineEnabled, isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import {
   createApplicationCard,
+  mirrorResumeCard,
+  mirrorResumeVersionCard,
   patchApplicationCard,
   resolveAppwriteUserId,
+  resumeCardExists,
+  resumeVersionCardExists,
 } from "@/lib/mcp/appwrite";
-import type { Application } from "@/lib/types";
+import type { Application, Resume, ResumeVersion } from "@/lib/types";
 
 // Resume tailoring calls Claude and can run long; give tool calls the same
 // ceiling the browser's own proxy gets.
@@ -77,6 +82,38 @@ async function mirrorToAppwrite(op: () => Promise<unknown>, logContext: Record<s
   } catch (error) {
     console.error("[mcp-appwrite-mirror] failed", { ...logContext, error });
   }
+}
+
+/**
+ * Same best-effort contract as mirrorToAppwrite, gated on the Resumes/
+ * workspace flag instead of the pipeline one — the two go to Appwrite
+ * independently (NEXT_PUBLIC_WORKSPACE_BACKEND vs NEXT_PUBLIC_PIPELINE_BACKEND).
+ */
+async function mirrorToAppwriteWorkspace(
+  op: () => Promise<unknown>,
+  logContext: Record<string, unknown>,
+) {
+  if (!isAppwriteWorkspaceEnabled) return;
+  try {
+    await op();
+  } catch (error) {
+    console.error("[mcp-appwrite-mirror] failed", { ...logContext, error });
+  }
+}
+
+/**
+ * A resume version's Appwrite mirror points at a resume_id; if the resume
+ * container itself was created before this connector started mirroring (or
+ * by a tool that still only writes Postgres), that id points at nothing in
+ * Appwrite and the version would show up with no resume to belong to. Backed
+ * by list_resumes rather than a single-resume GET, since the backend has no
+ * such endpoint (only list/patch/delete by id).
+ */
+async function ensureResumeCardMirrored(jwt: string, appwriteUserId: string, resumeId: string) {
+  if (await resumeCardExists(resumeId)) return;
+  const resumes = (await callBackend(jwt, "GET", "/resumes")) as Resume[];
+  const resume = resumes.find((r) => r.id === resumeId);
+  if (resume) await mirrorResumeCard(appwriteUserId, resume);
 }
 
 /**
@@ -441,16 +478,24 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           const { application_id, ...patch } = args;
-          const result = await callBackend(
+          const result = (await callBackend(
             token(ctx),
             "PATCH",
             `/applications/${application_id}`,
             patch,
-          );
-          await mirrorToAppwrite(
-            () => patchApplicationCard(resolveAppwriteUserId(clerkUserId(ctx)), application_id, patch),
-            { tool: "update_application_status", application_id },
-          );
+          )) as Application;
+          await mirrorToAppwrite(async () => {
+            const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+            try {
+              await patchApplicationCard(appwriteUserId, application_id, patch);
+            } catch {
+              // No mirror row yet — this application predates dual-writing, or
+              // its create mirror failed earlier. Falling back to a full create
+              // from the just-patched Postgres state is what makes this
+              // self-healing instead of failing the same way every time.
+              await createApplicationCard(appwriteUserId, result);
+            }
+          }, { tool: "update_application_status", application_id });
           return toolText(result);
         } catch (e) {
           return toolError(e);
@@ -496,7 +541,12 @@ const handler = createMcpHandler(
       },
       async (args, ctx) => {
         try {
-          return toolText(await callBackend(token(ctx), "POST", "/resumes", args));
+          const resume = (await callBackend(token(ctx), "POST", "/resumes", args)) as Resume;
+          await mirrorToAppwriteWorkspace(
+            () => mirrorResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), resume),
+            { tool: "create_resume", resume_id: resume.id },
+          );
+          return toolText(resume);
         } catch (e) {
           return toolError(e);
         }
@@ -537,10 +587,21 @@ const handler = createMcpHandler(
           form.set("file", new Blob([new Uint8Array(bytes)]), args.filename);
           if (args.note) form.set("note", args.note);
           if (args.application_id) form.set("application_id", args.application_id);
-          const version = await callBackendMultipart(
+          const version = (await callBackendMultipart(
             token(ctx),
             `/resumes/${args.resume_id}/versions/upload`,
             form,
+          )) as ResumeVersion;
+          await mirrorToAppwriteWorkspace(
+            async () => {
+              const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+              await ensureResumeCardMirrored(token(ctx), appwriteUserId, args.resume_id);
+              await mirrorResumeVersionCard(appwriteUserId, version, {
+                bytes,
+                filename: args.filename,
+              });
+            },
+            { tool: "upload_resume_version", resume_id: args.resume_id, version_id: version.id },
           );
           return withAttachmentEcho(token(ctx), version, args.application_id);
         } catch (e) {
@@ -604,7 +665,7 @@ const handler = createMcpHandler(
       },
       async (args, ctx) => {
         try {
-          const version = await callBackend(
+          const version = (await callBackend(
             token(ctx),
             "POST",
             `/resumes/${args.resume_id}/versions/confirm-upload`,
@@ -614,8 +675,78 @@ const handler = createMcpHandler(
               note: args.note,
               application_id: args.application_id,
             },
+          )) as ResumeVersion;
+          await mirrorToAppwriteWorkspace(
+            async () => {
+              const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+              await ensureResumeCardMirrored(token(ctx), appwriteUserId, args.resume_id);
+              const pdf = await callBackendBinary(
+                token(ctx),
+                `/resumes/${args.resume_id}/versions/${version.id}/download`,
+              );
+              await mirrorResumeVersionCard(
+                appwriteUserId,
+                version,
+                pdf ? { bytes: pdf.bytes, filename: args.filename } : null,
+              );
+            },
+            { tool: "confirm_resume_upload", resume_id: args.resume_id, version_id: version.id },
           );
           return withAttachmentEcho(token(ctx), version, args.application_id);
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "sync_resume_version_to_appwrite",
+      {
+        title: "Sync Resume Version to Appwrite",
+        description:
+          "Repair tool: mirrors one existing resume version (and its parent resume container, if needed) into Appwrite from its durable Postgres record, including copying the PDF into Appwrite Storage. Only needed for versions created before this connector started mirroring resume writes — they exist in job.os's backend but never appeared in Resume Studio. No-ops if the version is already mirrored.",
+        inputSchema: z.object({
+          resume_id: z.string().uuid(),
+          version_id: z.string().uuid(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolText({ synced: false, reason: "Appwrite workspace is not enabled" });
+          }
+          if (await resumeVersionCardExists(args.version_id)) {
+            return toolText({ synced: false, reason: "already synced" });
+          }
+          const version = (await callBackend(
+            token(ctx),
+            "GET",
+            `/resumes/${args.resume_id}/versions/${args.version_id}`,
+          )) as ResumeVersion;
+          const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+          await ensureResumeCardMirrored(token(ctx), appwriteUserId, args.resume_id);
+          const pdf = await callBackendBinary(
+            token(ctx),
+            `/resumes/${args.resume_id}/versions/${args.version_id}/download`,
+          );
+          // Uploaded versions stash the real filename in the json_resume stub
+          // (see upload_version in resumes.py), not source_filename.
+          const uploadedFilename = (version.json_resume as { filename?: string } | null)
+            ?.filename;
+          await mirrorResumeVersionCard(
+            appwriteUserId,
+            version,
+            pdf
+              ? { bytes: pdf.bytes, filename: version.source_filename ?? uploadedFilename ?? "resume.pdf" }
+              : null,
+          );
+          return toolText({ synced: true, resume_id: args.resume_id, version_id: args.version_id });
         } catch (e) {
           return toolError(e);
         }

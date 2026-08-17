@@ -45,6 +45,29 @@ export async function callBackend(
   return data;
 }
 
+/**
+ * Like callBackend, but for endpoints that answer with a raw file body
+ * (e.g. GET .../download, which streams `application/pdf`) rather than JSON.
+ */
+export async function callBackendBinary(
+  token: string,
+  path: string,
+): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+  const resp = await fetch(`${API}/api/v1${path}`, {
+    headers: { authorization: `Bearer ${token}` },
+  });
+  if (resp.status === 404) return null;
+  if (!resp.ok) {
+    const text = await resp.text();
+    throw new BackendError(resp.status, text || resp.statusText);
+  }
+  const buf = await resp.arrayBuffer();
+  return {
+    bytes: new Uint8Array(buf),
+    contentType: resp.headers.get("content-type") ?? "application/octet-stream",
+  };
+}
+
 export async function callBackendMultipart(
   token: string,
   path: string,

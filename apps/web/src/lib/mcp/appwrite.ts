@@ -15,9 +15,10 @@
  * session-based browser client gets for free from Appwrite's permission
  * system instead.
  */
-import { Client, ID, Permission, Query, Role, TablesDB, type Models } from "node-appwrite";
+import { Client, ID, Permission, Query, Role, Storage, TablesDB, type Models } from "node-appwrite";
+import { InputFile } from "node-appwrite/file";
 import { appwriteUserIdForClerk } from "@/lib/appwrite/user-id";
-import type { Application } from "@/lib/types";
+import type { Application, Resume, ResumeVersion } from "@/lib/types";
 
 function config() {
   const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT;
@@ -33,13 +34,43 @@ function config() {
     databaseId: process.env.NEXT_PUBLIC_APPWRITE_DATABASE_ID ?? "job-os",
     applicationsTableId:
       process.env.NEXT_PUBLIC_APPWRITE_APPLICATIONS_TABLE_ID ?? "application_cards",
+    resumesTableId: process.env.NEXT_PUBLIC_APPWRITE_RESUMES_TABLE_ID ?? "resumes",
+    resumeVersionsTableId:
+      process.env.NEXT_PUBLIC_APPWRITE_RESUME_VERSIONS_TABLE_ID ?? "resume_versions",
+    resumeFilesBucketId:
+      process.env.NEXT_PUBLIC_APPWRITE_RESUME_FILES_BUCKET_ID ?? "resume_files",
   };
 }
 
-function tablesClient() {
+function client() {
   const { endpoint, projectId, apiKey } = config();
-  const client = new Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
-  return new TablesDB(client);
+  return new Client().setEndpoint(endpoint).setProject(projectId).setKey(apiKey);
+}
+
+function tablesClient() {
+  return new TablesDB(client());
+}
+
+function storageClient() {
+  return new Storage(client());
+}
+
+function ownerPermissions(appwriteUserId: string): string[] {
+  return [
+    Permission.read(Role.user(appwriteUserId)),
+    Permission.update(Role.user(appwriteUserId)),
+    Permission.delete(Role.user(appwriteUserId)),
+  ];
+}
+
+async function rowExists(tableId: string, id: string): Promise<boolean> {
+  const { databaseId } = config();
+  try {
+    await tablesClient().getRow({ databaseId, tableId, rowId: id });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function resolveAppwriteUserId(clerkUserId: string): string {
@@ -132,13 +163,14 @@ export async function createApplicationCard(
       source_updated_at: application.updated_at,
       migrated_at: now,
     },
-    permissions: [
-      Permission.read(Role.user(appwriteUserId)),
-      Permission.update(Role.user(appwriteUserId)),
-      Permission.delete(Role.user(appwriteUserId)),
-    ],
+    permissions: ownerPermissions(appwriteUserId),
   });
   return fromRow(row);
+}
+
+export async function applicationCardExists(id: string): Promise<boolean> {
+  const { applicationsTableId } = config();
+  return rowExists(applicationsTableId, id);
 }
 
 /**
@@ -176,6 +208,103 @@ export async function patchApplicationCard(
     },
   });
   return fromRow(saved);
+}
+
+/**
+ * The resume_versions.status column is a strict Appwrite enum of
+ * draft/reviewed/final. The Postgres vocabulary is wider ("needs_changes"),
+ * and writing a value outside the enum rejects the whole row. Mirrors
+ * versionStatusColumn in lib/appwrite/workspace.ts: the snapshot JSON below
+ * carries the precise status, which is what the UI actually reads.
+ */
+const VERSION_STATUS_COLUMN_VALUES = new Set(["draft", "reviewed", "final"]);
+function versionStatusColumn(status: string): string {
+  return VERSION_STATUS_COLUMN_VALUES.has(status) ? status : "draft";
+}
+
+export async function resumeCardExists(id: string): Promise<boolean> {
+  const { resumesTableId } = config();
+  return rowExists(resumesTableId, id);
+}
+
+export async function resumeVersionCardExists(id: string): Promise<boolean> {
+  const { resumeVersionsTableId } = config();
+  return rowExists(resumeVersionsTableId, id);
+}
+
+/**
+ * Mirrors the Resume *container* only — the data identity ("AI / Backend
+ * SWE"), not any file. Reuses the Postgres id as the Appwrite row id, same
+ * as createApplicationCard, so a later call for the same resume is a clean
+ * existence check rather than a guess at whether it was already mirrored.
+ */
+export async function mirrorResumeCard(
+  appwriteUserId: string,
+  resume: Resume,
+): Promise<void> {
+  const { databaseId, resumesTableId } = config();
+  await tablesClient().createRow({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resume.id,
+    data: {
+      owner_id: appwriteUserId,
+      name: resume.name,
+      is_master: resume.is_master,
+      archived: false,
+      source_updated_at: resume.updated_at,
+      snapshot: JSON.stringify(resume),
+    },
+    permissions: ownerPermissions(appwriteUserId),
+  });
+}
+
+/**
+ * Mirrors one resume version, including its PDF.
+ *
+ * The Appwrite Resume Studio never reads pdf_r2_key (R2 is only reachable
+ * from the FastAPI/Python side); its download button resolves a
+ * `pdf_file_id` in Appwrite Storage. So a metadata-only mirror would show
+ * the version card with a dead download button — the PDF bytes have to be
+ * copied into Appwrite Storage too, not just referenced. Caller supplies the
+ * already-fetched bytes (from the FastAPI download endpoint, which is the
+ * one thing on this side of the fence that can reach R2).
+ */
+export async function mirrorResumeVersionCard(
+  appwriteUserId: string,
+  version: ResumeVersion,
+  pdf: { bytes: Uint8Array; filename: string } | null,
+): Promise<void> {
+  const { databaseId, resumeVersionsTableId, resumeFilesBucketId } = config();
+  const permissions = ownerPermissions(appwriteUserId);
+
+  let pdfFileId: string | undefined;
+  if (pdf) {
+    pdfFileId = ID.unique();
+    await storageClient().createFile({
+      bucketId: resumeFilesBucketId,
+      fileId: pdfFileId,
+      file: InputFile.fromBuffer(pdf.bytes, pdf.filename),
+      permissions,
+    });
+  }
+
+  const snapshot = pdfFileId ? { ...version, pdf_file_id: pdfFileId } : version;
+
+  await tablesClient().createRow({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: version.id,
+    data: {
+      owner_id: appwriteUserId,
+      resume_id: version.resume_id,
+      status: versionStatusColumn(version.status),
+      archived: false,
+      source_updated_at: version.updated_at,
+      snapshot: JSON.stringify(snapshot),
+    },
+    permissions,
+  });
 }
 
 export { ID };
