@@ -33,11 +33,19 @@ import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
 import type {
+  Application,
   Resume,
   ResumeImportItem,
   ResumeTemplate,
   ResumeVersionSummary,
 } from "@/lib/types";
+
+/** What a version's "for {company}" chip needs — just enough to identify the
+ * pipeline entry a version was tailored for, not the whole Application. */
+interface ApplicationRef {
+  company: string | null;
+  jobTitle: string;
+}
 
 /** Most recent activity on a resume, for sorting. Falls back to creation. */
 function resumeTimestamp(resume: Resume): number {
@@ -72,6 +80,19 @@ function ResumesInner() {
     queryKey: ["resumes"],
     queryFn: () => api.listResumes(),
   });
+  // Only for labeling versions with the company/role they were tailored for
+  // (spawned_from_application_id) — this page never mutates an application.
+  const { data: applications = [] } = useQuery({
+    queryKey: ["applications"],
+    queryFn: () => api.listApplications(),
+  });
+  const applicationById = useMemo(() => {
+    const map = new Map<string, ApplicationRef>();
+    for (const a of applications as Application[]) {
+      map.set(a.id, { company: a.job.company?.name ?? null, jobTitle: a.job.title });
+    }
+    return map;
+  }, [applications]);
   const [sort, setSort] = useState<ResumeSort>("priority");
   // The master is pinned as its own preview above these, so this list is
   // everything else — company-tailored resumes first by default, since
@@ -424,6 +445,7 @@ function ResumesInner() {
               resume={master}
               defaultOpen={master.id === openId}
               hasOriginal={originals[master.id] ?? false}
+              applicationById={applicationById}
               onDragStart={setDragging}
               onDragEnd={() => setDragging(null)}
               onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
@@ -448,6 +470,7 @@ function ResumesInner() {
             resumes={sorted}
             openId={openId}
             originals={originals}
+            applicationById={applicationById}
             onDragStart={setDragging}
             onDragEnd={() => setDragging(null)}
             onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
@@ -652,6 +675,7 @@ function SourceResumesSection({
   resumes,
   openId,
   originals,
+  applicationById,
   onDragStart,
   onDragEnd,
   onUseAsTemplate,
@@ -660,6 +684,7 @@ function SourceResumesSection({
   resumes: Resume[];
   openId: string | null;
   originals: Record<string, boolean>;
+  applicationById: Map<string, ApplicationRef>;
   onDragStart: (resume: Resume) => void;
   onDragEnd: () => void;
   onUseAsTemplate: (resume: Resume) => void;
@@ -711,6 +736,7 @@ function SourceResumesSection({
               resume={r}
               defaultOpen={r.id === openId}
               hasOriginal={originals[r.id] ?? false}
+              applicationById={applicationById}
               onDragStart={onDragStart}
               onDragEnd={onDragEnd}
               onUseAsTemplate={onUseAsTemplate}
@@ -729,6 +755,7 @@ function ResumeRow({
   resume,
   defaultOpen = false,
   hasOriginal,
+  applicationById,
   onDragStart,
   onDragEnd,
   onUseAsTemplate,
@@ -737,6 +764,7 @@ function ResumeRow({
   resume: Resume;
   defaultOpen?: boolean;
   hasOriginal: boolean;
+  applicationById: Map<string, ApplicationRef>;
   onDragStart: (resume: Resume) => void;
   onDragEnd: () => void;
   onUseAsTemplate: (resume: Resume) => void;
@@ -863,7 +891,16 @@ function ResumeRow({
             </div>
           )}
           {versions.map((v) => (
-            <VersionRow key={v.id} version={v} resumeId={resume.id} />
+            <VersionRow
+              key={v.id}
+              version={v}
+              resumeId={resume.id}
+              applicationRef={
+                v.spawned_from_application_id
+                  ? applicationById.get(v.spawned_from_application_id)
+                  : undefined
+              }
+            />
           ))}
         </div>
       )}
@@ -874,9 +911,11 @@ function ResumeRow({
 function VersionRow({
   version,
   resumeId,
+  applicationRef,
 }: {
   version: ResumeVersionSummary;
   resumeId: string;
+  applicationRef: ApplicationRef | undefined;
 }) {
   const qc = useQueryClient();
   const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
@@ -895,9 +934,20 @@ function VersionRow({
     <div className="flex items-center justify-between py-3 pl-12 pr-5 hover:bg-[color:var(--color-surface-2)]">
       <div className="flex items-center gap-3">
         <FileText className="size-4 text-[color:var(--color-text-muted)]" />
-        <div>
-          <div className="text-sm font-medium">{created}</div>
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <span className="truncate text-sm font-medium">
+              {version.source_filename ?? created}
+            </span>
+            {applicationRef && (
+              <span className="shrink-0 truncate rounded-full bg-[color:var(--color-violet)]/10 px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-violet)]">
+                {applicationRef.company ?? applicationRef.jobTitle}
+              </span>
+            )}
+          </div>
           <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-dim)]">
+            {version.source_filename && <span>{created}</span>}
+            {version.source_filename && <span>·</span>}
             {version.status === "final" ? (
               <span className="inline-flex items-center gap-1 text-[color:var(--color-mint-ink)]">
                 <CheckCircle2 className="size-3" /> Final
@@ -946,9 +996,11 @@ function VersionRow({
           </button>
         )}
         <button
-              onClick={() => {
-                if (window.confirm("Archive this resume version? It remains stored in the database.")) removeVersion.mutate();
-              }}
+          onClick={() => {
+            if (window.confirm("Archive this resume version? It remains stored in the database.")) {
+              removeVersion.mutate();
+            }
+          }}
           className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
           aria-label="Archive resume version"
         >

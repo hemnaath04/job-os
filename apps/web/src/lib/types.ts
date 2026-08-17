@@ -187,6 +187,7 @@ export interface ResumeVersionSummary {
   pdf_r2_key: string | null;
   docx_r2_key: string | null;
   spawned_from_job_id: string | null;
+  spawned_from_application_id: string | null;
   status: "draft" | "reviewed" | "needs_changes" | "final" | string;
   review_score: string | null;
   review_report: ResumeReviewResult | null;
