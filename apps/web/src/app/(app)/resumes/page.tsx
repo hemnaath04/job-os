@@ -18,14 +18,15 @@ import {
   MessageSquareText,
   Plus,
   Sparkles,
+  X,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import * as Dialog from "@radix-ui/react-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
-import { ProjectFolder } from "@/components/project-folder";
 import { TemplatePicker } from "@/components/template-picker";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
@@ -700,8 +701,17 @@ function TemplatesSection({
  * Falls back to initials on a colored badge when there's no domain, or the
  * favicon lookup itself fails.
  */
-function CompanyLogo({ domain, name }: { domain: string | null; name: string }) {
+function CompanyLogo({
+  domain,
+  name,
+  size = 56,
+}: {
+  domain: string | null;
+  name: string;
+  size?: number;
+}) {
   const [failed, setFailed] = useState(false);
+  const style = { width: size, height: size };
   if (!domain || failed) {
     const initials =
       name
@@ -711,7 +721,10 @@ function CompanyLogo({ domain, name }: { domain: string | null; name: string }) 
         .map((word) => word[0]?.toUpperCase())
         .join("") || "?";
     return (
-      <span className="grid size-20 shrink-0 place-items-center rounded-full bg-[color:var(--color-violet)]/15 text-2xl font-semibold text-[color:var(--color-violet)]">
+      <span
+        style={style}
+        className="grid shrink-0 place-items-center rounded-full bg-[color:var(--color-violet)]/15 font-semibold text-[color:var(--color-violet)]"
+      >
         {initials}
       </span>
     );
@@ -720,80 +733,115 @@ function CompanyLogo({ domain, name }: { domain: string | null; name: string }) 
     <img
       src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`}
       alt=""
-      width={80}
-      height={80}
-      className="size-20 shrink-0 rounded-full bg-[color:var(--color-surface-2)] object-contain p-3"
+      width={size}
+      height={size}
+      style={style}
+      className="shrink-0 rounded-full bg-[color:var(--color-surface-2)] object-contain p-2"
       onError={() => setFailed(true)}
     />
   );
 }
 
 /**
- * One resume version, shown small while peeking out of a closed folder and
- * large inside the open overlay — same element, `ProjectFolder` morphs it
- * between the two. Clickable in the overlay (peeking previews are
- * pointer-events: none by design, so this only ever fires there).
+ * One company, shown as a plain logo tile rather than a folder: almost every
+ * company here has exactly one resume version, so a folder with files
+ * fanning out of it was animation in service of nothing — there was rarely
+ * more than one file to fan. A tile that just opens the company's resume(s)
+ * on click says the same thing with far less machinery.
  */
-function VersionPreviewCard({
-  resumeId,
-  resumeName,
-  version,
+function CompanyResumeTile({
+  resume,
+  applicationRef,
+  onOpen,
 }: {
-  resumeId: string;
-  resumeName: string;
-  version: ResumeVersionSummary;
+  resume: Resume;
+  applicationRef: ApplicationRef | undefined;
+  onOpen: () => void;
 }) {
-  const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
-  const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
-  const label = version.source_filename
-    ? version.source_filename.replace(/\.pdf$/i, "").replace(/_/g, " ")
-    : format(new Date(version.created_at), "MMM d, yyyy");
   return (
     <button
       type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        if (version.status === "final") downloadPdf(downloadUrl, downloadName);
-      }}
-      className="flex h-full w-full flex-col items-center justify-center gap-1.5 p-2 text-center transition hover:bg-[color:var(--color-surface-hover)]"
+      onClick={onOpen}
+      className="flex w-28 flex-col items-center gap-2 rounded-2xl p-3 text-center transition hover:bg-[color:var(--color-surface-hover)]"
     >
-      <FileText className="size-6 shrink-0 text-[color:var(--color-violet)]" />
-      <span className="line-clamp-2 text-[10px] font-medium leading-tight text-[color:var(--color-text-muted)]">
-        {label}
+      <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} />
+      <span className="line-clamp-2 text-xs font-medium leading-tight text-[color:var(--color-text)]">
+        {resume.name}
       </span>
     </button>
   );
 }
 
-/** One company's resume as a folder — logo up front, versions as the files
- * that fan out on hover and fill the overlay on click. */
-function CompanyResumeFolder({
+/** What clicking a company tile opens: that resume's versions, using the
+ * exact same rows and download/open behavior as Source resumes. */
+function CompanyResumeDialog({
   resume,
   applicationRef,
+  onClose,
 }: {
-  resume: Resume;
+  resume: Resume | null;
   applicationRef: ApplicationRef | undefined;
+  onClose: () => void;
 }) {
-  const { data: versions = [] } = useQuery({
-    queryKey: ["versions", resume.id],
-    queryFn: () => api.listVersions(resume.id),
+  const { data: versions = [], isLoading } = useQuery({
+    queryKey: ["versions", resume?.id],
+    queryFn: () => api.listVersions(resume!.id),
+    enabled: resume !== null,
   });
   return (
-    <ProjectFolder
-      title={resume.name}
-      description={resume.base_role ?? "Tailored resume"}
-      ariaLabel={`${resume.name} — ${versions.length} version${versions.length === 1 ? "" : "s"}`}
-      itemLabel="version"
-      frontVisual={
-        <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} />
-      }
-      previews={versions.map((version) => ({
-        id: version.id,
-        content: (
-          <VersionPreviewCard resumeId={resume.id} resumeName={resume.name} version={version} />
-        ),
-      }))}
-    />
+    <Dialog.Root open={resume !== null} onOpenChange={(next) => !next && onClose()}>
+      <Dialog.Portal>
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm data-[state=open]:animate-in data-[state=open]:fade-in-0" />
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 w-full max-w-lg -translate-x-1/2 -translate-y-1/2 px-4">
+          {resume && (
+            <div className="glass max-h-[85vh] overflow-y-auto rounded-[var(--radius-card)] p-6">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <CompanyLogo
+                    domain={applicationRef?.companyDomain ?? null}
+                    name={resume.name}
+                    size={64}
+                  />
+                  <div>
+                    <Dialog.Title className="text-lg font-semibold">{resume.name}</Dialog.Title>
+                    <Dialog.Description className="mt-0.5 text-sm text-[color:var(--color-text-muted)]">
+                      {resume.base_role ?? "Tailored resume"}
+                    </Dialog.Description>
+                  </div>
+                </div>
+                <Dialog.Close
+                  aria-label="Close"
+                  className="grid size-8 shrink-0 place-items-center rounded-md text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+                >
+                  <X className="size-4" aria-hidden="true" />
+                </Dialog.Close>
+              </div>
+              <div className="mt-4 divide-y divide-[color:var(--color-border)] rounded-[var(--radius-nested)] border border-[color:var(--color-border)]">
+                {isLoading && (
+                  <div className="px-4 py-3 text-sm text-[color:var(--color-text-muted)]">
+                    Loading versions…
+                  </div>
+                )}
+                {!isLoading && versions.length === 0 && (
+                  <div className="px-4 py-3 text-sm text-[color:var(--color-text-muted)]">
+                    No versions yet.
+                  </div>
+                )}
+                {versions.map((version) => (
+                  <VersionRow
+                    key={version.id}
+                    version={version}
+                    resumeId={resume.id}
+                    resumeName={resume.name}
+                    applicationRef={applicationRef}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+        </Dialog.Content>
+      </Dialog.Portal>
+    </Dialog.Root>
   );
 }
 
@@ -805,6 +853,12 @@ function CompanyResumesGrid({
   applicationById: Map<string, ApplicationRef>;
 }) {
   const [open, setOpen] = useState(true);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = resumes.find((r) => r.id === selectedId) ?? null;
+  const selectedApplicationRef = selected?.spawned_from_application_id
+    ? applicationById.get(selected.spawned_from_application_id)
+    : undefined;
+
   return (
     <section className="mt-6">
       <button
@@ -832,9 +886,9 @@ function CompanyResumesGrid({
               No company resumes yet.
             </div>
           ) : (
-            <div className="mt-3 flex flex-wrap gap-5">
+            <div className="mt-3 flex flex-wrap gap-1">
               {resumes.map((resume) => (
-                <CompanyResumeFolder
+                <CompanyResumeTile
                   key={resume.id}
                   resume={resume}
                   applicationRef={
@@ -842,12 +896,18 @@ function CompanyResumesGrid({
                       ? applicationById.get(resume.spawned_from_application_id)
                       : undefined
                   }
+                  onOpen={() => setSelectedId(resume.id)}
                 />
               ))}
             </div>
           )}
         </>
       )}
+      <CompanyResumeDialog
+        resume={selected}
+        applicationRef={selectedApplicationRef}
+        onClose={() => setSelectedId(null)}
+      />
     </section>
   );
 }
