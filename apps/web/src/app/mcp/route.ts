@@ -381,6 +381,47 @@ const handler = createMcpHandler(
     );
 
     server.registerTool(
+      "sync_application_to_appwrite",
+      {
+        title: "Sync Application to Appwrite",
+        description:
+          "Repair tool: re-mirrors one pipeline entry into Appwrite from its durable Postgres record. Only needed for applications created before this connector started dual-writing (they exist in job.os's backend but never appeared on jobs.hemnaath.tech). Safe to call again on an already-synced application — it overwrites the mirror with the current Postgres state rather than erroring.",
+        inputSchema: z.object({ application_id: z.string().uuid() }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwritePipelineEnabled) {
+            return toolText({ synced: false, reason: "Appwrite pipeline is not enabled" });
+          }
+          const application = (await callBackend(
+            token(ctx),
+            "GET",
+            `/applications/${args.application_id}`,
+          )) as Application;
+          const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+          try {
+            await createApplicationCard(appwriteUserId, application);
+          } catch {
+            await patchApplicationCard(appwriteUserId, application.id, {
+              status: application.status,
+              archived: application.archived,
+              notes: application.notes,
+            });
+          }
+          return toolText({ synced: true, application_id: application.id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
       "update_application_status",
       {
         title: "Update Application Status",
