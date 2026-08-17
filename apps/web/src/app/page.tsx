@@ -3,6 +3,7 @@ import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BackendReadiness } from "@/components/backend-readiness";
+import { JobStacks } from "@/components/marketing/job-stacks";
 import { MarketingNav } from "@/components/marketing/marketing-nav";
 
 export default async function Landing() {
@@ -61,7 +62,7 @@ export default async function Landing() {
           </a>
         </div>
 
-        <MatchPreview />
+        <JobStacks />
       </section>
 
       <section id="how" className="mx-auto max-w-6xl px-6 pb-28">
@@ -109,63 +110,6 @@ export default async function Landing() {
         </div>
       </footer>
     </main>
-  );
-}
-
-/**
- * A still of the real Job Match card rather than a screenshot.
- *
- * Marked up rather than exported as an image on purpose: it stays sharp on any
- * display, weighs nothing, reads to a screen reader, and cannot drift out of
- * date the way a PNG of last month's UI does. The numbers are the ones the
- * scorer actually produces for a backend role, not decoration.
- */
-function MatchPreview() {
-  return (
-    <div className="animate-rise-in relative mt-20 w-full max-w-3xl">
-      <div className="rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/80 p-2 shadow-2xl backdrop-blur-xl">
-        <div className="rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-5 text-left">
-          <div className="flex items-start justify-between gap-4">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium text-[color:var(--color-text)]">
-                Backend Engineer, New Grad
-              </p>
-              <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
-                Remote, posted 2 days ago
-              </p>
-            </div>
-            <span className="shrink-0 rounded-full border border-[color:var(--color-mint-ink)]/35 bg-[color:var(--color-mint-ink)]/15 px-2 py-0.5 text-[11px] font-semibold tabular-nums text-[color:var(--color-mint-ink)]">
-              71% fit
-            </span>
-          </div>
-
-          <div className="mt-4 flex flex-wrap gap-1.5">
-            {["Python", "PostgreSQL", "AWS", "Docker", "Distributed systems"].map(
-              (skill) => (
-                <span
-                  key={skill}
-                  className="rounded-full border border-[color:var(--color-mint-ink)]/30 bg-[color:var(--color-mint-ink)]/10 px-2 py-0.5 text-[11px] text-[color:var(--color-mint-ink)]"
-                >
-                  {skill}
-                </span>
-              ),
-            )}
-          </div>
-
-          <div className="mt-2 flex flex-wrap items-center gap-1.5 text-[11px] text-[color:var(--color-text-dim)]">
-            <span className="uppercase tracking-wide">Gaps</span>
-            {["Microservices", "REST APIs"].map((gap) => (
-              <span
-                key={gap}
-                className="rounded-full bg-[color:var(--color-surface-3)] px-2 py-0.5"
-              >
-                {gap}
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-    </div>
   );
 }
 
