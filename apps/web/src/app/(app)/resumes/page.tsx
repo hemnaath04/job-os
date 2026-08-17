@@ -742,48 +742,66 @@ function CompanyLogo({
   );
 }
 
-/**
- * One resume version, shown small while peeking out of a closed folder and
- * large inside the open overlay — same element, `ProjectFolder` morphs it
- * between the two. Clickable in the overlay (peeking previews are
- * pointer-events: none by design, so this only ever fires there).
- */
-function VersionPreviewCard({
+/** One version's actions, condensed to fit inside a company's card in the
+ * folder overlay — the same Open/Download pair `VersionRow` offers, just
+ * smaller. Most companies have exactly one of these; a few have more. */
+function CompanyVersionActions({
   resumeId,
   resumeName,
-  applicationRef,
   version,
 }: {
   resumeId: string;
   resumeName: string;
-  applicationRef: ApplicationRef | undefined;
   version: ResumeVersionSummary;
 }) {
   const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
   const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
+  // Same reasoning as VersionRow: an upload has no structured resume to edit.
+  const isUploadedFile = !!version.source_filename;
   const label = version.source_filename
     ? version.source_filename.replace(/\.pdf$/i, "").replace(/_/g, " ")
     : format(new Date(version.created_at), "MMM d, yyyy");
   return (
-    <button
-      type="button"
-      onClick={(event) => {
-        event.stopPropagation();
-        if (version.status === "final") downloadPdf(downloadUrl, downloadName);
-      }}
-      className="flex h-full w-full flex-col items-center justify-center gap-1.5 p-2 text-center transition hover:bg-[color:var(--color-surface-hover)]"
-    >
-      <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resumeName} size={32} />
-      <span className="line-clamp-2 text-[10px] font-medium leading-tight text-[color:var(--color-text-muted)]">
+    <div className="flex items-center justify-between gap-1.5 rounded-lg bg-[color:var(--color-surface-2)] px-2 py-1.5">
+      <span className="min-w-0 truncate text-[10px] text-[color:var(--color-text-muted)]">
         {label}
       </span>
-    </button>
+      <div className="flex shrink-0 items-center gap-0.5">
+        {!isUploadedFile && (
+          <Link
+            href={`/resumes/${resumeId}/${version.id}`}
+            aria-label="Open"
+            title="Open"
+            className="rounded-md p-1 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+          >
+            <MessageSquareText className="size-3" />
+          </Link>
+        )}
+        {version.status === "final" && (
+          <button
+            type="button"
+            onClick={() => downloadPdf(downloadUrl, downloadName)}
+            aria-label="Download PDF"
+            title="Download PDF"
+            className="rounded-md p-1 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+          >
+            <Download className="size-3" />
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
 
-/** One company's resume as a folder — logo up front, versions as the files
- * that fan out on hover and fill the overlay on click. */
-function CompanyResumeFolder({
+/**
+ * One company, shown small while peeking out of the single "Company
+ * resumes" folder and large inside its open overlay — same element,
+ * `ProjectFolder` morphs it between the two. The logo is what tells one
+ * company apart from another at a glance; the versions underneath (almost
+ * always just one) are reachable without a second click, since peeking
+ * previews are pointer-events: none and only come alive in the overlay.
+ */
+function CompanyPreviewCard({
   resume,
   applicationRef,
 }: {
@@ -795,22 +813,59 @@ function CompanyResumeFolder({
     queryFn: () => api.listVersions(resume.id),
   });
   return (
-    <ProjectFolder
-      title={resume.name}
-      description={resume.base_role ?? "Tailored resume"}
-      ariaLabel={`${resume.name} — ${versions.length} version${versions.length === 1 ? "" : "s"}`}
-      itemLabel="version"
-      frontVisual={
-        <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} />
-      }
-      previews={versions.map((version) => ({
-        id: version.id,
-        content: (
-          <VersionPreviewCard
+    <div className="flex h-full w-full flex-col items-center gap-2 overflow-y-auto p-3 text-center">
+      <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} size={40} />
+      <div className="min-w-0">
+        <p className="truncate text-sm font-semibold">{resume.name}</p>
+        <p className="truncate text-[11px] text-[color:var(--color-text-dim)]">
+          {resume.base_role ?? "Tailored resume"}
+        </p>
+      </div>
+      <div className="mt-1 flex w-full flex-col gap-1">
+        {versions.map((version) => (
+          <CompanyVersionActions
+            key={version.id}
             resumeId={resume.id}
             resumeName={resume.name}
-            applicationRef={applicationRef}
             version={version}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** Every company-tailored resume, stacked inside one folder rather than one
+ * folder per company — almost every company only ever has a single resume,
+ * so a folder each read as dozens of near-identical boxes. Hovering fans out
+ * a few company logos; clicking opens all of them at once. */
+function CompanyResumesFolder({
+  resumes,
+  applicationById,
+}: {
+  resumes: Resume[];
+  applicationById: Map<string, ApplicationRef>;
+}) {
+  return (
+    <ProjectFolder
+      title="Company resumes"
+      description="Tailored for one specific application"
+      ariaLabel={`Company resumes — ${resumes.length} compan${resumes.length === 1 ? "y" : "ies"}`}
+      itemLabel="company"
+      count={resumes.length}
+      frontVisual={
+        <Sparkles className="size-12 text-[color:var(--color-violet)] opacity-40" />
+      }
+      previews={resumes.map((resume) => ({
+        id: resume.id,
+        content: (
+          <CompanyPreviewCard
+            resume={resume}
+            applicationRef={
+              resume.spawned_from_application_id
+                ? applicationById.get(resume.spawned_from_application_id)
+                : undefined
+            }
           />
         ),
       }))}
@@ -853,18 +908,8 @@ function CompanyResumesGrid({
               No company resumes yet.
             </div>
           ) : (
-            <div className="mt-3 flex flex-wrap gap-5">
-              {resumes.map((resume) => (
-                <CompanyResumeFolder
-                  key={resume.id}
-                  resume={resume}
-                  applicationRef={
-                    resume.spawned_from_application_id
-                      ? applicationById.get(resume.spawned_from_application_id)
-                      : undefined
-                  }
-                />
-              ))}
+            <div className="mt-3">
+              <CompanyResumesFolder resumes={resumes} applicationById={applicationById} />
             </div>
           )}
         </>

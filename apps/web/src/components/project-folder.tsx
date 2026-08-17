@@ -114,7 +114,10 @@ export function ProjectFolder({
   const expandedControlled = expanded !== undefined;
   const isExpanded = expanded ?? internalExpanded;
   const isOpen = (open ?? internalOpen) || isExpanded;
-  const previewItems = previews.slice(0, MAX_PREVIEWS);
+  // The fan behind the closed folder only ever reads as a handful of peeking
+  // files — past ~5 it's just noise. The overlay has no such limit: it's the
+  // "show me everything" view, so it renders every preview, however many.
+  const peekPreviews = previews.slice(0, MAX_PREVIEWS);
   const transition: Transition = reduce ? { duration: 0 } : SPRING_LAYOUT;
   const countText = `${count} ${itemLabel}${count === 1 ? "" : "s"}`;
 
@@ -129,11 +132,11 @@ export function ProjectFolder({
 
   const setExpanded = useCallback(
     (next: boolean) => {
-      if (disabled || previewItems.length === 0) return;
+      if (disabled || previews.length === 0) return;
       if (!expandedControlled) setInternalExpanded(next);
       onExpandedChange?.(next);
     },
-    [disabled, expandedControlled, onExpandedChange, previewItems.length],
+    [disabled, expandedControlled, onExpandedChange, previews.length],
   );
 
   const finishClose = useCallback(() => {
@@ -265,7 +268,7 @@ export function ProjectFolder({
 
         <div className="grid grid-cols-2 place-items-center gap-3 sm:grid-cols-3 lg:grid-cols-5">
           {isExpanded
-            ? previewItems.map((preview) => (
+            ? previews.map((preview) => (
                 <motion.div
                   key={preview.id}
                   layoutId={`file-${preview.id}`}
@@ -341,8 +344,8 @@ export function ProjectFolder({
           <span className="absolute left-1/2 top-0 block h-0 w-0">
             <AnimatePresence initial={false}>
               {!isExpanded
-                ? previewItems.map((preview, index) => {
-                    const opened = getPreviewTransform(index, previewItems.length);
+                ? peekPreviews.map((preview, index) => {
+                    const opened = getPreviewTransform(index, peekPreviews.length);
                     return (
                       <motion.span
                         key={preview.id}
