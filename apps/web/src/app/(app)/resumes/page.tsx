@@ -6,7 +6,6 @@ import {
   Archive,
   ArrowDownWideNarrow,
   CheckCircle2,
-  ChevronRight,
   Crown,
   Download,
   FolderOpen,
@@ -14,10 +13,9 @@ import {
   FileText,
   LayoutTemplate,
   LibraryBig,
-  Loader2,
-  MessageSquareText,
   Plus,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
@@ -27,7 +25,8 @@ import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { ProjectFolder } from "@/components/project-folder";
 import { ResumeVersionPreview } from "@/components/resume-version-preview";
-import { TemplatePicker } from "@/components/template-picker";
+import { TemplateDetailDialog } from "@/components/template-picker";
+import { TemplatePreview } from "@/components/template-preview";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
@@ -457,43 +456,49 @@ function ResumesInner() {
             </label>
           </div>
 
-          {master && (
-            <MasterResumeCard
-              resume={master}
-              hasOriginal={originals[master.id] ?? false}
-              onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
-              building={buildFromResume.isPending && buildFromResume.variables?.id === master.id}
+          {/* One shape for the whole library: every category is the same
+              folder, side by side, rather than a master row, a single
+              company folder, and two differently-styled accordions. */}
+          <div className="mt-6 flex flex-wrap gap-5">
+            {master && (
+              <MasterResumeFolder
+                resume={master}
+                hasOriginal={originals[master.id] ?? false}
+                onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
+                building={buildFromResume.isPending && buildFromResume.variables?.id === master.id}
+                defaultExpanded={master.id === openId}
+              />
+            )}
+
+            <CompanyResumesFolder
+              resumes={companyResumes}
+              applicationById={applicationById}
+              defaultExpanded={companyResumes.some((r) => r.id === openId)}
             />
-          )}
 
-          <CompanyResumesGrid
-            resumes={companyResumes}
-            applicationById={applicationById}
-            openId={openId}
-          />
+            <TemplatesFolder
+              templates={templates}
+              onRemove={(id) => removeTemplate.mutate(id)}
+              removingId={
+                removeTemplate.isPending ? (removeTemplate.variables ?? null) : null
+              }
+              onUpload={(file) => buildFromUpload.mutate(file)}
+              uploading={buildFromUpload.isPending}
+              building={buildFromResume.isPending}
+            />
 
-          <TemplatesSection
-            templates={templates}
-            onRemove={(id) => removeTemplate.mutate(id)}
-            removingId={
-              removeTemplate.isPending ? (removeTemplate.variables ?? null) : null
-            }
-            onUpload={(file) => buildFromUpload.mutate(file)}
-            uploading={buildFromUpload.isPending}
-            building={buildFromResume.isPending}
-          />
-
-          <SourceResumesGrid
-            resumes={sorted}
-            openId={openId}
-            originals={originals}
-            onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
-            buildingId={
-              buildFromResume.isPending
-                ? (buildFromResume.variables?.id ?? null)
-                : null
-            }
-          />
+            <SourceResumesFolder
+              resumes={sorted}
+              originals={originals}
+              onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
+              buildingId={
+                buildFromResume.isPending
+                  ? (buildFromResume.variables?.id ?? null)
+                  : null
+              }
+              defaultExpanded={sorted.some((r) => r.id === openId)}
+            />
+          </div>
         </>
       )}
     </div>
@@ -507,169 +512,200 @@ function buildDescription(built: { attempts: number; repairs: string[] }): strin
 }
 
 /**
- * The master, pinned above everything else rather than buried in the Source
- * resumes list at whatever position its sort key lands it — it's the one
- * resume every tailored version ultimately traces back to, so it reads as a
- * preview of "the canonical you," not just another row. Its own most recent
- * render is the thumbnail: there's no company logo to stand in for it, and
- * nothing says "this is you" better than the actual document.
+ * A generic "there's one more action" tile for a folder overlay — a dashed
+ * placeholder card among the real previews, rather than a control bolted
+ * onto the outside of the folder. Used for "Use as template" (master) and
+ * "Add your own" (templates), so the folder stays the one interactive shape.
  */
-function MasterResumeCard({
+function ActionTile({
+  icon: Icon,
+  label,
+  onClick,
+  disabled,
+}: {
+  icon: typeof FileUp;
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="flex h-full w-full flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-[color:var(--color-border)] p-3 text-center text-[color:var(--color-text-dim)] transition hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+    >
+      <Icon className="size-5" />
+      <span className="text-xs">{label}</span>
+    </button>
+  );
+}
+
+/** One version of the master, as a folder preview — thumbnail is its own
+ * render, since there's no company logo to stand in for it. */
+function MasterVersionPreviewCard({
+  resumeId,
+  resumeName,
+  version,
+}: {
+  resumeId: string;
+  resumeName: string;
+  version: ResumeVersionSummary;
+}) {
+  const isUploadedFile = !!version.source_filename;
+  const openHref = !isUploadedFile ? `/resumes/${resumeId}/${version.id}` : null;
+  const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
+  const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
+  const label = version.source_filename
+    ? version.source_filename.replace(/\.pdf$/i, "").replace(/_/g, " ")
+    : format(new Date(version.created_at), "MMM d, yyyy");
+  const identity = (
+    <>
+      <span className="block h-16 w-12 overflow-hidden rounded-md border border-[color:var(--color-border)] bg-white">
+        <ResumeVersionPreview downloadUrl={downloadUrl} label={label} />
+      </span>
+      <p className="w-full truncate text-center text-[11px] font-medium text-[color:var(--color-text-muted)]">
+        {label}
+      </p>
+    </>
+  );
+  return (
+    <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-3">
+      {openHref ? (
+        <Link
+          href={openHref}
+          className="flex w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg transition hover:bg-[color:var(--color-surface-hover)]"
+        >
+          {identity}
+        </Link>
+      ) : (
+        <div className="flex w-full flex-1 flex-col items-center justify-center gap-2">{identity}</div>
+      )}
+      {version.status === "final" && (
+        <button
+          type="button"
+          onClick={() => downloadPdf(downloadUrl, downloadName)}
+          aria-label="Download PDF"
+          title="Download PDF"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+        >
+          <Download className="size-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The master, the same folder shape as every other category — its previews
+ * are its own versions rather than other resumes, since there's only ever
+ * one of it. "Use as template" reads the original document regardless of
+ * version, so it sits as its own tile rather than on any one version.
+ */
+function MasterResumeFolder({
   resume,
   hasOriginal,
   onUseAsTemplate,
   building,
+  defaultExpanded,
 }: {
   resume: Resume;
   hasOriginal: boolean;
   onUseAsTemplate: (resume: Resume) => void;
   building: boolean;
+  defaultExpanded: boolean;
 }) {
-  const [showHistory, setShowHistory] = useState(false);
   const { data: versions = [] } = useQuery({
     queryKey: ["versions", resume.id],
     queryFn: () => api.listVersions(resume.id),
   });
-  const [latest, ...earlier] = versions;
-  const updated = format(new Date(resume.updated_at || resume.created_at), "MMM d, yyyy");
-
   return (
-    <section className="mt-6">
-      <div className="flex items-center gap-2">
-        <Crown className="size-4 shrink-0 text-[color:var(--color-amber)]" />
-        <h2 className="text-sm font-semibold">Master resume</h2>
-      </div>
-      <div className="workspace-panel mt-3 overflow-hidden ring-1 ring-[color:var(--color-amber)]/25">
-        <ResumeCardBody
-          resume={resume}
-          version={latest}
-          thumbnail={
-            <ResumeVersionPreview
-              downloadUrl={latest ? api.downloadVersionUrl(resume.id, latest.id) : null}
-              label={`${resume.name}, the master resume`}
-            />
-          }
-          badge="master"
-          subtitle={updated}
-          hasOriginal={hasOriginal}
-          onUseAsTemplate={() => onUseAsTemplate(resume)}
-          building={building}
-        />
-        {earlier.length > 0 && (
-          <div className="border-t border-[color:var(--color-border)]">
-            <button
-              onClick={() => setShowHistory((current) => !current)}
-              aria-expanded={showHistory}
-              className="flex w-full items-center gap-2 px-5 py-2.5 text-left text-xs text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-2)]"
-            >
-              <ChevronRight
-                className={`size-3 shrink-0 transition-transform ${showHistory ? "rotate-90" : ""}`}
-              />
-              {earlier.length} earlier version{earlier.length === 1 ? "" : "s"}
-            </button>
-            {showHistory && (
-              <div className="divide-y divide-[color:var(--color-border)] border-t border-[color:var(--color-border)] bg-[color:var(--color-surface-2)]/40">
-                {earlier.map((version) => (
-                  <VersionRow
-                    key={version.id}
-                    version={version}
-                    resumeId={resume.id}
-                    resumeName={resume.name}
-                    applicationRef={undefined}
+    <ProjectFolder
+      title="Master resume"
+      description={resume.base_role ?? "The canonical you"}
+      ariaLabel={`Master resume — ${versions.length} version${versions.length === 1 ? "" : "s"}`}
+      itemLabel="version"
+      count={versions.length}
+      defaultExpanded={defaultExpanded}
+      frontVisual={<Crown className="size-12 text-[color:var(--color-amber)] opacity-60" />}
+      previews={[
+        ...versions.map((version) => ({
+          id: version.id,
+          content: (
+            <MasterVersionPreviewCard resumeId={resume.id} resumeName={resume.name} version={version} />
+          ),
+        })),
+        ...(hasOriginal
+          ? [
+              {
+                id: "__use_as_template__",
+                content: (
+                  <ActionTile
+                    icon={LayoutTemplate}
+                    label={building ? "Reading…" : "Use as template"}
+                    onClick={() => onUseAsTemplate(resume)}
+                    disabled={building}
                   />
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </section>
+                ),
+              },
+            ]
+          : []),
+      ]}
+    />
   );
 }
 
 /**
- * One resume's primary card body: thumbnail, name, and the two actions that
- * matter — open the thing, or get the file — sized as real buttons rather
- * than icons alone, so there's something bigger than a few pixels to aim at.
- * Shared by the master and by every source resume, which differ only in
- * their thumbnail and their badge.
+ * One template as a folder preview: the real sample render, not an icon.
+ * Opening it shows the full render plus where the design came from and what
+ * it costs (`TemplateDetailDialog`, shared with the old picker). Removable
+ * ones get their own small control; builtins never do.
  */
-function ResumeCardBody({
-  resume,
-  version,
-  thumbnail,
-  badge,
-  subtitle,
-  hasOriginal,
-  onUseAsTemplate,
-  building,
+function TemplatePreviewCard({
+  template,
+  onOpenDetail,
+  onRemove,
+  removing,
 }: {
-  resume: Resume;
-  version: ResumeVersionSummary | undefined;
-  thumbnail: React.ReactNode;
-  badge?: string;
-  subtitle: string;
-  hasOriginal: boolean;
-  onUseAsTemplate: () => void;
-  building: boolean;
+  template: ResumeTemplate;
+  onOpenDetail: () => void;
+  onRemove?: () => void;
+  removing: boolean;
 }) {
-  const isUploadedFile = !!version?.source_filename;
-  const downloadUrl = version ? api.downloadVersionUrl(resume.id, version.id) : "";
-  const downloadName =
-    version?.source_filename ?? fallbackDownloadName(resume.name, version?.created_at ?? resume.updated_at);
-
   return (
-    <div className="flex items-center gap-4 px-5 py-4">
-      <span className="aspect-[8.5/11] h-24 w-[4.6rem] shrink-0 overflow-hidden rounded-lg border border-[color:var(--color-border)] bg-white">
-        {thumbnail}
-      </span>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <span className="min-w-0 truncate text-sm font-semibold">{resume.name}</span>
-          {badge && (
-            <span className="shrink-0 rounded-full bg-[color:var(--color-amber)]/15 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-[color:var(--color-amber-ink)]">
-              {badge}
+    <div className="flex h-full w-full flex-col gap-1.5 p-2">
+      <button
+        type="button"
+        onClick={onOpenDetail}
+        className="flex min-h-0 flex-1 flex-col items-center justify-center gap-2 rounded-lg p-1 text-center transition hover:bg-[color:var(--color-surface-hover)]"
+      >
+        <span className="block aspect-[8.5/11] h-20 w-[3.9rem] overflow-hidden rounded-md border border-[color:var(--color-border)] bg-white">
+          <TemplatePreview template={template} />
+        </span>
+        <span className="w-full min-w-0">
+          <span className="block truncate text-sm font-semibold">{template.name}</span>
+          {template.columns === 2 && (
+            <span className="text-[10px] text-[color:var(--color-amber-ink,var(--color-text-muted))]">
+              Two column
             </span>
           )}
-        </div>
-        {resume.base_role && (
-          <p className="mt-0.5 truncate text-xs text-[color:var(--color-text-muted)]">
-            {resume.base_role}
-          </p>
-        )}
-        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">{subtitle}</p>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        {version && !isUploadedFile && (
-          <Link
-            href={`/resumes/${resume.id}/${version.id}`}
-            className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
-          >
-            <MessageSquareText className="size-3" />
-            Open
-          </Link>
-        )}
-        {version?.status === "final" && (
-          <button
-            type="button"
-            onClick={() => downloadPdf(downloadUrl, downloadName)}
-            className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
-          >
-            <Download className="size-3" />
-            Download
-          </button>
-        )}
-        {hasOriginal ? (
-          <button
-            onClick={onUseAsTemplate}
-            disabled={building}
-            title="Read this resume's design and save it as a template"
-            className="shrink-0 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
-          >
-            {building ? "Reading…" : "Use as template"}
-          </button>
-        ) : null}
-      </div>
+        </span>
+      </button>
+      {onRemove && (
+        <button
+          type="button"
+          onClick={(event) => {
+            event.stopPropagation();
+            onRemove();
+          }}
+          disabled={removing}
+          title="Remove this template"
+          aria-label={`Remove ${template.name}`}
+          className="shrink-0 self-center rounded-full p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
+        >
+          <Trash2 className="size-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -677,14 +713,10 @@ function ResumeCardBody({
 /**
  * The looks available to render with: the six that ship with the app, plus any
  * built from the user's own uploads. A template holds LaTeX only, never resume
- * data.
- *
- * There is no selection here. This page is the library, and choosing a look
- * belongs to the run that uses it, on the tailor page. What this offers is
- * looking: every card is the real sample render, and Full size opens the PDF the
- * renderer produced.
+ * data. Same folder shape as everything else in the library; the upload
+ * control lives as its own tile inside, rather than bolted onto the outside.
  */
-function TemplatesSection({
+function TemplatesFolder({
   templates,
   onRemove,
   removingId,
@@ -699,96 +731,72 @@ function TemplatesSection({
   uploading: boolean;
   building: boolean;
 }) {
-  // Closed by default: the look isn't something you need in front of you
-  // every visit, only when you're actually choosing or adding one.
-  const [open, setOpen] = useState(false);
+  const [previewing, setPreviewing] = useState<ResumeTemplate | null>(null);
   const uploadInput = useRef<HTMLInputElement>(null);
   const busy = uploading || building;
   const mine = templates.filter((template) => template.kind === "custom").length;
 
   return (
-    <section className="mt-6">
-      <div className="flex flex-wrap items-baseline gap-2">
-        <button
-          onClick={() => setOpen((current) => !current)}
-          aria-expanded={open}
-          className="flex min-w-0 items-baseline gap-2 text-left"
-        >
-          <ChevronRight
-            className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
-              open ? "rotate-90" : ""
-            }`}
-          />
-          <LayoutTemplate className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
-          <h2 className="text-sm font-semibold">Templates</h2>
-          <span className="text-xs text-[color:var(--color-text-dim)]">
-            {templates.length}
-            {mine > 0 ? `, ${mine} yours` : ""}
-          </span>
-        </button>
-        {busy && (
-          <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-dim)]">
-            <Loader2 className="size-3 animate-spin" />
-            Writing the LaTeX and compiling it, up to a few minutes
-          </span>
-        )}
-        <input
-          ref={uploadInput}
-          type="file"
-          accept=".tex,.pdf,application/pdf,text/x-tex"
-          className="hidden"
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onUpload(file);
-            event.target.value = "";
-          }}
-        />
-        <button
-          onClick={() => {
-            setOpen(true);
-            uploadInput.current?.click();
-          }}
-          disabled={busy}
-          className="ml-auto inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1 text-[11px] text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)] disabled:opacity-50"
-        >
-          <FileUp className="size-3" /> Add your own
-        </button>
-      </div>
-      {!open && (
-        <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-          {templates.length} available. Open to browse or add your own.
-        </p>
-      )}
-      {open && (
-        <>
-      <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        The look, not the data. Every preview is a real render of invented sample
-        data. Add your own by uploading a <strong>.tex</strong>, which keeps the
-        design exactly, or a <strong>.pdf</strong>, which gets rebuilt as LaTeX
-        and comes close rather than matching.
-      </p>
-      <div className="mt-3">
-        <TemplatePicker
-          templates={templates}
-          selectable={false}
-          value=""
-          onChange={() => {}}
-          onRemove={(templateId) => {
-            const template = templates.find((item) => item.id === templateId);
-            if (
-              window.confirm(
-                `Remove the ${template?.name ?? "selected"} template? This deletes the saved look only. No resume, version or PDF is touched.`,
-              )
-            ) {
-              onRemove(templateId);
-            }
-          }}
-          removingId={removingId}
-        />
-      </div>
-        </>
-      )}
-    </section>
+    <>
+      <ProjectFolder
+        title="Templates"
+        description={busy ? "Writing the LaTeX and compiling it…" : "The look, not the data"}
+        ariaLabel={`Templates — ${templates.length}${mine > 0 ? `, ${mine} yours` : ""}`}
+        itemLabel="template"
+        count={templates.length}
+        frontVisual={
+          <LayoutTemplate className="size-12 text-[color:var(--color-text-muted)] opacity-40" />
+        }
+        previews={[
+          ...templates.map((template) => ({
+            id: template.id,
+            content: (
+              <TemplatePreviewCard
+                template={template}
+                onOpenDetail={() => setPreviewing(template)}
+                onRemove={
+                  template.kind === "custom"
+                    ? () => {
+                        if (
+                          window.confirm(
+                            `Remove the ${template.name} template? This deletes the saved look only. No resume, version or PDF is touched.`,
+                          )
+                        ) {
+                          onRemove(template.id);
+                        }
+                      }
+                    : undefined
+                }
+                removing={removingId === template.id}
+              />
+            ),
+          })),
+          {
+            id: "__add_template__",
+            content: (
+              <ActionTile
+                icon={FileUp}
+                label="Add your own"
+                onClick={() => uploadInput.current?.click()}
+                disabled={busy}
+              />
+            ),
+          },
+        ]}
+      />
+      <input
+        ref={uploadInput}
+        type="file"
+        accept=".tex,.pdf,application/pdf,text/x-tex"
+        className="hidden"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          if (file) onUpload(file);
+          event.target.value = "";
+        }}
+      />
+      <TemplateDetailDialog template={previewing} onOpenChange={(open) => !open && setPreviewing(null)} />
+    </>
   );
 }
 
@@ -991,57 +999,6 @@ function CompanyResumesFolder({
   );
 }
 
-function CompanyResumesGrid({
-  resumes,
-  applicationById,
-  openId,
-}: {
-  resumes: Resume[];
-  applicationById: Map<string, ApplicationRef>;
-  openId: string | null;
-}) {
-  const [open, setOpen] = useState(true);
-  return (
-    <section className="mt-6">
-      <button
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        className="flex items-baseline gap-2 text-left"
-      >
-        <ChevronRight
-          className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
-            open ? "rotate-90" : ""
-          }`}
-        />
-        <Sparkles className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
-        <h2 className="text-sm font-semibold">Company resumes</h2>
-        <span className="text-xs text-[color:var(--color-text-dim)]">{resumes.length}</span>
-      </button>
-      {open && (
-        <>
-          <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-            Tailored for one specific application. Each one is its own resume, not a
-            version buried under a shared source.
-          </p>
-          {resumes.length === 0 ? (
-            <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-              No company resumes yet.
-            </div>
-          ) : (
-            <div className="mt-3">
-              <CompanyResumesFolder
-                resumes={resumes}
-                applicationById={applicationById}
-                defaultExpanded={resumes.some((r) => r.id === openId)}
-              />
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 /**
  * One source resume's own most recent render as its thumbnail — there's no
  * company logo to stand in for a general-purpose resume, so the document
@@ -1168,182 +1125,10 @@ function SourceResumesFolder({
   );
 }
 
-function SourceResumesGrid({
-  resumes,
-  openId,
-  originals,
-  onUseAsTemplate,
-  buildingId,
-}: {
-  resumes: Resume[];
-  openId: string | null;
-  originals: Record<string, boolean>;
-  onUseAsTemplate: (resume: Resume) => void;
-  buildingId: string | null;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="mt-6">
-      <button
-        onClick={() => setOpen((current) => !current)}
-        aria-expanded={open}
-        className="flex items-baseline gap-2 text-left"
-      >
-        <ChevronRight
-          className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
-            open ? "rotate-90" : ""
-          }`}
-        />
-        <FolderOpen className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
-        <h2 className="text-sm font-semibold">Source resumes</h2>
-        <span className="text-xs text-[color:var(--color-text-dim)]">{resumes.length}</span>
-      </button>
-      {!open ? (
-        <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-          {resumes.length} resume{resumes.length === 1 ? "" : "s"}. Open to see them.
-        </p>
-      ) : (
-        <>
-          <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-            The data. Tailored versions are saved here, under the resume they came from.
-          </p>
-          {resumes.length === 0 ? (
-            <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-              No resumes yet.
-            </div>
-          ) : (
-            <div className="mt-3">
-              <SourceResumesFolder
-                resumes={resumes}
-                originals={originals}
-                onUseAsTemplate={onUseAsTemplate}
-                buildingId={buildingId}
-                defaultExpanded={resumes.some((r) => r.id === openId)}
-              />
-            </div>
-          )}
-        </>
-      )}
-    </section>
-  );
-}
-
 /** A safe, meaningful filename when there's no source_filename to reuse —
  * "Daice Labs.pdf", not a UUID fragment nobody chose. */
 function fallbackDownloadName(resumeName: string, createdAt: string): string {
   const slug = resumeName.trim().replace(/[^\w\- ]+/g, "").replace(/\s+/g, "_");
   const date = createdAt.slice(0, 10);
   return `${slug || "resume"}_${date}.pdf`;
-}
-
-function VersionRow({
-  version,
-  resumeId,
-  resumeName,
-  applicationRef,
-}: {
-  version: ResumeVersionSummary;
-  resumeId: string;
-  resumeName: string;
-  applicationRef: ApplicationRef | undefined;
-}) {
-  const qc = useQueryClient();
-  const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
-  const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
-  // An uploaded PDF/DOCX has no structured json_resume to edit — it's the
-  // {"uploaded": true, ...} stub the upload endpoints write. Opening it in
-  // the structured editor renders an empty form with nothing to click into,
-  // which reads as the click having done nothing. source_filename is set
-  // only on uploads, so it doubles as that signal.
-  const isUploadedFile = !!version.source_filename;
-  const created = format(new Date(version.created_at), "MMM d, yyyy");
-  const removeVersion = useMutation({
-    mutationFn: () => api.deleteVersion(resumeId, version.id),
-    onSuccess: () => {
-      toast.success("Version archived", {
-        description: "The revision remains stored in the database.",
-      });
-      qc.invalidateQueries({ queryKey: ["versions", resumeId] });
-    },
-    onError: (error: Error) => reportFailure("archive that version", error),
-  });
-  return (
-    <div className="flex items-center justify-between py-3 pl-12 pr-5 hover:bg-[color:var(--color-surface-2)]">
-      <div className="flex items-center gap-3">
-        <FileText className="size-4 text-[color:var(--color-text-muted)]" />
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
-            <span className="truncate text-sm font-medium">
-              {version.source_filename ?? created}
-            </span>
-            {applicationRef && (
-              <span className="shrink-0 truncate rounded-full bg-[color:var(--color-violet)]/10 px-2 py-0.5 text-[11px] font-medium text-[color:var(--color-violet)]">
-                {applicationRef.company ?? applicationRef.jobTitle}
-              </span>
-            )}
-          </div>
-          <div className="flex items-center gap-2 text-xs text-[color:var(--color-text-dim)]">
-            {version.source_filename && <span>{created}</span>}
-            {version.source_filename && <span>·</span>}
-            {version.status === "final" ? (
-              <span className="inline-flex items-center gap-1 text-[color:var(--color-mint-ink)]">
-                <CheckCircle2 className="size-3" /> Final
-              </span>
-            ) : (
-              <span>{versionStatusLabel(version.status)}</span>
-            )}
-            {version.ats_score !== null && version.ats_score !== undefined && (
-              <>
-                <span>·</span>
-                <span>Match {version.ats_score}</span>
-              </>
-            )}
-            {version.review_score !== null && version.review_score !== undefined && (
-              <>
-                <span>·</span>
-                <span>QA {Math.round(Number(version.review_score))}</span>
-              </>
-            )}
-            {version.spawned_from_job_id && (
-              <>
-                <span>·</span>
-                <span>Tailored</span>
-              </>
-            )}
-          </div>
-        </div>
-      </div>
-      <div className="flex items-center gap-2">
-        {!isUploadedFile && (
-          <Link
-            href={`/resumes/${resumeId}/${version.id}`}
-            className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
-          >
-            <MessageSquareText className="size-3" />
-            Open
-          </Link>
-        )}
-        {version.status === "final" && (
-          <button
-            onClick={() => downloadPdf(downloadUrl, downloadName)}
-            className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
-          >
-            <Download className="size-3" />
-            Download PDF
-          </button>
-        )}
-        <button
-          onClick={() => {
-            if (window.confirm("Archive this resume version? It remains stored in the database.")) {
-              removeVersion.mutate();
-            }
-          }}
-          className="rounded-lg p-2 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
-          aria-label="Archive resume version"
-        >
-          <Archive className="size-3.5" />
-        </button>
-      </div>
-    </div>
-  );
 }

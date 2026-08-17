@@ -136,7 +136,7 @@ export function TemplatePicker({
 }
 
 /** The full sample render, plus where the design came from and what it costs. */
-function TemplateDetailDialog({
+export function TemplateDetailDialog({
   template,
   onOpenChange,
 }: {
