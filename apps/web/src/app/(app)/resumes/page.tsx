@@ -94,12 +94,23 @@ function ResumesInner() {
     return map;
   }, [applications]);
   const [sort, setSort] = useState<ResumeSort>("priority");
-  // The master is pinned as its own preview above these, so this list is
-  // everything else — company-tailored resumes first by default, since
-  // those are the ones actually doing work in an active search.
+  // The master is pinned as its own preview above these.
   const master = resumes.find((r) => r.is_master);
+  // Company-tailored resumes (spawned_from_application_id set) are a
+  // different kind of thing from a general-purpose data identity like the
+  // master or "AI / Backend SWE" — one is a specific output for one
+  // application, the other is a base every tailored version traces back to.
+  // Mixing them into one "Source resumes" list is how a handful of real
+  // sources ends up buried under dozens of one-off company resumes.
+  const companyResumes = useMemo(
+    () =>
+      resumes
+        .filter((r) => !r.is_master && !!r.spawned_from_application_id)
+        .sort((left, right) => resumeTimestamp(right) - resumeTimestamp(left)),
+    [resumes],
+  );
   const sorted = useMemo(() => {
-    const rows = resumes.filter((r) => !r.is_master);
+    const rows = resumes.filter((r) => !r.is_master && !r.spawned_from_application_id);
     if (sort === "name") {
       return rows.sort((left, right) => left.name.localeCompare(right.name));
     }
@@ -453,6 +464,26 @@ function ResumesInner() {
             />
           )}
 
+          <ResumeGroupSection
+            title="Company resumes"
+            icon={Sparkles}
+            description="Tailored for one specific application. Each one is its own resume, not a version buried under a shared source."
+            emptyText="No company resumes yet."
+            resumes={companyResumes}
+            openId={openId}
+            originals={originals}
+            applicationById={applicationById}
+            defaultOpen
+            onDragStart={setDragging}
+            onDragEnd={() => setDragging(null)}
+            onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
+            buildingId={
+              buildFromResume.isPending
+                ? (buildFromResume.variables?.id ?? null)
+                : null
+            }
+          />
+
           <TemplatesSection
             templates={templates}
             onRemove={(id) => removeTemplate.mutate(id)}
@@ -466,7 +497,11 @@ function ResumesInner() {
             building={buildFromResume.isPending}
           />
 
-          <SourceResumesSection
+          <ResumeGroupSection
+            title="Source resumes"
+            icon={FolderOpen}
+            description="The data. Tailored versions are saved here, under the resume they came from. Drag one up to Templates to reuse its design."
+            emptyText="No resumes yet."
             resumes={sorted}
             openId={openId}
             originals={originals}
@@ -671,29 +706,40 @@ function TemplatesSection({
 }
 
 /** Every resume. Tailored versions are saved under the one they came from. */
-function SourceResumesSection({
+function ResumeGroupSection({
+  title,
+  icon: Icon,
+  description,
+  emptyText,
   resumes,
   openId,
   originals,
   applicationById,
+  defaultOpen = false,
   onDragStart,
   onDragEnd,
   onUseAsTemplate,
   buildingId,
 }: {
+  title: string;
+  icon: typeof FolderOpen;
+  description: string;
+  emptyText: string;
   resumes: Resume[];
   openId: string | null;
   originals: Record<string, boolean>;
   applicationById: Map<string, ApplicationRef>;
+  defaultOpen?: boolean;
   onDragStart: (resume: Resume) => void;
   onDragEnd: () => void;
   onUseAsTemplate: (resume: Resume) => void;
   buildingId: string | null;
 }) {
-  // Closed by default, except when a specific resume was linked to (from the
-  // tailor flow's ?open= param) — that one needs to actually be visible, not
-  // hidden behind a dropdown the deep link was supposed to skip past.
-  const [open, setOpen] = useState(resumes.some((r) => r.id === openId));
+  // Closed by default (unless the section says otherwise), except when a
+  // specific resume was linked to (from the tailor flow's ?open= param) —
+  // that one needs to actually be visible, not hidden behind a dropdown the
+  // deep link was supposed to skip past.
+  const [open, setOpen] = useState(defaultOpen || resumes.some((r) => r.id === openId));
 
   return (
     <section className="mt-6">
@@ -707,26 +753,25 @@ function SourceResumesSection({
             open ? "rotate-90" : ""
           }`}
         />
-        <FolderOpen className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
-        <h2 className="text-sm font-semibold">Source resumes</h2>
+        <Icon className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
+        <h2 className="text-sm font-semibold">{title}</h2>
         <span className="text-xs text-[color:var(--color-text-dim)]">
           {resumes.length}
         </span>
       </button>
       {!open ? (
         <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-          {resumes.length} other resume{resumes.length === 1 ? "" : "s"}. Open to see
-          versions and tailored history.
+          {resumes.length} resume{resumes.length === 1 ? "" : "s"}. Open to see versions
+          and tailored history.
         </p>
       ) : (
         <>
       <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
-        The data. Tailored versions are saved here, under the resume they came
-        from. Drag one up to Templates to reuse its design.
+        {description}
       </p>
       {resumes.length === 0 ? (
         <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-          No resumes yet.
+          {emptyText}
         </div>
       ) : (
         <div className="workspace-panel mt-3 divide-y divide-[color:var(--color-border)] overflow-hidden">
@@ -895,6 +940,7 @@ function ResumeRow({
               key={v.id}
               version={v}
               resumeId={resume.id}
+              resumeName={resume.name}
               applicationRef={
                 v.spawned_from_application_id
                   ? applicationById.get(v.spawned_from_application_id)
@@ -908,17 +954,34 @@ function ResumeRow({
   );
 }
 
+/** A safe, meaningful filename when there's no source_filename to reuse —
+ * "Daice Labs.pdf", not a UUID fragment nobody chose. */
+function fallbackDownloadName(resumeName: string, createdAt: string): string {
+  const slug = resumeName.trim().replace(/[^\w\- ]+/g, "").replace(/\s+/g, "_");
+  const date = createdAt.slice(0, 10);
+  return `${slug || "resume"}_${date}.pdf`;
+}
+
 function VersionRow({
   version,
   resumeId,
+  resumeName,
   applicationRef,
 }: {
   version: ResumeVersionSummary;
   resumeId: string;
+  resumeName: string;
   applicationRef: ApplicationRef | undefined;
 }) {
   const qc = useQueryClient();
   const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
+  const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
+  // An uploaded PDF/DOCX has no structured json_resume to edit — it's the
+  // {"uploaded": true, ...} stub the upload endpoints write. Opening it in
+  // the structured editor renders an empty form with nothing to click into,
+  // which reads as the click having done nothing. source_filename is set
+  // only on uploads, so it doubles as that signal.
+  const isUploadedFile = !!version.source_filename;
   const created = format(new Date(version.created_at), "MMM d, yyyy");
   const removeVersion = useMutation({
     mutationFn: () => api.deleteVersion(resumeId, version.id),
@@ -977,18 +1040,18 @@ function VersionRow({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Link
-          href={`/resumes/${resumeId}/${version.id}`}
-          className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
-        >
-          <MessageSquareText className="size-3" />
-          Open
-        </Link>
+        {!isUploadedFile && (
+          <Link
+            href={`/resumes/${resumeId}/${version.id}`}
+            className="kinetic-button kinetic-button-secondary min-h-0 px-3 py-1.5"
+          >
+            <MessageSquareText className="size-3" />
+            Open
+          </Link>
+        )}
         {version.status === "final" && (
           <button
-            onClick={() =>
-              downloadPdf(downloadUrl, `resume_${version.id.slice(0, 8)}.pdf`)
-            }
+            onClick={() => downloadPdf(downloadUrl, downloadName)}
             className="kinetic-button kinetic-button-primary min-h-0 px-3 py-1.5"
           >
             <Download className="size-3" />

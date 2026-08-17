@@ -37,6 +37,16 @@ class Resume(UUIDPK, Timestamped, Base):
     is_master: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
     source_kind: Mapped[str | None] = mapped_column(String, nullable=True)
     source_label: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Set only when this resume container itself was created for one specific
+    # company/job (an MCP-uploaded tailored resume), not a general-purpose
+    # data identity like the master or a "SWE resume". Distinguishes the two
+    # in the UI, which otherwise has no way to tell them apart — both are
+    # just rows in the same table.
+    spawned_from_application_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("applications.id", ondelete="SET NULL"),
+        nullable=True,
+    )
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 

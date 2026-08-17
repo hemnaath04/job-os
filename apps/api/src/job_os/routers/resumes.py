@@ -101,6 +101,10 @@ async def create_resume(
         ).scalar_one_or_none()
         if master:
             raise HTTPException(409, "A master resume already exists.")
+    if payload.spawned_from_application_id is not None:
+        application = await session.get(Application, payload.spawned_from_application_id)
+        if application is None or application.user_id != user.id:
+            raise HTTPException(404, "application not found")
     resume = Resume(
         user_id=user.id,
         name=payload.name,
@@ -108,6 +112,7 @@ async def create_resume(
         is_master=payload.is_master,
         source_kind=payload.source_kind,
         source_label=payload.source_label,
+        spawned_from_application_id=payload.spawned_from_application_id,
     )
     session.add(resume)
     await session.flush()

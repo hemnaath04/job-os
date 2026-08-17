@@ -172,6 +172,12 @@ export interface Resume {
   job_posting_id?: string | null;
   source_kind: string | null;
   source_label: string | null;
+  /**
+   * Set when this resume container itself was made for one specific company
+   * (an MCP-uploaded tailored resume), not a general-purpose data identity.
+   * Separates the two in the UI — otherwise indistinguishable rows.
+   */
+  spawned_from_application_id?: string | null;
   archived_at: string | null;
   created_at: string;
   updated_at: string;

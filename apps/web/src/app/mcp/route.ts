@@ -527,11 +527,12 @@ const handler = createMcpHandler(
       {
         title: "Create Resume",
         description:
-          "Create a new, empty resume container to hold versions (e.g. one you'll upload with upload_resume_version). This is the data identity — 'SWE resume', 'Research resume' — not a file; list_resumes shows what already exists before creating another.",
+          "Create a new, empty resume container to hold versions (e.g. one you'll upload with upload_resume_version). Two kinds: a general-purpose data identity ('SWE resume', 'AI resume' — omit application_id, list_resumes shows what already exists before creating another) or a company-tailored one (pass application_id — name it after the company, base_role after the job title; each company/target job should get its own, never reuse a general resume across companies).",
         inputSchema: z.object({
           name: z.string(),
           base_role: z.string().optional(),
           is_master: z.boolean().optional(),
+          application_id: z.string().uuid().optional(),
         }),
         annotations: {
           readOnlyHint: false,
@@ -542,7 +543,11 @@ const handler = createMcpHandler(
       },
       async (args, ctx) => {
         try {
-          const resume = (await callBackend(token(ctx), "POST", "/resumes", args)) as Resume;
+          const { application_id, ...rest } = args;
+          const resume = (await callBackend(token(ctx), "POST", "/resumes", {
+            ...rest,
+            spawned_from_application_id: application_id,
+          })) as Resume;
           await mirrorToAppwriteWorkspace(
             () => mirrorResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), resume),
             { tool: "create_resume", resume_id: resume.id },

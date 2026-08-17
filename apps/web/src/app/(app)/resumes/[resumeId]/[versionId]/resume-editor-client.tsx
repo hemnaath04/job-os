@@ -223,7 +223,7 @@ export default function ResumeEditorClient({
     version.pdf_r2_key;
   const hasRenderedPdf = Boolean(storedFileId) || version.status === "final";
   const downloadResume = () =>
-    downloadPdf(downloadUrl, "Hemnaath_Balasubramani_Resume.pdf");
+    downloadPdf(downloadUrl, version.source_filename ?? "Hemnaath_Balasubramani_Resume.pdf");
 
   return (
     <div className="workspace-page max-w-[1720px]">
