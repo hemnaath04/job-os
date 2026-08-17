@@ -362,10 +362,10 @@ async def preview_draft(
     LaTeX now, and an HTML approximation of it would be a different document
     from the one that gets sent to an employer.
     """
-    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf_async
 
     try:
-        rendered = render_resume_pdf(
+        rendered = await render_resume_pdf_async(
             payload.json_resume, template_key=payload.template_key
         )
     except LatexRenderError as exc:
@@ -488,7 +488,7 @@ async def render_draft(
     nothing is stored here. The Appwrite workspace attaches the returned PDF to the
     version so Download works immediately, then fetches the review separately.
     """
-    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf_async
     from job_os.services.resume_engine import (
         generate_latex_source,
         validate_json_resume_document,
@@ -496,7 +496,7 @@ async def render_draft(
 
     validate_json_resume_document(payload.json_resume)
     try:
-        rendered = render_resume_pdf(
+        rendered = await render_resume_pdf_async(
             payload.json_resume,
             template_key=payload.template_key,
             latex_source=payload.latex_source,
@@ -958,11 +958,11 @@ async def preview_version(
     session: AsyncSession = Depends(get_session),
 ) -> Response:
     """The stored version, rendered. A PDF, because that is what a resume is."""
-    from job_os.services.latex_render import LatexRenderError, render_resume_pdf
+    from job_os.services.latex_render import LatexRenderError, render_resume_pdf_async
 
     version = await _load_version(session, resume_id, version_id, user)
     try:
-        rendered = render_resume_pdf(version.json_resume)
+        rendered = await render_resume_pdf_async(version.json_resume)
     except LatexRenderError as exc:
         raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return Response(
@@ -993,7 +993,7 @@ async def export_version(
     """Render the version's JSON Resume to PDF with LaTeX, push to R2 if
     configured (otherwise just report the rendered byte count)."""
     from job_os.integrations import r2
-    from job_os.services.latex_render import render_resume_pdf
+    from job_os.services.latex_render import render_resume_pdf_async
 
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)
@@ -1011,7 +1011,7 @@ async def export_version(
             400, "Only `pdf` is supported today (DOCX renderer coming with template-2)."
         )
 
-    rendered = render_resume_pdf(version.json_resume)
+    rendered = await render_resume_pdf_async(version.json_resume)
     key = f"resumes/{user.id}/{resume_id}/{version_id}/{uuid4().hex}.pdf"
     upload = await r2.upload(key, rendered.bytes_, rendered.content_type)
     presigned = await r2.presign_get(key) if upload else None
@@ -1075,9 +1075,9 @@ async def download_version(
         version.pdf_bytes = pdf_bytes
         await session.flush()
     else:
-        from job_os.services.latex_render import render_resume_pdf
+        from job_os.services.latex_render import render_resume_pdf_async
 
-        rendered = render_resume_pdf(version.json_resume)
+        rendered = await render_resume_pdf_async(version.json_resume)
         pdf_bytes = rendered.bytes_
         # Persist for subsequent clicks. flush() not commit — the session
         # middleware commits at request end.

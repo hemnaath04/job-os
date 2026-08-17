@@ -18,6 +18,7 @@ see the per-template ATTRIBUTION.md files under `latex_templates/`.
 """
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import shutil
@@ -765,3 +766,28 @@ def render_resume_pdf(
 
     filled = fill_template(source, model)
     return RenderedPdf(bytes_=compile_pdf(filled, assets_dir=assets))
+
+
+async def render_resume_pdf_async(
+    json_resume: dict[str, Any],
+    *,
+    template_key: str | None = None,
+    latex_source: str | None = None,
+) -> RenderedPdf:
+    """`render_resume_pdf`, off the event loop.
+
+    Tectonic compilation is a blocking subprocess call that can run several
+    seconds. Every caller lives inside an async request handler on a
+    single-worker process, so calling the sync function directly serializes
+    every other request behind that one render: two "parallel" tailor jobs, or
+    one tailor and one unrelated page load, would actually queue one after the
+    other rather than making progress together. asyncio.to_thread moves the
+    wait onto a worker thread so the event loop stays free for everything else
+    while this compiles.
+    """
+    return await asyncio.to_thread(
+        render_resume_pdf,
+        json_resume,
+        template_key=template_key,
+        latex_source=latex_source,
+    )

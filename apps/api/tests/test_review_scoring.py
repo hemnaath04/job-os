@@ -110,11 +110,11 @@ def _stub_model(
     monkeypatch.setattr(
         resume_engine, "_client", lambda: SimpleNamespace(messages=FakeMessages())
     )
-    monkeypatch.setattr(
-        resume_engine,
-        "render_resume_pdf",
-        lambda doc, **_kwargs: SimpleNamespace(bytes_=_one_page_pdf()),
-    )
+
+    async def fake_render(doc: Any, **_kwargs: Any) -> Any:
+        return SimpleNamespace(bytes_=_one_page_pdf())
+
+    monkeypatch.setattr(resume_engine, "render_resume_pdf_async", fake_render)
     monkeypatch.setattr(
         resume_engine,
         "deterministic_review",

@@ -155,13 +155,11 @@ async def test_the_review_grades_the_two_cases_differently(
     monkeypatch.setattr(
         resume_engine, "_client", lambda: SimpleNamespace(messages=FakeMessages())
     )
-    monkeypatch.setattr(
-        resume_engine,
-        "render_resume_pdf",
-        lambda *_a, **_k: (_ for _ in ()).throw(
-            resume_engine.TectonicUnavailableError("no engine")
-        ),
-    )
+
+    async def unavailable_render(*_a: Any, **_k: Any) -> Any:
+        raise resume_engine.TectonicUnavailableError("no engine")
+
+    monkeypatch.setattr(resume_engine, "render_resume_pdf_async", unavailable_render)
 
     async def rate_limited(*_a: Any, **_k: Any) -> Any:
         return {}, [], {"hemnaath04/bedrocked": GITHUB_RATE_LIMITED}

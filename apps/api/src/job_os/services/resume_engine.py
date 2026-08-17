@@ -24,7 +24,7 @@ from pypdf import PdfReader
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
 from job_os.services.latex_catalog import builtin
-from job_os.services.latex_render import TectonicUnavailableError, render_resume_pdf
+from job_os.services.latex_render import TectonicUnavailableError, render_resume_pdf_async
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
@@ -732,8 +732,10 @@ async def review_resume(
     """
     validate_json_resume_document(doc)
     try:
-        pdf_bytes = render_resume_pdf(
-            doc, template_key=template_key, latex_source=latex_source
+        pdf_bytes = (
+            await render_resume_pdf_async(
+                doc, template_key=template_key, latex_source=latex_source
+            )
         ).bytes_
     except TectonicUnavailableError as exc:
         log.warning("resume_render_unavailable", error=str(exc))
