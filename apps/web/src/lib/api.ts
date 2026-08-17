@@ -595,17 +595,36 @@ const legacyApi = {
       verifiedFactsForReview(),
     ]);
     await warmBackend();
-    return withTimeout(
-      request<RenderReviewResult>("/resumes/render-review", {
-        method: "POST",
-        body: JSON.stringify({
-          json_resume: jsonResume,
-          template_key: look?.template_key ?? null,
-          latex_source: look?.latex_source ?? null,
-          verified_facts: verifiedFacts,
-        }),
+    // Kicked off as a background job rather than awaited directly: the model
+    // review alone routinely runs past a minute, and Heroku's router kills any
+    // request still waiting past 30 seconds with no way for either side to
+    // retry the same work -- render-review was failing this way on close to
+    // every real call, not occasionally. The start call returns almost
+    // immediately; the actual wait happens in the poll loop below, as a series
+    // of fast, individually-fine requests instead of one long one.
+    const { job_id } = await request<{ job_id: string }>("/resumes/render-review/start", {
+      method: "POST",
+      body: JSON.stringify({
+        json_resume: jsonResume,
+        template_key: look?.template_key ?? null,
+        latex_source: look?.latex_source ?? null,
+        verified_facts: verifiedFacts,
       }),
-      RENDER_TIMEOUT_MS,
+    });
+    const deadline = Date.now() + RENDER_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const status = await request<{
+        status: "running" | "done" | "error";
+        result?: RenderReviewResult;
+        error?: string;
+      }>(`/resumes/render-review/status/${job_id}`);
+      if (status.status === "done") return status.result as RenderReviewResult;
+      if (status.status === "error") {
+        throw new Error(status.error ?? "The quality review failed.");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, AGENT_POLL_MS));
+    }
+    throw new Error(
       "The quality review timed out. The API container may be waking up, try again in a moment.",
     );
   },

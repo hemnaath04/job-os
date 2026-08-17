@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime
@@ -5,6 +6,7 @@ from pathlib import Path
 from uuid import UUID, uuid4
 
 import anthropic
+import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -22,6 +24,8 @@ from job_os.schemas.resumes import (
     MoveVersionRequest,
     PresignUploadRequest,
     PresignUploadResponse,
+    RenderReviewJobStart,
+    RenderReviewJobStatus,
     ResumeChatRequest,
     ResumeChatResponse,
     ResumeCreate,
@@ -42,6 +46,8 @@ from job_os.schemas.resumes import (
     TailorRequest,
     TailorResponse,
 )
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/resumes")
 
@@ -371,6 +377,26 @@ async def preview_draft(
     )
 
 
+async def _render_and_review(payload: ResumeRenderReviewRequest) -> ResumeRenderReviewResponse:
+    from job_os.services.latex_render import LatexRenderError
+    from job_os.services.resume_engine import generate_latex_source, review_resume
+
+    try:
+        review, pdf_bytes = await review_resume(
+            payload.json_resume,
+            template_key=payload.template_key,
+            latex_source=payload.latex_source,
+            verified_facts=payload.verified_facts,
+        )
+    except LatexRenderError as exc:
+        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
+    return ResumeRenderReviewResponse(
+        review=review,
+        latex_source=generate_latex_source(payload.json_resume),
+        pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+    )
+
+
 @router.post("/render-review", response_model=ResumeRenderReviewResponse)
 async def render_and_review_draft(
     payload: ResumeRenderReviewRequest,
@@ -389,24 +415,63 @@ async def render_and_review_draft(
     caller has to hand over `verified_facts`: the reviewer needs the evidence
     vault to tell a verified claim from an invented one, and this service has no
     way to read the Appwrite one.
-    """
-    from job_os.services.latex_render import LatexRenderError
-    from job_os.services.resume_engine import generate_latex_source, review_resume
 
-    try:
-        review, pdf_bytes = await review_resume(
-            payload.json_resume,
-            template_key=payload.template_key,
-            latex_source=payload.latex_source,
-            verified_facts=payload.verified_facts,
-        )
-    except LatexRenderError as exc:
-        raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
-    return ResumeRenderReviewResponse(
-        review=review,
-        latex_source=generate_latex_source(payload.json_resume),
-        pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
-    )
+    Kept for any caller that still wants the blocking form, but the model
+    review alone routinely runs past a minute (see ResumeRenderResponse's own
+    docstring) against Heroku's hard 30-second router timeout — a request
+    this slow gets an H12 and a dead connection almost every time, not
+    occasionally. The browser uses /render-review/start + /status instead;
+    see the note there for the numbers that made a background job necessary
+    rather than optional.
+    """
+    return await _render_and_review(payload)
+
+
+# In-process job store for the same reason the review itself has to run in
+# the background: Heroku's router kills any request still waiting past 30
+# seconds, and the model review alone is documented at "over a minute" per
+# ResumeRenderResponse. A single dict is safe because this image runs
+# `--workers 1` (see Dockerfile.vercel's CMD) -- there is exactly one process
+# that could ever read or write it. Cleared per job on the read that finishes
+# it, so this cannot grow unbounded across a long-running dyno.
+_RENDER_REVIEW_JOBS: dict[str, RenderReviewJobStatus] = {}
+
+
+@router.post("/render-review/start", response_model=RenderReviewJobStart, status_code=202)
+async def start_render_review_job(
+    payload: ResumeRenderReviewRequest,
+    _user: User = Depends(get_current_user),
+) -> RenderReviewJobStart:
+    job_id = str(uuid4())
+    _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(status="running")
+
+    async def run() -> None:
+        try:
+            result = await _render_and_review(payload)
+            _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(status="done", result=result)
+        except HTTPException as exc:
+            _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(
+                status="error", error=str(exc.detail)
+            )
+        except Exception as exc:  # noqa: BLE001 -- a review that dies must reach the poller
+            log.exception("resume.render_review_job_failed", job_id=job_id)
+            _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(status="error", error=str(exc))
+
+    asyncio.create_task(run())
+    return RenderReviewJobStart(job_id=job_id)
+
+
+@router.get("/render-review/status/{job_id}", response_model=RenderReviewJobStatus)
+async def get_render_review_job(
+    job_id: str,
+    _user: User = Depends(get_current_user),
+) -> RenderReviewJobStatus:
+    job = _RENDER_REVIEW_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.status != "running":
+        del _RENDER_REVIEW_JOBS[job_id]
+    return job
 
 
 @router.post("/render", response_model=ResumeRenderResponse)

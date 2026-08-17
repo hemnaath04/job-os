@@ -2104,7 +2104,12 @@ _NON_SKILL_RE = re.compile(
     # required, French a plus", and both were scored as missing skills.
     r"new grad|early[- ]career|entry[- ]level|years? of experience|"
     r"english|french|german|spanish|mandarin|fluent|native speaker|"
-    r"a plus|nice to have|preferred|coursework|thesis|law degree"
+    r"a plus|nice to have|preferred|coursework|thesis|law degree|"
+    # An eligibility statement phrased as who the role suits, not what it
+    # asks of a skill. Crowe's "Ideal for students" scored as a missing
+    # skill no resume text could ever satisfy, capping the ATS score
+    # regardless of true fit.
+    r"ideal for (?:current )?students?"
     r")\b",
     re.I,
 )
@@ -2164,7 +2169,8 @@ _ELIGIBILITY_REQUIREMENT_RE = re.compile(
     r"\b(?:currently pursuing|bachelors?|masters?|phd|degree|gpa|grade point|"
     r"junior standing|senior standing|graduation|enrolled|"
     r"work authorization|sponsorship|visa|citizenship|clearance|"
-    r"ability to start|able to start|start date|new grad|early[- ]career)\b",
+    r"ability to start|able to start|start date|new grad|early[- ]career|"
+    r"ideal for (?:current )?students?)\b",
     re.I,
 )
 # A fragment that opens with one of these is a clause, not a skill name.

@@ -95,6 +95,22 @@ def test_an_eligibility_rule_is_not_scored_as_a_skill() -> None:
     assert any("Currently pursuing" in term for term in report["excluded_non_skills"])
 
 
+def test_an_eligibility_statement_phrased_as_who_the_role_suits_is_excluded() -> None:
+    """"Ideal for students" is who the role is for, not a skill.
+
+    A real Crowe Advisory posting scored 29 with this counted as a missing
+    required skill no resume text could ever satisfy -- structurally capping
+    the score regardless of true fit.
+    """
+    jd = {
+        "required_skills": ["Ideal for students", "Python"],
+    }
+    score, report = _score(jd)
+    assert score == 100.0
+    assert report["required_total"] == 1
+    assert any("Ideal for students" in term for term in report["excluded_non_skills"])
+
+
 def test_a_skill_is_matched_as_a_word_not_as_a_substring() -> None:
     """MongoDB does not prove Go, and Cloud Storage does not prove RAG."""
     assert not _mentions("built a service backed by mongodb", "Go")

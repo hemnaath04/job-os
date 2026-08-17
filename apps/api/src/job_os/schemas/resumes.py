@@ -199,6 +199,23 @@ class ResumeRenderReviewResponse(BaseModel):
     pdf_base64: str
 
 
+class RenderReviewJobStart(BaseModel):
+    job_id: str
+
+
+class RenderReviewJobStatus(BaseModel):
+    """Polled while a render-review job runs in the background.
+
+    "running" until the background task finishes; then either "done" with
+    the same payload /render-review used to return directly, or "error" with
+    the message the caller would otherwise have gotten as an HTTP error.
+    """
+
+    status: Literal["running", "done", "error"]
+    result: ResumeRenderReviewResponse | None = None
+    error: str | None = None
+
+
 class ResumeRenderResponse(BaseModel):
     """The rendered PDF and its LaTeX, with NO quality review.
 
