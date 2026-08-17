@@ -25,6 +25,7 @@ import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
+import { ProjectFolder } from "@/components/project-folder";
 import { TemplatePicker } from "@/components/template-picker";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
@@ -44,6 +45,7 @@ import type {
  * pipeline entry a version was tailored for, not the whole Application. */
 interface ApplicationRef {
   company: string | null;
+  companyDomain: string | null;
   jobTitle: string;
 }
 
@@ -89,7 +91,11 @@ function ResumesInner() {
   const applicationById = useMemo(() => {
     const map = new Map<string, ApplicationRef>();
     for (const a of applications as Application[]) {
-      map.set(a.id, { company: a.job.company?.name ?? null, jobTitle: a.job.title });
+      map.set(a.id, {
+        company: a.job.company?.name ?? null,
+        companyDomain: a.job.company?.domain ?? null,
+        jobTitle: a.job.title,
+      });
     }
     return map;
   }, [applications]);
@@ -464,25 +470,7 @@ function ResumesInner() {
             />
           )}
 
-          <ResumeGroupSection
-            title="Company resumes"
-            icon={Sparkles}
-            description="Tailored for one specific application. Each one is its own resume, not a version buried under a shared source."
-            emptyText="No company resumes yet."
-            resumes={companyResumes}
-            openId={openId}
-            originals={originals}
-            applicationById={applicationById}
-            defaultOpen
-            onDragStart={setDragging}
-            onDragEnd={() => setDragging(null)}
-            onUseAsTemplate={(resume) => buildFromResume.mutate(resume)}
-            buildingId={
-              buildFromResume.isPending
-                ? (buildFromResume.variables?.id ?? null)
-                : null
-            }
-          />
+          <CompanyResumesGrid resumes={companyResumes} applicationById={applicationById} />
 
           <TemplatesSection
             templates={templates}
@@ -699,6 +687,165 @@ function TemplatesSection({
           removingId={removingId}
         />
       </div>
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * A company's logo as a quick visual anchor. Every tailored resume looks
+ * about the same on the page itself, so the logo — not the document — is
+ * what actually lets you tell "Daice Labs" apart from "Roblox" at a glance.
+ * Falls back to initials on a colored badge when there's no domain, or the
+ * favicon lookup itself fails.
+ */
+function CompanyLogo({ domain, name }: { domain: string | null; name: string }) {
+  const [failed, setFailed] = useState(false);
+  if (!domain || failed) {
+    const initials =
+      name
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map((word) => word[0]?.toUpperCase())
+        .join("") || "?";
+    return (
+      <span className="grid size-20 shrink-0 place-items-center rounded-full bg-[color:var(--color-violet)]/15 text-2xl font-semibold text-[color:var(--color-violet)]">
+        {initials}
+      </span>
+    );
+  }
+  return (
+    <img
+      src={`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`}
+      alt=""
+      width={80}
+      height={80}
+      className="size-20 shrink-0 rounded-full bg-[color:var(--color-surface-2)] object-contain p-3"
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
+/**
+ * One resume version, shown small while peeking out of a closed folder and
+ * large inside the open overlay — same element, `ProjectFolder` morphs it
+ * between the two. Clickable in the overlay (peeking previews are
+ * pointer-events: none by design, so this only ever fires there).
+ */
+function VersionPreviewCard({
+  resumeId,
+  resumeName,
+  version,
+}: {
+  resumeId: string;
+  resumeName: string;
+  version: ResumeVersionSummary;
+}) {
+  const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
+  const downloadName = version.source_filename ?? fallbackDownloadName(resumeName, version.created_at);
+  const label = version.source_filename
+    ? version.source_filename.replace(/\.pdf$/i, "").replace(/_/g, " ")
+    : format(new Date(version.created_at), "MMM d, yyyy");
+  return (
+    <button
+      type="button"
+      onClick={(event) => {
+        event.stopPropagation();
+        if (version.status === "final") downloadPdf(downloadUrl, downloadName);
+      }}
+      className="flex h-full w-full flex-col items-center justify-center gap-1.5 p-2 text-center transition hover:bg-[color:var(--color-surface-hover)]"
+    >
+      <FileText className="size-6 shrink-0 text-[color:var(--color-violet)]" />
+      <span className="line-clamp-2 text-[10px] font-medium leading-tight text-[color:var(--color-text-muted)]">
+        {label}
+      </span>
+    </button>
+  );
+}
+
+/** One company's resume as a folder — logo up front, versions as the files
+ * that fan out on hover and fill the overlay on click. */
+function CompanyResumeFolder({
+  resume,
+  applicationRef,
+}: {
+  resume: Resume;
+  applicationRef: ApplicationRef | undefined;
+}) {
+  const { data: versions = [] } = useQuery({
+    queryKey: ["versions", resume.id],
+    queryFn: () => api.listVersions(resume.id),
+  });
+  return (
+    <ProjectFolder
+      title={resume.name}
+      description={resume.base_role ?? "Tailored resume"}
+      ariaLabel={`${resume.name} — ${versions.length} version${versions.length === 1 ? "" : "s"}`}
+      itemLabel="version"
+      frontVisual={
+        <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} />
+      }
+      previews={versions.map((version) => ({
+        id: version.id,
+        content: (
+          <VersionPreviewCard resumeId={resume.id} resumeName={resume.name} version={version} />
+        ),
+      }))}
+    />
+  );
+}
+
+function CompanyResumesGrid({
+  resumes,
+  applicationById,
+}: {
+  resumes: Resume[];
+  applicationById: Map<string, ApplicationRef>;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <section className="mt-6">
+      <button
+        onClick={() => setOpen((current) => !current)}
+        aria-expanded={open}
+        className="flex items-baseline gap-2 text-left"
+      >
+        <ChevronRight
+          className={`size-3.5 shrink-0 self-center text-[color:var(--color-text-dim)] transition-transform ${
+            open ? "rotate-90" : ""
+          }`}
+        />
+        <Sparkles className="size-4 shrink-0 self-center text-[color:var(--color-text-muted)]" />
+        <h2 className="text-sm font-semibold">Company resumes</h2>
+        <span className="text-xs text-[color:var(--color-text-dim)]">{resumes.length}</span>
+      </button>
+      {open && (
+        <>
+          <p className="mt-1 pl-6 text-xs leading-5 text-[color:var(--color-text-dim)]">
+            Tailored for one specific application. Each one is its own resume, not a
+            version buried under a shared source.
+          </p>
+          {resumes.length === 0 ? (
+            <div className="workspace-panel mt-3 px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
+              No company resumes yet.
+            </div>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-5">
+              {resumes.map((resume) => (
+                <CompanyResumeFolder
+                  key={resume.id}
+                  resume={resume}
+                  applicationRef={
+                    resume.spawned_from_application_id
+                      ? applicationById.get(resume.spawned_from_application_id)
+                      : undefined
+                  }
+                />
+              ))}
+            </div>
+          )}
         </>
       )}
     </section>
