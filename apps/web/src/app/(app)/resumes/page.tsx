@@ -869,10 +869,15 @@ function FolderResumeCard({
     latestVersion?.source_filename ??
     fallbackDownloadName(resume.name, latestVersion?.created_at ?? resume.updated_at);
 
+  // A column flex with items-center sizes children to their own content, not
+  // to the card's width -- so a long role title never had anything to
+  // truncate against and just grew past the card's edge. items-stretch (the
+  // default) makes the text block the full card width; text-center still
+  // centers the text itself inside that now-constrained box.
   const identity = (
     <>
       <div className="flex items-center justify-center">{thumbnail}</div>
-      <div className="min-w-0 text-center">
+      <div className="w-full min-w-0 text-center">
         <p className="truncate text-sm font-semibold">{resume.name}</p>
         <p className="truncate text-[11px] text-[color:var(--color-text-dim)]">{subtitle}</p>
       </div>
@@ -884,12 +889,12 @@ function FolderResumeCard({
       {openHref ? (
         <Link
           href={openHref}
-          className="flex w-full flex-1 flex-col items-center justify-center gap-2 rounded-lg transition hover:bg-[color:var(--color-surface-hover)]"
+          className="flex w-full flex-1 flex-col justify-center gap-2 rounded-lg transition hover:bg-[color:var(--color-surface-hover)]"
         >
           {identity}
         </Link>
       ) : (
-        <div className="flex w-full flex-1 flex-col items-center justify-center gap-2">
+        <div className="flex w-full flex-1 flex-col justify-center gap-2">
           {identity}
         </div>
       )}
