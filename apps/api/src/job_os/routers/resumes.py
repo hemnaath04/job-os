@@ -1042,6 +1042,7 @@ async def upload_version(
     version = ResumeVersion(
         resume_id=resume_id,
         json_resume={"uploaded": True, "filename": file.filename, "note": note},
+        source_filename=file.filename,
         approved_by_user=True,
         status="final",
         finalized_at=datetime.now(UTC),
@@ -1129,6 +1130,7 @@ async def confirm_upload(
     version = ResumeVersion(
         resume_id=resume_id,
         json_resume={"uploaded": True, "filename": payload.filename, "note": payload.note},
+        source_filename=payload.filename,
         approved_by_user=True,
         status="final",
         finalized_at=datetime.now(UTC),

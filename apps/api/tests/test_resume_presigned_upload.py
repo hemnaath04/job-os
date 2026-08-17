@@ -153,4 +153,5 @@ async def test_confirm_upload_creates_a_final_version_and_can_attach_to_an_appli
     assert version.status == "final"
     assert version.finalized_at is not None
     assert version.pdf_r2_key == key
+    assert version.source_filename == "Hemnaath_Balasubramani_DaiceLabs.pdf"
     assert version.spawned_from_application_id == application.id

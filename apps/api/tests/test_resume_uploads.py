@@ -60,6 +60,7 @@ async def test_upload_is_immediately_final_and_downloadable(db_session) -> None:
     assert version.status == "final"
     assert version.finalized_at is not None
     assert version.spawned_from_application_id is None
+    assert version.source_filename == "resume.pdf"
 
     # Round-trips through the local-fallback storage path (no R2 configured
     # in tests), which is the bug this fixes: download_version used to only
