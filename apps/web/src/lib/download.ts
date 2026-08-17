@@ -34,28 +34,34 @@ function isAppwriteFileUrl(url: string): boolean {
  * session cookie is third-party and browsers drop it, which made an owned file
  * answer 404. See appwriteFileAuthHeaders.
  */
+/** The fetch half of a PDF read, shared by the save-to-disk and inline-preview
+ * paths below — same credentials, same "is this actually a PDF" guard. */
+async function fetchPdfBlob(url: string): Promise<Blob> {
+  const res = await fetch(url, {
+    cache: "no-store",
+    ...(isAppwriteFileUrl(url)
+      ? { headers: await appwriteFileAuthHeaders() }
+      : { credentials: "include" as RequestCredentials }),
+  });
+  if (!res.ok) {
+    throw new Error(`${res.status} ${res.statusText}`);
+  }
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.includes("pdf")) {
+    // Backend was cold or the proxy timed out — Vercel handed us its
+    // 404.html instead of our PDF. Don't use it.
+    throw new Error("The stored file is not a valid PDF.");
+  }
+  return res.blob();
+}
+
 export async function downloadPdf(url: string, filename: string): Promise<void> {
   const toastId = toast.loading("Generating PDF…");
   try {
     if (!url) {
       throw new Error("This version does not have a finalized PDF yet.");
     }
-    const res = await fetch(url, {
-      cache: "no-store",
-      ...(isAppwriteFileUrl(url)
-        ? { headers: await appwriteFileAuthHeaders() }
-        : { credentials: "include" as RequestCredentials }),
-    });
-    if (!res.ok) {
-      throw new Error(`${res.status} ${res.statusText}`);
-    }
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.includes("pdf")) {
-      // Backend was cold or the proxy timed out — Vercel handed us its
-      // 404.html instead of our PDF. Don't save it.
-      throw new Error("The stored file is not a valid PDF.");
-    }
-    const blob = await res.blob();
+    const blob = await fetchPdfBlob(url);
     const objectUrl = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = objectUrl;
@@ -69,4 +75,16 @@ export async function downloadPdf(url: string, filename: string): Promise<void> 
     const msg = (e as Error).message;
     toast.error(`Couldn't download PDF: ${msg}`, { id: toastId });
   }
+}
+
+/**
+ * A PDF as an object URL, for showing it inline (an `<object>` thumbnail)
+ * rather than saving it. Throws rather than toasting — a thumbnail's fallback
+ * for "could not load" is a plain icon, not an error banner. Caller must
+ * revoke the URL when done, same as any object URL.
+ */
+export async function pdfObjectUrl(url: string): Promise<string> {
+  if (!url) throw new Error("No file to preview.");
+  const blob = await fetchPdfBlob(url);
+  return URL.createObjectURL(blob);
 }
