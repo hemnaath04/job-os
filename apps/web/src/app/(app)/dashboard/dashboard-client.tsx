@@ -4,15 +4,17 @@ import { useQuery } from "@tanstack/react-query";
 import { motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowUpRight,
+  Bot,
   CalendarClock,
   DatabaseZap,
   FileText,
   Radar,
   Sparkles,
   TrendingUp,
+  X,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
@@ -99,6 +101,8 @@ export default function DashboardClient({
           </Link>
         </div>
       </motion.header>
+
+      <AgentBanner />
 
       {/* One bordered slab split by hairlines rather than four floating cards.
           Four separate surfaces made four separate things to look at; a single
@@ -196,6 +200,50 @@ export default function DashboardClient({
           <NextActions applications={intelligence.nextMoves} />
         </DashboardPanel>
       </motion.div>
+    </div>
+  );
+}
+
+const AGENT_BANNER_DISMISSED_KEY = "job-os:dashboard-agent-banner-dismissed";
+
+/**
+ * A one-line pointer to the MCP connector, not a feature we bury in docs
+ * nobody visits. Dismissible and remembered per browser, since anyone who
+ * has already seen it does not need it taking a row every visit.
+ */
+function AgentBanner() {
+  const [dismissed, setDismissed] = useState(true);
+
+  useEffect(() => {
+    setDismissed(window.localStorage.getItem(AGENT_BANNER_DISMISSED_KEY) === "1");
+  }, []);
+
+  if (dismissed) return null;
+
+  return (
+    <div className="mb-3.5 flex items-center gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/60 px-4 py-2.5">
+      <Bot className="size-4 shrink-0 text-[color:var(--color-text-muted)]" aria-hidden="true" />
+      <p className="min-w-0 flex-1 truncate text-xs text-[color:var(--color-text-muted)]">
+        Your own agent can drive this over MCP now: search jobs, tailor resumes, track
+        applications.
+      </p>
+      <Link
+        href="/docs/mcp"
+        className="shrink-0 text-xs font-medium text-[color:var(--color-text)] underline decoration-dotted"
+      >
+        Connect one
+      </Link>
+      <button
+        type="button"
+        onClick={() => {
+          window.localStorage.setItem(AGENT_BANNER_DISMISSED_KEY, "1");
+          setDismissed(true);
+        }}
+        aria-label="Dismiss"
+        className="shrink-0 rounded-md p-1 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+      >
+        <X className="size-3.5" />
+      </button>
     </div>
   );
 }

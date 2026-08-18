@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { ArrowRight, ShieldCheck, Sparkles, Workflow } from "lucide-react";
+import { ArrowRight, Bot, ShieldCheck, Sparkles, Workflow } from "lucide-react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { BackendReadiness } from "@/components/backend-readiness";
@@ -66,7 +66,7 @@ export default async function Landing() {
       </section>
 
       <section id="how" className="mx-auto max-w-6xl px-6 pb-28">
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <Feature
             icon={<Workflow className="size-4" />}
             title="One workspace"
@@ -81,6 +81,20 @@ export default async function Landing() {
             icon={<ShieldCheck className="size-4" />}
             title="No invented experience"
             body="The agent raises a gap question instead of inventing a skill you do not have."
+          />
+          <Feature
+            icon={<Bot className="size-4" />}
+            title="Built for agents too"
+            body={
+              <>
+                An MCP server your own agent can drive: search jobs, tailor resumes, track
+                applications.{" "}
+                <Link href="/docs/mcp" className="underline decoration-dotted hover:text-[color:var(--color-text)]">
+                  Connect one
+                </Link>
+                .
+              </>
+            }
           />
         </div>
       </section>
@@ -120,7 +134,7 @@ function Feature({
 }: {
   icon: React.ReactNode;
   title: string;
-  body: string;
+  body: React.ReactNode;
 }) {
   return (
     <div className="rounded-[var(--radius-card-lg)] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/60 p-6 backdrop-blur-sm transition hover:border-[color:var(--color-border-strong)] hover:bg-[color:var(--color-surface-1)]">
