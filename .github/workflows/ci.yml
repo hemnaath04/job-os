@@ -149,6 +149,25 @@ jobs:
           tectonic --version
       - working-directory: apps/api
         run: uv sync --frozen
+      # Tectonic downloads its TeX bundle on first compile. Unwarmed, every
+      # test races that fetch and they fail together on
+      # "called `Result::unwrap()` on an `Err` value: this bundle isn't
+      # available" -- which is what 25 of them did the first time this job got
+      # far enough to run at all. The production image solves it by baking a
+      # warmed TECTONIC_CACHE_DIR (Dockerfile.vercel), so do the same here and
+      # keep it across runs: one fetch ever, instead of one per nightly.
+      - name: Cache Tectonic bundle
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tectonic-ci
+          key: tectonic-bundle-0.17.0-${{ runner.os }}
+      - name: Warm the Tectonic cache
+        working-directory: apps/api
+        env:
+          TECTONIC_CACHE_DIR: ~/.cache/tectonic-ci
+        run: uv run python -m job_os.scripts.warm_latex_cache
       - name: pytest -m slow
         working-directory: apps/api
+        env:
+          TECTONIC_CACHE_DIR: ~/.cache/tectonic-ci
         run: uv run pytest -q -m slow
