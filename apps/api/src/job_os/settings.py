@@ -64,6 +64,13 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str | None = None
     anthropic_base_url: str | None = None
+
+    # Personal standalone job-scraper (separate project, separate infra) - see
+    # job_os.ingest.scraper_import. Pull-only: this app reads its export, it
+    # never gets write access to anything of ours.
+    scraper_export_url: str | None = None
+    scraper_export_key: str | None = None
+
     # Claude is the only LLM provider — retrieval, extraction, tailoring, verification.
     # We don't use embeddings; retrieval uses Claude directly over the (small) profile.
     anthropic_model_extract: str = "manifest/auto"
