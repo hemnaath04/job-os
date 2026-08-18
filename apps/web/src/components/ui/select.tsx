@@ -25,6 +25,7 @@ export function Select({
   placeholder = "Select",
   className,
   id,
+  compact = false,
   "aria-label": ariaLabel,
   "aria-describedby": ariaDescribedBy,
 }: {
@@ -35,6 +36,13 @@ export function Select({
   placeholder?: string;
   className?: string;
   id?: string;
+  /**
+   * Toolbar sizing: a filter pill rather than a form field. `field-control` is
+   * a 42px-tall full-width input, which is right for a form and wrong for a
+   * row of filters above a dense list -- six of them at form height push the
+   * first row of data off the fold.
+   */
+  compact?: boolean;
   "aria-label"?: string;
   "aria-describedby"?: string;
 }) {
@@ -49,15 +57,31 @@ export function Select({
         aria-label={ariaLabel}
         aria-describedby={ariaDescribedBy}
         className={cn(
-          "group field-control flex items-center justify-between gap-2 text-left",
+          "group flex items-center text-left",
           "disabled:cursor-not-allowed disabled:opacity-50",
-          "data-[state=open]:border-[color:var(--color-accent-border)] data-[state=open]:shadow-[0_0_0_3px_rgba(255,231,135,0.45)]",
+          compact
+            ? cn(
+                "h-8 justify-between gap-1.5 rounded-lg px-2.5 text-xs",
+                "border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)]",
+                "text-[color:var(--color-text-muted)] transition-colors duration-150",
+                "hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)]",
+                "data-[state=open]:border-[color:var(--color-accent-border)] data-[state=open]:text-[color:var(--color-text)]",
+              )
+            : cn(
+                "field-control justify-between gap-2",
+                "data-[state=open]:border-[color:var(--color-accent-border)] data-[state=open]:shadow-[0_0_0_3px_rgba(255,231,135,0.45)]",
+              ),
           className,
         )}
       >
         <SelectPrimitive.Value placeholder={placeholder} />
         <SelectPrimitive.Icon asChild>
-          <ChevronDown className="size-4 shrink-0 text-[color:var(--color-text-dim)] transition-transform duration-[var(--dur)] ease-[var(--ease-out)] group-data-[state=open]:rotate-180" />
+          <ChevronDown
+            className={cn(
+              "shrink-0 text-[color:var(--color-text-dim)] transition-transform duration-[var(--dur)] ease-[var(--ease-out)] group-data-[state=open]:rotate-180",
+              compact ? "size-3.5" : "size-4",
+            )}
+          />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
 

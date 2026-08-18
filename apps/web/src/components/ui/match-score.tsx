@@ -24,6 +24,18 @@ export function scoreTier(score: number): ScoreTier {
   return "weak";
 }
 
+const TIER_LABEL: Record<ScoreTier, string> = {
+  strong: "Strong match",
+  good: "Good match",
+  fair: "Fair match",
+  weak: "Weak match",
+};
+
+/** The number in words, for the one place there is room to say it. */
+export function scoreLabel(score: number): string {
+  return TIER_LABEL[scoreTier(score)];
+}
+
 const TIER_CHIP: Record<ScoreTier, string> = {
   strong:
     "bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)] ring-[color:var(--color-accent-border)]",

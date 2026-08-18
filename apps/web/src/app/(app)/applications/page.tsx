@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BriefcaseBusiness, Inbox, Plus } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AddJobDialog } from "@/components/add-job-dialog";
 import {
   ApplicationInspector,
@@ -33,9 +33,11 @@ export default function ApplicationsPage() {
   const [location, setLocation] = useState("");
   const [workType, setWorkType] = useState("");
   const [minMatch, setMinMatch] = useState("");
+  const [dateWindow, setDateWindow] = useState("");
   const [sort, setSort] = useState<ApplicationSort>("updated");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [addOpen, setAddOpen] = useState(false);
+  const searchRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
 
   const { data: applications = [], refetch, isLoading } = useQuery({
@@ -125,11 +127,18 @@ export default function ApplicationsPage() {
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const threshold = minMatch ? Number(minMatch) : null;
+    const cutoff = dateWindow
+      ? Date.now() - Number(dateWindow) * 86_400_000
+      : null;
     const rows = baseApplications.filter((application) => {
       if (stage !== "archived" && !matchesStatuses(application.status, stageDef.statuses)) return false;
       if (location && application.job.location !== location) return false;
       if (workType && application.job.remote !== workType) return false;
       if (threshold !== null && (matchScores.get(application.id) ?? -1) < threshold) return false;
+      if (cutoff !== null) {
+        const at = application.applied_at ?? application.updated_at;
+        if (!at || Date.parse(at) < cutoff) return false;
+      }
       if (!q) return true;
       const haystack = [
         application.job.title,
@@ -150,11 +159,28 @@ export default function ApplicationsPage() {
       sorted.sort((a, b) => (b.applied_at ?? "").localeCompare(a.applied_at ?? ""));
     } else if (sort === "match") {
       sorted.sort((a, b) => (matchScores.get(b.id) ?? -1) - (matchScores.get(a.id) ?? -1));
+    } else if (sort === "match_asc") {
+      // Unscored rows sort last here rather than first: "lowest match" is for
+      // finding weak fits to drop, and a row with no score is not a weak fit,
+      // it is an unknown one.
+      sorted.sort(
+        (a, b) =>
+          (matchScores.get(a.id) ?? Number.POSITIVE_INFINITY) -
+          (matchScores.get(b.id) ?? Number.POSITIVE_INFINITY),
+      );
+    } else if (sort === "next_action") {
+      // Soonest deadline first; anything with no action due sits after
+      // everything that has one.
+      sorted.sort((a, b) => {
+        const at = a.next_action_at ? Date.parse(a.next_action_at) : Number.POSITIVE_INFINITY;
+        const bt = b.next_action_at ? Date.parse(b.next_action_at) : Number.POSITIVE_INFINITY;
+        return at - bt;
+      });
     } else {
       sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     }
     return sorted;
-  }, [baseApplications, stage, stageDef, location, workType, minMatch, query, sort, matchScores]);
+  }, [baseApplications, stage, stageDef, location, workType, minMatch, dateWindow, query, sort, matchScores]);
 
   // The selection survives a filter or search change, per the brief, so the
   // inspector is looked up from the full set rather than the filtered one.
@@ -171,6 +197,63 @@ export default function ApplicationsPage() {
     // which is exactly the case this must not react to.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applications, selectedId]);
+
+  // Keyboard navigation. The page already had a ⌘K palette, so this extends an
+  // existing shortcut vocabulary rather than inventing one, and stays
+  // deliberately invisible: no hint bar, since the spec's own rule is not to
+  // advertise shortcuts the app does not already advertise.
+  const moveSelection = useCallback(
+    (delta: number) => {
+      if (filtered.length === 0) return;
+      const index = filtered.findIndex((application) => application.id === selectedId);
+      // No selection yet: arrow down starts at the top, arrow up at the bottom.
+      const next =
+        index === -1
+          ? delta > 0
+            ? 0
+            : filtered.length - 1
+          : Math.min(Math.max(index + delta, 0), filtered.length - 1);
+      setSelectedId(filtered[next].id);
+    },
+    [filtered, selectedId],
+  );
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      // Never steal a key from someone who is typing. Notes, search and the
+      // next-action field all live on this page.
+      const typing =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+
+      if (event.key === "/" && !typing && !event.metaKey && !event.ctrlKey) {
+        event.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+      if (event.key === "Escape") {
+        if (typing) {
+          (target as HTMLElement).blur();
+          return;
+        }
+        setSelectedId(null);
+        return;
+      }
+      if (typing || event.metaKey || event.ctrlKey || event.altKey) return;
+      if (event.key === "ArrowDown" || event.key === "j") {
+        event.preventDefault();
+        moveSelection(1);
+      } else if (event.key === "ArrowUp" || event.key === "k") {
+        event.preventDefault();
+        moveSelection(-1);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [moveSelection]);
 
   const activeCount = applications.filter((application) => isActiveStatus(application.status)).length;
   const interviewCount = applications.filter((application) => application.status === "interview_scheduled").length;
@@ -216,10 +299,13 @@ export default function ApplicationsPage() {
             onWorkTypeChange={setWorkType}
             minMatch={minMatch}
             onMinMatchChange={setMinMatch}
+            dateWindow={dateWindow}
+            onDateWindowChange={setDateWindow}
             sort={sort}
             onSortChange={setSort}
             view={view}
             onViewChange={setView}
+            searchRef={searchRef}
           />
           <StageTabs
             applications={applications}
@@ -248,12 +334,15 @@ export default function ApplicationsPage() {
             // a tall external display) stretches this bordered panel into a
             // mostly-empty card instead of leaving that space as plain page
             // background. max-h caps the panel; flex-1 still fills up to it.
-            <div className="workspace-panel grid min-h-0 flex-1 max-h-[820px] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(320px,38%)_1fr]">
+            <div className="workspace-panel grid min-h-0 flex-1 max-h-[820px] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(340px,40%)_1fr]">
               <div className={`min-h-0 ${selected ? "hidden lg:block" : ""}`}>
                 <ApplicationList
                   applications={filtered}
                   selectedId={selectedId}
                   matchScores={matchScores}
+                  // Date headings only make sense when the order is a date.
+                  // Under "highest match" they would repeat and mean nothing.
+                  grouped={sort === "updated" || sort === "applied"}
                   onSelect={(application) => setSelectedId(application.id)}
                 />
               </div>
