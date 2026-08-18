@@ -333,12 +333,15 @@ def _profile_key(fact: dict[str, Any]) -> tuple[str, ...]:
 
 class Workspace:
     def __init__(self, req: Any):
+        # Appwrite only injects x-appwrite-user-id for session-triggered executions
+        # (the browser's own Tailor button). API-key-triggered executions -- the
+        # MCP tool path -- never carry it, so this can be empty here; callers that
+        # need a user_id before it's resolved via resolve_user_id() below must not
+        # assume it is set yet.
         self.user_id = _header(req, "x-appwrite-user-id")
         api_key = _header(req, "x-appwrite-key")
         endpoint = os.environ["APPWRITE_FUNCTION_API_ENDPOINT"]
         project_id = os.environ["APPWRITE_FUNCTION_PROJECT_ID"]
-        if not self.user_id:
-            raise PermissionError("Authenticated Appwrite user required.")
         if not api_key:
             raise RuntimeError("Appwrite dynamic API key is unavailable.")
         client = (
@@ -467,6 +470,25 @@ class Workspace:
         if owner_id != self.user_id:
             raise PermissionError("Resource does not belong to this user.")
         return row
+
+    def resolve_user_id(self, job_id: str) -> None:
+        """Fall back to the job's own owner when no end-user session header exists.
+
+        The MCP tool path dispatches this execution with the function's API key,
+        not an end-user session, so ``self.user_id`` arrives empty (see the
+        comment in __init__). The job row's ``owner_id`` was already set by
+        trusted server-side code at job-creation time, so it's a safe source of
+        truth for who this run is acting as -- reusing it here is what lets
+        every other owner_id check in this class (owned_row, update_job, ...)
+        keep working unchanged for API-key-triggered runs.
+        """
+        if self.user_id:
+            return
+        row = self.tables.get_row(self.database_id, self.jobs_table, job_id)
+        owner_id = _field(row, "owner_id")
+        if not owner_id:
+            raise PermissionError("Authenticated Appwrite user required.")
+        self.user_id = owner_id
 
     def create_snapshot(
         self,
@@ -1247,6 +1269,7 @@ async def main(context: Any) -> Any:
                 {"detail": "Missing job_id in request body."}, 400
             )
         job_id = str(job_id)
+        workspace.resolve_user_id(job_id)
         workspace.update_job(job_id, status="running")
         try:
             result = await _dispatch(
