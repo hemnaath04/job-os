@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import date
@@ -172,6 +173,24 @@ DRAFT_MAX_TOKENS = 32000
 # that the answer did not fit. It must exceed what thinking already consumed, or
 # the retry reproduces the failure exactly.
 RETRY_MAX_TOKENS = 48000
+
+# The gateway's default posture is "high" effort, which on an adaptive-thinking
+# model means "almost always thinks" -- the thinking block DRAFT_MAX_TOKENS
+# above budgets room for. Measured directly against the live gateway on this
+# call's own system prompt: the compose call at high (unset) effort took 37.6s
+# with a thinking block consuming most of its 4045 output tokens; the same
+# call at "medium" took 19.7s, still thought, and still parsed as valid
+# TailorAgentOutput JSON. Applied here and not to the analyst call: a prior
+# real run already tried reducing power on THAT step (swapping it to Haiku)
+# and lost real, defensible matches the Sonnet analysis had found -- Job Match
+# 52.2 against 73.9 and 78.3, see the comment where `_analyse_requirements` is
+# called. Compose is a different bet: cutting thinking depth on the WRITER
+# rather than the step that decides WHAT gets written, backed by the
+# deterministic checks (bullet_flags, document_quality_flags, the
+# no-hallucination sanitizers) that exist specifically to catch a bad rewrite
+# regardless of which model or effort level produced it, and by the repair
+# loop that already re-runs this same call when those checks find something.
+COMPOSE_EFFORT = "medium"
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
@@ -802,6 +821,7 @@ async def run_tailor(
                 state.get("repair_note") or None,
                 min(0.82, 0.36 + 0.30 * (iteration - 1)),
             )
+        started = time.perf_counter()
         try:
             msg = await create_message(
                 client,
@@ -810,6 +830,7 @@ async def run_tailor(
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
                 messages=state["messages"],
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+                output_config={"effort": COMPOSE_EFFORT},
             )
         except (anthropic.APIError, httpx.HTTPError) as exc:
             # A refine pass is an improvement on something that already works, so a
@@ -832,6 +853,12 @@ async def run_tailor(
             # Nothing to ship yet, so the caller has to hear about it.
             raise
         _log_prompt_cache("compose", iteration, msg)
+        log.info(
+            "tailor.call_timing",
+            step="compose",
+            iteration=iteration,
+            seconds=round(time.perf_counter() - started, 1),
+        )
         raw = response_text(msg)
         try:
             attempt = parse_model_json(TailorAgentOutput, raw)
@@ -861,6 +888,7 @@ async def run_tailor(
                     {"role": "user", "content": JSON_ONLY_RETRY},
                 ]
             )
+            retry_started = time.perf_counter()
             retry = await create_message(
                 client,
                 model=settings.anthropic_model_tailor,
@@ -868,6 +896,13 @@ async def run_tailor(
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
                 messages=retry_messages,
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+                output_config={"effort": COMPOSE_EFFORT},
+            )
+            log.info(
+                "tailor.call_timing",
+                step="compose_json_retry",
+                iteration=iteration,
+                seconds=round(time.perf_counter() - retry_started, 1),
             )
             retry_raw = response_text(retry)
             try:
@@ -2762,7 +2797,11 @@ async def _analyse_requirements(
         "Respond with a single JSON object matching this schema (no prose, no "
         f"fences):\n{json.dumps(TailorAnalysis.model_json_schema())}"
     )
+    started = time.perf_counter()
     try:
+        # No COMPOSE_EFFORT here, deliberately: left at the gateway's default.
+        # See the comment on COMPOSE_EFFORT for why this specific step is the
+        # one exception, not an oversight.
         msg = await create_message(
             client,
             model=model,
@@ -2772,6 +2811,12 @@ async def _analyse_requirements(
             extra_headers={"x-manifest-tier": tier},
         )
         _log_prompt_cache("analyst", 1, msg)
+        log.info(
+            "tailor.call_timing",
+            step="analyst",
+            iteration=1,
+            seconds=round(time.perf_counter() - started, 1),
+        )
         analysis = parse_model_json(TailorAnalysis, response_text(msg))
     except (anthropic.APIError, httpx.HTTPError, ValidationError) as exc:
         # An empty analysis is a planned degradation: `analysis_settled` downstream
