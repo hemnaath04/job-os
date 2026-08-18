@@ -370,6 +370,11 @@ export default function DiscoverPage() {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
       setSourceErrors(data.errors ?? []);
+      const emptySources = sources.filter(
+        (s) => (data.source_counts?.[s] ?? 0) === 0 && !data.errors?.find((e) => e.source === s),
+      );
+      if (emptySources.length > 0)
+        console.log("[discover] sources with 0 hits for these filters:", emptySources);
       if (data.results.length === 0)
         toast("No results", { description: "Try widening the filters." });
     },
@@ -961,11 +966,11 @@ export default function DiscoverPage() {
         </>
       )}
 
-      {/* Per-source warnings, surfaced any time a source returned 0 hits or
-          threw (e.g. THEIRSTACK_API_KEY missing in Render). Prevents the
-          "only SimplifyJobs is showing" mystery state where one source silently
-          fails. */}
-      {sortedResults !== null && (sourceErrors.length > 0 || hasEmptySource(sources, sourceCounts)) && (
+      {/* Per-source errors only (e.g. THEIRSTACK_API_KEY missing in Render).
+          Zero-hit sources are expected noise on a narrow filter, not worth a
+          banner, so they go to the console instead; see the search mutation's
+          onSuccess. */}
+      {sortedResults !== null && sourceErrors.length > 0 && (
         <div className="notice notice-caution mt-4 p-3 text-xs">
           {sourceErrors.map((e) => (
             <div key={e.source} className="flex items-start gap-2">
@@ -980,22 +985,6 @@ export default function DiscoverPage() {
               </div>
             </div>
           ))}
-          {hasEmptySource(sources, sourceCounts) &&
-            sources
-              .filter((s) => (sourceCounts[s] ?? 0) === 0 && !sourceErrors.find((e) => e.source === s))
-              .map((s) => (
-                <div key={s} className="flex items-start gap-2">
-                  <span className="opacity-70">·</span>
-                  <div>
-                    <span className="font-semibold uppercase tracking-wider">
-                      {s}
-                    </span>{" "}
-                    <span className="notice-detail">
-                      returned 0 hits with these filters.
-                    </span>
-                  </div>
-                </div>
-              ))}
         </div>
       )}
 
@@ -1602,13 +1591,6 @@ function tsOrZero(s: string | null | undefined): number {
 // cards line up. source_id is only unique within a source.
 function resultKey(r: DiscoveryResult): string {
   return `${r.source}:${r.source_id || r.source_url}`;
-}
-
-function hasEmptySource(
-  sources: DiscoverySource[],
-  counts: Record<string, number>,
-): boolean {
-  return sources.some((s) => (counts[s] ?? 0) === 0);
 }
 
 /**
