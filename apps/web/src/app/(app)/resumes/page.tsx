@@ -711,7 +711,7 @@ function TemplatePreviewCard({
 }
 
 /**
- * The looks available to render with: the six that ship with the app, plus any
+ * The looks available to render with: the seven that ship with the app, plus any
  * built from the user's own uploads. A template holds LaTeX only, never resume
  * data. Same folder shape as everything else in the library; the upload
  * control lives as its own tile inside, rather than bolted onto the outside.

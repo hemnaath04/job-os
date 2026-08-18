@@ -142,7 +142,7 @@ export interface ResumeTemplate {
   columns?: number;
   /**
    * How this layout tends to fare in an applicant tracking system, in plain
-   * words. Shown next to the template: two of the six are two-column designs
+   * words. Shown next to the template: two of the seven are two-column designs
    * that some parsers read badly, and hiding that would cost somebody an
    * interview.
    */

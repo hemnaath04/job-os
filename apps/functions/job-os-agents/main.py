@@ -959,11 +959,23 @@ async def _review_resume(
 ) -> dict[str, Any]:
     version_id = str(payload["version_id"])
     version = _snapshot(workspace.owned_row(workspace.versions_table, version_id))
+    # `template_key` names one of the bundled templates (see
+    # `latex_catalog.BUILTIN_TEMPLATES`); absent or unknown falls back to the
+    # default inside `render_resume_pdf`. This was previously dropped on the
+    # floor here while the FastAPI-backed path (`routers/resumes.py`, which is
+    # what the browser and the MCP server's start_resume_finalize tool actually
+    # call today) has always honoured it -- a caller that reaches this Appwrite
+    # function path directly instead would silently always get the default
+    # look. Threaded through for parity with that path, not because anything
+    # in this repository calls this one with a template_key set yet.
+    template_key = payload.get("template_key")
     # The reviewer needs the evidence vault to tell a verified claim from an
     # invented one. Without it, it graded the candidate's own job title and
     # coursework as fabrications.
     report, pdf_bytes = await review_resume(
-        version["json_resume"], verified_facts=workspace.verified_facts()
+        version["json_resume"],
+        template_key=template_key,
+        verified_facts=workspace.verified_facts(),
     )
     now = _now()
     version.update(

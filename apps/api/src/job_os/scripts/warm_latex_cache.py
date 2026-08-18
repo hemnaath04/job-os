@@ -8,7 +8,7 @@ happened to be offline. Compiling all six here lands every file they need in
 TECTONIC_CACHE_DIR, which is baked into the image, and lets requests render with
 `--only-cached`.
 
-It doubles as the build's own check that the six templates still compile: a
+It doubles as the build's own check that the seven templates still compile: a
 failure here fails the image, rather than shipping a template that cannot
 render.
 

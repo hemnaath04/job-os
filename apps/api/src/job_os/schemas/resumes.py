@@ -131,7 +131,7 @@ class ResumeReviewResult(BaseModel):
 class BuiltinTemplateSummary(BaseModel):
     """One of the templates that ship with the app.
 
-    `ats_note` is shown to the user next to the template. Two of the six are
+    `ats_note` is shown to the user next to the template. Two of the seven are
     two-column layouts that some applicant tracking systems parse badly, and a
     picker that hides that is a picker that costs somebody an interview.
     """

@@ -333,7 +333,7 @@ export const appwriteWorkspace = {
   },
 
   /**
-   * The templates that can actually render: the six builtins plus this user's
+   * The templates that can actually render: the seven builtins plus this user's
    * own. Rows from the retired HTML renderer are left out, because selecting one
    * would produce a failed render rather than a different look.
    *

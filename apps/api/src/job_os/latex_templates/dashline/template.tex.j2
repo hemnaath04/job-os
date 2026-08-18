@@ -1,0 +1,160 @@
+%-------------------------
+% Resume in LaTeX: "dashline"
+%
+% An original job.os template, not a port of anyone else's. It reproduces a
+% layout that is extremely common in new-grad / early-career software resumes
+% shared in ATS-advice communities: a centred plain header, section headings
+% underlined by a rule (no small caps), entries whose title/employer/place sit
+% on ONE bold line with the date range flush right, and bullets marked with an
+% en dash rather than a round bullet. See ATTRIBUTION.md.
+%
+% Placeholder syntax is documented in latex_render.py; note that a LaTeX
+% comment does not hide one, so this comment deliberately spells none of them
+% out.
+%------------------------
+
+\documentclass[letterpaper,11pt]{article}
+
+\usepackage[empty]{fullpage}
+\usepackage{titlesec}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{tabularx}
+
+% Adjust margins the same way jakes/sb2nov do: half an inch all around, reached
+% by stretching \textwidth and \textheight rather than setting geometry, so the
+% three templates measure identically against Tectonic's default article class.
+\addtolength{\oddsidemargin}{-0.5in}
+\addtolength{\evensidemargin}{-0.5in}
+\addtolength{\textwidth}{1in}
+\addtolength{\topmargin}{-.5in}
+\addtolength{\textheight}{1.0in}
+
+\urlstyle{same}
+
+\raggedbottom
+\raggedright
+% No hyphenation, for the same reason jakes turns it off: a resume is mostly
+% proper nouns, and a break inside one reads as a typo.
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\setlength{\tabcolsep}{0in}
+\pagestyle{empty}
+
+% Section formatting: bold, plain case (deliberately NOT \scshape -- the
+% reference layout this reproduces sets headings in ordinary title case), with
+% a full-width rule directly under it.
+\titleformat{\section}{
+  \vspace{-4pt}\bfseries\raggedright\large
+}{}{0em}{}[\titlerule \vspace{-5pt}]
+
+%-------------------------
+% Custom commands
+
+% The two-corner entry line every section shares: bold or plain content on the
+% left, the date range flush right. A wrapping X column (tabularx, not
+% tabular*) so a long title cannot collide with its date.
+\newcommand{\entryLine}[2]{%
+  \begin{tabularx}{0.98\textwidth}[t]{@{}X@{\hspace{1em}}r@{}}
+    #1 & #2 \\
+  \end{tabularx}%
+}
+
+\newcommand{\itemsStart}{\begin{itemize}[label={\textendash},leftmargin=0.2in,itemsep=1pt,topsep=3pt,parsep=0pt]}
+\newcommand{\itemsEnd}{\end{itemize}\vspace{2pt}}
+
+%-------------------------------------------
+\begin{document}
+
+%----------HEADING----------
+\begin{center}
+    \textbf{\Huge <<name>>} \\ \vspace{2pt}
+    \small
+<# Each entry is boxed with its own trailing separator so that a contact line
+   long enough to wrap breaks after a bar rather than before one. #>
+<% for item in contact %>
+\mbox{<% if item.url %>\href{<<item.url>>}{<<item.text>>}<% else %><<item.text>><% endif %><% if not loop.last %> $|$<% endif %>}
+<% endfor %>
+
+\end{center}
+\vspace{-6pt}
+
+<% if education %>
+%-----------EDUCATION-----------
+\section{Education}
+<% for school in education %>
+  \entryLine{\textbf{<<school.institution>>}<% if school.location %>, <<school.location>><% endif %>}{<<school.dates>>}
+<% if school.degree %>
+  \small <<school.degree>>\\
+<% endif %>
+<% if school.bullets or school.score %>
+  \small <% if school.bullets %>Relevant Coursework: <<school.bullets | join(', ')>><% endif %><% if school.bullets and school.score %> $|$ <% endif %><% if school.score %>\textbf{CGPA: <<school.score>>}<% endif %>\\
+<% endif %>
+  \vspace{5pt}
+<% endfor %>
+  \vspace{-8pt}
+<% endif %>
+
+<% if skills or certificates %>
+%-----------SKILLS-----------
+% Certifications fold into this same list rather than getting a section of
+% their own -- the reference layout this reproduces has no separate
+% Certifications heading, just a trailing "Certifications:" line inside Skills.
+\section{Skills}
+ \begin{itemize}[leftmargin=0in, label={}, itemsep=1pt, topsep=2pt]
+    \small{\item{
+<% for group in skills %>
+     \textbf{<<group.name>>}{: <<group.keywords_line>>}<% if not loop.last or certificates %> \\<% endif %>
+
+<% endfor %>
+<% if certificates %>
+     \textbf{Certifications}: <% for cert in certificates %><<cert.name>><% if cert.issuer %>, <<cert.issuer>><% endif %><% if cert.date %> (<<cert.date>>)<% endif %><% if not loop.last %>; <% endif %><% endfor %>
+<% endif %>
+    }}
+ \end{itemize}
+<% endif %>
+
+<% if work %>
+%-----------WORK EXPERIENCE-----------
+\section{Work Experience}
+<% for job in work %>
+  \entryLine{\textbf{<<job.company>><% if job.position %> $|$ <<job.position>><% endif %><% if job.location %> $|$ <<job.location>><% endif %>}}{<<job.dates>>}
+<% if job.bullets %>
+  \itemsStart
+<% for bullet in job.bullets %>
+    \item \small{<<bullet>>}
+<% endfor %>
+  \itemsEnd
+<% elif job.summary %>
+  \itemsStart
+    \item \small{<<job.summary>>}
+  \itemsEnd
+<% endif %>
+<% endfor %>
+  \vspace{-8pt}
+<% endif %>
+
+<% if projects %>
+%-----------PROJECTS-----------
+\section{Projects}
+<% for project in projects %>
+  \entryLine{\textbf{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}}{<<project.dates>>}
+<% if project.keywords_line %>
+  \small\textit{<<project.keywords_line>>}\\
+<% endif %>
+<% if project.bullets or project.description %>
+  \itemsStart
+<% if project.description and not project.bullets %>
+    \item \small{<<project.description>>}
+<% endif %>
+<% for bullet in project.bullets %>
+    \item \small{<<bullet>>}
+<% endfor %>
+  \itemsEnd
+<% endif %>
+  \vspace{2pt}
+<% endfor %>
+  \vspace{-8pt}
+<% endif %>
+
+\end{document}

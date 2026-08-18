@@ -8,7 +8,7 @@ user's resumes were flagged as spam by Ashby, so the text layer is checked with
 the same `pdf_text_audit` the resume review uses rather than assumed.
 
 The second is that the pairing is real. The whole argument for one letter
-template restyled by six records is that the typeface and the header treatment
+template restyled by seven records is that the typeface and the header treatment
 are what make two documents look related. Typst substitutes a missing family
 silently, so a letter whose font never resolved would compile, render, look
 wrong, and pass every test that only checked it produced a PDF. So the fonts are

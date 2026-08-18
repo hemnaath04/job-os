@@ -1,6 +1,6 @@
 # Bundled LaTeX resume templates
 
-Six templates, each in its own directory. A directory holds:
+Seven templates, each in its own directory. A directory holds:
 
 - `template.tex.j2` - the LaTeX, with placeholders. Written for job.os.
 - the class file and fonts the template needs, if any. Vendored so a render
@@ -46,8 +46,8 @@ and has no idea what a LaTeX comment is.
 Every value a template receives is already LaTeX-escaped, and a template cannot
 reach an unescaped one. The names available are whatever
 `latex_render.build_render_model` returns; that function is the contract, and
-the six templates here, a template stored in Appwrite, and the prompt that asks
-a model to write one from an upload all have to agree with it.
+the seven templates here, a template stored in Appwrite, and the prompt that
+asks a model to write one from an upload all have to agree with it.
 
 ## Licences
 
@@ -59,7 +59,8 @@ a model to write one from an upload all have to agree with it.
 | altacv | LPPL-1.3+ | class renamed on modification, as LPPL requires |
 | moderncv | LPPL-1.3c | nothing vendored, ships in Tectonic's bundle |
 | deedy | Apache-2.0, fonts SIL OFL 1.1 | OFL text added, upstream omits it |
+| dashline | none -- original, no upstream to attribute | nothing vendored |
 
-All six permit commercial use. Awesome-CV's example `.tex` files are CC BY-SA,
-which is why `awesome-cv/template.tex.j2` was written from the class's
+All seven permit commercial use. Awesome-CV's example `.tex` files are CC
+BY-SA, which is why `awesome-cv/template.tex.j2` was written from the class's
 documented commands rather than derived from `examples/resume.tex`.
