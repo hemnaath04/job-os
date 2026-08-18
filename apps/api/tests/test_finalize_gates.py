@@ -32,6 +32,13 @@ def base_doc(n_roles: int = 1, bullets_per_role: int = 3) -> dict:
             "phone": "+1 555 0100",
             "location": {"city": "Boston", "region": "MA"},
             "summary": "Test automation engineer with API and UI coverage experience.",
+            # Links and a full graduation date: the reader-side checks treat
+            # their absence as a warning apiece, and this fixture is here to
+            # test the PDF gates, not to re-test those.
+            "profiles": [
+                {"network": "GitHub", "url": "https://github.com/acandidate"},
+                {"network": "LinkedIn", "url": "https://linkedin.com/in/acandidate"},
+            ],
         },
         "work": [
             {
@@ -50,9 +57,12 @@ def base_doc(n_roles: int = 1, bullets_per_role: int = 3) -> dict:
         ],
         "education": [
             {"institution": "Northeastern University", "area": "Computer Science",
-             "studyType": "MS", "startDate": "2026-01"}
+             "studyType": "MS", "startDate": "2026-01", "endDate": "2028-05"}
         ],
-        "skills": [{"name": "Testing", "keywords": ["TestNG", "Selenium", "pytest"]}],
+        # Only what the bullets above actually demonstrate. "pytest" was listed
+        # here while no bullet used it, which is the "listed without showing how
+        # it was used" gap the reader checks now catch.
+        "skills": [{"name": "Testing", "keywords": ["TestNG", "Selenium"]}],
     }
 
 

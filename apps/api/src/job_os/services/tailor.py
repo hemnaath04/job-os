@@ -518,7 +518,23 @@ def _refine_prompt(
             "chose, up to 4 per role and 3 per project. over_page is the opposite "
             "and is worse, because the content spills onto a second page: cut the "
             "weakest project or its weakest bullet, or shorten the longest "
-            "bullets, until it fits.",
+            "bullets, until it fits. "
+            "no_graduation_month_and_year means the education entry shows a bare "
+            "year: a recruiter screens on which cycle he is available for, so "
+            "carry the month and the year from the verified education fact. "
+            "missing_education means the page has no education entry at all. "
+            "no_github_link and no_linkedin_link mean the page carries no such "
+            "URL: reviewers do click them, so take the URL from the verified "
+            "facts or the master resume, and never guess one. "
+            "unevidenced_skill names a skill the skills block claims that no "
+            "bullet on the page demonstrates: either select a bullet that shows "
+            "it being used, or drop it from the skills block, because a "
+            "technology listed without showing how it was used is the gap a "
+            "reviewer probes first. "
+            "no_quantified_bullets means not one bullet carries a number: "
+            "surface a figure a verified bullet already has, and small numbers "
+            "count. Never invent one to clear this flag, it is the one flag "
+            "worth leaving set.",
         ]
     if unreachable:
         lines += [

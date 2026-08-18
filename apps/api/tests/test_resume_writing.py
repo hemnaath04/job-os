@@ -163,13 +163,29 @@ def test_a_role_with_seven_bullets_is_flagged_where_it_lives() -> None:
 
 
 def test_a_clean_document_reports_nothing() -> None:
+    """Clean writing AND a complete page.
+
+    This fixture carries basics, education and links because the reader checks
+    treat their absence as a defect. Before those existed the same document
+    passed while having no graduation date and no clickable link, which is
+    exactly the resume the session notes describe getting screened out.
+    """
     document = {
+        "basics": {
+            "profiles": [
+                {"network": "GitHub", "url": "https://github.com/hemnaath04"},
+                {"network": "LinkedIn", "url": "https://linkedin.com/in/hemnaath"},
+            ]
+        },
+        "education": [
+            {"institution": "Northeastern University", "endDate": "2028-05"}
+        ],
         "work": [
             {
                 "position": "Engineer",
                 "highlights": [
                     "Migrated legacy suites to Cucumber and TestNG.",
-                    "Wrote automated tests for a Go pricing engine.",
+                    "Wrote automated tests for a Go pricing engine across 6 markets.",
                     "Investigated failing tests daily with developers.",
                     "Trained new joiners on the internal tooling.",
                 ],
@@ -189,7 +205,10 @@ def test_a_clean_document_reports_nothing() -> None:
                 "highlights": ["Wrote the parser.", "Deployed behind nginx."],
             },
         ],
-        "skills": [{"name": "Languages", "keywords": ["Python"]}],
+        # Go, not Python: no bullet here demonstrates Python, and claiming a
+        # language the page never shows is the "listed without showing how it
+        # was used" gap the reader checks now catch.
+        "skills": [{"name": "Languages", "keywords": ["Go"]}],
     }
     assert document_quality_flags(document) == {}
 
@@ -255,3 +274,125 @@ def test_the_line_estimate_counts_the_entry_heading_and_the_wrap() -> None:
     }
     # 27 words wrap onto three rows at 13 words each, under the same heading.
     assert estimated_page_lines(wrapped) == 4
+
+
+# ---------------------------------------------------------------------------
+# Reader-side checks, from the NVIDIA resume session (August 2026). These are
+# not writing rules; they are the facts the three readers look for and the ways
+# a well-written page can still fail to answer them.
+# ---------------------------------------------------------------------------
+
+# Minimal page that passes the reader checks, so each test below can break one
+# thing and assert on that thing alone.
+def _sound_page() -> dict:
+    return {
+        "basics": {
+            "profiles": [
+                {"network": "GitHub", "url": "https://github.com/hemnaath04"},
+                {"network": "LinkedIn", "url": "https://linkedin.com/in/hemnaath"},
+            ]
+        },
+        "education": [
+            {"institution": "Northeastern University", "endDate": "2028-05"}
+        ],
+        "work": [
+            {
+                "position": "Engineer",
+                "highlights": ["Wrote a Python parser covering 40 cases."],
+            }
+        ],
+        "skills": [{"name": "Languages", "keywords": ["Python"]}],
+    }
+
+
+def test_a_sound_page_raises_none_of_the_reader_flags() -> None:
+    found = document_quality_flags(_sound_page())
+    for key in ("education", "links", "skills", "impact"):
+        assert key not in found, f"{key}: {found.get(key)}"
+
+
+def test_a_year_only_graduation_date_is_flagged() -> None:
+    """The most common screen-out in the session notes. "2028" does not say
+    which hiring cycle he is available for."""
+    document = _sound_page()
+    document["education"] = [{"institution": "Northeastern", "endDate": "2028"}]
+    assert document_quality_flags(document)["education"] == [
+        "no_graduation_month_and_year"
+    ]
+
+
+def test_a_written_month_counts_as_a_graduation_date() -> None:
+    document = _sound_page()
+    document["education"] = [{"institution": "Northeastern", "endDate": "May 2028"}]
+    assert "education" not in document_quality_flags(document)
+
+
+def test_a_page_with_no_education_says_so() -> None:
+    document = _sound_page()
+    document["education"] = []
+    assert document_quality_flags(document)["education"] == ["missing_education"]
+
+
+def test_a_skill_no_bullet_demonstrates_is_flagged() -> None:
+    """"Technologies listed without showing how they were used", verbatim from
+    the session's list of gaps. A skills row is a claim; a bullet is evidence."""
+    document = _sound_page()
+    document["skills"] = [{"name": "Languages", "keywords": ["Python", "Rust"]}]
+    assert document_quality_flags(document)["skills"] == [
+        "unevidenced_skill(Rust)"
+    ]
+
+
+def test_a_skill_shown_in_a_project_name_counts_as_evidenced() -> None:
+    document = _sound_page()
+    document["skills"] = [{"name": "Tools", "keywords": ["Docker"]}]
+    document["projects"] = [
+        {"name": "Docker build cache", "highlights": ["Cut image size by half."]}
+    ]
+    assert "skills" not in document_quality_flags(document)
+
+
+def test_a_missing_github_link_is_flagged() -> None:
+    """Reviewers click links. A page naming GitHub projects with no URL asks the
+    reader to go searching, which they will not do."""
+    document = _sound_page()
+    document["basics"]["profiles"] = [
+        {"network": "LinkedIn", "url": "https://linkedin.com/in/hemnaath"}
+    ]
+    assert document_quality_flags(document)["links"] == ["no_github_link"]
+
+
+def test_a_project_url_satisfies_the_github_link() -> None:
+    document = _sound_page()
+    document["basics"]["profiles"] = [
+        {"network": "LinkedIn", "url": "https://linkedin.com/in/hemnaath"}
+    ]
+    document["projects"] = [
+        {
+            "name": "BedRocked",
+            "url": "https://github.com/hemnaath04/bedrocked",
+            "highlights": ["Scored 2,404 sewer segments."],
+        }
+    ]
+    assert "links" not in document_quality_flags(document)
+
+
+def test_a_page_with_no_numbers_anywhere_is_flagged() -> None:
+    """Deliberately a page-level signal, not a per-bullet rule: requiring a
+    number in every bullet would push the model to invent one, and a fabricated
+    metric is the failure that collapses in the interview."""
+    document = _sound_page()
+    document["work"] = [
+        {"position": "Engineer", "highlights": ["Wrote a parser for the config format."]}
+    ]
+    document["skills"] = [{"name": "Languages", "keywords": []}]
+    assert document_quality_flags(document)["impact"] == ["no_quantified_bullets"]
+
+
+def test_one_real_number_clears_the_quantification_flag() -> None:
+    document = _sound_page()
+    document["work"] = [
+        {"position": "Engineer", "highlights": ["Cut flaky failures to 3 per week."]}
+    ]
+    document["skills"] = [{"name": "Languages", "keywords": []}]
+    assert "impact" not in document_quality_flags(document)

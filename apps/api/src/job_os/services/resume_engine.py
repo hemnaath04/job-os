@@ -114,6 +114,17 @@ SUBSTANTIVE_WRITING_FLAGS = (
     # it and rewrites the summary, and an honest resume going out beats another
     # blocking verdict the user has to clear by hand.
     "unevidenced_domain",
+    # The reader-side checks. These are not polish items: a missing graduation
+    # month is the single most common reason a student resume is screened out
+    # before anyone technical reads it, and a skill the page never demonstrates
+    # is the claim that collapses in the interview. Left as suggestions they
+    # were worth one point each against a cap of five, so a resume could carry
+    # all four and lose three points.
+    "no_graduation_month_and_year",
+    "missing_education",
+    "no_github_link",
+    "no_linkedin_link",
+    "unevidenced_skill",
 )
 class ModelReviewIssue(BaseModel):
     severity: str

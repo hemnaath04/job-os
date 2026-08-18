@@ -570,6 +570,119 @@ def section_flags(bullets: list[str]) -> list[str]:
     return flags
 
 
+# --------------------------------------------------------------------------
+# Reader-side checks.
+#
+# The rules above are about how a bullet is written. These are about whether the
+# page answers the questions its three readers actually ask: a recruiter
+# checking basic eligibility, a sourcer deciding which team you point at, and a
+# hiring manager looking for something to ask you about. They come from a
+# resume session run by NVIDIA recruiters and engineers (August 2026), where the
+# most common rejections were not bad prose but missing facts.
+# --------------------------------------------------------------------------
+
+# A graduation date that is a bare year fails the check the recruiter actually
+# runs, which is whether you are available for a given cycle. "2028" does not
+# distinguish a May graduate from a December one. Session notes list a missing
+# or year-only graduation date as the single most common defect.
+_ISO_YEAR_MONTH_RE = re.compile(r"^\s*\d{4}-(0[1-9]|1[0-2])")
+_MONTH_NAME_RE = re.compile(
+    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)", re.I
+)
+
+
+def has_month_and_year(value: object) -> bool:
+    """Does this date string name a month as well as a year?"""
+    text = str(value or "").strip()
+    if not text:
+        return False
+    if not re.search(r"\b(?:19|20)\d{2}\b", text):
+        return False
+    return bool(_ISO_YEAR_MONTH_RE.match(text) or _MONTH_NAME_RE.search(text))
+
+
+def education_flags(document: dict) -> list[str]:
+    """Whether the education block answers a recruiter's first question."""
+    entries = document.get("education") or []
+    if not entries:
+        return ["missing_education"]
+    flags: list[str] = []
+    if not any(has_month_and_year(entry.get("endDate")) for entry in entries):
+        flags.append("no_graduation_month_and_year")
+    return flags
+
+
+# Links get clicked. A resume naming a GitHub project without a URL anywhere on
+# the page asks the reader to go and search for it, which they will not do.
+_LINK_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("github", re.compile(r"github\.com/\w", re.I)),
+    ("linkedin", re.compile(r"linkedin\.com/", re.I)),
+)
+
+
+def missing_link_kinds(document: dict) -> list[str]:
+    """Link types the page never carries, in basics or on a project."""
+    basics = document.get("basics") or {}
+    haystack = [str(basics.get("url") or "")]
+    haystack += [
+        str((profile or {}).get("url") or "") for profile in (basics.get("profiles") or [])
+    ]
+    haystack += [
+        str((project or {}).get("url") or "") for project in (document.get("projects") or [])
+    ]
+    blob = " ".join(haystack)
+    return [name for name, pattern in _LINK_PATTERNS if not pattern.search(blob)]
+
+
+# A skill row is a claim. The session's phrasing for the failure is
+# "technologies listed without showing how they were used": the reader cannot
+# tell a language you shipped in from one you read a tutorial about, so the
+# skill has to appear inside a bullet somewhere, doing something.
+def unevidenced_skills(document: dict) -> list[str]:
+    """Skills named in the skills block that no bullet ever demonstrates."""
+    bullets: list[str] = []
+    for section in ("work", "projects", "volunteer"):
+        for entry in document.get(section) or []:
+            bullets.extend(str(h) for h in (entry.get("highlights") or []) if h)
+            for key in ("name", "position", "description", "summary"):
+                if entry.get(key):
+                    bullets.append(str(entry[key]))
+    blob = " ".join(bullets)
+    if not blob.strip():
+        return []
+    missing: list[str] = []
+    for group in document.get("skills") or []:
+        for keyword in (group or {}).get("keywords") or []:
+            term = str(keyword).strip()
+            if term and not mentions_word(blob, term):
+                missing.append(term)
+    return sorted(set(missing))
+
+
+# Quantification is a soft signal on purpose. Requiring a number per bullet
+# would collide head-on with the no-fabrication rule and push the model to
+# invent one, which is the worse failure: a made-up metric is the thing that
+# collapses in the interview the resume was supposed to win. So this only
+# notices a page with no numbers anywhere, where the fix is to surface a real
+# figure that already exists in the vault.
+_NUMBER_RE = re.compile(r"\d")
+
+
+def quantified_bullets(document: dict) -> tuple[int, int]:
+    """(bullets carrying a number, total bullets)."""
+    total = 0
+    numeric = 0
+    for section in ("work", "projects", "volunteer"):
+        for entry in document.get(section) or []:
+            for highlight in (entry.get("highlights") or []):
+                if not highlight:
+                    continue
+                total += 1
+                if _NUMBER_RE.search(str(highlight)):
+                    numeric += 1
+    return numeric, total
+
+
 def _evidence_text(document: dict) -> str:
     """Everything the resume says apart from its summary line.
 
@@ -640,8 +753,30 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
             if entry_flags:
                 found[f"{section}: {label}"] = sorted(set(entry_flags))
     groups = document.get("skills") or []
+    skill_flags: list[str] = []
     if len(groups) > MAX_SKILL_GROUPS:
-        found["skills"] = [f"too_many_groups({len(groups)})"]
+        skill_flags.append(f"too_many_groups({len(groups)})")
+    unevidenced = unevidenced_skills(document)
+    if unevidenced:
+        # Capped: a page listing fifteen unevidenced skills has one problem, not
+        # fifteen, and naming them all buries the rest of the report.
+        shown = ",".join(unevidenced[:6])
+        extra = f",+{len(unevidenced) - 6}" if len(unevidenced) > 6 else ""
+        skill_flags.append(f"unevidenced_skill({shown}{extra})")
+    if skill_flags:
+        found["skills"] = skill_flags
+
+    education = education_flags(document)
+    if education:
+        found["education"] = education
+
+    missing_links = missing_link_kinds(document)
+    if missing_links:
+        found["links"] = [f"no_{kind}_link" for kind in missing_links]
+
+    numeric, total = quantified_bullets(document)
+    if total and numeric == 0:
+        found["impact"] = ["no_quantified_bullets"]
     rendered_bullets = sum(
         len([h for h in (entry.get("highlights") or []) if h])
         for section in ("work", "projects", "volunteer")

@@ -93,9 +93,20 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     assert score == 0
     # An empty document has no keywords to cover and cannot fill a page, so both
     # passes come in at zero coverage minus the thin-page penalty.
-    assert report["iterations"] == [-3.0, -3.0]
+    # -12: four flags at 3 points each against an intentionally empty document
+    # (thin_page, missing_education, no_github_link, no_linkedin_link). The
+    # number matters less than the two iterations being identical, which is the
+    # subject here: the score comes from the rendered document, not from what
+    # the pass claims about itself.
+    assert report["iterations"] == [-12.0, -12.0]
     assert report["scoring"] == "deterministic_required_requirements"
-    assert report["writing_flags"] == {"page": ["thin_page(0 bullets)"]}
+    # The empty fixture also has no education entry and no links, which the
+    # reader-side checks report alongside the thin page.
+    assert report["writing_flags"] == {
+        "page": ["thin_page(0 bullets)"],
+        "education": ["missing_education"],
+        "links": ["no_github_link", "no_linkedin_link"],
+    }
     assert gaps == []
     # The repair pass did not beat the draft, so the draft is what ships. Keeping
     # the later pass regardless is how a padded rewrite used to win a tie.
@@ -163,4 +174,9 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
         jd_clean="Python agent role",
     )
     assert score == 0
-    assert report["iterations"] == [-3.0, -3.0]
+    # -12: four flags at 3 points each against an intentionally empty document
+    # (thin_page, missing_education, no_github_link, no_linkedin_link). The
+    # number matters less than the two iterations being identical, which is the
+    # subject here: the score comes from the rendered document, not from what
+    # the pass claims about itself.
+    assert report["iterations"] == [-12.0, -12.0]

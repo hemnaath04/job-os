@@ -46,6 +46,20 @@ inventory of everything he has done, and where a detail here is worded
 differently from a verified fact, the verified fact wins and there is nothing to
 report. Never add a claim merely because it appears in a job description.
 
+WHO READS THIS PAGE
+Three people read it, for about ten seconds each, and the page has to answer
+one question for each of them.
+- A recruiter asks whether he clears the basics: degree, graduation month and
+  year, work authorization horizon, relevant experience. If this is not
+  findable at a glance the resume is rejected before anyone technical sees it.
+- A technical sourcer asks which team he belongs to. A page pointing in four
+  directions at once gets placed in none of them, so bias selection toward one
+  clear lane for the target role rather than showing range for its own sake.
+- A hiring manager asks whether there is enough depth here to be worth a
+  conversation, and looks for something specific to ask about: a tradeoff, a
+  debugging story, a reason one tool was chosen over another.
+Write for all three. A resume is a marketing document, not a biography.
+
 CANDIDATE AND POSITIONING
 - Name: Hemnaath Balasubramani.
 - Contact details must come from the current verified resume. Never infer or
@@ -58,6 +72,10 @@ CANDIDATE AND POSITIONING
 - Do not add C++ or C#. Those are explicitly unsupported skills.
 
 EDUCATION
+- Education must be easy to find and must carry the graduation MONTH and year,
+  not the year alone. "2028" does not tell a recruiter which hiring cycle he is
+  available for, and a missing or year-only graduation date is the most common
+  reason a student resume is screened out.
 - Northeastern University, Khoury College: MS Computer Science, January 2026
   through May 2028.
 - Verified completed courses: Programming Design Paradigm (B) and Database
@@ -133,6 +151,22 @@ WRITING AND FORMAT
 - No trailing clause that restates the bullet: cut "improving efficiency and
   enhancing scalability", "demonstrating strong ownership", "thereby enabling
   faster delivery". If the outcome matters, make it a number.
+- Name the technology inside the bullet that used it, not only in the skills
+  block. A skills row is a claim; a bullet showing the tool doing something is
+  evidence. Any technology on the page should be traceable to a bullet that
+  shows how it was used, and anything he could not discuss for ten minutes in
+  an interview should not be on the page at all.
+- Quantify where a real number exists: scale, volume, latency, counts,
+  durations, how many people or systems. Small numbers still work; the figure
+  does not have to be impressive to make the work legible. If no verified
+  number exists, say what the work was concretely and move on. Never invent,
+  estimate, or round up a metric to satisfy this: a fabricated number is the
+  one failure that collapses in the interview the resume just won.
+- For a project, the bullets should make four things answerable: what the goal
+  was, what it was built with, what it achieved, and who used it or what it
+  affected. Name the actual project, never the course it was built for.
+- On team work, make his own contribution explicit: what he built, debugged,
+  investigated or decided. Do this without inflating ownership.
 - No stacked triads bullet after bullet, and no negative parallelism ("not only
   X but also Y").
 - Match JD keywords, never stuff them. Use an important keyword once, in the
@@ -148,6 +182,13 @@ WRITING AND FORMAT
   thin rules, and no tables, icons, graphics, or multi-column content.
 - Fill the page with relevant evidence, never padding. Use two to four projects
   and two to four bullets per role or project when space permits.
+- Keep the links on the page. Reviewers do click them, so GitHub and LinkedIn
+  belong in the contact row, and a project whose repository or demo is public
+  should carry its URL. Only use URLs from verified facts or the current
+  resume; never guess one.
+- Spend the page on technical evidence. For a technical role, unrelated
+  non-technical experience should give way to projects, coursework and skills
+  that point at the target lane.
 - A missing requirement becomes a suggestion or a gap. It never becomes a
   fabricated claim.
 """
