@@ -1,4 +1,4 @@
-"""The six bundled LaTeX resume templates, and the sample data that previews them.
+"""The seven bundled LaTeX resume templates, and the sample data that previews them.
 
 Each entry names a directory under `latex_templates/`, which holds the
 template's `template.tex.j2`, whatever class file and fonts it needs, and the
@@ -46,7 +46,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
         ),
         columns=1,
         ats_note=(
-            "Single column and plain text throughout. The safest of the six "
+            "Single column and plain text throughout. The safest of the seven "
             "for applicant tracking systems."
         ),
         upstream="https://github.com/jakegut/resume",
@@ -154,12 +154,12 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
         name="Deedy",
         description=(
             "Debarghya Das's two-column resume in Lato and Raleway. The most "
-            "designed of the six."
+            "designed of the seven."
         ),
         columns=2,
         ats_note=(
             "Two columns, and the layout is the point of it. This is the "
-            "riskiest of the six for automated parsing: a system that reads the "
+            "riskiest of the seven for automated parsing: a system that reads the "
             "page as one stream will mix the right column into the left. Good "
             "for a human reader or a portfolio, not for a bulk application."
         ),
@@ -172,6 +172,30 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "omits."
         ),
         tags=("two column", "designed", "lato"),
+        typst_ready=True,
+    ),
+    BuiltinTemplate(
+        key="dashline",
+        name="Dashline",
+        description=(
+            "A plain-case, single-column layout common in early-career "
+            "software resumes: company, role and place on one bold line per "
+            "entry with the date flush right, and en-dash bullets."
+        ),
+        columns=1,
+        ats_note=(
+            "Single column and plain text throughout. As safe for applicant "
+            "tracking systems as Jake's, with a denser entry layout."
+        ),
+        upstream="",
+        licence="",
+        author="job.os",
+        changes=(
+            "Not a port: an original template written for job.os. See "
+            "ATTRIBUTION.md for the layout it reproduces and what was checked "
+            "against a rendered page rather than assumed."
+        ),
+        tags=("single column", "compact", "ats safe"),
         typst_ready=True,
     ),
 )

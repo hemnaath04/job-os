@@ -48,7 +48,7 @@ Slab is still vendored, because the LaTeX class still loads it.
   writes accessibility text through `accsupp` and, under this engine, some of it
   comes out as the unexpanded macro. An applicant tracking system reading that
   page sees `\faPreselectedIcon {certificate}` as literal text next to the
-  certification. This template is already the second riskiest of the six for
+  certification. This template is already the second riskiest of the seven for
   automated parsing; that makes it worse in a way nobody would find by looking.
 - **No hyphenation and no justification.** The LaTeX render justifies and
   hyphenates, producing "indepen-dently" and "ex-ception" broken across lines.

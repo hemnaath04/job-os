@@ -8,7 +8,7 @@ Three pieces, in the order the data moves through them:
    rest of it; a stray `\\` could execute.
 2. `build_render_model` shapes the JSON Resume into the flat, pre-escaped names
    a template may use. This is the template contract, and it is the same
-   contract in three directions: the six bundled templates, a template stored
+   contract in three directions: the seven bundled templates, a template stored
    in Appwrite, and the prompt that asks a model to write one from an upload.
 3. `compile_pdf` runs Tectonic over the filled source in a scratch directory.
 

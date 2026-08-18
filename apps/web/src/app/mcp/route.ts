@@ -57,6 +57,22 @@ const STATUS = z.enum([
   "ghosted",
 ]);
 
+// Every bundled resume template job.os ships, kept in step with
+// apps/api/src/job_os/services/latex_catalog.py's BUILTIN_TEMPLATES -- adding a
+// builtin there means adding its key here too, in the same change. This is the
+// full set start_resume_finalize's template_id accepts: a template a user built
+// from their own upload has no id a tool caller could know in advance, and
+// selecting one of those is not something this tool exposes.
+const RESUME_TEMPLATE_ID = z.enum([
+  "jakes",
+  "sb2nov",
+  "awesome-cv",
+  "altacv",
+  "moderncv",
+  "deedy",
+  "dashline",
+]);
+
 const EMPTY = z.object({});
 
 function token(ctx: { http?: { authInfo?: { token: string } } }): string {
@@ -352,10 +368,10 @@ const handler = createMcpHandler(
       {
         title: "Start Resume Finalize",
         description:
-          "Run the quality review and produce a final PDF for a drafted resume version (the output of start_resume_tailor), and return immediately with a job_id rather than waiting -- the review takes real time. Poll get_resume_finalize_status with the same version_id and job_id to get the result. Only works on a version job.os drafted itself; a version that was uploaded as a file has no structured resume to review.",
+          "Run the quality review and produce a final PDF for a drafted resume version (the output of start_resume_tailor), and return immediately with a job_id rather than waiting -- the review takes real time. Poll get_resume_finalize_status with the same version_id and job_id to get the result. Only works on a version job.os drafted itself; a version that was uploaded as a file has no structured resume to review. template_id picks the rendered look; omit it for the default (jakes -- single column, no colour, the safest of the set for applicant tracking systems). Options: jakes (default, described above), sb2nov (compact single column, narrower header), awesome-cv (single column with a coloured header and contact icons), altacv (two-column with a sidebar -- some ATS parsers flatten the columns), moderncv (traditional single column, renders noticeably slower than the rest), deedy (two-column, the most designed of the set, same ATS caveat as altacv), dashline (single column, denser one-line entry headers and en-dash bullets).",
         inputSchema: z.object({
           version_id: z.string().min(1).max(36),
-          template_id: z.string().optional(),
+          template_id: RESUME_TEMPLATE_ID.optional(),
         }),
         annotations: {
           readOnlyHint: false,

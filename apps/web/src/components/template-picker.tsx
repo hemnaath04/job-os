@@ -11,7 +11,7 @@ import type { ResumeTemplate } from "@/lib/types";
  *
  * The card shows the real sample render, and the sample render is produced by
  * the same code path that will render the user's resume, so what they choose
- * from is what they get. Two of the six are two-column designs that some
+ * from is what they get. Two of the seven are two-column designs that some
  * applicant tracking systems parse badly; the card says so rather than leaving
  * somebody to find out from a silent rejection.
  */
@@ -42,8 +42,8 @@ export function TemplatePicker({
   if (templates.length === 0) {
     return (
       <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-        No templates are available yet. Run the seeding script to add the six that
-        ship with the app.
+        No templates are available yet. Run the seeding script to add the seven
+        that ship with the app.
       </div>
     );
   }

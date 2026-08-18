@@ -32,7 +32,7 @@ newlines that would end a paragraph in the middle of a bullet.
 
 The engine runs offline. Typst reaches the network for exactly one thing, a
 `@preview` package import, and 0.15.1 has no flag to forbid it, so `_reject_imports`
-refuses any source that contains one. The six bundled templates import nothing.
+refuses any source that contains one. The seven bundled templates import nothing.
 """
 from __future__ import annotations
 
@@ -643,6 +643,7 @@ def _font_dirs(key: str) -> tuple[Path, ...]:
 FONT_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     "jakes": ("New Computer Modern",),
     "sb2nov": ("New Computer Modern",),
+    "dashline": ("New Computer Modern",),
     "deedy": ("Lato", "Raleway"),
     "awesome-cv": (
         "Source Sans Pro",

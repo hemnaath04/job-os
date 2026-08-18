@@ -11,23 +11,23 @@ operational rather than structural, and it is specific:
   1. The container renders with `tectonic --only-cached`
      (`latex_render._only_cached`, set in Dockerfile.vercel), because a request a
      user is waiting on must not go to the network for a LaTeX package.
-  2. That cache is warmed at image build time by compiling exactly the six
+  2. That cache is warmed at image build time by compiling exactly the seven
      bundled resume templates (`scripts/warm_latex_cache.py`). A letter template
-     pulls a document class and font packages none of those six pull, so on a
+     pulls a document class and font packages none of those seven pull, so on a
      built image its first compile would fail closed.
   3. Fixing that means extending the warm script and rebuilding the image, which
      is a deployment change.
 
 Production already sets `RENDER_ENGINE=typst` (Dockerfile.vercel:120), Typst
 compiles this letter in milliseconds against Tectonic's fifteen to thirty
-seconds, and its bundled fonts cover every family the six resume templates name.
+seconds, and its bundled fonts cover every family the seven resume templates name.
 So the letter renders through Typst on every deployment, whatever `RENDER_ENGINE`
 says, and raises a clear error rather than a mystery when the binary is absent.
 
 MATCHING THE RESUME. One template file, restyled by a per-resume-template record:
 typeface, name treatment, margins, and whether the header carries a rule. That is
-what makes two documents look like a set, and it is six values rather than six
-documents. See `letter_templates/letter.typ`.
+what makes two documents look like a set, and it is seven values rather than
+seven documents. See `letter_templates/letter.typ`.
 """
 from __future__ import annotations
 
@@ -165,6 +165,21 @@ LETTER_STYLES: dict[str, LetterStyle] = {
         margin_x=1.0,
         margin_y=0.95,
         align="left",
+        rule=True,
+        small_caps=False,
+        tracking=0,
+    ),
+    # dashline is plain Computer Modern like jakes/sb2nov, just with a denser,
+    # rule-underlined entry layout on the resume side; a matching letter is the
+    # same centred-name-over-a-rule look those two use.
+    "dashline": LetterStyle(
+        font="New Computer Modern",
+        name_font="New Computer Modern",
+        base_size=11,
+        name_size=19,
+        margin_x=0.9,
+        margin_y=0.9,
+        align="center",
         rule=True,
         small_caps=False,
         tracking=0,

@@ -1,7 +1,7 @@
 # Bundled Typst resume templates
 
-The fast path beside `latex_templates/`. Same six designs, same contract, a
-different engine. Five are ported; moderncv still renders through Tectonic, and
+The fast path beside `latex_templates/`. Same seven designs, same contract, a
+different engine. Six are ported; moderncv still renders through Tectonic, and
 the app is none the wiser either way.
 
 | template | engine | fonts |
@@ -11,12 +11,13 @@ the app is none the wiser either way.
 | deedy | Typst | Lato, Raleway, from `latex_templates/deedy/fonts/` |
 | awesome-cv | Typst | Source Sans Pro, Roboto, Font Awesome 5 |
 | altacv | Typst | Lato, Font Awesome 5 |
+| dashline | Typst | New Computer Modern, embedded in Typst |
 | moderncv | Typst, not enabled | Latin Modern Sans |
 
-All six are ported. Which of them a deployment actually uses is a separate
-decision, recorded as `typst_ready` in `latex_catalog.py`, and today that is
-jakes, sb2nov and deedy. The rest render on either engine and are waiting on
-somebody looking at the two pages side by side.
+Six are ported. Which of them a deployment actually uses is a separate
+decision, recorded as `typst_ready` in `latex_catalog.py`; today that is every
+ported template. moderncv has no port at all and renders on either engine and
+is waiting on somebody looking at the two pages side by side.
 
 moderncv is the one to be careful with, and its ATTRIBUTION.md says why at
 length: it is the only template with no class file in this repository to measure

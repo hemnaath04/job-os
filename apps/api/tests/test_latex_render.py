@@ -6,8 +6,8 @@ that silently loses half a job title because somebody's employer had a `%` in it
 or a template that executes something a model wrote.
 
 WHICH COMPILES RUN BY DEFAULT. Tectonic takes fifteen to thirty seconds per
-document, so compiling all six templates twice is four minutes of a test run
-nobody will wait for. Five of the six also have a Typst port that renders the
+document, so compiling all seven templates twice is minutes of a test run
+nobody will wait for. Six of the seven also have a Typst port that renders the
 same page in about a tenth of a second, and `render_resume_pdf` already chooses
 between the two on `RENDER_ENGINE`. So the default run renders through that
 switch, which is a real compile of a real template and additionally proves the
