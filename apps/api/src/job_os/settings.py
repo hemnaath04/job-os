@@ -67,7 +67,13 @@ class Settings(BaseSettings):
     # Claude is the only LLM provider — retrieval, extraction, tailoring, verification.
     # We don't use embeddings; retrieval uses Claude directly over the (small) profile.
     anthropic_model_extract: str = "manifest/auto"
-    anthropic_model_tailor: str = "manifest/auto"
+    # Named explicitly rather than "manifest/auto": probed directly against the
+    # live gateway (2026-08-18) with x-manifest-tier: job-os-sonnet set, the id
+    # sent alongside that header is decorative -- the tier alone decides the
+    # model, matching the job-os-sonnet/job-os-quality behavior documented
+    # below. Named anyway so this reads as an intentional choice rather than a
+    # placeholder, and so it stays correct if this step's tier is ever dropped.
+    anthropic_model_tailor: str = "anthropic/claude-sonnet-5-subscription"
     anthropic_model_verify: str = "manifest/auto"
     # Manifest custom routing tiers. Fast handles short structured tasks;
     # quality is reserved for resume extraction; sonnet handles resume
