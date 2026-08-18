@@ -19,6 +19,7 @@ import {
   archiveResumeCard,
   createApplicationCard,
   getResumeTailorJobStatus,
+  listProfileFacts,
   listResumeCards,
   mirrorResumeCard,
   mirrorResumeVersionCard,
@@ -986,6 +987,14 @@ const handler = createMcpHandler(
       },
       async (_args, ctx) => {
         try {
+          // Production reads and writes facts through Appwrite, not Postgres
+          // (NEXT_PUBLIC_WORKSPACE_BACKEND=appwrite) -- the Postgres-backed
+          // /profile/facts endpoint is empty for every account whose facts
+          // were entered through the web app, same root cause as the resume
+          // mirroring elsewhere in this file.
+          if (isAppwriteWorkspaceEnabled) {
+            return toolText(await listProfileFacts(resolveAppwriteUserId(clerkUserId(ctx))));
+          }
           return toolText(await callBackend(token(ctx), "GET", "/profile/facts"));
         } catch (e) {
           return toolError(e);

@@ -29,7 +29,7 @@ import {
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { appwriteUserIdForClerk } from "@/lib/appwrite/user-id";
-import type { Application, Resume, ResumeVersion } from "@/lib/types";
+import type { Application, FactBullet, ProfileFact, Resume, ResumeVersion } from "@/lib/types";
 
 function config() {
   const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT;
@@ -54,6 +54,10 @@ function config() {
       process.env.NEXT_PUBLIC_APPWRITE_AGENT_JOBS_TABLE_ID ?? "agent_jobs",
     agentFunctionId:
       process.env.NEXT_PUBLIC_APPWRITE_AGENT_FUNCTION_ID ?? "job-os-agents",
+    profileFactsTableId:
+      process.env.NEXT_PUBLIC_APPWRITE_PROFILE_FACTS_TABLE_ID ?? "profile_facts",
+    factBulletsTableId:
+      process.env.NEXT_PUBLIC_APPWRITE_FACT_BULLETS_TABLE_ID ?? "fact_bullets",
   };
 }
 
@@ -592,6 +596,74 @@ export async function getResumeTailorJobStatus(
     throw new Error("tailor job not found");
   }
   return JSON.parse(row.snapshot) as AgentJobSnapshot;
+}
+
+interface SnapshotOnlyRow extends Models.Row {
+  owner_id: string;
+  snapshot: string;
+}
+
+interface FactBulletRow extends SnapshotOnlyRow {
+  fact_id: string;
+}
+
+/**
+ * Verified career facts straight from Appwrite, the store the browser
+ * actually reads and writes (NEXT_PUBLIC_WORKSPACE_BACKEND=appwrite) --
+ * the FastAPI /profile/facts endpoint this MCP tool called before hits
+ * Postgres instead, which is empty for every account whose facts were ever
+ * entered through the web app. Same root cause, same fix, as the resume
+ * mirroring in this file: an API key has no session to fall back on for
+ * row-level permissions, so owner_id is filtered explicitly.
+ */
+export async function listProfileFacts(
+  appwriteUserId: string,
+  kind?: string,
+): Promise<ProfileFact[]> {
+  const { databaseId, profileFactsTableId, factBulletsTableId } = config();
+  const tables = tablesClient();
+  const factsResult = await tables.listRows<SnapshotOnlyRow>({
+    databaseId,
+    tableId: profileFactsTableId,
+    queries: [
+      Query.equal("owner_id", appwriteUserId),
+      Query.equal("archived", false),
+      Query.orderDesc("source_updated_at"),
+      Query.limit(500),
+    ],
+  });
+  const facts = factsResult.rows
+    .map((row) => JSON.parse(row.snapshot) as ProfileFact)
+    .filter((fact) => !kind || fact.kind === kind);
+  if (!facts.length) return [];
+
+  const bullets: (FactBullet & { fact_id: string })[] = [];
+  for (let start = 0; start < facts.length; start += 100) {
+    const ids = facts.slice(start, start + 100).map((fact) => fact.id);
+    const result = await tables.listRows<FactBulletRow>({
+      databaseId,
+      tableId: factBulletsTableId,
+      queries: [
+        Query.equal("owner_id", appwriteUserId),
+        Query.equal("fact_id", ids),
+        Query.orderAsc("source_updated_at"),
+        Query.limit(500),
+      ],
+    });
+    bullets.push(
+      ...result.rows.map((row) => ({
+        ...(JSON.parse(row.snapshot) as FactBullet),
+        fact_id: row.fact_id,
+      })),
+    );
+  }
+  const byFact = new Map<string, FactBullet[]>();
+  for (const bullet of bullets) {
+    const group = byFact.get(bullet.fact_id) ?? [];
+    group.push(bullet);
+    byFact.set(bullet.fact_id, group);
+  }
+  return facts.map((fact) => ({ ...fact, bullets: byFact.get(fact.id) ?? [] }));
 }
 
 export { ID };
