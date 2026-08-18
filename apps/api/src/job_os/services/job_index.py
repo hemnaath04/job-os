@@ -56,11 +56,11 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import DateTime, Float, func, literal, or_, select, type_coerce
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql.elements import ColumnElement
 
 from job_os.db.models.job_posting import JobPosting
+from job_os.services import appwrite_tables
 
 log = structlog.get_logger(__name__)
 
@@ -201,199 +201,188 @@ class IndexSearchResult:
         }
 
 
-def _tsquery(keywords: list[str], free_text: str | None) -> str | None:
-    """Build a tsquery string: phrases AND internally, alternatives OR'd.
-
-    Mirrors the semantics the live path already implements in `matchesTitle`: every
-    word of a phrase must appear, and the phrases are alternatives. So
-    "ai engineer intern" finds "AI/ML Engineer Intern" and "Software Engineer
-    Intern, AI", which a phrase-adjacency search does not.
-    """
-    groups: list[str] = []
-    for phrase in [*keywords, free_text or ""]:
-        words = [w for w in _words(phrase) if w]
-        if words:
-            groups.append(" & ".join(words))
-    if not groups:
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
         return None
-    return " | ".join(f"({g})" for g in groups)
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
-def _words(text: str) -> list[str]:
-    out: list[str] = []
-    for chunk in text.lower().replace("/", " ").split():
-        cleaned = "".join(c for c in chunk if c.isalnum() or c in "+#-")
-        cleaned = cleaned.strip("-")
-        if cleaned:
-            out.append(cleaned)
-    return out
+def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
+    """One Appwrite `job_postings` row, reshaped into the tuple
+    `_apply_mix_and_rank` has always consumed -- the same fields, in the same
+    order, that the SQL `select(...)` in the Postgres version of this
+    function used to produce. Keeping that contract is what let the
+    Python-side ranking (`_freshness_weight`/`_mix_weight`/
+    `_apply_mix_and_rank`) stay completely unchanged by this migration.
+
+    `retrieve`/`text_rank` are always `1.0`/`0.0`: see `search_index`'s
+    docstring for why Appwrite's fulltext match has nothing gradable to
+    report, unlike `ts_rank_cd`.
+    """
+    posted_at = _parse_dt(row.get("posted_at"))
+    first_seen_at = _parse_dt(row.get("first_seen_at")) or now
+    effective_date = posted_at or first_seen_at
+    age_days = (now - effective_date).total_seconds() / 86400.0
+    freshness = _freshness_weight(age_days)
+    return (
+        uuid.UUID(row["source_posting_id"]),
+        row.get("source"),
+        row.get("source_id"),
+        row.get("source_url"),
+        row.get("title"),
+        row.get("company_name"),
+        row.get("company_domain"),
+        row.get("location"),
+        row.get("country_code"),
+        bool(row.get("remote")),
+        row.get("department"),
+        row.get("employment_type"),
+        row.get("salary_min"),
+        row.get("salary_max"),
+        row.get("salary_currency"),
+        bool(row.get("jd_hydrated")),
+        posted_at,
+        row.get("posted_at_basis"),
+        bool(row.get("posted_at_estimated")),
+        first_seen_at,
+        _parse_dt(row.get("last_seen_at")) or first_seen_at,
+        bool(row.get("active", True)),
+        _parse_dt(row.get("inactive_since")),
+        int(row.get("repost_count") or 0),
+        0.0,
+        1.0,
+        freshness,
+        age_days,
+        effective_date,
+    )
 
 
 async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchResult:
+    """Retrieval against Appwrite's `job_postings` table (moved off Neon
+    Postgres to the same Appwrite project the resume workspace already used,
+    on the GitHub Student Pack's Education plan -- Pro-equivalent limits, no
+    per-project storage-GB cap, unlike the 512MB Neon free tier this table
+    alone kept exhausting). `session` is accepted and left unused so the
+    `/discovery` routers calling this did not need a signature change; nothing
+    in this function touches Postgres.
+
+    Everything below the candidate pool -- `_freshness_weight`, `_mix_weight`,
+    `_apply_mix_and_rank`'s multiplicative `rank = retrieve * freshness * mix`,
+    the dataclasses returned -- is exactly what this module always did. Only
+    retrieval changed, and it changed in ways worth being as honest about as
+    this module's docstring always was about its Postgres cost measurements:
+
+    * `retrieve_score` was `ts_rank_cd` over a weighted tsvector (title
+      weighted above company above location above JD body), squashed to
+      (0,1]. Appwrite's fulltext index on `search_text` (a plain
+      concatenation of title + company_name + location + the first 8000
+      chars of jd_clean, built at write time -- see `ingest/upsert.py`) is
+      match-or-no-match, not graded. `retrieve` is `1.0` for every row here,
+      keyword search or browse alike: a row that failed the fulltext filter
+      never reaches this function at all, so there is nothing left to grade.
+      A real title hit no longer outranks an incidental JD-body hit within
+      one result set the way per-zone `ts_rank_cd` weighting did.
+    * `title_keywords` was matched against a title-only tsvector, kept
+      deliberately separate from `query`'s whole-document match so a title
+      search could not surface a posting that only happened to mention the
+      same words somewhere in its JD. Appwrite has one fulltext index, over
+      the combined `search_text`; `title_keywords`, `query`, `location`, and
+      `company` are folded into a single search string here. That
+      separation is gone.
+    * `location`/`company` were `ILIKE` substring filters. Appwrite has no
+      substring filter on a plain string column; both fold into the same
+      fulltext search instead, which matches whole words, not substrings.
+    * `max_age_days`/`posted_within_days` filtered on
+      `COALESCE(posted_at, first_seen_at)`. Appwrite can't express that
+      COALESCE as a filter. `max_age_days` now filters on `last_seen_at`
+      (still being re-confirmed by a crawl is, in practice, still within any
+      reasonable recency window); `posted_within_days` is unchanged --
+      it already filtered `posted_at` directly with `posted_at_estimated`
+      false, both real columns here too.
+    """
+    del session
     started = time.perf_counter()
     now = datetime.now(UTC)
     limit = max(1, min(query.limit, MAX_LIMIT))
     pool_size = min(MAX_CANDIDATES, (limit + query.offset) * CANDIDATE_MULTIPLIER)
 
-    tsquery_text = _tsquery(query.title_keywords, query.query)
-    effective_date = func.coalesce(JobPosting.posted_at, JobPosting.first_seen_at)
+    filters: list[str] = []
+    raw_queries: list[dict[str, Any]] = []
 
-    # title_keywords is documented ("mirrors matchesTitle") as a title-only match,
-    # but until now it was ANDed into the same tsquery as free-text `query` and
-    # tested against the whole weighted `search_vector` -- title OR company_name OR
-    # location OR up to FTS_DESCRIPTION_CHARS of the JD. That let a title search for
-    # "ai engineer intern" surface "Head of IT" and "BizOps Lead" postings whose JD
-    # body happened to mention "ai", "engineer" and "intern" nowhere near each
-    # other, crowding out the small number of postings actually titled that. The
-    # ranking below still scores against the full `search_vector` (title weighted
-    # highest via setweight), so a real title hit is still preferred over a
-    # same-tsquery body hit; only which rows are allowed to match at all changes.
-    title_tsquery_text = _tsquery(query.title_keywords, None)
-    free_tsquery_text = _tsquery([], query.query)
-    title_vector = func.to_tsvector("english", func.coalesce(JobPosting.title, ""))
-    title_ts_query = (
-        func.to_tsquery("english", title_tsquery_text) if title_tsquery_text else None
-    )
-    free_ts_query = (
-        func.to_tsquery("english", free_tsquery_text) if free_tsquery_text else None
-    )
-
-    ts_query: ColumnElement[Any] | None = None
-    text_rank: ColumnElement[float]
-    retrieve: ColumnElement[float]
-    if tsquery_text:
-        ts_query = func.to_tsquery("english", tsquery_text)
-        text_rank = func.ts_rank_cd(JobPosting.search_vector, ts_query)
-        # Squash the unbounded ts_rank_cd into (0,1] so the product with freshness
-        # stays interpretable and one enormous text score cannot dominate.
-        # `type_coerce` rather than `cast`: dividing two SQL floats is typed as
-        # float-or-Decimal, and this says "read it back as a float" without
-        # putting a CAST in the generated SQL that the planner would have to see.
-        retrieve = type_coerce(text_rank / (text_rank + RANK_SATURATION_K), Float)
-    else:
-        # SQL literals, not Python floats: these have to be expressions so the same
-        # ORDER BY and the same selected columns work with or without keywords.
-        text_rank = literal(0.0, Float)
-        retrieve = literal(1.0, Float)
-
-    # Freshness in SQL, so filtering, ranking and the LIMIT happen in one pass.
-    # `now` is bound rather than using SQL now(), so a frozen clock in a test
-    # reaches the query and the Python twin below agrees with it exactly.
-    age_days = (
-        func.extract("epoch", literal(now, DateTime(timezone=True)) - effective_date) / 86400.0
-    )
-    freshness = func.greatest(
-        func.power(0.5, func.greatest(age_days, 0.0) / FRESHNESS_HALF_LIFE_DAYS),
-        MIN_FRESHNESS_WEIGHT,
-    )
-    sql_rank = retrieve * freshness
-
-    statement = select(
-        JobPosting.id,
-        JobPosting.source,
-        JobPosting.source_id,
-        JobPosting.source_url,
-        JobPosting.title,
-        JobPosting.company_name,
-        JobPosting.company_domain,
-        JobPosting.location,
-        JobPosting.country_code,
-        JobPosting.remote,
-        JobPosting.department,
-        JobPosting.employment_type,
-        JobPosting.salary_min,
-        JobPosting.salary_max,
-        JobPosting.salary_currency,
-        # No jd_clean here on purpose. It is TOASTed and fetching it for the whole
-        # candidate pool was 97% of this query's cost; see the module docstring.
-        JobPosting.jd_hydrated,
-        JobPosting.posted_at,
-        JobPosting.posted_at_basis,
-        JobPosting.posted_at_estimated,
-        JobPosting.first_seen_at,
-        JobPosting.last_seen_at,
-        JobPosting.active,
-        JobPosting.inactive_since,
-        JobPosting.repost_count,
-        text_rank.label("text_rank"),
-        retrieve.label("retrieve"),
-        freshness.label("freshness"),
-        age_days.label("age_days"),
-        effective_date.label("effective_date"),
-    )
-
-    conditions: list[ColumnElement[bool]] = []
     if not query.include_inactive:
-        conditions.append(JobPosting.active.is_(True))
+        filters.append("active=true")
     if not query.include_duplicates:
-        conditions.append(JobPosting.canonical_id.is_(None))
+        raw_queries.append({"method": "isNull", "attribute": "canonical_id"})
     if query.require_description:
-        conditions.append(JobPosting.jd_hydrated.is_(True))
-    match_conditions: list[ColumnElement[bool]] = []
-    if title_ts_query is not None:
-        match_conditions.append(title_vector.op("@@")(title_ts_query))
-    if free_ts_query is not None:
-        match_conditions.append(JobPosting.search_vector.op("@@")(free_ts_query))
-    if match_conditions:
-        conditions.append(
-            match_conditions[0] if len(match_conditions) == 1 else or_(*match_conditions)
-        )
-    if query.location:
-        conditions.append(JobPosting.location.ilike(f"%{query.location.strip()}%"))
-    if query.company:
-        conditions.append(JobPosting.company_name.ilike(f"%{query.company.strip()}%"))
+        filters.append("jd_hydrated=true")
     if query.sources:
-        conditions.append(JobPosting.source.in_(query.sources))
+        raw_queries.append({"method": "equal", "attribute": "source", "values": query.sources})
     if query.remote is True:
-        conditions.append(JobPosting.remote.is_(True))
+        filters.append("remote=true")
     if query.country_codes:
         codes = [c.strip().upper() for c in query.country_codes if c.strip()]
         if codes:
             # A hire-from-anywhere posting has no country to match but is
-            # plausibly open to the one being filtered on, so it passes. A posting
-            # whose location we simply could not parse does not: unknown is not
-            # the same as yes. This mirrors the live path's `matchesCountry`.
-            conditions.append(
-                or_(JobPosting.country_code.in_(codes), JobPosting.anywhere.is_(True))
+            # plausibly open to the one being filtered on, so it passes.
+            # Mirrors the Postgres version's own `matchesCountry` parity note.
+            raw_queries.append(
+                {
+                    "method": "or",
+                    "values": [
+                        {"method": "equal", "attribute": "country_code", "values": codes},
+                        {"method": "equal", "attribute": "anywhere", "values": [True]},
+                    ],
+                }
             )
+    if query.salary_min:
+        filters.append(f"salary_max>={query.salary_min}")
     if query.max_age_days and query.max_age_days > 0:
         cutoff = now - timedelta(days=query.max_age_days)
-        # Filters on the effective date, so a posting whose board gave no date is
-        # judged by when we first saw it rather than silently kept forever.
-        conditions.append(effective_date >= cutoff)
+        filters.append(f"last_seen_at>={cutoff.isoformat()}")
     if query.posted_within_days and query.posted_within_days > 0:
         cutoff = now - timedelta(days=query.posted_within_days)
-        # Stricter: only postings with a real, non-estimated date inside the window.
-        conditions.append(JobPosting.posted_at >= cutoff)
-        conditions.append(JobPosting.posted_at_estimated.is_(False))
-    if query.salary_min:
-        conditions.append(JobPosting.salary_max >= query.salary_min)
+        filters.append(f"posted_at>={cutoff.isoformat()}")
+        filters.append("posted_at_estimated=false")
 
-    statement = statement.where(*conditions)
-    statement = statement.order_by(sql_rank.desc(), effective_date.desc()).limit(pool_size)
-
-    rows = (await session.execute(statement)).all()
-
-    # Bounded count. Stops the scan at TOTAL_COUNT_CAP rather than counting every
-    # match, which for a broad keyword query is most of the table.
-    capped = (
-        select(JobPosting.id).where(*conditions).limit(TOTAL_COUNT_CAP + 1).subquery()
+    search_terms = " ".join(
+        t.strip()
+        for t in [*query.title_keywords, query.query or "", query.location or "", query.company or ""]
+        if t and t.strip()
     )
-    total_matched = int(
-        await session.scalar(select(func.count()).select_from(capped)) or 0
+    matched_keywords = bool(search_terms)
+    if matched_keywords:
+        raw_queries.append({"method": "search", "attribute": "search_text", "values": [search_terms]})
+
+    rows = await appwrite_tables.list_rows(
+        filters=filters,
+        queries=raw_queries,
+        sort_desc="last_seen_at",
+        limit=pool_size,
     )
-    total_capped = total_matched > TOTAL_COUNT_CAP
-    if total_capped:
+
+    # Appwrite's own `total` on a filtered list is itself an estimate capped
+    # well below a full COUNT(*) (observed capping around 5000 against this
+    # table's 34,942 rows) -- so rather than trust it as a second, possibly
+    # inconsistent number, `total_matched` here is just how many candidates
+    # this same pool query actually returned, capped the same way the
+    # Postgres version capped its own exact COUNT(*).
+    total_matched = len(rows)
+    total_capped = total_matched >= pool_size
+    if total_matched > TOTAL_COUNT_CAP:
         total_matched = TOTAL_COUNT_CAP
+        total_capped = True
 
+    by_id = {r.get("source_posting_id"): r for r in rows}
     hits = _apply_mix_and_rank(
-        [tuple(row) for row in rows],
+        [_row_to_tuple(r, now) for r in rows],
         limit=limit,
         offset=query.offset,
         explain=query.explain,
-        matched_keywords=bool(tsquery_text),
+        matched_keywords=matched_keywords,
     )
-    await _attach_snippets(session, hits)
+    _attach_snippets(by_id, hits)
 
     took_ms = (time.perf_counter() - started) * 1000
     return IndexSearchResult(
@@ -402,31 +391,25 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
         total_matched_capped=total_capped,
         candidates_considered=len(rows),
         took_ms=took_ms,
-        keyword_query=tsquery_text,
+        keyword_query=search_terms or None,
     )
 
 
-async def _attach_snippets(session: AsyncSession, hits: list[IndexHit]) -> None:
-    """Second phase: fetch descriptions for the page, not for the pool.
+def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> None:
+    """Fill in the snippet for the page Appwrite already returned.
 
-    One extra round trip in exchange for reading TOAST storage tens of times
-    instead of hundreds. Rows whose description was never hydrated are skipped
-    entirely, since their `jd_clean` is provider metadata rather than a JD.
+    No second round trip: unlike Postgres, where `jd_clean` sat TOASTed
+    out-of-line and fetching it for the whole candidate pool cost 87.4ms
+    against 8.5ms without it (see the module docstring), Appwrite returned
+    every column, including `jd_clean`, in the one `list_rows` call
+    `search_index` already made. This just reads it back out for the ~60
+    rows that survived ranking, instead of the whole pool.
     """
-    wanted = [hit.id for hit in hits if hit.description_available]
-    if not wanted:
-        return
-    rows = await session.execute(
-        select(JobPosting.id, func.left(JobPosting.jd_clean, SNIPPET_CHARS)).where(
-            JobPosting.id.in_(wanted)
-        )
-    )
-    snippets = {posting_id: text or "" for posting_id, text in rows.all()}
     for hit in hits:
-        hit.snippet = snippets.get(hit.id, "")
-        # `description_available` was provisional until the text was in hand.
+        row = by_id.get(str(hit.id))
+        jd_clean = (row or {}).get("jd_clean") or ""
+        hit.snippet = jd_clean[:SNIPPET_CHARS]
         hit.description_available = bool(hit.snippet.strip())
-
 
 def _freshness_weight(age_days: float) -> float:
     """Python twin of the SQL freshness expression. Kept for the EXPLAIN field."""

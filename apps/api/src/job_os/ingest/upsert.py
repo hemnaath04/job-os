@@ -20,25 +20,28 @@ The contract, which the tests in `tests/test_ingest_upsert.py` pin:
 """
 from __future__ import annotations
 
+import json
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import and_, case, literal_column, select, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.db.models.job_posting import JobPosting
 from job_os.ingest import normalize
 from job_os.ingest.providers import RawPosting
+from job_os.services import appwrite_tables
 
 log = structlog.get_logger(__name__)
 
-#: Rows per INSERT statement. Large enough that the round trips disappear, small
-#: enough that one bad batch is cheap to retry and the statement stays under any
-#: parameter ceiling.
-BATCH_SIZE = 500
+#: Rows per Appwrite bulk call. See `appwrite_tables.BATCH_SIZE` -- kept as a
+#: separate constant here since this module's own lookup-before-write batching
+#: (see `_write_batch`) is what actually bounds call size; `appwrite_tables`
+#: re-batches internally too, so this only has to be a sane unit of work, not
+#: an exact fit against Appwrite's own cap.
+BATCH_SIZE = 25
 
 
 @dataclass(slots=True)
@@ -67,18 +70,35 @@ def to_row(
     company_name: str | None = None,
     company_domain: str | None = None,
 ) -> dict[str, object]:
-    """Flatten a `RawPosting` into an insertable row.
+    """Flatten a `RawPosting` into an Appwrite-insertable row.
 
     `company_name` / `company_domain` come from the token's curated entry when
     there is one. Lever and Ashby do not report the employer's name at all, so
     without that the board token is the best available answer, which is why the
     curated list matters for dedupe quality rather than only for display.
+
+    `source_posting_id` is new: a fresh id minted here, not carried over from
+    anywhere. The Appwrite migration used this same column to hold the
+    original Postgres row's UUID for its own idempotent keying; a brand new
+    posting from this ingest path never touched Postgres, so it gets a fresh
+    one instead, and it means the same thing going forward -- a stable,
+    non-Appwrite-internal identity for this posting.
+
+    `search_text` backs the fulltext index `job_index.search_index` reads
+    (see that module's docstring for the tradeoff of one combined index
+    versus Postgres's weighted-zone tsvector).
+
+    `posted_at_estimated` was a *generated* column in Postgres, computed from
+    `posted_at_basis`. Appwrite has no generated columns, so it is computed
+    here, the same way: true when the date came from an update timestamp or
+    a first-crawl guess rather than something the board actually published.
     """
     name = company_name or posting.company_name
     domain = company_domain or posting.company_domain
     description = posting.jd_clean
 
-    return {
+    row = {
+        "source_posting_id": str(uuid.uuid4()),
         "source": posting.source,
         "source_id": posting.source_id,
         "board_token": posting.board_token,
@@ -101,26 +121,32 @@ def to_row(
         "jd_raw": posting.jd_raw or None,
         "jd_clean": description,
         "jd_hydrated": posting.jd_hydrated,
-        "jd_parsed": posting.extra or {},
+        "jd_parsed": json.dumps(posting.extra or {}),
         "content_hash": normalize.content_hash(
             name, posting.title, posting.location, description, domain=domain
         ),
         "dedupe_key": normalize.dedupe_key(
             name, posting.title, posting.location, domain=domain
         ),
-        "posted_at": posting.posted_at,
+        "posted_at": posting.posted_at.isoformat() if posting.posted_at else None,
         "posted_at_basis": posting.posted_at_basis,
-        "closes_at": posting.closes_at,
+        "posted_at_estimated": posting.posted_at_estimated,
+        "closes_at": posting.closes_at.isoformat() if posting.closes_at else None,
         "active": True,
-        "first_seen_at": seen_at,
-        "last_seen_at": seen_at,
-        "last_crawl_run_id": run_id,
+        "first_seen_at": seen_at.isoformat(),
+        "last_seen_at": seen_at.isoformat(),
+        "last_crawl_run_id": str(run_id) if run_id else None,
+        "content_updated_at": seen_at.isoformat(),
     }
+    text_bits = [row["title"] or "", row["company_name"] or "", row["location"] or "", (row["jd_clean"] or "")[:8000]]
+    row["search_text"] = " ".join(b for b in text_bits if b)
+    return row
 
 
 #: Columns a re-crawl is allowed to overwrite. `first_seen_at` is absent by
 #: design: it is the one fact a later crawl can never improve on, and every other
-#: honest-freshness claim rests on it.
+#: honest-freshness claim rests on it. `search_text` is derived from several of
+#: these, so it moves alongside them.
 _MUTABLE_COLUMNS = (
     "source_url",
     "company_name",
@@ -145,7 +171,9 @@ _MUTABLE_COLUMNS = (
     "dedupe_key",
     "posted_at",
     "posted_at_basis",
+    "posted_at_estimated",
     "closes_at",
+    "search_text",
 )
 
 
@@ -157,7 +185,12 @@ async def upsert_postings(
     seen_at: datetime | None = None,
     company_names: dict[tuple[str, str], tuple[str | None, str | None]] | None = None,
 ) -> UpsertStats:
-    """Write postings, preserving history. Returns what actually changed."""
+    """Write postings to Appwrite, preserving history. Returns what changed.
+
+    `session` is accepted and unused, kept so callers did not need a
+    signature change; nothing here touches Postgres.
+    """
+    del session
     stats = UpsertStats()
     if not postings:
         return stats
@@ -170,9 +203,10 @@ async def upsert_postings(
     for posting in postings:
         identity = (posting.source, posting.source_id)
         if identity in seen_ids:
-            # One board listing the same posting id twice would make the INSERT
-            # fail with "cannot affect row a second time", so the duplicate is
-            # dropped here rather than taking the whole batch down.
+            # One board listing the same posting id twice would make a single
+            # upsert-rows call try to touch the same row twice -- dropped here
+            # rather than taking the whole batch down, same reasoning as the
+            # Postgres version's "cannot affect row a second time" guard.
             stats.skipped += 1
             continue
         seen_ids.add(identity)
@@ -189,68 +223,66 @@ async def upsert_postings(
 
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start : start + BATCH_SIZE]
-        stats.merge(await _write_batch(session, batch, now=now))
+        stats.merge(await _write_batch(batch, now=now))
     return stats
 
 
-async def _write_batch(
-    session: AsyncSession, rows: list[dict[str, object]], *, now: datetime
-) -> UpsertStats:
+async def _write_batch(rows: list[dict[str, object]], *, now: datetime) -> UpsertStats:
+    """Look up which of this batch's postings already exist, then upsert.
+
+    This is the one real behavioural change from the Postgres version worth
+    being blunt about: `ON CONFLICT DO UPDATE` made the whole
+    read-decide-write a single atomic statement, so two concurrent crawls of
+    the same posting could not race each other. This is a lookup, then a
+    separate write, with a real gap between them. Appwrite has no
+    conditional-upsert-on-a-non-`$id`-column primitive to close that gap
+    with. Acceptable here because this app runs one crawler at a time, not
+    several writers contending for the same posting -- but it is a real gap,
+    not a hidden one.
+    """
     stats = UpsertStats()
-    statement = insert(JobPosting).values(rows)
-    excluded = statement.excluded
+    source_ids = [row["source_id"] for row in rows]
+    existing_rows = await appwrite_tables.list_rows(
+        queries=[{"method": "equal", "attribute": "source_id", "values": source_ids}],
+        limit=len(source_ids),
+    )
+    # Keyed by (source, source_id): source_id alone already embeds the board
+    # token for every provider in this codebase, but a board-token collision
+    # across two different `source` values is not something to bet the
+    # dedupe on.
+    existing_by_key = {(r.get("source"), r.get("source_id")): r for r in existing_rows}
 
-    # Postgres decides per row whether the posting actually changed, so the
-    # unchanged case costs no extra round trip and cannot lose a race the way a
-    # read-then-write in Python would.
-    changed = JobPosting.content_hash.is_distinct_from(excluded.content_hash)
+    upsert_batch: list[dict[str, object]] = []
+    for row in rows:
+        key = (row["source"], row["source_id"])
+        existing = existing_by_key.get(key)
+        if existing is None:
+            upsert_batch.append(row)
+            stats.inserted += 1
+            continue
 
-    # `case(..., else_=<current value>)` rather than `coalesce`. Coalesce looks
-    # equivalent and is not: a field that legitimately becomes NULL (a salary
-    # band withdrawn, a deadline removed) would fall through to the old value and
-    # the row would keep asserting something the board no longer says.
-    mutable = {
-        column: case((changed, getattr(excluded, column)), else_=getattr(JobPosting, column))
-        for column in _MUTABLE_COLUMNS
-    }
-
-    returning = statement.on_conflict_do_update(
-        constraint="uq_job_postings_source_pair",
-        set_={
-            # Always. This crawl saw it, whether or not anything changed, and
-            # that is the whole point of last_seen_at.
-            "last_seen_at": excluded.last_seen_at,
-            "last_crawl_run_id": excluded.last_crawl_run_id,
+        changed = existing.get("content_hash") != row["content_hash"]
+        was_inactive = not existing.get("active", True)
+        payload: dict[str, object] = {
+            "$id": existing["$id"],
+            "last_seen_at": row["last_seen_at"],
+            "last_crawl_run_id": row["last_crawl_run_id"],
             "active": True,
             "inactive_since": None,
-            # Back on a board after having been dropped is a repost. Counting it
-            # is how a role that has been "new" nine times becomes visible as one.
-            "repost_count": JobPosting.repost_count
-            + case((JobPosting.active.is_(False), 1), else_=0),
-            **mutable,
-            # Only moves when the content moved, so `updated_at` keeps meaning
-            # "the posting changed" rather than "a crawler ran".
-            "updated_at": case((changed, now), else_=JobPosting.updated_at),
-        },
-    ).returning(
-        # `xmax = 0` is the standard Postgres test for a row this statement
-        # inserted rather than updated. It is the only way to tell the two apart
-        # from a single upsert, and it beats comparing timestamps because it does
-        # not depend on a value round-tripping through the driver unchanged.
-        literal_column("xmax").op("=")(literal_column("0")).label("was_inserted"),
-        JobPosting.updated_at,
-    )
-
-    result = await session.execute(returning)
-    for was_inserted, updated_at in result.all():
-        if was_inserted:
-            stats.inserted += 1
-        elif updated_at == now:
-            # `updated_at` only moves when the content hash moved, so this is the
-            # honest count of postings the employer actually edited.
+            "repost_count": int(existing.get("repost_count") or 0) + (1 if was_inactive else 0),
+        }
+        if changed:
+            for column in _MUTABLE_COLUMNS:
+                payload[column] = row[column]
+            payload["content_updated_at"] = row["content_updated_at"]
             stats.updated += 1
         else:
             stats.unchanged += 1
+        if was_inactive:
+            stats.reactivated += 1
+        upsert_batch.append(payload)
+
+    await appwrite_tables.upsert_rows(upsert_batch)
     return stats
 
 
@@ -262,7 +294,7 @@ async def deactivate_missing(
     run_id: uuid.UUID,
     at: datetime | None = None,
 ) -> int:
-    """Mark postings this board no longer lists as inactive.
+    """Mark postings this board no longer lists as inactive, in Appwrite.
 
     Scoped to one board and one run on purpose. "Absent from the crawl" is only
     evidence of closure if that board's current list was actually read, so the
@@ -272,25 +304,24 @@ async def deactivate_missing(
 
     Rows are never deleted. A closed posting is a fact worth showing, and keeping
     it means `first_seen_at` survives if the role is reposted later.
+
+    `session` is accepted and unused, kept so callers did not need a signature
+    change. This is one real bulk `update-rows` call, unlike `_write_batch`'s
+    per-batch lookup-then-write -- Appwrite's WHERE-then-SET semantics here
+    give the same one-statement guarantee `deactivate_missing` always had.
     """
+    del session
     now = at or datetime.now(UTC)
-    statement = (
-        update(JobPosting)
-        .where(
-            and_(
-                JobPosting.source == source,
-                JobPosting.board_token == board_token,
-                JobPosting.active.is_(True),
-                # Anything this run touched has the run id on it. Everything else
-                # under this board was not in the list we just read.
-                (JobPosting.last_crawl_run_id.is_distinct_from(run_id)),
-            )
-        )
-        .values(active=False, inactive_since=now, updated_at=now)
-        .returning(JobPosting.id)
+    updated = await appwrite_tables.update_rows(
+        filters=[
+            f"source={source}",
+            f"board_token={board_token}",
+            "active=true",
+            f"last_crawl_run_id!={run_id}",
+        ],
+        data={"active": False, "inactive_since": now.isoformat()},
     )
-    result = await session.execute(statement)
-    return len(result.all())
+    return updated
 
 
 async def mark_duplicates(

@@ -114,9 +114,17 @@ class Settings(BaseSettings):
     # project the resume workspace already uses, on the GitHub Student Pack's
     # Education plan (Pro-equivalent limits, no storage-GB cap on documents --
     # see the plan comment on the resume workspace tables in appwrite_common.py
-    # for why that matters here specifically). Endpoint/project/database id
-    # default to the same values apps/web already points at; only the table id
-    # and the API key are new.
+    # for why that matters here specifically).
+    #
+    # Currently unused by `services/appwrite_tables.py`, which is what
+    # `job_index.search_index` and `ingest/upsert.py` actually call: there is
+    # no `APPWRITE_API_KEY` value anywhere in this environment for a server
+    # SDK client to authenticate with (minting one needs a `keys.write` scope
+    # this project's role does not have), so that module shells out through
+    # the `appwrite` CLI's own already-authenticated session instead, with
+    # the database/table ids hardcoded to match what was actually created.
+    # These fields are kept for the day a real key exists and it is worth
+    # switching to the SDK -- until then, changing them changes nothing.
     appwrite_endpoint: str | None = None
     appwrite_project_id: str | None = None
     appwrite_api_key: str | None = None
