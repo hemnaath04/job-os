@@ -228,26 +228,68 @@ export function ApplicationInspector({
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        <Section title="Overview">
-          <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-            <DetailRow label="Location" value={job.location} />
-            <DetailRow label="Work type" value={job.remote} />
-            <DetailRow label="Salary" value={salary} />
-            <DetailRow label="Job type" value={job.level} />
-            <DetailRow label="Source" value={job.source} />
-            <DetailRow
-              label="Applied"
-              value={
-                application.applied_at
-                  ? format(new Date(application.applied_at), "MMM d, yyyy")
-                  : null
-              }
-            />
-            <DetailRow label="Recruiter" value={application.recruiter_name} />
-          </dl>
-        </Section>
+      {/* @container, not a viewport breakpoint: this panel's width is a
+          fraction of the master-detail split, so it can be narrow on a wide
+          screen (and the mobile full-screen case is the opposite). Asking the
+          viewport how wide this panel is would be asking the wrong element. */}
+      <div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-3.5">
+        <div className="grid grid-cols-1 gap-x-8 gap-y-5 @2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
+          {/* Left: the things you read, then the thing you do next. */}
+          <div className="flex min-w-0 flex-col gap-5">
+            <Section title="Overview">
+              <dl className="grid grid-cols-[104px_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                <DetailRow label="Location" value={job.location} />
+                <DetailRow label="Work type" value={job.remote} />
+                <DetailRow label="Salary" value={salary} />
+                <DetailRow label="Job type" value={job.level} />
+                <DetailRow label="Source" value={job.source} />
+                <DetailRow
+                  label="Applied"
+                  value={
+                    application.applied_at
+                      ? format(new Date(application.applied_at), "MMM d, yyyy")
+                      : null
+                  }
+                />
+                <DetailRow label="Recruiter" value={application.recruiter_name} />
+              </dl>
+            </Section>
 
+            <Section title="Next action">
+              <div className="flex flex-col gap-1.5">
+                <input
+                  ref={nextActionRef}
+                  type="text"
+                  value={nextActionLabel}
+                  onChange={(event) => setNextActionLabel(event.target.value)}
+                  onBlur={saveNextAction}
+                  placeholder="e.g. Prepare technical interview"
+                  className="field-control !min-h-8 !py-1.5 !text-xs"
+                />
+                <div className="flex items-center gap-1.5">
+                  <input
+                    type="date"
+                    value={nextActionDate}
+                    onChange={(event) => setNextActionDate(event.target.value)}
+                    onBlur={saveNextAction}
+                    className="field-control !min-h-8 min-w-0 flex-1 !py-1.5 !text-xs"
+                  />
+                  {hasNextAction && (
+                    <button
+                      type="button"
+                      onClick={completeNextAction}
+                      className="flex shrink-0 items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)]"
+                    >
+                      <Check className="size-3" /> Complete
+                    </button>
+                  )}
+                </div>
+              </div>
+            </Section>
+          </div>
+
+          {/* Right: the assessment, the history, the artifacts. */}
+          <div className="flex min-w-0 flex-col gap-5">
         <Section title="AI match">
           {fit.confident ? (
             <>
@@ -283,57 +325,31 @@ export function ApplicationInspector({
           )}
         </Section>
 
-        <Section title="Timeline">
-          <ApplicationTimeline application={application} />
-        </Section>
+            <Section title="Timeline">
+              <ApplicationTimeline application={application} />
+            </Section>
 
-        <Section title="Next action">
-          <div className="flex flex-col gap-1.5">
-            <input
-              ref={nextActionRef}
-              type="text"
-              value={nextActionLabel}
-              onChange={(event) => setNextActionLabel(event.target.value)}
-              onBlur={saveNextAction}
-              placeholder="e.g. Prepare technical interview"
-              className="field-control !min-h-8 !py-1.5 !text-xs"
-            />
-            <div className="flex items-center gap-1.5">
-              <input
-                type="date"
-                value={nextActionDate}
-                onChange={(event) => setNextActionDate(event.target.value)}
-                onBlur={saveNextAction}
-                className="field-control !min-h-8 flex-1 !py-1.5 !text-xs"
-              />
-              {hasNextAction && (
-                <button
-                  type="button"
-                  onClick={completeNextAction}
-                  className="flex shrink-0 items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)]"
-                >
-                  <Check className="size-3" /> Complete
-                </button>
-              )}
-            </div>
+            <Section title="Documents">
+              <ApplicationDocuments application={application} />
+            </Section>
           </div>
-        </Section>
 
-        <Section title="Documents">
-          <ApplicationDocuments application={application} />
-        </Section>
-
-        <Section title="Notes" last>
-          <textarea
-            ref={notesRef}
-            value={notes}
-            onChange={(event) => setNotes(event.target.value)}
-            onBlur={saveNotes}
-            placeholder="Add a note..."
-            rows={3}
-            className="field-control min-h-20 resize-y !text-xs"
-          />
-        </Section>
+          {/* Notes spans both columns: a note is prose, and prose in a
+              0.85fr column is a column of two-word lines. */}
+          <div className="min-w-0 border-t border-[color:var(--color-border)] pt-4 @2xl:col-span-2">
+            <Section title="Notes">
+              <textarea
+                ref={notesRef}
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                onBlur={saveNotes}
+                placeholder="Add a note..."
+                rows={3}
+                className="field-control min-h-20 resize-y !text-xs"
+              />
+            </Section>
+          </div>
+        </div>
       </div>
     </div>
   );
@@ -362,32 +378,35 @@ function SkillGroup({
   );
 }
 
-function Section({
-  title,
-  children,
-  last = false,
-}: {
-  title: string;
-  children: React.ReactNode;
-  last?: boolean;
-}) {
+/**
+ * Sections carry no padding or rule of their own now. In a two-column grid a
+ * per-section bottom border draws ragged lines that stop at different heights
+ * in each column; the grid's own gap separates them more calmly, and the one
+ * rule that remains (above Notes) spans the full width where it can land
+ * straight.
+ */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div
-      className={"px-4 py-3" + (last ? "" : " border-b border-[color:var(--color-border)]")}
-    >
+    <section className="min-w-0">
       <h3 className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-[color:var(--color-text-dim)]">
         {title}
       </h3>
       {children}
-    </div>
+    </section>
   );
 }
 
+/**
+ * Left-aligned against a fixed label column, not pushed to opposite edges.
+ * `justify-between` on a wide panel strands the value against the far margin
+ * with a river of empty space between it and its own label, which is exactly
+ * as hard to read as it sounds.
+ */
 function DetailRow({ label, value }: { label: string; value: string | null | undefined }) {
   return (
     <>
       <dt className="text-[color:var(--color-text-dim)]">{label}</dt>
-      <dd className="truncate text-right text-[color:var(--color-text)]">{value || "Not set"}</dd>
+      <dd className="min-w-0 break-words text-[color:var(--color-text)]">{value || "Not set"}</dd>
     </>
   );
 }
