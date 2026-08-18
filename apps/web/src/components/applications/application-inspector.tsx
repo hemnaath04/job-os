@@ -129,7 +129,13 @@ export function ApplicationInspector({
   const hasNextAction = Boolean(application.next_action_label);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    // min-w-0 flex-1, not just flex flex-col: the parent wrapper in the page
+    // is `lg:flex`, a row-direction flex container, so this root is a flex
+    // item. Without flex-1 it takes `flex: 0 1 auto` and sizes to its own
+    // content -- which is what left the inspector rendering at about 400px
+    // inside an 820px grid cell and the right half of the panel empty. min-w-0
+    // so long unbroken values can shrink it rather than push it wider.
+    <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col">
       {/* Sticky identity. Scrolling a long inspector should never leave you
           unsure which application you are editing. */}
       <div className="sticky top-0 z-10 shrink-0 border-b border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-4 py-3">
