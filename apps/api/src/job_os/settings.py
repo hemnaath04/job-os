@@ -110,6 +110,19 @@ class Settings(BaseSettings):
     r2_bucket: str | None = None
     r2_public_base_url: str | None = None
 
+    # `job_postings` (the crawl-index cache) moved off Neon to the same Appwrite
+    # project the resume workspace already uses, on the GitHub Student Pack's
+    # Education plan (Pro-equivalent limits, no storage-GB cap on documents --
+    # see the plan comment on the resume workspace tables in appwrite_common.py
+    # for why that matters here specifically). Endpoint/project/database id
+    # default to the same values apps/web already points at; only the table id
+    # and the API key are new.
+    appwrite_endpoint: str | None = None
+    appwrite_project_id: str | None = None
+    appwrite_api_key: str | None = None
+    appwrite_database_id: str = "job-os"
+    appwrite_job_postings_table_id: str = "job_postings"
+
     reactive_resume_base_url: str | None = None
     reactive_resume_api_key: str | None = None
 

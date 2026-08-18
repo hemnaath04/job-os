@@ -26,6 +26,7 @@ class AppwriteAdminConfig:
     fact_bullets_table_id: str
     agent_jobs_table_id: str
     resume_files_bucket_id: str
+    job_postings_table_id: str
 
     @classmethod
     def from_environment(cls) -> AppwriteAdminConfig:
@@ -80,6 +81,9 @@ class AppwriteAdminConfig:
             agent_jobs_table_id=value("APPWRITE_AGENT_JOBS_TABLE_ID") or "agent_jobs",
             resume_files_bucket_id=(
                 value("APPWRITE_RESUME_FILES_BUCKET_ID") or "resume_files"
+            ),
+            job_postings_table_id=(
+                value("APPWRITE_JOB_POSTINGS_TABLE_ID") or "job_postings"
             ),
         )
 
