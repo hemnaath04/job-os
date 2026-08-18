@@ -21,6 +21,7 @@ import {
   attachReviewAndMaybeFinalize,
   createApplicationCard,
   createProfileFact,
+  downloadResumeVersionFile,
   getResumeTailorJobStatus,
   getResumeVersionSnapshot,
   listProfileFacts,
@@ -159,6 +160,51 @@ async function withAttachmentEcho(
       status: application.status,
     },
   });
+}
+
+/**
+ * A tailored version's PDF lives in Appwrite Storage under the version id
+ * (see attachReviewAndMaybeFinalize) -- fine for the app's own download
+ * button, which already knows what it's looking at, but useless handed to a
+ * person as a filename. Builds the name someone would actually save it as:
+ * candidate, company, role, resolved through whichever of
+ * spawned_from_application_id/spawned_from_job_id the version actually has.
+ * Falls back to just the candidate's name when neither is set, e.g. a
+ * manually finalized master resume with no job attached.
+ */
+async function resumeVersionFilename(jwt: string, version: ResumeVersion): Promise<string> {
+  const candidate = version.json_resume.basics?.name;
+  let company: string | undefined;
+  let role: string | undefined;
+  try {
+    if (version.spawned_from_application_id) {
+      const application = (await callBackend(
+        jwt,
+        "GET",
+        `/applications/${version.spawned_from_application_id}`,
+      )) as { job?: { title?: string; company?: { name?: string } } };
+      company = application.job?.company?.name;
+      role = application.job?.title;
+    } else if (version.spawned_from_job_id) {
+      const job = (await callBackend(jwt, "GET", `/jobs/${version.spawned_from_job_id}`)) as {
+        title?: string;
+        company?: { name?: string };
+      };
+      company = job.company?.name;
+      role = job.title;
+    }
+  } catch {
+    // Best-effort naming only -- an unreachable job/application shouldn't
+    // block the download itself.
+  }
+  const slug = [candidate, company, role]
+    .filter((part): part is string => Boolean(part))
+    .join(" ")
+    .replace(/[\\/:*?"<>|]/g, "")
+    .trim()
+    .replace(/\s+/g, "_")
+    .slice(0, 120);
+  return `${slug || "resume"}.pdf`;
 }
 
 async function createJobAndMaybeApply(
@@ -972,6 +1018,61 @@ const handler = createMcpHandler(
           if (!resume) throw new BackendError(404, "resume not found");
           await resyncResumeCard(resolveAppwriteUserId(clerkUserId(ctx)), resume);
           return toolText({ synced: true, resume_id: args.resume_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "download_resume_version",
+      {
+        title: "Download Resume Version",
+        description:
+          "Downloads a finalized resume version's actual PDF bytes, named for the person, company, and role it was tailored for (e.g. \"Jane_Doe_Acme_Corp_Backend_Engineer.pdf\") instead of the raw version id job.os stores it under internally. Only works once the version has a rendered PDF -- a fresh draft from start_resume_tailor does not; run start_resume_finalize on it first, and check get_resume_finalize_status until it reports final. Returns { status: 'not_ready', reason } instead of the file when there is nothing to download yet.",
+        inputSchema: z.object({ version_id: z.string().min(1) }),
+        annotations: {
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite resume workspace is not enabled."));
+          }
+          const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+          const result = await downloadResumeVersionFile(appwriteUserId, args.version_id);
+          if (!result) {
+            return toolText({
+              status: "not_ready",
+              reason: "This version has no rendered PDF yet. Run start_resume_finalize on it first.",
+            });
+          }
+          const { version, bytes } = result;
+          const filename = await resumeVersionFilename(token(ctx), version);
+          return {
+            content: [
+              {
+                type: "text" as const,
+                text: JSON.stringify(
+                  { filename, version_id: args.version_id, ats_score: version.ats_score },
+                  null,
+                  2,
+                ),
+              },
+              {
+                type: "resource" as const,
+                resource: {
+                  uri: `file:///${filename}`,
+                  mimeType: "application/pdf",
+                  blob: bytes.toString("base64"),
+                },
+              },
+            ],
+          };
         } catch (e) {
           return toolError(e);
         }

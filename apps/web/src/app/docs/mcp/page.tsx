@@ -28,7 +28,7 @@ const TOOL_GROUPS = [
   {
     title: "Resume tailoring",
     tools:
-      "start_resume_tailor, get_resume_tailor_status, start_resume_finalize, get_resume_finalize_status",
+      "start_resume_tailor, get_resume_tailor_status, start_resume_finalize, get_resume_finalize_status, download_resume_version",
   },
   {
     title: "Resume library",
@@ -55,7 +55,8 @@ Typical workflow:
 3. Call start_resume_tailor(resume_id, job_id) to draft a resume tailored to one job. It returns immediately with an agent_job_id; it does not wait for the draft to finish.
 4. Poll get_resume_tailor_status(agent_job_id) every few seconds until status is "succeeded" or "failed". You can start several tailor runs back to back, for different jobs or different resumes, and poll each independently -- they run as genuinely concurrent agent jobs, not one after another.
 5. The result of a succeeded job is a draft resume version, an id you get from that response. To make it final: call start_resume_finalize(version_id) for a job_id, then poll get_resume_finalize_status(version_id, job_id) the same way. Once done, the version is either finalized (the review passed) or blocked (it did not; the review is attached so you can see why, and you can call the status tool again with force: true to finalize anyway).
-6. Use list_applications / get_application_timeline to check pipeline status, and update_application_status to move something forward once the person confirms.
+6. Once a version is finalized, download_resume_version(version_id) returns the actual PDF, named after the candidate, company, and role it was tailored for rather than the raw version id. It answers { status: "not_ready" } instead of a file if the version has no rendered PDF yet.
+7. Use list_applications / get_application_timeline to check pipeline status, and update_application_status to move something forward once the person confirms.
 
 Rules:
 - Nothing here is destructive. archive_resume, move_resume_version, and archive_profile_fact never delete data, only hide or relocate it.

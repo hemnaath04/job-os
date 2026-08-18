@@ -802,6 +802,29 @@ export async function getResumeVersionSnapshot(
 }
 
 /**
+ * Reads a finalized version's rendered PDF straight out of Appwrite Storage,
+ * for handing back to whoever asked for the download rather than mirroring it
+ * somewhere else. Returns null (not a thrown error) when the version has no
+ * `pdf_file_id` yet -- true of every draft start_resume_tailor produces and
+ * of a reviewed-but-not-passed version -- since that is an ordinary, expected
+ * state the caller should explain to a person, not treat as a failure.
+ */
+export async function downloadResumeVersionFile(
+  appwriteUserId: string,
+  versionId: string,
+): Promise<{ version: ResumeVersion; bytes: Buffer } | null> {
+  const version = await getResumeVersionSnapshot(appwriteUserId, versionId);
+  const pdfFileId = (version as ResumeVersion & { pdf_file_id?: string }).pdf_file_id;
+  if (!pdfFileId) return null;
+  const { resumeFilesBucketId } = config();
+  const raw = await storageClient().getFileDownload({
+    bucketId: resumeFilesBucketId,
+    fileId: pdfFileId,
+  });
+  return { version, bytes: Buffer.from(raw) };
+}
+
+/**
  * Persists a completed render-review result against a version, and finalizes
  * it when the review passed (or the caller forces it) -- the same sequence
  * the browser's finalizeVersion runs as three separate Appwrite writes
