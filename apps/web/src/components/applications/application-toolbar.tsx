@@ -99,7 +99,13 @@ export function ApplicationToolbar({
           onChange={onLocationChange}
           options={locationOptions}
           aria-label="Filter by location"
-          className="w-36"
+          // field-control sets width: 100% in the base layer, which a plain
+          // w-36 here cannot outrank, so every filter rendered full width and
+          // flex-wrap gave up one per row. The ! forces the override on these
+          // deliberately narrow toolbar selects without touching the shared
+          // field-control class every other input in the app still wants
+          // full width from by default.
+          className="!w-36 shrink-0"
         />
       )}
       {workTypeOptions.length > 1 && (
@@ -108,7 +114,7 @@ export function ApplicationToolbar({
           onChange={onWorkTypeChange}
           options={workTypeOptions}
           aria-label="Filter by work type"
-          className="w-32"
+          className="!w-36 shrink-0"
         />
       )}
       <Select
@@ -116,14 +122,14 @@ export function ApplicationToolbar({
         onChange={onMinMatchChange}
         options={MATCH_THRESHOLDS}
         aria-label="Filter by AI match score"
-        className="w-28"
+        className="!w-32 shrink-0"
       />
       <Select
         value={sort}
         onChange={(value) => onSortChange(value as ApplicationSort)}
         options={SORT_OPTIONS}
         aria-label="Sort applications"
-        className="w-44"
+        className="!w-44 shrink-0"
       />
       <div
         role="group"

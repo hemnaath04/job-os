@@ -120,7 +120,11 @@ const LEXICON: LexEntry[] = [
   { canon: "prompt-engineering", display: "Prompt engineering", forms: ["prompt engineering", "prompting"] },
   { canon: "embeddings", display: "Embeddings", forms: ["embeddings", "semantic search", "vector search"] },
   { canon: "fine-tuning", display: "Fine-tuning", forms: ["fine-tuning", "fine tuning", "lora", "peft"] },
-  { canon: "agents", display: "AI agents", forms: ["ai agents", "agentic", "agent orchestration", "multi-agent", "multi agent"] },
+  // Bare "agent"/"agents" included on purpose: this lexicon only ever scores
+  // tech and CS postings, where the word means an AI agent essentially every
+  // time, and requiring the fuller phrase "AI agents" missed postings that
+  // just said "LLMs and agents" or "build agents" instead.
+  { canon: "agents", display: "AI agents", forms: ["ai agents", "agentic", "agent orchestration", "multi-agent", "multi agent", "agent", "agents"] },
   { canon: "transformers", display: "Transformers", forms: ["transformer", "transformers", "attention mechanism"] },
   { canon: "mlops", display: "MLOps", forms: ["mlops", "model serving", "model deployment", "model inference"] },
   { canon: "openai", display: "OpenAI API", forms: ["openai", "gpt-4", "gpt-3"] },
@@ -156,9 +160,16 @@ for (const e of LEXICON) {
 }
 const SINGLE_WORD_FORMS: [string, LexEntry][] = [];
 const PHRASE_FORMS: [string, LexEntry][] = [];
+// tokenSet below splits on anything outside [a-z0-9+#.], so a form carrying a
+// space, a hyphen or a slash never survives as one token: "fine-tuning" tokenizes
+// to "fine" and "tuning", neither of which equals the form string "fine-tuning",
+// so the single-word path silently never matched it. Route anything the
+// tokenizer would break apart through the substring check instead, the same
+// path multi-word phrases already use.
+const NEEDS_SUBSTRING_MATCH = /[^a-z0-9+#.]/;
 for (const e of LEXICON) {
   for (const f of e.forms) {
-    (f.includes(" ") ? PHRASE_FORMS : SINGLE_WORD_FORMS).push([f, e]);
+    (NEEDS_SUBSTRING_MATCH.test(f) ? PHRASE_FORMS : SINGLE_WORD_FORMS).push([f, e]);
   }
 }
 
@@ -264,22 +275,29 @@ function jobKeyTerms(
 
   const key = new Set<string>(canon);
   // A technology tag the source already extracted is an explicit ask even if the
-  // prose did not spell it out. Map it onto a canonical skill when we can.
+  // prose did not spell it out, when it maps onto a skill the lexicon actually
+  // knows. One that does not (a specific enterprise product name like "Palantir
+  // Foundry" or "AWS GovCloud", or the vendor's own internal name for a
+  // capability) used to be added as its own unmatchable key term regardless: a
+  // real posting named eleven technologies, seven of which mapped to nothing in
+  // the lexicon, and every one of those seven counted as a missing required
+  // skill no candidate could ever satisfy, capping the score at 59% before a
+  // single real skill was even weighed. The lexicon exists precisely to decide
+  // which surface forms are the same skill; a form it does not recognise is not
+  // evidence the posting asks for something specific, it is evidence the
+  // lexicon has not been taught that alias yet, and it should not cost the
+  // score in the meantime.
   for (const raw of result.technologies ?? []) {
     const t = normalize(raw);
     const entry = FORM_TO_ENTRY.get(t);
     if (entry) key.add(entry.canon);
-    else if (t) key.add(`tech:${t}`);
   }
   // Custom profile skills the posting names verbatim.
   for (const c of vocab.custom) {
     if (norm.includes(c)) key.add(c);
   }
 
-  const displayOf = (t: string): string => {
-    if (t.startsWith("tech:")) return t.slice(5);
-    return vocab.display.get(t) ?? t;
-  };
+  const displayOf = (t: string): string => vocab.display.get(t) ?? t;
   return { key, displayOf };
 }
 
@@ -309,10 +327,7 @@ export function scoreJob(result: DiscoveryResult, vocab: ProfileVocab): FitResul
     return { score: 0, matched: [], gaps: [], confident: false };
   }
 
-  const has = (t: string): boolean =>
-    t.startsWith("tech:")
-      ? vocab.canon.has(t.slice(5)) || vocab.custom.has(t.slice(5))
-      : vocab.canon.has(t) || vocab.custom.has(t);
+  const has = (t: string): boolean => vocab.canon.has(t) || vocab.custom.has(t);
 
   const matched: string[] = [];
   const gaps: string[] = [];
