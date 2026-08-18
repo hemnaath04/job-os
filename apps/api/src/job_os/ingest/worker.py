@@ -23,6 +23,7 @@ import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from sqlalchemy import select
@@ -39,6 +40,7 @@ from job_os.ingest.upsert import (
     mark_duplicates,
     upsert_postings,
 )
+from job_os.services import appwrite_tables
 
 log = structlog.get_logger(__name__)
 
@@ -265,53 +267,57 @@ async def dedupe_recent(
     over the index is quadratic and mostly re-answers questions already answered.
     Cross-run duplicates are caught the next time both rows are re-crawled in the
     same sweep, and the stage-one content hash catches the rest for free on write.
+
+    Reads Appwrite, not Postgres: `upsert_postings` writes this run's postings
+    there now, so a query against `JobPosting.last_crawl_run_id == run_id`
+    would find nothing for any run after the move -- this candidate fetch has
+    to track that write path, not just `mark_duplicates`. `session` itself is
+    unused by this function directly, but stays a real parameter (not deleted)
+    since it is still passed through to `mark_duplicates` below, which keeps
+    the same signature for the same reason.
     """
-    rows = await session.execute(
-        select(
-            JobPosting.id,
-            JobPosting.dedupe_key,
-            JobPosting.content_hash,
-            JobPosting.jd_clean,
-            JobPosting.jd_hydrated,
-            JobPosting.posted_at,
-            JobPosting.posted_at_estimated,
-            JobPosting.first_seen_at,
-        )
-        .where(
-            JobPosting.last_crawl_run_id == run_id,
-            JobPosting.active.is_(True),
-            JobPosting.canonical_id.is_(None),
-        )
-        .limit(limit)
+    records = await appwrite_tables.list_rows(
+        filters=[f"last_crawl_run_id={run_id}", "active=true"],
+        queries=[{"method": "isNull", "attribute": "canonical_id"}],
+        select=[
+            "source_posting_id",
+            "dedupe_key",
+            "content_hash",
+            "jd_clean",
+            "jd_hydrated",
+            "posted_at",
+            "posted_at_estimated",
+            "first_seen_at",
+        ],
+        limit=limit,
     )
-    records = rows.all()
     if len(records) < 2:
         return 0
 
     candidates: list[DedupeCandidate] = []
     by_key: dict[str, uuid.UUID] = {}
-    for (
-        posting_id,
-        dedupe_key,
-        content_hash,
-        jd_clean,
-        jd_hydrated,
-        posted_at,
-        posted_at_estimated,
-        first_seen_at,
-    ) in records:
+    for record in records:
+        posting_id = uuid.UUID(record["source_posting_id"])
         key = str(posting_id)
         by_key[key] = posting_id
+        posted_at = _parse_dt(record.get("posted_at"))
+        # `_survivor_rank` requires a real datetime, not Optional -- every row
+        # here should carry one, but `datetime.now` is a safer fallback than a
+        # crash if a malformed row somehow lacks it.
+        first_seen_at = _parse_dt(record.get("first_seen_at")) or datetime.now(UTC)
         candidates.append(
             DedupeCandidate(
                 key=key,
-                dedupe_key=dedupe_key,
-                content_hash=content_hash,
+                dedupe_key=record["dedupe_key"],
+                content_hash=record["content_hash"],
                 # An unhydrated body is provider metadata, not a description.
                 # Feeding it to TF-IDF would make every posting from one
-                # SmartRecruiters board look like every other one.
-                description=jd_clean if jd_hydrated else "",
-                rank=_survivor_rank(posted_at, posted_at_estimated, first_seen_at),
+                # SmartRecruiters board look like every other one. `.get(...)
+                # or ""` because Appwrite omits an empty-string attribute from
+                # a row payload entirely rather than returning "" for it, so a
+                # genuinely hydrated-but-empty body reads back as a missing key.
+                description=(record.get("jd_clean") or "") if record.get("jd_hydrated") else "",
+                rank=_survivor_rank(posted_at, bool(record.get("posted_at_estimated")), first_seen_at),
             )
         )
 
@@ -334,6 +340,18 @@ async def dedupe_recent(
             marked=marked,
         )
     return marked
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    """An Appwrite row's timestamp column, as ISO 8601 text, back into a `datetime`.
+
+    Postgres handed these back already typed; Appwrite's JSON responses do not.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
 def _survivor_rank(

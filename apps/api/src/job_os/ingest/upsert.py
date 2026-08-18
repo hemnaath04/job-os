@@ -333,26 +333,40 @@ async def mark_duplicates(
     The duplicate keeps its own row: its URL still resolves, the merge is
     reversible if it was wrong, and the read path filters on `canonical_id IS
     NULL` rather than relying on a delete having been correct.
+
+    `duplicate_id`/`canonical_id` are `source_posting_id` values (the stable
+    identity `job_index.py` and this module both key on since the move to
+    Appwrite), not Appwrite's own `$id`. One `update_rows` call per link,
+    not the single batched SQL `UPDATE` Postgres gave this for free -- each
+    link sets a different `canonical_id`/`reason`/`score`, so they cannot
+    share one `data` patch the way `deactivate_missing`'s single flip to
+    `active=False` can. `session` is unused; kept so `worker.py`'s call site
+    did not need to change, same as `search_index`.
     """
+    del session
     if not links:
         return 0
     marked = 0
     for duplicate_id, canonical_id, reason, score in links:
         if duplicate_id == canonical_id:
             continue
-        result = await session.execute(
-            update(JobPosting)
-            .where(JobPosting.id == duplicate_id, JobPosting.canonical_id.is_(None))
-            .values(canonical_id=canonical_id, duplicate_reason=reason, duplicate_score=score)
-            .returning(JobPosting.id)
+        marked += await appwrite_tables.update_rows(
+            filters=[f"source_posting_id={duplicate_id}"],
+            queries=[{"method": "isNull", "attribute": "canonical_id"}],
+            data={"canonical_id": str(canonical_id), "duplicate_reason": reason, "duplicate_score": score},
         )
-        marked += len(result.all())
     return marked
 
 
 async def postings_for_board(
     session: AsyncSession, *, source: str, board_token: str, active_only: bool = True
 ) -> list[JobPosting]:
+    """Unused anywhere in this repo (checked at the time of the Appwrite move) and
+    stale since: it still reads Postgres's `job_postings`, which nothing has written
+    a new row into since that move. Left as-is rather than deleted or rewritten for
+    a caller that does not exist -- rewrite this against `appwrite_tables` first if
+    one shows up.
+    """
     statement = select(JobPosting).where(
         JobPosting.source == source, JobPosting.board_token == board_token
     )

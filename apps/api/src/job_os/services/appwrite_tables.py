@@ -104,16 +104,23 @@ async def upsert_rows(rows: list[dict[str, Any]]) -> None:
         await asyncio.to_thread(_run, args)
 
 
-async def update_rows(*, filters: list[str], data: dict[str, Any]) -> int:
-    """Apply one `data` patch to every row matching `filters`, in a single call.
+async def update_rows(
+    *, filters: list[str] | None = None, queries: list[dict[str, Any]] | None = None, data: dict[str, Any]
+) -> int:
+    """Apply one `data` patch to every row matching `filters`/`queries`, in a single call.
 
     Real bulk semantics from Appwrite itself here, unlike `upsert_rows` --
     exactly what `deactivate_missing` needs (one WHERE, one SET, no per-row
-    round trip), so no lookup-then-write race exists for this path.
+    round trip), so no lookup-then-write race exists for this path. `queries`
+    exists for the same reason `list_rows` takes it: `--filter` alone cannot
+    express an isNull check, which `mark_duplicates` needs to preserve its
+    "only mark an unmerged row" guard.
     """
     args = ["appwrite", "tablesdb", "update-rows", "--database-id", DATABASE_ID, "--table-id", TABLE_ID, "--json", "--data", json.dumps(data)]
-    for f in filters:
+    for f in filters or []:
         args += ["--filter", f]
+    for q in queries or []:
+        args += ["--queries", json.dumps(q)]
     payload = await asyncio.to_thread(_run, args)
     rows = payload.get("rows")
     if isinstance(rows, list):

@@ -6,6 +6,10 @@ which makes search latency the sum of someone else's API latency and caps covera
 at the boards in that file. This module answers the same question with one indexed
 query and does not touch the network.
 
+**Storage.** `job_postings` moved off Neon Postgres to Appwrite (see
+`search_index`'s own docstring for the honest list of what retrieval lost in
+that move -- graded relevance chief among them). Everything below stayed put.
+
 **Ranking.** `rank = retrieve_score * freshness_weight * mix_weight`, multiplicative
 so freshness cannot be swamped by a marginally better keyword match. With an
 additive score, a perfect title hit from eight months ago outranks a good hit from
@@ -13,34 +17,33 @@ this morning, which is the wrong answer for a job search: the old one is probabl
 filled. Multiplying means a stale posting has to be substantially more relevant to
 beat a fresh one, rather than slightly.
 
-  * `retrieve_score`  `ts_rank_cd` over the weighted tsvector, normalized to (0,1].
-                      1.0 when no keywords were given, so a browse is ranked purely
-                      on freshness and mix.
+  * `retrieve_score`  always `1.0` now -- Appwrite's fulltext match is pass/fail,
+                      not graded, so a row that reaches this function already
+                      passed the filter and has nothing left to score. Formerly
+                      `ts_rank_cd` over a weighted tsvector; see `search_index`.
   * `freshness_weight` exponential decay on the effective date with a 14-day half
                       life, floored so an old-but-perfect match is demoted rather
                       than deleted.
   * `mix_weight`      diversity: the nth posting from one company is progressively
                       discounted, so one employer mid-hiring-spree cannot own the
-                      page. Positional, so it is applied in Python after SQL has
-                      produced a candidate pool.
+                      page. Positional, applied in Python after the candidate pool
+                      comes back from Appwrite.
 
-**Two-phase, and why.** SQL filters and scores a candidate pool on
-`retrieve_score * freshness_weight`, which are both row-local, then Python applies
-the positional `mix_weight` and re-sorts. Doing diversity in SQL would need a
-window function over the whole match set, which is the expensive part of the query
-for a value that only affects the ordering of one page.
+**Two-phase, and why.** Appwrite's filters/fulltext search pick the candidate
+pool and a coarse sort order; Python then computes the real `freshness_weight`
+and the positional `mix_weight` and re-sorts by the full multiplicative rank.
+Diversity has to happen after retrieval regardless of storage engine: it is a
+function of a row's position among its neighbors, not of the row alone.
 
-The pool query deliberately does not select `jd_clean`. Measured on 19,461 real
-crawled postings, a 480-row pool cost 8.5ms selecting the narrow columns and 87.4ms
-selecting the same rows plus `left(jd_clean, 400)`. `jd_clean` averages 5,569
-characters and 17,204 of those 19,461 rows exceed 2KB, so Postgres keeps it out of
-line in TOAST and has to fetch and decompress it once per row. Snippets are
-therefore a second query over the ~60 rows that survived ranking rather than the
-480 that were considered, and that query measures 0.9ms.
+Snippets are a second pass, over just the ~60 rows that survived ranking, so
+that Appwrite's own row size cap and the cost of moving `jd_clean` around only
+has to be paid for a page, not the whole candidate pool -- the same shape the
+Postgres version used, back when it was TOAST doing the cost, not Appwrite.
 
-The result count gets the same treatment: an exact `COUNT(*)` over a keyword match
-measured 48.4ms against 4.7ms bounded at `TOTAL_COUNT_CAP`, so the count is capped
-and `total_matched_capped` says so rather than implying a precise total.
+The result count is capped at `TOTAL_COUNT_CAP` for the same reason as before:
+a searcher does not act on the difference between 1,000 and 7,019 matches, and
+`total_matched_capped` says when the number is a floor rather than an exact
+total.
 
 **Freshness is reported, not asserted.** Every result carries `first_seen_at`,
 `last_seen_at`, and `posted_at_estimated`, so the UI can say "first seen 3 weeks
@@ -71,9 +74,13 @@ FRESHNESS_HALF_LIFE_DAYS = 14.0
 #: real job, so it is ranked down rather than filtered out; deciding it is gone is
 #: the crawl's job, via `active`, not the ranker's.
 MIN_FRESHNESS_WEIGHT = 0.05
-#: `ts_rank_cd` is unbounded, so it is squashed into (0,1] by x/(x+k). k sets where
-#: the curve bends; 1.0 keeps typical scores spread across the useful range instead
-#: of saturating near 1.
+#: Inert since the move to Appwrite: this squashed `ts_rank_cd`'s unbounded
+#: score into (0,1] via x/(x+k). Appwrite's fulltext match has no score to
+#: squash -- `retrieve_score` is a flat 1.0 now (see this module's own
+#: docstring) -- so this constant no longer affects any ranking and is not
+#: reported by `ranking_constants()`. Left defined, unused, rather than
+#: deleted: the Postgres-backed `ts_rank_cd` path this tuned is still real
+#: code history, not a hypothetical one.
 RANK_SATURATION_K = 1.0
 #: Discount applied to the nth posting from the same company on one page.
 COMPANY_DIVERSITY_DECAY = 0.65
@@ -598,11 +605,17 @@ def promote_payload(hit: IndexHit) -> dict[str, object]:
 
 
 def ranking_constants() -> dict[str, float]:
-    """The tunables, so the web app can describe the ranking without copying it."""
+    """The tunables, so the web app can describe the ranking without copying it.
+
+    `rank_saturation_k` is deliberately absent: it tuned `ts_rank_cd`'s
+    squash curve, and Appwrite's fulltext match has no graded score for that
+    curve to act on anymore (see `RANK_SATURATION_K`'s own comment).
+    Reporting a number that no longer shapes any result would be exactly the
+    kind of implied precision this module's docstrings have never allowed.
+    """
     return {
         "freshness_half_life_days": FRESHNESS_HALF_LIFE_DAYS,
         "min_freshness_weight": MIN_FRESHNESS_WEIGHT,
-        "rank_saturation_k": RANK_SATURATION_K,
         "company_diversity_decay": COMPANY_DIVERSITY_DECAY,
         "min_mix_weight": MIN_MIX_WEIGHT,
     }
