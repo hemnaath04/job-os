@@ -205,7 +205,7 @@ export default function ApplicationsPage() {
           cta={{ href: "/jobs", label: "Find internships" }}
         />
       ) : (
-        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-3">
+        <div className="mt-5 flex min-h-0 flex-1 flex-col gap-4">
           <ApplicationToolbar
             applications={baseApplications}
             query={query}

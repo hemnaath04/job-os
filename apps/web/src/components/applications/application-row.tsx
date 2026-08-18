@@ -3,8 +3,9 @@
 import { format } from "date-fns";
 import { memo } from "react";
 import { CompanyAvatar } from "@/components/company-avatar";
+import { StatusPill } from "@/components/status-pill";
+import { Badge } from "@/components/ui/badge";
 import type { Application } from "@/lib/types";
-import { STATUS_LABELS } from "@/lib/types";
 
 function formatShortDate(iso: string): string {
   return format(new Date(iso), "MMM d");
@@ -33,7 +34,7 @@ export const ApplicationRow = memo(function ApplicationRow({
       onClick={onSelect}
       aria-current={selected}
       className={
-        "flex w-full items-center gap-3 border-b border-[color:var(--color-border)] px-3 py-2.5 text-left transition " +
+        "flex w-full items-center gap-3 border-b border-[color:var(--color-border)] px-3 py-3 text-left transition " +
         (selected
           ? "bg-[color:var(--color-accent-soft)]"
           : "hover:bg-[color:var(--color-surface-2)]")
@@ -47,21 +48,29 @@ export const ApplicationRow = memo(function ApplicationRow({
         <div className="truncate text-xs text-[color:var(--color-text-muted)]">
           {application.job.title}
         </div>
-        <div className="mt-0.5 truncate text-[11px] text-[color:var(--color-text-dim)]">
-          {STATUS_LABELS[application.status]}
-          {stageDate ? ` · ${formatShortDate(stageDate)}` : ""}
+        <div className="mt-1.5 flex items-center gap-1.5">
+          <StatusPill status={application.status} size="xs" />
+          {stageDate && (
+            <span className="text-[11px] text-[color:var(--color-text-dim)]">
+              {formatShortDate(stageDate)}
+            </span>
+          )}
         </div>
       </div>
-      <div className="flex shrink-0 flex-col items-end gap-0.5 text-right">
-        {matchScore !== null && (
-          <span className="text-[11px] font-semibold tabular-nums text-[color:var(--color-accent-ink)]">
-            {matchScore}% match
-          </span>
+      <div className="flex shrink-0 flex-col items-end gap-1 text-right">
+        {matchScore !== null ? (
+          <Badge variant="accent">{matchScore}% match</Badge>
+        ) : (
+          // Named rather than left blank: a bare-empty corner next to a row
+          // that does have a score reads as broken, not as "nothing to show
+          // here". See job-fit.ts -- this is "too few recognized skills to
+          // score confidently", not a bug, and the row should say so.
+          <span className="text-[11px] text-[color:var(--color-text-dim)]">Not scored</span>
         )}
         {application.next_action_label && (
-          <span className="max-w-28 truncate text-[10px] text-[color:var(--color-amber)]">
+          <Badge variant="amber" className="max-w-28 truncate">
             {application.next_action_label}
-          </span>
+          </Badge>
         )}
       </div>
     </button>

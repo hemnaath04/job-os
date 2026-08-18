@@ -6,7 +6,7 @@ import { useRef } from "react";
 import { ApplicationRow } from "@/components/applications/application-row";
 import type { Application } from "@/lib/types";
 
-const ROW_HEIGHT = 68;
+const ROW_HEIGHT = 78;
 
 /**
  * The scrolling half of the master-detail layout. Virtualized: a 1,000-row
