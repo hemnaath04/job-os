@@ -490,6 +490,89 @@ export type DiscoverySource =
   | "feed:jobicy"
   | "feed:arbeitnow";
 
+/**
+ * One score component from `/index/search`'s `explain=true`. Debugging shape,
+ * not rendered on a card; kept typed so a future breakdown view has it ready.
+ */
+export interface IndexScoreExplain {
+  rank: number;
+  retrieve_score: number;
+  freshness_weight: number;
+  mix_weight: number;
+  text_rank_raw: number;
+  age_days: number;
+  effective_date: string;
+  company_rank: number;
+  matched_keywords: boolean;
+  formula: string;
+}
+
+/**
+ * One row from the pre-built index (`apps/api/src/job_os/services/job_index.py`),
+ * populated by the overnight ingest crawl rather than a live per-search
+ * fetch. Deliberately close to `DiscoveryResult` in shape (see
+ * `docs/ingest-index.md`) so mapping one into the other is a field copy, not
+ * a UI rewrite -- `first_seen_at`/`last_seen_at`/`posted_at_estimated` are the
+ * real difference: freshness here is evidence, not a single asserted date.
+ */
+export interface IndexHitRead {
+  id: string;
+  source: string;
+  source_id: string;
+  source_url: string;
+  title: string;
+  company_name: string;
+  company_domain: string | null;
+  location: string | null;
+  country_code: string | null;
+  remote: boolean;
+  department: string | null;
+  employment_type: string | null;
+  salary_min: number | null;
+  salary_max: number | null;
+  salary_currency: string | null;
+  snippet: string;
+  description_available: boolean;
+  posted_at: string | null;
+  posted_at_basis: string;
+  posted_at_estimated: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+  active: boolean;
+  inactive_since: string | null;
+  repost_count: number;
+  rank: number;
+  explain: IndexScoreExplain | null;
+}
+
+export interface IndexSearchRequest {
+  title_keywords?: string[];
+  query?: string | null;
+  location?: string | null;
+  country_codes?: string[];
+  company?: string | null;
+  sources?: string[];
+  remote?: boolean | null;
+  max_age_days?: number | null;
+  posted_within_days?: number | null;
+  include_inactive?: boolean;
+  include_duplicates?: boolean;
+  require_description?: boolean;
+  salary_min?: number | null;
+  limit?: number;
+  offset?: number;
+  explain?: boolean;
+}
+
+export interface IndexSearchResponse {
+  results: IndexHitRead[];
+  total_matched: number;
+  total_matched_capped: boolean;
+  candidates_considered: number;
+  took_ms: number;
+  keyword_query: string | null;
+}
+
 export interface DiscoveryResult {
   source: DiscoverySource | string;
   source_label: string | null;

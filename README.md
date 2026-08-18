@@ -8,29 +8,31 @@ It does three things:
    board or work it in a table.
 2. **Tailors resumes.** An agent rewrites a master resume against one specific
    posting, grounded strictly in facts the resume or profile already verifies.
-3. **Finds roles, and scores them against you.** Discovery reads 85 company job
-   boards across Greenhouse, Lever and Ashby, three board-wide feeds that carry
-   every employer on them, the SimplifyJobs new-grad lists, and any endpoint you
-   point it at yourself. Every result is scored against your verified profile, so
-   the page leads with what fits rather than what is newest.
+3. **Finds roles, and scores them against you.** A crawler sweeps Greenhouse,
+   Lever, Ashby and SmartRecruiters on a schedule and stores what it finds, so a
+   search reads an index instead of fetching the internet live. Every result is
+   scored against your verified profile, so the page leads with what fits rather
+   than what is newest.
 
 The tracker is a tracker. The tailoring engine is the part worth reading.
 
 ## Finding roles
 
-Two shapes of source, and the difference decides coverage.
+The default search reads a pre-built index (`apps/api/src/job_os/ingest/`,
+`docs/ingest-index.md`) crawled overnight from Greenhouse, Lever, Ashby and
+SmartRecruiters' public board APIs, on a schedule, with per-token liveness
+tracking so a dead board is not re-checked on every sweep. Reading the index is
+one query, typically under 300ms even at tens of thousands of rows; the fan-out
+this replaced could take 8 to 60 seconds and download over 100MB per search.
 
-**Per-company boards.** Greenhouse, Lever and Ashby publish a JSON endpoint per
-employer, so reaching them means holding a list of companies. That gives clean,
-first-party data and a hard ceiling: a role at a company not on the list is
-invisible. The list is 85 boards, every slug verified live before it was added.
-
-**Board-wide feeds** invert that. One request returns postings from every company
-on the board, so coverage stops depending on how long a list is. These are read
-through a single shape adapter rather than a parser per provider: it locates the
-job array under any of a dozen wrapper keys and maps fields by alias, so
-`job_title`, `jobTitle` and `position` all resolve, and adding a feed is a line
-of config. The same adapter reads a custom endpoint you host, POST or GET.
+**Live sources stay available, as a second, explicit step.** TheirStack, GitHub,
+and any keyed or custom endpoint you add are not in the overnight crawl yet, so
+Job Finder keeps a collapsed "Also search live sources" section that still fans
+out to them on demand for broader, slower coverage. These are read through a
+single shape adapter rather than a parser per provider: it locates the job array
+under any of a dozen wrapper keys and maps fields by alias, so `job_title`,
+`jobTitle` and `position` all resolve, and adding a feed is a line of config.
+The same adapter reads a custom endpoint you host, POST or GET.
 
 ### Fit scoring
 
@@ -227,7 +229,7 @@ browser reads.
 | Jobs and vectors | Postgres with pgvector                                  |
 | Auth          | Clerk                                                      |
 | Models        | Claude, routed through a Manifest gateway                  |
-| Discovery     | 85 Greenhouse, Lever and Ashby boards, board-wide feeds, SimplifyJobs, custom endpoints |
+| Discovery     | Overnight-crawled index (Greenhouse, Lever, Ashby, SmartRecruiters), plus live TheirStack, GitHub, board-wide feeds and custom endpoints as a second step |
 | Job import    | Firecrawl, with a guarded direct HTTP fallback              |
 | Observability | Sentry across web, API and the agent function               |
 | Hosting       | Vercel for the web app, Heroku for the API, Appwrite Cloud  |

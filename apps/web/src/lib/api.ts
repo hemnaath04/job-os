@@ -5,6 +5,8 @@ import type {
   CalendarHistoryEntry,
   DiscoverySearchRequest,
   DiscoverySearchResponse,
+  IndexSearchRequest,
+  IndexSearchResponse,
   InterviewPrep,
   InterviewQuestion,
   Job,
@@ -686,6 +688,17 @@ const legacyApi = {
 
   discoverySearch: (body: DiscoverySearchRequest) =>
     request<DiscoverySearchResponse>("/discovery/search", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  /**
+   * The pre-built index (overnight ingest crawl), not a live fan-out. This is
+   * the fast, default path -- see docs/ingest-index.md. discoverySearch and
+   * discoverNoKey stay as the secondary, opt-in "live sources" path, since
+   * the index only covers Greenhouse/Lever/Ashby/SmartRecruiters today.
+   */
+  indexSearch: (body: IndexSearchRequest) =>
+    request<IndexSearchResponse>("/index/search", {
       method: "POST",
       body: JSON.stringify(body),
     }),

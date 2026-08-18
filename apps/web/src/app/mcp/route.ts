@@ -368,7 +368,7 @@ const handler = createMcpHandler(
       {
         title: "Search Jobs",
         description:
-          "Search job boards for new postings (not yet imported). Merges results across sources and sorts by recency.",
+          "Search a pre-built index of postings crawled overnight from Greenhouse, Lever, Ashby and SmartRecruiters (not yet imported) -- fast, no live board fetch. technology_slugs is folded into the free-text query, since the index matches keywords against the full posting body rather than a separate tech-slug filter.",
         inputSchema: z.object({
           title_keywords: z.array(z.string()).optional(),
           technology_slugs: z.array(z.string()).optional(),
@@ -376,13 +376,21 @@ const handler = createMcpHandler(
           max_age_days: z.number().int().min(1).max(180).optional(),
           limit: z.number().int().min(1).max(50).optional(),
         }),
-        // POST at the HTTP layer, but it only queries job boards and never
+        // POST at the HTTP layer, but it only reads the index and never
         // writes anything to the user's account.
-        annotations: { readOnlyHint: true, openWorldHint: true },
+        annotations: { readOnlyHint: true, openWorldHint: false },
       },
       async (args, ctx) => {
         try {
-          return toolText(await callBackend(token(ctx), "POST", "/discovery/search", args));
+          return toolText(
+            await callBackend(token(ctx), "POST", "/index/search", {
+              title_keywords: args.title_keywords,
+              query: args.technology_slugs?.join(" "),
+              country_codes: args.country_codes,
+              max_age_days: args.max_age_days,
+              limit: args.limit,
+            }),
+          );
         } catch (e) {
           return toolError(e);
         }

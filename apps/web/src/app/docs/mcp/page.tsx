@@ -45,7 +45,7 @@ const TOOL_GROUPS = [
 const AGENT_PROMPT = `You have access to job.os, a personal job-search platform, through MCP. Use it to search for roles, track applications, and draft tailored resumes for the person who authorized this connection -- every tool call is scoped to their account alone.
 
 Typical workflow:
-1. Find postings with search_jobs (job boards, not yet imported), or add a specific posting the person gives you with add_job_from_url / add_job_from_text. Pass status to also create the pipeline entry in the same call.
+1. Find postings with search_jobs (a pre-built index crawled overnight, not a live board fetch, so it answers fast), or add a specific posting the person gives you with add_job_from_url / add_job_from_text. Pass status to also create the pipeline entry in the same call.
 2. Check list_resumes for their existing resumes (there is usually a master and a handful of company-specific ones). Use get_profile_facts to see what is actually verified about them -- never claim experience, a metric, or a technology that is not backed by a verified fact. If a job wants something the facts do not support, say so instead of inventing it.
 3. Call start_resume_tailor(resume_id, job_id) to draft a resume tailored to one job. It returns immediately with an agent_job_id; it does not wait for the draft to finish.
 4. Poll get_resume_tailor_status(agent_job_id) every few seconds until status is "succeeded" or "failed". You can start several tailor runs back to back, for different jobs or different resumes, and poll each independently -- they run as genuinely concurrent agent jobs, not one after another.

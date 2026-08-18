@@ -6,6 +6,7 @@ import { motion } from "framer-motion";
 import {
   Bookmark,
   CheckCircle2,
+  ChevronRight,
   ExternalLink,
   KeyRound,
   Loader2,
@@ -33,6 +34,7 @@ import {
   type FitResult,
   type ProfileVocab,
 } from "@/lib/discover/fit-score";
+import { indexHitToDiscoveryResult } from "@/lib/discover/index-results";
 import { detectEligibilityFlags } from "@/lib/discover/work-auth";
 import { reportFailure } from "@/lib/errors";
 import {
@@ -295,6 +297,10 @@ export default function DiscoverPage() {
   // Hydrate from localStorage so the result list survives nav, reload, and
   // closing and reopening the browser, until Clear results.
   const initial = useMemo(loadState, []);
+  // Free text for the fast, primary search, kept separate from the advanced
+  // panel's own fields below since the two hit different backends with
+  // different filter vocabularies.
+  const [indexQuery, setIndexQuery] = useState<string>("");
   const [titles, setTitles] = useState<string>(initial.titles ?? "");
   const [techs, setTechs] = useState<string>(initial.techs ?? "");
   const [country, setCountry] = useState<string>(initial.country ?? "US");
@@ -311,6 +317,10 @@ export default function DiscoverPage() {
   // Default to fit so the strongest matches lead. When the profile is empty the
   // fit branch falls back to recency, so this is safe for a fresh account too.
   const [sort, setSort] = useState<SortMode>(initial.sort ?? "fit");
+  // Collapsed by default: the index covers the boards that matter, so the
+  // live multi-source fan-out (smart search, saved searches, source picking)
+  // is a slower, broader fallback rather than the thing you see first.
+  const [showLiveSearch, setShowLiveSearch] = useState(false);
 
   const [smartQuery, setSmartQuery] = useState<string>("");
 
@@ -365,6 +375,34 @@ export default function DiscoverPage() {
     },
     onError: (err: Error) => reportFailure("run that search", err),
   });
+
+  // The primary path: the pre-built index, populated by an overnight crawl
+  // rather than fetched live. No sources to pick, because the crawl already
+  // covers the boards that matter; see docs/ingest-index.md.
+  const indexSearch = useMutation({
+    mutationFn: () =>
+      api.indexSearch({
+        query: indexQuery.trim() || undefined,
+        country_codes: country ? [country.toUpperCase()] : [],
+        max_age_days: maxAgeDays,
+        limit,
+      }),
+    onSuccess: (data) => {
+      setResults(data.results.map(indexHitToDiscoveryResult));
+      setSourceCounts({});
+      setSourceErrors([]);
+      if (data.results.length === 0)
+        toast("No results", { description: "Try a broader query, or search live sources below." });
+    },
+    onError: (err: Error) => reportFailure("search the index", err),
+  });
+
+  // Land on a page with something to look at rather than an empty form: only
+  // when there is no persisted state from a previous visit.
+  useEffect(() => {
+    if (results === null) indexSearch.mutate();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function currentQuery(): DiscoverySearchRequest {
     return {
@@ -581,11 +619,72 @@ export default function DiscoverPage() {
         description="Translate plain-English intent into focused job-board searches, then bring the strongest roles into your private pipeline."
         icon={Radar}
       >
-        <InfoChip tone="sage">{FREE_SOURCES.length} free sources</InfoChip>
+        <InfoChip tone="sage">Indexed, updated overnight</InfoChip>
         <InfoChip>{saved.length} saved searches</InfoChip>
         <InfoChip tone="clay">50-result guardrail</InfoChip>
       </PageIntro>
 
+      {/* Primary search: the pre-built index. No sources to pick here, and
+          no wait -- the crawl already ran. */}
+      <div className="workspace-panel mt-6 p-5 sm:p-6">
+        <label htmlFor="index-search" className="text-sm font-medium">
+          Search
+        </label>
+        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
+          Reads from the index, crawled overnight from Greenhouse, Lever, Ashby and
+          SmartRecruiters. Sorted by fit to your profile by default.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          <input
+            id="index-search"
+            type="text"
+            value={indexQuery}
+            onChange={(e) => setIndexQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") indexSearch.mutate();
+            }}
+            placeholder="software engineer intern, python, remote"
+            className="field-control min-w-0 flex-1 rounded-full"
+          />
+          <button
+            onClick={() => indexSearch.mutate()}
+            disabled={indexSearch.isPending}
+            className="kinetic-button kinetic-button-primary disabled:opacity-50"
+          >
+            {indexSearch.isPending ? (
+              <Loader2 className="size-3.5 animate-spin" />
+            ) : (
+              <Search className="size-3.5" />
+            )}
+            Search
+          </button>
+          {results !== null && (
+            <button
+              onClick={clearResults}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+            >
+              <X className="size-3.5" /> Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <button
+        onClick={() => setShowLiveSearch((v) => !v)}
+        aria-expanded={showLiveSearch}
+        className="mt-4 flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+      >
+        <ChevronRight
+          className={`size-3.5 transition-transform ${showLiveSearch ? "rotate-90" : ""}`}
+        />
+        Also search live sources
+        <span className="text-[color:var(--color-text-dim)]">
+          (slower, broader: TheirStack, GitHub, and any keys you have added)
+        </span>
+      </button>
+
+      {showLiveSearch && (
+        <>
       {/* Smart search */}
       <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
         <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
@@ -859,6 +958,8 @@ export default function DiscoverPage() {
           )}
         </div>
       </div>
+        </>
+      )}
 
       {/* Per-source warnings, surfaced any time a source returned 0 hits or
           threw (e.g. THEIRSTACK_API_KEY missing in Render). Prevents the
