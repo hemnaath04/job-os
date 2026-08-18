@@ -68,6 +68,27 @@ jobs:
         working-directory: apps/api
         run: uv run pytest -q
 
+      # Typst renders 5 of the 6 bundled templates in production
+      # (RENDER_ENGINE=typst, and every template except moderncv sets
+      # typst_ready), and until now it had no CI coverage at all -- the only
+      # render job in this file compiles the Tectonic path, nightly. That is
+      # backwards: the engine serving almost every render was the one nothing
+      # checked. This runs per-commit rather than nightly because it can: Typst
+      # is a single static binary and these compiles take about a second in
+      # total, against roughly ten minutes for the Tectonic equivalent.
+      - name: Install Typst
+        env:
+          TYPST_VERSION: 0.15.1
+        run: |
+          set -euo pipefail
+          url="https://github.com/typst/typst/releases/download/v${TYPST_VERSION}/typst-x86_64-unknown-linux-musl.tar.xz"
+          curl -fsSL "$url" | tar -xJ --strip-components=1 -C /usr/local/bin typst-x86_64-unknown-linux-musl/typst
+          typst --version
+
+      - name: Typst templates render
+        working-directory: apps/api
+        run: uv run python -m job_os.scripts.check_typst_templates
+
       - name: ruff + mypy ratchet
         run: ./scripts/lint-ratchet.sh
 
@@ -114,8 +135,13 @@ jobs:
         run: pnpm build
 
   # The render tests do ~20 real Tectonic compiles and take about ten minutes,
-  # which is too slow for every push but too valuable to run never -- they are the
-  # only coverage of the actual LaTeX path. Nightly, plus on demand.
+  # which is too slow for every push but too valuable to run never -- they are
+  # the only coverage of the Tectonic path. That path is not legacy: moderncv
+  # is the one bundled template never ported to Typst, and every custom or
+  # uploaded template stays on Tectonic deliberately, because the sandboxing
+  # for executing somebody else's markup (--untrusted, the forbidden-command
+  # screen, the scrubbed environment) exists only there. Typst covers the rest
+  # and is checked per-commit in the `api` job above. Nightly, plus on demand.
   slow-render:
     name: slow render tests (nightly)
     if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
