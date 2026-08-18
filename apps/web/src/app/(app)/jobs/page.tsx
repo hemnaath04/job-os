@@ -66,6 +66,7 @@ import type {
   DiscoverySearchResponse,
   DiscoverySource,
   DiscoverySourceError,
+  IndexSearchRequest,
   SavedSearch,
 } from "@/lib/types";
 
@@ -384,14 +385,22 @@ export default function DiscoverPage() {
   // The primary path: the pre-built index, populated by an overnight crawl
   // rather than fetched live. No sources to pick, because the crawl already
   // covers the boards that matter; see docs/ingest-index.md.
+  //
+  // Takes an optional override so smart search (below) can run its extracted,
+  // structured filters through this same indexed path instead of the manual
+  // free-text box's state. `title_keywords` is matched title-only on the
+  // backend, unlike `query`, which is why smart search's role phrases go there
+  // rather than into `query` alongside the tech terms.
   const indexSearch = useMutation({
-    mutationFn: () =>
-      api.indexSearch({
-        query: indexQuery.trim() || undefined,
-        country_codes: country ? [country.toUpperCase()] : [],
-        max_age_days: maxAgeDays,
-        limit,
-      }),
+    mutationFn: (override?: IndexSearchRequest) =>
+      api.indexSearch(
+        override ?? {
+          query: indexQuery.trim() || undefined,
+          country_codes: country ? [country.toUpperCase()] : [],
+          max_age_days: maxAgeDays,
+          limit,
+        },
+      ),
     onSuccess: (data) => {
       setResults(data.results.map(indexHitToDiscoveryResult));
       setSourceCounts({});
@@ -405,7 +414,7 @@ export default function DiscoverPage() {
   // Land on a page with something to look at rather than an empty form: only
   // when there is no persisted state from a previous visit.
   useEffect(() => {
-    if (results === null) indexSearch.mutate();
+    if (results === null) indexSearch.mutate(undefined);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -436,15 +445,19 @@ export default function DiscoverPage() {
       const nextSources = mergeSmartSources(filters.sources, sources);
       setSources(nextSources);
       if (explanation) toast.success(explanation);
-      // Auto-run the search with the extracted filters.
-      search.mutate({
-        sources: nextSources,
+      // Auto-run against the daily-updated index rather than the live fan-out:
+      // same coverage this page defaults to for the plain search box, and far
+      // broader than the handful of curated boards "Also search live sources"
+      // fans out to live. title_keywords stays structured (matched title-only,
+      // see lib/discover -- job_index.py on the backend); technology_slugs has
+      // no index-side equivalent, so it folds into the free-text `query`,
+      // mirroring how the MCP search_jobs tool does the same fold.
+      indexSearch.mutate({
         title_keywords: filters.title_keywords ?? [],
-        technology_slugs: filters.technology_slugs ?? [],
+        query: (filters.technology_slugs ?? []).join(" ") || undefined,
         country_codes: filters.country_codes ?? [],
         max_age_days: filters.max_age_days ?? 30,
         limit: filters.limit ?? 20,
-        page: 0,
       });
     },
     onError: (err: Error) => reportFailure("read that sentence", err),
@@ -646,13 +659,13 @@ export default function DiscoverPage() {
             value={indexQuery}
             onChange={(e) => setIndexQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") indexSearch.mutate();
+              if (e.key === "Enter") indexSearch.mutate(undefined);
             }}
             placeholder="software engineer intern, python, remote"
             className="field-control min-w-0 flex-1 rounded-full"
           />
           <button
-            onClick={() => indexSearch.mutate()}
+            onClick={() => indexSearch.mutate(undefined)}
             disabled={indexSearch.isPending}
             className="kinetic-button kinetic-button-primary disabled:opacity-50"
           >
@@ -674,23 +687,12 @@ export default function DiscoverPage() {
         </div>
       </div>
 
-      <button
-        onClick={() => setShowLiveSearch((v) => !v)}
-        aria-expanded={showLiveSearch}
-        className="mt-4 flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-      >
-        <ChevronRight
-          className={`size-3.5 transition-transform ${showLiveSearch ? "rotate-90" : ""}`}
-        />
-        Also search live sources
-        <span className="text-[color:var(--color-text-dim)]">
-          (slower, broader: TheirStack, GitHub, and any keys you have added)
-        </span>
-      </button>
-
-      {showLiveSearch && (
-        <>
-      {/* Smart search */}
+      {/* Smart search: runs against the same daily index the box above does,
+          just from a sentence instead of one free-text field -- see its
+          onSuccess for why that is now indexSearch rather than the live
+          fan-out below. Lives here, next to the index box, rather than inside
+          "Also search live sources": what it searches no longer has anything
+          to do with that section. */}
       <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
         <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Smart search
@@ -723,6 +725,22 @@ export default function DiscoverPage() {
         </div>
       </form>
 
+      <button
+        onClick={() => setShowLiveSearch((v) => !v)}
+        aria-expanded={showLiveSearch}
+        className="mt-4 flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+      >
+        <ChevronRight
+          className={`size-3.5 transition-transform ${showLiveSearch ? "rotate-90" : ""}`}
+        />
+        Also search live sources
+        <span className="text-[color:var(--color-text-dim)]">
+          (slower, broader: TheirStack, GitHub, and any keys you have added)
+        </span>
+      </button>
+
+      {showLiveSearch && (
+        <>
       {/* Saved searches */}
       {saved.length > 0 && (
         <div className="mt-6">
