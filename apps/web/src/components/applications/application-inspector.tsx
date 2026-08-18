@@ -11,6 +11,7 @@ import { Select } from "@/components/ui/select";
 import { reportFailure } from "@/lib/errors";
 import type { ProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
+import { MatchScoreMeter, SkillChip } from "@/components/ui/match-score";
 import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
@@ -166,20 +167,44 @@ export function ApplicationInspector({
       <Section title="AI match">
         {fit.confident ? (
           <>
-            <div className="flex items-center justify-between text-sm">
-              <span className="font-semibold tabular-nums text-[color:var(--color-text)]">
-                {fit.score}%
-              </span>
-              <span className="text-[color:var(--color-text-dim)]">
-                {fit.matched.length} of {fit.matched.length + fit.gaps.length} skills matched
-              </span>
-            </div>
-            <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-[color:var(--color-surface-3)]">
-              <div
-                className="h-full rounded-full bg-gradient-brand"
-                style={{ width: `${fit.score}%` }}
-              />
-            </div>
+            <MatchScoreMeter
+              score={fit.score}
+              matched={fit.matched.length}
+              total={fit.matched.length + fit.gaps.length}
+            />
+            {/* The score was always computed from these two lists, but only
+                the number was ever shown -- which makes a 47% unactionable:
+                you cannot tell whether the gap is one missing framework or a
+                whole discipline. Naming them turns the score into something
+                you can do something about, and it is data we already have. */}
+            {(fit.matched.length > 0 || fit.gaps.length > 0) && (
+              <div className="mt-3 flex flex-col gap-2.5">
+                {fit.matched.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+                      You have
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {fit.matched.map((skill) => (
+                        <SkillChip key={skill} label={skill} matched />
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {fit.gaps.length > 0 && (
+                  <div>
+                    <div className="text-[10px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
+                      Not on your profile
+                    </div>
+                    <div className="mt-1 flex flex-wrap gap-1">
+                      {fit.gaps.map((skill) => (
+                        <SkillChip key={skill} label={skill} matched={false} />
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </>
         ) : (
           <p className="text-xs text-[color:var(--color-text-dim)]">

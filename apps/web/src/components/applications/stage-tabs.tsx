@@ -1,5 +1,7 @@
 "use client";
 
+import { LayoutGroup, motion } from "framer-motion";
+import { useId } from "react";
 import { PRIMARY_STAGES, SECONDARY_STAGES, matchesStatuses } from "@/lib/application-stage";
 import type { PrimaryStage, SecondaryStage } from "@/lib/application-stage";
 import type { Application } from "@/lib/types";
@@ -22,26 +24,31 @@ export function StageTabs({
   active: StageFilter;
   onChange: (stage: StageFilter) => void;
 }) {
+  // Scopes the sliding indicator to this instance, so two tab bars on one page
+  // could never animate into each other.
+  const groupId = useId();
   return (
     <div className="flex flex-col gap-2.5">
-      <div
-        role="tablist"
-        aria-label="Filter by stage"
-        className="inline-flex flex-wrap items-center gap-1 self-start rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1"
-      >
-        {PRIMARY_STAGES.map((stage) => {
-          const count = applications.filter((a) => matchesStatuses(a.status, stage.statuses)).length;
-          return (
-            <StageTab
-              key={stage.key}
-              label={stage.label}
-              count={count}
-              selected={active === stage.key}
-              onClick={() => onChange(stage.key)}
-            />
-          );
-        })}
-      </div>
+      <LayoutGroup id={groupId}>
+        <div
+          role="tablist"
+          aria-label="Filter by stage"
+          className="inline-flex flex-wrap items-center gap-1 self-start rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-1"
+        >
+          {PRIMARY_STAGES.map((stage) => {
+            const count = applications.filter((a) => matchesStatuses(a.status, stage.statuses)).length;
+            return (
+              <StageTab
+                key={stage.key}
+                label={stage.label}
+                count={count}
+                selected={active === stage.key}
+                onClick={() => onChange(stage.key)}
+              />
+            );
+          })}
+        </div>
+      </LayoutGroup>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 text-[11px]">
         {SECONDARY_STAGES.map((stage, index) => {
           const count =
@@ -84,14 +91,33 @@ function StageTab({
       aria-pressed={selected}
       aria-selected={selected}
       className={
-        "flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition " +
+        "relative flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium " +
+        "transition-colors duration-150 " +
         (selected
-          ? "bg-[color:var(--color-accent-soft)] text-[color:var(--color-accent-ink)] shadow-sm"
-          : "text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]")
+          ? "text-[color:var(--color-accent-ink)]"
+          : "text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]")
       }
     >
-      {label}
-      <span className={"tabular-nums " + (selected ? "opacity-80" : "text-[color:var(--color-text-dim)]")}>
+      {/* The selected background is one shared element that travels between
+          tabs rather than a class that pops on and off, so switching stages
+          reads as moving a selection rather than repainting two of them.
+          Spring, not a duration: the distance varies with which tabs you move
+          between, and a fixed duration makes the short hops feel sluggish. */}
+      {selected && (
+        <motion.span
+          layoutId="stage-tab-active"
+          aria-hidden
+          className="absolute inset-0 rounded-full bg-[color:var(--color-accent-soft)] ring-1 ring-inset ring-[color:var(--color-accent-border)]"
+          transition={{ type: "spring", stiffness: 520, damping: 40, mass: 0.7 }}
+        />
+      )}
+      <span className="relative">{label}</span>
+      <span
+        className={
+          "relative tabular-nums " +
+          (selected ? "opacity-70" : "text-[color:var(--color-text-dim)]")
+        }
+      >
         {count}
       </span>
     </button>
