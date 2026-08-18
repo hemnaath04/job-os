@@ -238,6 +238,26 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
     tsquery_text = _tsquery(query.title_keywords, query.query)
     effective_date = func.coalesce(JobPosting.posted_at, JobPosting.first_seen_at)
 
+    # title_keywords is documented ("mirrors matchesTitle") as a title-only match,
+    # but until now it was ANDed into the same tsquery as free-text `query` and
+    # tested against the whole weighted `search_vector` -- title OR company_name OR
+    # location OR up to FTS_DESCRIPTION_CHARS of the JD. That let a title search for
+    # "ai engineer intern" surface "Head of IT" and "BizOps Lead" postings whose JD
+    # body happened to mention "ai", "engineer" and "intern" nowhere near each
+    # other, crowding out the small number of postings actually titled that. The
+    # ranking below still scores against the full `search_vector` (title weighted
+    # highest via setweight), so a real title hit is still preferred over a
+    # same-tsquery body hit; only which rows are allowed to match at all changes.
+    title_tsquery_text = _tsquery(query.title_keywords, None)
+    free_tsquery_text = _tsquery([], query.query)
+    title_vector = func.to_tsvector("english", func.coalesce(JobPosting.title, ""))
+    title_ts_query = (
+        func.to_tsquery("english", title_tsquery_text) if title_tsquery_text else None
+    )
+    free_ts_query = (
+        func.to_tsquery("english", free_tsquery_text) if free_tsquery_text else None
+    )
+
     ts_query: ColumnElement[Any] | None = None
     text_rank: ColumnElement[float]
     retrieve: ColumnElement[float]
@@ -309,8 +329,15 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
         conditions.append(JobPosting.canonical_id.is_(None))
     if query.require_description:
         conditions.append(JobPosting.jd_hydrated.is_(True))
-    if tsquery_text:
-        conditions.append(JobPosting.search_vector.op("@@")(ts_query))
+    match_conditions: list[ColumnElement[bool]] = []
+    if title_ts_query is not None:
+        match_conditions.append(title_vector.op("@@")(title_ts_query))
+    if free_ts_query is not None:
+        match_conditions.append(JobPosting.search_vector.op("@@")(free_ts_query))
+    if match_conditions:
+        conditions.append(
+            match_conditions[0] if len(match_conditions) == 1 else or_(*match_conditions)
+        )
     if query.location:
         conditions.append(JobPosting.location.ilike(f"%{query.location.strip()}%"))
     if query.company:

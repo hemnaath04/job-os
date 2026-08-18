@@ -395,6 +395,80 @@ async def test_max_age_days_judges_a_dateless_posting_by_first_sight(
 
 
 # ---------------------------------------------------------------------------
+# title_keywords is title-only; free-text `query` is not
+# ---------------------------------------------------------------------------
+
+
+async def test_title_keywords_does_not_match_the_jd_body(
+    db_session: AsyncSession, source: str
+) -> None:
+    """A title search is a title search, not "these words somewhere in the JD".
+
+    `search_vector` also carries company_name, location and the JD body, so a
+    title_keywords query that matched against the whole vector (as opposed to
+    the title alone) would surface postings like this: none of "ai", "engineer"
+    or "intern" appear anywhere near each other in the title, only scattered
+    through the body text.
+    """
+    await write(
+        db_session,
+        posting(
+            source=source,
+            external_id="unrelated-title",
+            title="Head of IT",
+            description=(
+                "We are hiring an AI engineer to mentor our summer intern "
+                "cohort and modernize internal tooling."
+            ),
+        ),
+    )
+
+    hits = await search(db_session, source, title_keywords=["ai engineer intern"])
+
+    assert hits == []
+
+
+async def test_free_text_query_still_matches_the_jd_body(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The other half of the same fix: `query` (technology_slugs, folded in by
+    the caller) is meant to search the whole posting, unlike title_keywords."""
+    await write(
+        db_session,
+        posting(
+            source=source,
+            external_id="body-match",
+            title="Backend Engineer",
+            description="We build everything in Rust and deploy on bare metal.",
+        ),
+    )
+
+    hits = await search(db_session, source, query="rust")
+
+    assert [hit.source_id for hit in hits] == ["board:body-match"]
+
+
+async def test_title_keywords_and_free_text_are_alternatives_not_a_conjunction(
+    db_session: AsyncSession, source: str
+) -> None:
+    """Consistent with the rest of this module's "search wider" stance: a posting
+    can qualify on a title hit alone, a body hit alone, or both."""
+    await write(
+        db_session,
+        posting(source=source, external_id="title-only", title="AI Engineer Intern",
+                 description="Nothing about Rust here."),
+        posting(source=source, external_id="body-only", title="Backend Engineer",
+                 description="We build everything in Rust."),
+    )
+
+    hits = await search(
+        db_session, source, title_keywords=["ai engineer intern"], query="rust"
+    )
+
+    assert {hit.source_id for hit in hits} == {"board:title-only", "board:body-only"}
+
+
+# ---------------------------------------------------------------------------
 # what the default query does and does not show
 # ---------------------------------------------------------------------------
 
