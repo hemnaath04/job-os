@@ -28,6 +28,11 @@ from job_os.settings import get_settings
 log = structlog.get_logger(__name__)
 
 PAGE_LIMIT = 1000
+#: Safety cap, not a tuning knob for the current daily schedule - Heroku
+#: Scheduler gives a job runtime up to its own frequency (a daily job gets up
+#: to 24h), so this isn't close to binding today. It exists so a stalled
+#: connection or an unexpectedly large backlog can't run away silently.
+DEFAULT_MAX_SECONDS = 1200
 
 
 @dataclass(slots=True)
@@ -40,6 +45,12 @@ class ImportResult:
     deactivated: int = 0
     duration_s: float = 0.0
     error: str | None = None
+    #: Hit the time budget before exhausting the export. Deactivation is
+    #: skipped whenever this is true (see run_import) - the same board can
+    #: legitimately span more than one export page, so stopping mid-way means
+    #: this run never actually saw any board's complete current list, and
+    #: deactivating on that would risk closing postings that are still live.
+    truncated: bool = False
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -54,6 +65,7 @@ class ImportResult:
             "deactivated": self.deactivated,
             "skipped": self.upsert.skipped,
             "duration_s": round(self.duration_s, 2),
+            "truncated": self.truncated,
             "error": self.error,
         }
 
@@ -89,7 +101,7 @@ async def _fetch_page(client: httpx.AsyncClient, base_url: str, key: str, since_
     return r.json()
 
 
-async def run_import(session: AsyncSession) -> ImportResult:
+async def run_import(session: AsyncSession, *, max_seconds: int = DEFAULT_MAX_SECONDS) -> ImportResult:
     settings = get_settings()
     if not settings.scraper_export_url or not settings.scraper_export_key:
         raise RuntimeError("SCRAPER_EXPORT_URL / SCRAPER_EXPORT_KEY not configured")
@@ -112,6 +124,10 @@ async def run_import(session: AsyncSession) -> ImportResult:
         async with httpx.AsyncClient() as client:
             cursor = 0
             while True:
+                if (datetime.now(UTC) - started).total_seconds() > max_seconds:
+                    result.truncated = True
+                    log.warning("ingest.scraper_import_truncated", run_id=str(run_id), cursor=cursor)
+                    break
                 page = await _fetch_page(
                     client, settings.scraper_export_url, settings.scraper_export_key, cursor
                 )
@@ -128,13 +144,17 @@ async def run_import(session: AsyncSession) -> ImportResult:
                 if cursor is None:
                     break
 
-        # Only boards this run actually saw a current list for get to close out
-        # rows that disappeared - same safety rule the direct-crawl worker uses.
-        for source, board_token in result.boards_touched:
-            result.deactivated += await deactivate_missing(
-                session, source=source, board_token=board_token, run_id=run_id, at=seen_at
-            )
-        await session.commit()
+        # Only when the export was exhausted, not time-boxed out: a board's
+        # postings can span more than one page, so stopping early means no
+        # board's list is provably complete for this run, and deactivating on
+        # that would risk closing postings that are still live (the same rule
+        # deactivate_missing's own docstring states for the direct-crawl worker).
+        if not result.truncated:
+            for source, board_token in result.boards_touched:
+                result.deactivated += await deactivate_missing(
+                    session, source=source, board_token=board_token, run_id=run_id, at=seen_at
+                )
+            await session.commit()
 
         run.status = CrawlStatus.COMPLETED.value
     except Exception as exc:  # noqa: BLE001 - the run row must record the failure
