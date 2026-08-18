@@ -24,7 +24,11 @@ from pypdf import PdfReader
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
 from job_os.services.latex_catalog import builtin
-from job_os.services.latex_render import TectonicUnavailableError, render_resume_pdf_async
+from job_os.services.latex_render import (
+    TectonicUnavailableError,
+    date_range as shared_date_range,
+    render_resume_pdf_async,
+)
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
@@ -1246,9 +1250,12 @@ def generate_latex_source(doc: dict[str, Any]) -> str:
         return "".join(replacements.get(char, char) for char in text)
 
     def date_range(item: dict[str, Any]) -> str:
-        start = esc(item.get("startDate"))
-        end = esc(item.get("endDate") or "Present")
-        return f"{start} -- {end}" if start else end
+        # Shares latex_render.date_range/_fmt_date with the real Typst/LaTeX
+        # templates so this portable source never renders a raw "2026-01-01"
+        # where the actual PDF renders "Jan 2026" -- JSON Resume dates are
+        # YYYY-MM or YYYY to begin with, this function just used to print
+        # them unformatted instead of parsing them.
+        return shared_date_range(item.get("startDate"), item.get("endDate"))
 
     basics = doc.get("basics") or {}
     location = basics.get("location") or {}
