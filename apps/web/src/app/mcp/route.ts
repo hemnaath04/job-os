@@ -16,9 +16,13 @@ import {
 } from "@/lib/mcp/backend";
 import { isAppwritePipelineEnabled, isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import {
+  archiveProfileFact,
   archiveResumeCard,
+  attachReviewAndMaybeFinalize,
   createApplicationCard,
+  createProfileFact,
   getResumeTailorJobStatus,
+  getResumeVersionSnapshot,
   listProfileFacts,
   listResumeCards,
   mirrorResumeCard,
@@ -31,7 +35,7 @@ import {
   retargetResumeVersionCard,
   startResumeTailorJob,
 } from "@/lib/mcp/appwrite";
-import type { Application, Resume, ResumeVersion } from "@/lib/types";
+import type { Application, Resume, ResumeReviewResult, ResumeVersion } from "@/lib/types";
 
 // Resume tailoring calls Claude and can run long; give tool calls the same
 // ceiling the browser's own proxy gets.
@@ -291,6 +295,112 @@ const handler = createMcpHandler(
               args.agent_job_id,
             ),
           );
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "start_resume_finalize",
+      {
+        title: "Start Resume Finalize",
+        description:
+          "Run the quality review and produce a final PDF for a drafted resume version (the output of start_resume_tailor), and return immediately with a job_id rather than waiting -- the review takes real time. Poll get_resume_finalize_status with the same version_id and job_id to get the result. Only works on a version job.os drafted itself; a version that was uploaded as a file has no structured resume to review.",
+        inputSchema: z.object({
+          version_id: z.string().min(1).max(36),
+          template_id: z.string().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const appwriteUserId = resolveAppwriteUserId(clerkUserId(ctx));
+          const version = await getResumeVersionSnapshot(appwriteUserId, args.version_id);
+          if (version.source_filename) {
+            return toolError(
+              new Error(
+                "This version was uploaded as a file, not drafted by job.os, so there is no structured resume to review or finalize.",
+              ),
+            );
+          }
+          const facts = await listProfileFacts(appwriteUserId);
+          const verifiedFacts = facts
+            .filter((fact) => fact.verified)
+            .map((fact) => ({
+              kind: fact.kind,
+              title: fact.title,
+              org: fact.org,
+              start_date: fact.start_date,
+              end_date: fact.end_date,
+              location: fact.location,
+              source_url: fact.source_url,
+              payload: fact.payload,
+              bullets: fact.bullets.map((bullet) => ({ text: bullet.text })),
+            }));
+          const start = (await callBackend(token(ctx), "POST", "/resumes/render-review/start", {
+            json_resume: version.json_resume,
+            template_key: args.template_id ?? null,
+            latex_source: null,
+            verified_facts: verifiedFacts,
+          })) as { job_id: string };
+          return toolText({ job_id: start.job_id, version_id: args.version_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "get_resume_finalize_status",
+      {
+        title: "Get Resume Finalize Status",
+        description:
+          "Poll a job_id from start_resume_finalize, with the same version_id. status is running, done, or error. Once done, the result is applied immediately: status finalized means the review passed (or force was set) and the version is now final; status blocked means the review did not pass and the version stays a draft with the review attached so you can see why -- call again with force: true to finalize anyway, matching the web app's 'Finalize anyway' override. Each finished job can only be read once; a repeated call with the same job_id after it already resolved errors with 'not found' rather than reapplying anything.",
+        inputSchema: z.object({
+          version_id: z.string().min(1).max(36),
+          job_id: z.string().min(1),
+          force: z.boolean().optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const status = (await callBackend(
+            token(ctx),
+            "GET",
+            `/resumes/render-review/status/${args.job_id}`,
+          )) as {
+            status: "running" | "done" | "error";
+            result?: { review: ResumeReviewResult; latex_source: string; pdf_base64: string };
+            error?: string;
+          };
+          if (status.status !== "done" || !status.result) {
+            return toolText(status);
+          }
+          const outcome = await attachReviewAndMaybeFinalize(
+            resolveAppwriteUserId(clerkUserId(ctx)),
+            args.version_id,
+            status.result,
+            args.force ?? false,
+          );
+          return toolText(outcome);
         } catch (e) {
           return toolError(e);
         }
@@ -1004,6 +1114,89 @@ const handler = createMcpHandler(
             return toolText(await listProfileFacts(resolveAppwriteUserId(clerkUserId(ctx))));
           }
           return toolText(await callBackend(token(ctx), "GET", "/profile/facts"));
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "create_profile_fact",
+      {
+        title: "Create Profile Fact",
+        description:
+          "Add a career fact (experience, project, skill, education, certification, publication, award, volunteering, or leadership) to the user's profile vault. verified defaults to false. Only get_profile_facts entries with verified: true are ever cited in a tailored resume, so pass verified: true here only when the user has explicitly confirmed the fact themselves in this conversation -- otherwise leave it false and tell them it needs verifying in the web app before job.os will use it. This distinction is the whole point of the vault: it is what keeps a tailored resume from claiming something nobody checked.",
+        inputSchema: z.object({
+          kind: z.enum([
+            "education",
+            "experience",
+            "project",
+            "skill",
+            "certification",
+            "publication",
+            "award",
+            "volunteering",
+            "leadership",
+          ]),
+          title: z.string().min(1),
+          org: z.string().optional(),
+          start_date: z.string().optional(),
+          end_date: z.string().optional(),
+          location: z.string().optional(),
+          payload: z.record(z.string(), z.unknown()).optional(),
+          verified: z.boolean().default(false),
+          source_url: z.string().optional(),
+          bullets: z
+            .array(
+              z.object({
+                text: z.string().min(1),
+                target_role: z.string().optional(),
+                metric_verified: z.boolean().optional(),
+              }),
+            )
+            .optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const fact = await createProfileFact(resolveAppwriteUserId(clerkUserId(ctx)), args);
+          return toolText(fact);
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "archive_profile_fact",
+      {
+        title: "Archive Profile Fact",
+        description:
+          "Archive a profile fact. The fact and its bullets are not deleted, only hidden from get_profile_facts and future tailoring.",
+        inputSchema: z.object({ fact_id: z.string().min(1).max(36) }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          await archiveProfileFact(resolveAppwriteUserId(clerkUserId(ctx)), args.fact_id);
+          return toolText({ archived: true, fact_id: args.fact_id });
         } catch (e) {
           return toolError(e);
         }

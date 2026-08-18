@@ -27,7 +27,8 @@ const TOOL_GROUPS = [
   },
   {
     title: "Resume tailoring",
-    tools: "start_resume_tailor, get_resume_tailor_status",
+    tools:
+      "start_resume_tailor, get_resume_tailor_status, start_resume_finalize, get_resume_finalize_status",
   },
   {
     title: "Resume library",
@@ -39,21 +40,26 @@ const TOOL_GROUPS = [
     tools:
       "upload_resume_version, create_resume_upload_url, confirm_resume_upload, sync_resume_version_to_appwrite, resync_resume_to_appwrite",
   },
-  { title: "Other", tools: "whoami, get_profile_facts, list_cover_letters, get_upcoming_calendar" },
+  {
+    title: "Other",
+    tools:
+      "whoami, get_profile_facts, create_profile_fact, archive_profile_fact, list_cover_letters, get_upcoming_calendar",
+  },
 ];
 
 const AGENT_PROMPT = `You have access to job.os, a personal job-search platform, through MCP. Use it to search for roles, track applications, and draft tailored resumes for the person who authorized this connection -- every tool call is scoped to their account alone.
 
 Typical workflow:
 1. Find postings with search_jobs (a pre-built index crawled overnight, not a live board fetch, so it answers fast), or add a specific posting the person gives you with add_job_from_url / add_job_from_text. Pass status to also create the pipeline entry in the same call.
-2. Check list_resumes for their existing resumes (there is usually a master and a handful of company-specific ones). Use get_profile_facts to see what is actually verified about them -- never claim experience, a metric, or a technology that is not backed by a verified fact. If a job wants something the facts do not support, say so instead of inventing it.
+2. Check list_resumes for their existing resumes (there is usually a master and a handful of company-specific ones). Use get_profile_facts to see what is actually verified about them -- never claim experience, a metric, or a technology that is not backed by a verified fact. If a job wants something the facts do not support, say so instead of inventing it, or capture it with create_profile_fact first (see the rule on verified below).
 3. Call start_resume_tailor(resume_id, job_id) to draft a resume tailored to one job. It returns immediately with an agent_job_id; it does not wait for the draft to finish.
 4. Poll get_resume_tailor_status(agent_job_id) every few seconds until status is "succeeded" or "failed". You can start several tailor runs back to back, for different jobs or different resumes, and poll each independently -- they run as genuinely concurrent agent jobs, not one after another.
-5. The result of a succeeded job is a draft resume version. It has not been through the quality review or been finalized yet -- that step is still done from the job.os web app today, so tell the person their draft is ready to review there rather than treating it as done.
+5. The result of a succeeded job is a draft resume version, an id you get from that response. To make it final: call start_resume_finalize(version_id) for a job_id, then poll get_resume_finalize_status(version_id, job_id) the same way. Once done, the version is either finalized (the review passed) or blocked (it did not; the review is attached so you can see why, and you can call the status tool again with force: true to finalize anyway).
 6. Use list_applications / get_application_timeline to check pipeline status, and update_application_status to move something forward once the person confirms.
 
 Rules:
-- Nothing here is destructive. archive_resume and move_resume_version never delete data, only hide or relocate it.
+- Nothing here is destructive. archive_resume, move_resume_version, and archive_profile_fact never delete data, only hide or relocate it.
+- create_profile_fact defaults verified to false. Only pass verified: true when the person has explicitly confirmed the fact themselves in this conversation: an unverified fact is never cited in a tailored resume, and a wrongly-verified one corrupts every resume tailored after it.
 - If a tool call fails with "not found" for an id you were given, do not retry with a guessed id -- ask instead.
 - Report what you actually did (which tools, which ids) rather than a generic "I tailored your resume," so the person can verify it in the web app.`;
 
@@ -133,13 +139,14 @@ export default function McpDocsPage() {
 
         <H2 id="tools">What&rsquo;s exposed</H2>
         <p>
-          Twenty-seven tools, covering jobs, applications, resume tailoring, the resume library,
+          Thirty-one tools, covering jobs, applications, resume tailoring, the resume library,
           resume files, profile facts, cover letters, and calendar. Most are pure reads; the
           writes are additive or reversible, nothing destructive, and nothing here can touch
-          another user&rsquo;s data. <code>start_resume_tailor</code> and{" "}
-          <code>get_resume_tailor_status</code> are a start/poll pair: the first returns an{" "}
-          <code>agent_job_id</code> immediately instead of blocking on a draft that takes real
-          time to write, and each one runs as an independent, concurrent agent job.
+          another user&rsquo;s data. <code>start_resume_tailor</code>/<code>get_resume_tailor_status</code>{" "}
+          and <code>start_resume_finalize</code>/<code>get_resume_finalize_status</code> are both
+          start/poll pairs: the first call returns a job id immediately instead of blocking on
+          work that takes real time, and each job runs independently, so several run
+          concurrently rather than queueing behind each other.
         </p>
         <p>
           Both <code>add_job_from_url</code> and <code>add_job_from_text</code> take an optional{" "}

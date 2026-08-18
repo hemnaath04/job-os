@@ -29,7 +29,14 @@ import {
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { appwriteUserIdForClerk } from "@/lib/appwrite/user-id";
-import type { Application, FactBullet, ProfileFact, Resume, ResumeVersion } from "@/lib/types";
+import type {
+  Application,
+  FactBullet,
+  ProfileFact,
+  Resume,
+  ResumeReviewResult,
+  ResumeVersion,
+} from "@/lib/types";
 
 function config() {
   const endpoint = process.env.NEXT_PUBLIC_APPWRITE_ENDPOINT;
@@ -664,6 +671,224 @@ export async function listProfileFacts(
     byFact.set(bullet.fact_id, group);
   }
   return facts.map((fact) => ({ ...fact, bullets: byFact.get(fact.id) ?? [] }));
+}
+
+/**
+ * Mirrors appwriteWorkspace.createFact -- same shape, same two-table write
+ * (the fact row, then one row per bullet), but from an API key instead of a
+ * session, so permissions are granted explicitly the same way every other
+ * write in this file does.
+ */
+export async function createProfileFact(
+  appwriteUserId: string,
+  input: {
+    kind: string;
+    title: string;
+    org?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    location?: string | null;
+    payload?: Record<string, unknown>;
+    verified?: boolean;
+    source_url?: string | null;
+    bullets?: { text: string; target_role?: string | null; metric_verified?: boolean }[];
+  },
+): Promise<ProfileFact> {
+  const { databaseId, profileFactsTableId, factBulletsTableId } = config();
+  const tables = tablesClient();
+  const timestamp = new Date().toISOString();
+  const permissions = ownerPermissions(appwriteUserId);
+
+  const fact: ProfileFact = {
+    id: ID.unique(),
+    kind: input.kind as ProfileFact["kind"],
+    title: input.title,
+    org: input.org ?? null,
+    start_date: input.start_date ?? null,
+    end_date: input.end_date ?? null,
+    location: input.location ?? null,
+    payload: input.payload ?? {},
+    verified: input.verified ?? false,
+    source_url: input.source_url ?? null,
+    bullets: [],
+    created_at: timestamp,
+    updated_at: timestamp,
+  };
+
+  await tables.createRow({
+    databaseId,
+    tableId: profileFactsTableId,
+    rowId: fact.id,
+    data: {
+      owner_id: appwriteUserId,
+      verified: fact.verified,
+      archived: false,
+      source_updated_at: timestamp,
+      snapshot: JSON.stringify(fact),
+    },
+    permissions,
+  });
+
+  for (const inputBullet of input.bullets ?? []) {
+    const bullet: FactBullet & { fact_id: string } = {
+      id: ID.unique(),
+      fact_id: fact.id,
+      text: inputBullet.text,
+      target_role: inputBullet.target_role ?? null,
+      metric_verified: inputBullet.metric_verified ?? false,
+      created_at: timestamp,
+      updated_at: timestamp,
+    };
+    await tables.createRow({
+      databaseId,
+      tableId: factBulletsTableId,
+      rowId: bullet.id,
+      data: {
+        owner_id: appwriteUserId,
+        fact_id: fact.id,
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(bullet),
+      },
+      permissions,
+    });
+    fact.bullets.push(bullet);
+  }
+
+  return fact;
+}
+
+/** Mirrors appwriteWorkspace.archiveFact. Archives, never deletes. */
+export async function archiveProfileFact(appwriteUserId: string, factId: string): Promise<void> {
+  const { databaseId, profileFactsTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<SnapshotOnlyRow>({
+    databaseId,
+    tableId: profileFactsTableId,
+    rowId: factId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("profile fact not found");
+  const timestamp = new Date().toISOString();
+  const fact = { ...(JSON.parse(row.snapshot) as ProfileFact), updated_at: timestamp };
+  await tables.updateRow({
+    databaseId,
+    tableId: profileFactsTableId,
+    rowId: factId,
+    data: {
+      archived: true,
+      source_updated_at: timestamp,
+      snapshot: JSON.stringify(fact),
+    },
+  });
+}
+
+/**
+ * Reads one resume version's full snapshot (including json_resume), owner
+ * checked. Needed before dispatching a finalize job: the FastAPI
+ * render-review endpoint is stateless and has no session of its own, so the
+ * caller has to hand it the document.
+ */
+export async function getResumeVersionSnapshot(
+  appwriteUserId: string,
+  versionId: string,
+): Promise<ResumeVersion> {
+  const { databaseId, resumeVersionsTableId } = config();
+  const row = await tablesClient().getRow<SnapshotOnlyRow>({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume version not found");
+  return JSON.parse(row.snapshot) as ResumeVersion;
+}
+
+/**
+ * Persists a completed render-review result against a version, and finalizes
+ * it when the review passed (or the caller forces it) -- the same sequence
+ * the browser's finalizeVersion runs as three separate Appwrite writes
+ * (attachReview, then markFinalized), collapsed into one so an MCP caller
+ * gets a single answer once the backend job is done rather than needing a
+ * third round trip.
+ *
+ * Called at most once per finished backend job: the render-review status
+ * endpoint (apps/api's get_render_review_job) deletes a job from its
+ * in-memory store the moment it is read as "done" or "error", so a second
+ * poll with the same job_id 404s there before this function is ever reached
+ * again. That is the only guard against double-uploading the PDF, and it is
+ * enough -- there is no path back into this function for a job already
+ * consumed.
+ */
+export async function attachReviewAndMaybeFinalize(
+  appwriteUserId: string,
+  versionId: string,
+  result: { review: ResumeReviewResult; latex_source: string; pdf_base64: string },
+  force: boolean,
+): Promise<{ status: "blocked" | "finalized"; version: ResumeVersion }> {
+  const { databaseId, resumeVersionsTableId, resumeFilesBucketId } = config();
+  const tables = tablesClient();
+  const permissions = ownerPermissions(appwriteUserId);
+
+  const row = await tables.getRow<SnapshotOnlyRow>({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume version not found");
+
+  const pdfFileId = ID.unique();
+  await storageClient().createFile({
+    bucketId: resumeFilesBucketId,
+    fileId: pdfFileId,
+    file: InputFile.fromBuffer(Buffer.from(result.pdf_base64, "base64"), `${versionId}.pdf`),
+    permissions,
+  });
+
+  const reviewedAt = new Date().toISOString();
+  const passed = result.review.passed;
+  const reviewedStatus = passed ? "reviewed" : "needs_changes";
+  let version: ResumeVersion = {
+    ...(JSON.parse(row.snapshot) as ResumeVersion),
+    status: reviewedStatus,
+    review_score: result.review.score,
+    review_report: result.review,
+    latex_source: result.latex_source,
+    updated_at: reviewedAt,
+  };
+  (version as ResumeVersion & { pdf_file_id?: string }).pdf_file_id = pdfFileId;
+
+  await tables.updateRow({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+    data: {
+      status: versionStatusColumn(reviewedStatus),
+      source_updated_at: reviewedAt,
+      snapshot: JSON.stringify(version),
+    },
+  });
+
+  if (!passed && !force) {
+    return { status: "blocked", version };
+  }
+
+  const finalizedAt = new Date().toISOString();
+  version = {
+    ...version,
+    status: "final",
+    approved_by_user: true,
+    finalized_at: finalizedAt,
+    updated_at: finalizedAt,
+  };
+  await tables.updateRow({
+    databaseId,
+    tableId: resumeVersionsTableId,
+    rowId: versionId,
+    data: {
+      status: versionStatusColumn("final"),
+      source_updated_at: finalizedAt,
+      snapshot: JSON.stringify(version),
+    },
+  });
+  return { status: "finalized", version };
 }
 
 export { ID };
