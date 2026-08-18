@@ -242,7 +242,13 @@ export default function ApplicationsPage() {
               onRestore={restoreApplication}
             />
           ) : (
-            <div className="workspace-panel grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[minmax(320px,38%)_1fr]">
+            // flex-1 fills whatever vertical room the page has, which is right
+            // when there are enough rows to use it -- but "fill" has no upper
+            // bound of its own, so a short filtered list (or any list at all on
+            // a tall external display) stretches this bordered panel into a
+            // mostly-empty card instead of leaving that space as plain page
+            // background. max-h caps the panel; flex-1 still fills up to it.
+            <div className="workspace-panel grid min-h-0 flex-1 max-h-[820px] grid-cols-1 overflow-hidden lg:grid-cols-[minmax(320px,38%)_1fr]">
               <div className={`min-h-0 ${selected ? "hidden lg:block" : ""}`}>
                 <ApplicationList
                   applications={filtered}
