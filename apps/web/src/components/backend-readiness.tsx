@@ -4,7 +4,7 @@ import { useEffect } from "react";
 import { isAppwriteInteractiveBackendEnabled } from "@/lib/appwrite/config";
 
 /**
- * Wake both the Render service and Neon compute while the user is on the
+ * Wake both the API and Neon compute while the user is on the
  * landing or authentication screen, before the dashboard needs data.
  */
 export function BackendReadiness() {

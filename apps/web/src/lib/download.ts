@@ -16,8 +16,8 @@ function isAppwriteFileUrl(url: string): boolean {
  * produces in our hosting layout:
  *
  *   1. Click <a download> → browser GETs `/api/backend/...`
- *   2. Vercel proxy forwards to Render (free tier — may be cold)
- *   3. Render wake takes 30-60s
+ *   2. Vercel proxy forwards to the backend (may be cold)
+ *   3. Backend wake takes 30-60s
  *   4. Vercel hobby plan kills the function ~60s and serves its own static
  *      404.html as the response body
  *   5. The browser dutifully writes that HTML to disk as `resume.pdf`

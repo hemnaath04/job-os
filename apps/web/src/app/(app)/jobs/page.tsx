@@ -984,7 +984,7 @@ export default function DiscoverPage() {
         </>
       )}
 
-      {/* Per-source errors only (e.g. THEIRSTACK_API_KEY missing in Render).
+      {/* Per-source errors only (e.g. THEIRSTACK_API_KEY missing on the backend).
           Zero-hit sources are expected noise on a narrow filter, not worth a
           banner, so they go to the console instead; see the search mutation's
           onSuccess. */}

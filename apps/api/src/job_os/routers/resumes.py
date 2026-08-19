@@ -1044,7 +1044,7 @@ async def download_version(
     via a BackgroundTask). On cache miss, render on demand and persist so
     the next click is instant. The cached path matters because the Vercel
     proxy that fronts this is on a tight serverless-function time budget
-    and Render's free tier has a cold-start that already eats most of it.
+    and the backend can have a cold-start that already eats most of it.
     """
     await _load_resume(session, resume_id, user)
     version = await session.get(ResumeVersion, version_id)

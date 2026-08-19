@@ -9,7 +9,7 @@ import { isAppwriteInteractiveBackendEnabled } from "@/lib/appwrite/config";
  * Wake the API when the signed-in shell mounts, then fill low-priority caches
  * only after the backend is responsive and the browser is idle.
  *
- * Why this matters: Render's hobby plan sleeps the API after 15 min idle.
+ * Why this matters: the API can go cold after enough idle time.
  * Starting every authenticated request during a cold boot creates a thundering
  * herd and makes the first screen compete with speculative work. The active
  * page owns its primary query; this component only warms likely next routes.

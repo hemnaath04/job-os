@@ -16,7 +16,7 @@ const API = process.env.API_BASE_URL ?? "http://localhost:8000";
 // extraction doesn't get killed mid-flight.
 export const maxDuration = 300;
 // Force Node runtime — Edge doesn't support arbitrary outbound HTTP to
-// non-HTTPS hosts and our upstream is over a public IP at :8000 via Render.
+// non-HTTPS hosts, and our upstream isn't guaranteed HTTPS in every deployment.
 export const runtime = "nodejs";
 // We're a proxy; no caching, ever.
 export const dynamic = "force-dynamic";
