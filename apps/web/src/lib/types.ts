@@ -507,6 +507,40 @@ export interface IndexScoreExplain {
   formula: string;
 }
 
+export interface IndexScoreLine {
+  axis: string;
+  points: number;
+  reason: string;
+  detail: string;
+  subject: string | null;
+  evidence: string | null;
+}
+
+export interface IndexAxisScore {
+  axis: string;
+  weight: number;
+  points: number;
+  percent: number;
+}
+
+/**
+ * The AI-authoritative fit score, present once a posting has been enriched
+ * (see docs/job-enrichment.md). Absent means the client's own lexicon
+ * estimate (lib/discover/fit-score.ts) renders instead -- the two must never
+ * both render for the same job, see jobs/page.tsx's fitByKey.
+ */
+export interface IndexMatchScore {
+  overall: number;
+  raw_overall: number;
+  axes: IndexAxisScore[];
+  top_reasons: IndexScoreLine[];
+  confidence: "high" | "low";
+  confidence_reasons: string[];
+  blockers: IndexScoreLine[];
+  matched_skills: string[];
+  missing_skills: string[];
+}
+
 /**
  * One row from the pre-built index (`apps/api/src/job_os/services/job_index.py`),
  * populated by the overnight ingest crawl rather than a live per-search
@@ -543,6 +577,7 @@ export interface IndexHitRead {
   repost_count: number;
   rank: number;
   explain: IndexScoreExplain | null;
+  match: IndexMatchScore | null;
 }
 
 export interface IndexSearchRequest {
@@ -587,6 +622,11 @@ export interface DiscoveryResult {
   description: string;
   technologies: string[];
   already_imported: boolean;
+  // Present only for index-search results with a signed-in profile that has
+  // usable signal, and only once the posting has been enriched -- see
+  // IndexMatchScore. Absent for the live discovery path, which never scored
+  // server-side to begin with.
+  match?: IndexMatchScore | null;
 }
 
 export interface DiscoverySearchRequest {

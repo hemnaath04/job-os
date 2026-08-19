@@ -58,12 +58,29 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import json
+
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from job_os.services import appwrite_tables
+from job_os.schemas.enrichment import JobEnrichment
+from job_os.services import appwrite_tables, job_enrich, job_match
+from job_os.services.job_match import CandidateProfile, MatchScore
 
 log = structlog.get_logger(__name__)
+
+#: The Appwrite `job_postings` column holding a job's enrichment document, as
+#: the raw JSON `job_enrich.enrich_job` produced -- not the `Job.jd_parsed`
+#: dict wrapper `store_enrichment`/`load_enrichment` were written against,
+#: since this table has no such column. Wrapping/unwrapping in that shape
+#: here reuses their validation and schema-version handling instead of a
+#: second copy of it.
+ENRICHMENT_COLUMN = "enrichment"
+
+#: Enrichment runs inline, per row, the first time a posting reaches a page a
+#: user actually sees -- bounded by the page size a search ever returns, not
+#: by the corpus. `MAX_LIMIT` is the ceiling on that per-search cost.
+MAX_ENRICH_PER_SEARCH = 50
 
 #: Half life of the freshness decay. A fortnight is roughly the useful life of a
 #: posting: applying on day 30 is materially worse than on day 2.
@@ -182,6 +199,11 @@ class IndexHit:
     repost_count: int
     rank: float
     explain: ScoreExplain | None = None
+    #: None when no `candidate` was passed to `search_index` (the caller has
+    #: no signed-in profile to score against) -- the frontend's own lexicon
+    #: fallback (`fit-score.ts`) is what renders then. Present and
+    #: authoritative otherwise; see `_attach_match_scores`.
+    match: MatchScore | None = None
 
 
 @dataclass(slots=True)
@@ -279,7 +301,12 @@ def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
     )
 
 
-async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchResult:
+async def search_index(
+    session: AsyncSession,
+    query: IndexQuery,
+    *,
+    candidate: CandidateProfile | None = None,
+) -> IndexSearchResult:
     """Retrieval against Appwrite's `job_postings` table (moved off Neon
     Postgres to the same Appwrite project the resume workspace already used,
     on the GitHub Student Pack's Education plan -- Pro-equivalent limits, no
@@ -435,6 +462,8 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
         matched_keywords=matched_keywords,
     )
     _attach_snippets(by_id, hits)
+    if candidate is not None:
+        await _attach_match_scores(by_id, hits, candidate)
 
     took_ms = (time.perf_counter() - started) * 1000
     return IndexSearchResult(
@@ -462,6 +491,74 @@ def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> 
         jd_clean = (row or {}).get("jd_clean") or ""
         hit.snippet = jd_clean[:SNIPPET_CHARS]
         hit.description_available = bool(hit.snippet.strip())
+
+
+def _load_enrichment(row: dict[str, Any]) -> JobEnrichment | None:
+    """A row's stored enrichment, or None if absent/unreadable/stale.
+
+    Reuses `job_enrich.load_enrichment` rather than duplicating its
+    schema-version check and salvage-tolerant validation -- that function
+    expects the `Job.jd_parsed` dict shape it was written against
+    (`{"enrichment": {...}}`), which this table does not have, so the raw
+    column value is wrapped in that shape here rather than storage being
+    reshaped to match a different table's column.
+    """
+    raw = row.get(ENRICHMENT_COLUMN)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return job_enrich.load_enrichment({ENRICHMENT_COLUMN: parsed})
+
+
+async def _attach_match_scores(
+    by_id: dict[Any, dict[str, Any]], hits: list[IndexHit], candidate: CandidateProfile
+) -> None:
+    """Score every hit on this page against `candidate`, enriching first if needed.
+
+    Enrichment is the one LLM call per job the whole design rests on (see
+    `docs/job-enrichment.md`) -- it runs here, lazily, the first time a
+    posting reaches a page a real search actually returns, rather than eagerly
+    over the full crawl. That bounds the cost of a backlog-heavy corpus to
+    "at most one page's worth of new calls per search" instead of "the whole
+    index, most of which nobody will ever look at". A posting enriched once
+    stays enriched: the result is written back to Appwrite so every later
+    search reads it for free, exactly like `job_match.score_job` itself.
+    """
+    to_persist: list[dict[str, Any]] = []
+    enriched_count = 0
+    for hit in hits:
+        row = by_id.get(str(hit.id))
+        if row is None:
+            continue
+        enrichment = _load_enrichment(row)
+        if enrichment is None and enriched_count < MAX_ENRICH_PER_SEARCH:
+            enrichment = await job_enrich.enrich_job(
+                row.get("jd_clean") or "",
+                title_hint=row.get("title"),
+                company_hint=row.get("company_name"),
+                posted_at=hit.posted_at,
+            )
+            enriched_count += 1
+            row_id = row.get("$id")
+            if row_id:
+                to_persist.append(
+                    {"$id": row_id, ENRICHMENT_COLUMN: json.dumps(enrichment.model_dump(mode="json"))}
+                )
+        if enrichment is not None:
+            hit.match = job_match.score_job(enrichment, candidate)
+    if to_persist:
+        try:
+            await appwrite_tables.upsert_rows(to_persist)
+        except appwrite_tables.AppwriteTablesError as exc:
+            # A search that scored jobs correctly but failed to cache the
+            # result is a slower future search, not a wrong one -- the next
+            # request just enriches these rows again. Not worth failing the
+            # search a user is waiting on over a write that only saves money.
+            log.warning("job_index.enrichment_persist_failed", error=str(exc)[:300])
+
 
 def _freshness_weight(age_days: float) -> float:
     """Python twin of the SQL freshness expression. Kept for the EXPLAIN field."""

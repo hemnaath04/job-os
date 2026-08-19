@@ -51,10 +51,13 @@ beside the score, in `blockers`.
 """
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import date
 from fractions import Fraction
 from typing import Literal
 
+from job_os.db.models.profile import ProfileFact
 from job_os.schemas.enrichment import (
     DEGREE_ORDER,
     ENRICHMENT_SCHEMA_VERSION,
@@ -1048,3 +1051,124 @@ def explain(score: MatchScore) -> list[str]:
     for blocker in score.blockers:
         out.append(f"  blocker: {blocker.detail}")
     return out
+
+
+# Substring match against a JSON-Resume `studyType` (free text: "Bachelor of
+# Science", "BS", "Master's", "MBA", ...), checked longest-keyword-first so
+# "master of business administration" does not fall through to a shorter
+# false positive. Ordered by degree level otherwise, low to high.
+_DEGREE_KEYWORDS: tuple[tuple[str, DegreeLevel], ...] = (
+    ("ged", "high-school"),
+    ("high school", "high-school"),
+    ("associate", "associates"),
+    ("bachelor", "bachelors"),
+    ("b.s", "bachelors"),
+    ("b.a", "bachelors"),
+    ("mba", "masters"),
+    ("master", "masters"),
+    ("m.s", "masters"),
+    ("m.a", "masters"),
+    ("phd", "doctorate"),
+    ("ph.d", "doctorate"),
+    ("doctorate", "doctorate"),
+    ("doctoral", "doctorate"),
+)
+
+
+def _degree_level_from_text(text: str | None) -> DegreeLevel:
+    if not text:
+        return "none"
+    lowered = text.lower()
+    for keyword, level in _DEGREE_KEYWORDS:
+        if keyword in lowered:
+            return level
+    return "none"
+
+
+def _seniority_from_years(years: float) -> Seniority:
+    """A rough band from total experience. Used only when no seniority is
+    tracked anywhere else in today's profile data model -- see
+    `build_candidate_profile`."""
+    if years < 1:
+        return "intern"
+    if years < 2:
+        return "new-grad"
+    if years < 5:
+        return "mid"
+    if years < 8:
+        return "senior"
+    if years < 12:
+        return "staff"
+    return "principal"
+
+
+_MANAGEMENT_TITLE_TERMS = ("manager", "lead", "head of", "director", "chief", "vp ", "vp,")
+
+
+def build_candidate_profile(facts: Sequence[ProfileFact]) -> CandidateProfile:
+    """The only supported way to turn a user's profile facts into a
+    `CandidateProfile`, so every caller canonicalizes and degrades the same way.
+
+    Best-effort by necessity: today's profile data model has no field for
+    industries, target titles, visa/clearance/remote preference, or desired
+    commitment type, so those stay at `CandidateProfile.build`'s safe
+    defaults. That is not a bug to fix here -- `score_job` already treats an
+    absent signal as "no opinion" rather than "no", which is what lets the
+    industry axis and the bonus lines degrade gracefully instead of inventing
+    a claim about the candidate. Only `verified` facts count, the same rule
+    generated resumes already follow: an unconfirmed draft is not something
+    to score a candidate's fit on.
+    """
+    verified = [f for f in facts if f.verified]
+
+    skills: list[str] = []
+    for fact in verified:
+        if fact.kind == "skill" and fact.title:
+            skills.append(fact.title)
+        if fact.kind in ("experience", "project"):
+            skills.extend(str(k) for k in (fact.payload or {}).get("keywords") or [])
+
+    today = date.today()
+    years_experience = 0.0
+    has_management = False
+    for fact in verified:
+        if fact.kind != "experience" or fact.start_date is None:
+            continue
+        end = fact.end_date or today
+        years_experience += max((end - fact.start_date).days / 365.25, 0.0)
+        if any(term in (fact.title or "").lower() for term in _MANAGEMENT_TITLE_TERMS):
+            has_management = True
+
+    highest_degree: DegreeLevel = "none"
+    in_progress_degree: DegreeLevel | None = None
+    degree_fields: list[str] = []
+    for fact in verified:
+        if fact.kind != "education":
+            continue
+        payload = fact.payload or {}
+        level = _degree_level_from_text(payload.get("studyType") or fact.title)
+        if level == "none":
+            continue
+        area = payload.get("area")
+        if area:
+            degree_fields.append(str(area))
+        if fact.end_date is None or fact.end_date > today:
+            if in_progress_degree is None or DEGREE_ORDER.index(level) > DEGREE_ORDER.index(
+                in_progress_degree
+            ):
+                in_progress_degree = level
+        elif DEGREE_ORDER.index(level) > DEGREE_ORDER.index(highest_degree):
+            highest_degree = level
+
+    has_experience = any(f.kind == "experience" for f in verified)
+    seniority = _seniority_from_years(years_experience) if has_experience else "unknown"
+
+    return CandidateProfile.build(
+        skills=skills,
+        years_experience=round(years_experience, 1),
+        seniority=seniority,
+        highest_degree=highest_degree,
+        in_progress_degree=in_progress_degree,
+        degree_fields=degree_fields,
+        has_management_experience=has_management,
+    )

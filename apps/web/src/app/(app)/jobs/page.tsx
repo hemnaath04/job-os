@@ -66,9 +66,23 @@ import type {
   DiscoverySearchResponse,
   DiscoverySource,
   DiscoverySourceError,
+  IndexMatchScore,
   IndexSearchRequest,
   SavedSearch,
 } from "@/lib/types";
+
+// Adapts the server's AI-authoritative score to the shape the client
+// heuristic already returns, so ResultCard/sorting need no separate
+// rendering path for the two -- see fitByKey's own comment for the handoff
+// contract this exists to serve.
+function serverMatchToFitResult(match: IndexMatchScore): FitResult {
+  return {
+    score: match.overall,
+    matched: match.matched_skills,
+    gaps: match.missing_skills,
+    confident: match.confidence === "high",
+  };
+}
 
 type SortMode = "fit" | "recency" | "location";
 const SORT_LABEL: Record<SortMode, string> = {
@@ -595,10 +609,21 @@ export default function DiscoverPage() {
   const vocab: ProfileVocab = useMemo(() => buildProfileVocab(facts), [facts]);
   // Score every result once, keyed the same way the card list is keyed, so both
   // the sort and each card's badge read from the same computation.
+  //
+  // The handoff contract, one job at a time (docs/job-enrichment.md): a
+  // result carrying `match` was scored server-side against the AI-extracted
+  // job facts and is authoritative -- render it and skip the client lexicon
+  // entirely, even when `vocab` itself is not ready, since the server score
+  // does not depend on it. Only a result with no `match` yet (not enriched,
+  // or no signed-in profile signal to score against) falls back to the
+  // client estimate. The two must never both render for the same job.
   const fitByKey = useMemo(() => {
     const m = new Map<string, FitResult>();
-    if (!results || !vocab.ready) return m;
-    for (const r of results) m.set(resultKey(r), scoreJob(r, vocab));
+    if (!results) return m;
+    for (const r of results) {
+      if (r.match) m.set(resultKey(r), serverMatchToFitResult(r.match));
+      else if (vocab.ready) m.set(resultKey(r), scoreJob(r, vocab));
+    }
     return m;
   }, [results, vocab]);
   const sortedResults = useMemo(() => {

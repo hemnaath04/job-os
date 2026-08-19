@@ -69,6 +69,43 @@ class IndexSearchRequest(BaseModel):
     )
 
 
+class ScoreLineRead(BaseModel):
+    axis: str
+    points: int
+    reason: str
+    detail: str
+    subject: str | None = None
+    evidence: str | None = None
+
+
+class AxisScoreRead(BaseModel):
+    axis: str
+    weight: int
+    points: int
+    percent: int
+
+
+class MatchScoreRead(BaseModel):
+    """The AI-authoritative fit score, present once a posting has been
+    enriched -- see `docs/job-enrichment.md`. Absent means the frontend's own
+    lexicon estimate renders instead; the two never both render for one job.
+    """
+
+    overall: int
+    raw_overall: int
+    axes: list[AxisScoreRead]
+    top_reasons: list[ScoreLineRead] = Field(
+        description="The lines that moved the score most, not the full breakdown."
+    )
+    confidence: str
+    confidence_reasons: list[str]
+    blockers: list[ScoreLineRead] = Field(
+        description="Not points. A hard mismatch (e.g. no visa sponsorship) travels here."
+    )
+    matched_skills: list[str]
+    missing_skills: list[str]
+
+
 class ScoreExplainRead(BaseModel):
     rank: float
     retrieve_score: float
@@ -127,6 +164,7 @@ class IndexHitRead(BaseModel):
     )
     rank: float
     explain: ScoreExplainRead | None = None
+    match: MatchScoreRead | None = None
 
 
 class IndexSearchResponse(BaseModel):

@@ -26,5 +26,6 @@ export function indexHitToDiscoveryResult(hit: IndexHitRead): DiscoveryResult {
     description: hit.snippet,
     technologies: [],
     already_imported: false,
+    match: hit.match,
   };
 }

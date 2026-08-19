@@ -12,19 +12,24 @@ from __future__ import annotations
 
 import structlog
 from fastapi import APIRouter, Depends
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.auth import get_current_user
 from job_os.db.models import User
+from job_os.db.models.profile import ProfileFact
 from job_os.db.session import get_session
 from job_os.schemas.job_index import (
+    AxisScoreRead,
     IndexHitRead,
     IndexSearchRequest,
     IndexSearchResponse,
     IndexStatsResponse,
+    MatchScoreRead,
     ScoreExplainRead,
+    ScoreLineRead,
 )
-from job_os.services import job_index
+from job_os.services import job_index, job_match
 
 log = structlog.get_logger(__name__)
 
@@ -55,7 +60,20 @@ async def search(
         offset=payload.offset,
         explain=payload.explain,
     )
-    result = await job_index.search_index(session, query)
+    facts = (
+        await session.execute(select(ProfileFact).where(ProfileFact.user_id == _user.id))
+    ).scalars().all()
+    candidate = job_match.build_candidate_profile(facts)
+    # A profile with nothing usable scores every job the same uninformative
+    # way and still costs an enrichment call per un-cached posting on the
+    # page -- skip it and let the frontend's own lexicon fallback (which
+    # already returns 0/not-confident for an empty profile too) render
+    # instead, rather than paying that cost for a signal that isn't there yet.
+    has_signal = bool(candidate.skills or candidate.highest_degree != "none" or candidate.years_experience)
+
+    result = await job_index.search_index(
+        session, query, candidate=candidate if has_signal else None
+    )
     log.info("index.search", **result.as_dict())
 
     return IndexSearchResponse(
@@ -112,4 +130,28 @@ def _to_read(hit: job_index.IndexHit) -> IndexHitRead:
         repost_count=hit.repost_count,
         rank=hit.rank,
         explain=ScoreExplainRead(**hit.explain.as_dict()) if hit.explain else None,
+        match=_match_to_read(hit.match) if hit.match else None,
+    )
+
+
+def _match_to_read(score: job_match.MatchScore) -> MatchScoreRead:
+    def line(l: job_match.ScoreLine) -> ScoreLineRead:
+        return ScoreLineRead(
+            axis=l.axis, points=l.points, reason=l.reason, detail=l.detail,
+            subject=l.subject, evidence=l.evidence,
+        )
+
+    return MatchScoreRead(
+        overall=score.overall,
+        raw_overall=score.raw_overall,
+        axes=[
+            AxisScoreRead(axis=a.axis, weight=a.weight, points=a.points, percent=a.percent)
+            for a in score.axes
+        ],
+        top_reasons=[line(l) for l in score.top_reasons()],
+        confidence=score.confidence,
+        confidence_reasons=list(score.confidence_reasons),
+        blockers=[line(l) for l in score.blockers],
+        matched_skills=list(score.matched_skills),
+        missing_skills=list(score.missing_skills),
     )
