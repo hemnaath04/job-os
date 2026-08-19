@@ -13,10 +13,18 @@ is how a crawler quietly deletes a company's whole board on a bad afternoon.
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
+
+#: Appwrite's `source_id` column caps at 255 chars. Every provider here gives
+#: a short native job id, except the standalone scraper's `_row_to_posting`,
+#: which falls back to the full posting URL when a board hands it nothing
+#: else -- long enough, combined with `board_token`, to blow past that and
+#: reject the whole batch write it lands in (not just that one row).
+_SOURCE_ID_MAX = 255
 
 # How a posting's date was arrived at. The read path exposes this rather than
 # presenting every crawled date as though the employer stated it.
@@ -91,8 +99,18 @@ class RawPosting:
 
     @property
     def source_id(self) -> str:
-        """Stable per-source identity. Matches the web app's `{token}:{id}`."""
-        return f"{self.board_token}:{self.external_id}"
+        """Stable per-source identity. Matches the web app's `{token}:{id}`.
+
+        Hashed instead when that would exceed Appwrite's 255-char column
+        limit, rather than truncated -- a truncated long URL risks two
+        different postings colliding on a shared prefix; a hash of the
+        original id does not, and stays stable across runs the same way.
+        """
+        raw = f"{self.board_token}:{self.external_id}"
+        if len(raw) <= _SOURCE_ID_MAX:
+            return raw
+        digest = hashlib.sha256(self.external_id.encode()).hexdigest()
+        return f"{self.board_token[:40]}:{digest}"
 
     @property
     def posted_at_estimated(self) -> bool:

@@ -100,7 +100,13 @@ def to_row(
         "source": posting.source,
         "source_id": posting.source_id,
         "board_token": posting.board_token,
-        "external_id": posting.external_id,
+        # `external_id` is display/debugging only -- `source_id` (already
+        # hashed above the 255-char mark) is what dedupe actually keys on.
+        # The scraper falls back to the full posting URL here, which the
+        # column's own 255-char cap would otherwise reject outright; the full
+        # value already lives in `source_url` (2048 chars), so truncating
+        # this one loses nothing load-bearing.
+        "external_id": posting.external_id[:255],
         "source_url": posting.source_url,
         "company_name": name,
         "company_domain": domain,
