@@ -4,11 +4,17 @@
     uv run python -m job_os.ingest.cli sweep --providers greenhouse --limit 200
     uv run python -m job_os.ingest.cli status
     uv run python -m job_os.ingest.cli sample --provider lever --limit 120
+    uv run python -m job_os.ingest.cli import-scraper
 
-Nothing here is scheduled. `sweep` is the entrypoint a cron would call and the
-options it needs, but no schedule is wired up or enabled anywhere in this branch;
-`docs/ingest-index.md` has the three lines of workflow YAML and says what to weigh
-before turning it on.
+`sweep` (this repo's own direct-to-ATS crawl) is still not scheduled anywhere -
+`docs/ingest-index.md` has the three lines of workflow YAML and says what to
+weigh before turning it on. `import-scraper` is a different, lighter path: it
+pulls already-crawled postings from a personal standalone scraper (own infra,
+own schedule, covers BambooHR/Workday/iCIMS too) via SCRAPER_EXPORT_URL/KEY and
+writes them through the same upsert_postings/deactivate_missing this module's
+own sweep uses (which now write to Appwrite, not Postgres - see
+services/appwrite_tables.py) - no crawling here, so it's safe to schedule
+(e.g. Heroku Scheduler) independently of `sweep`.
 
 `sample` exists so liveness and throughput can be measured without writing to a
 database, which is how the numbers quoted in `liveness.py` were produced.
@@ -42,6 +48,20 @@ def _emit(payload: dict[str, object]) -> None:
     than buried in prose.
     """
     print(json.dumps(payload, default=str, sort_keys=True))
+
+
+async def _cmd_import_scraper(args: argparse.Namespace) -> int:
+    from job_os.db.session import async_session
+    from job_os.ingest.scraper_import import run_import
+
+    async with async_session() as session:
+        try:
+            result = await run_import(session)
+        except RuntimeError as e:
+            _emit({"command": "import-scraper", "error": str(e)})
+            return 1
+    _emit({"command": "import-scraper", **result.as_dict()})
+    return 0
 
 
 async def _cmd_seed(args: argparse.Namespace) -> int:
@@ -215,6 +235,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     status = sub.add_parser("status", help="index and corpus counters")
     status.set_defaults(handler=_cmd_status)
+
+    import_scraper = sub.add_parser(
+        "import-scraper",
+        help="pull from the standalone job-scraper's export and upsert into job_postings (Appwrite)",
+    )
+    import_scraper.set_defaults(handler=_cmd_import_scraper)
 
     sample = sub.add_parser(
         "sample", help="measure liveness and throughput without touching the database"

@@ -134,6 +134,13 @@ class Settings(BaseSettings):
     appwrite_database_id: str = "job-os"
     appwrite_job_postings_table_id: str = "job_postings"
 
+    # Personal standalone job-scraper (separate project, separate infra) - see
+    # job_os.ingest.scraper_import. Pull-only: this app reads its export, it
+    # never gets write access to anything of ours. Unrelated to the
+    # appwrite_* fields above - this is the scraper's own API, not job.os's.
+    scraper_export_url: str | None = None
+    scraper_export_key: str | None = None
+
     reactive_resume_base_url: str | None = None
     reactive_resume_api_key: str | None = None
 
