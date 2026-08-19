@@ -231,7 +231,9 @@ class TestSearchIndex:
         assert result.hits[0].title == "Fresh Engineer Role"
         assert result.hits[0].rank > result.hits[1].rank
         assert result.hits[0].snippet == "fresh posting description"
-        assert result.keyword_query == "engineer"
+        # Quoted, not bare: see search_index's own comment on why an unquoted
+        # multi-word query matched almost the whole table on real data.
+        assert result.keyword_query == '"engineer"'
 
     async def test_no_keywords_is_a_pure_freshness_browse(
         self, monkeypatch: pytest.MonkeyPatch
@@ -301,3 +303,72 @@ class TestFilterTranslation:
 
         with pytest.raises(ValueError):
             at._parse_filter("active true")
+
+
+class TestPhraseQuoting:
+    """`job_index._quote_phrase` and the query-building it feeds -- the fix for
+    the real bug a live test against the actual table caught: an unquoted
+    multi-word search runs MariaDB fulltext in natural-language mode, matched
+    by any single common word anywhere in `search_text`'s JD body, which
+    returned an Account Executive posting for a "software engineer intern"
+    search. Quoting forces phrase (adjacent, in-order) matching instead.
+    """
+
+    def test_strips_embedded_quotes_rather_than_escaping(self) -> None:
+        assert job_index._quote_phrase('back"end eng"ineer') == '"backend engineer"'
+
+    def test_strips_surrounding_whitespace(self) -> None:
+        assert job_index._quote_phrase("  intern  ") == '"intern"'
+
+    async def test_multiple_title_keywords_become_an_or_of_quoted_phrases(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = {}
+
+        async def fake_list_rows(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr(job_index.appwrite_tables, "list_rows", fake_list_rows)
+
+        await job_index.search_index(
+            None,
+            IndexQuery(title_keywords=["software engineer intern", "swe intern"], limit=5),
+        )
+
+        search_or = next(q for q in captured["queries"] if q.get("method") == "or")
+        assert search_or["values"] == [
+            {"method": "search", "attribute": "search_text", "values": ['"software engineer intern"']},
+            {"method": "search", "attribute": "search_text", "values": ['"swe intern"']},
+        ]
+
+    async def test_location_and_company_are_required_not_alternatives(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        captured = {}
+
+        async def fake_list_rows(**kwargs):
+            captured.update(kwargs)
+            return []
+
+        monkeypatch.setattr(job_index.appwrite_tables, "list_rows", fake_list_rows)
+
+        await job_index.search_index(
+            None,
+            IndexQuery(title_keywords=["engineer"], location="Boston, MA", company="Acme", limit=5),
+        )
+
+        # Each is its own top-level query (Appwrite ANDs the list), not folded
+        # into the same `or` group title_keywords/query alternatives use --
+        # doing that would turn "engineer" + "Boston, MA" into one impossible
+        # literal phrase and return nothing.
+        assert {
+            "method": "search",
+            "attribute": "search_text",
+            "values": ['"Boston, MA"'],
+        } in captured["queries"]
+        assert {
+            "method": "search",
+            "attribute": "search_text",
+            "values": ['"Acme"'],
+        } in captured["queries"]

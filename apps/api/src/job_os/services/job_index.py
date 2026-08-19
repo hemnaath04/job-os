@@ -216,6 +216,21 @@ def _parse_dt(value: Any) -> datetime | None:
     return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
 
 
+def _quote_phrase(text: str) -> str:
+    """A search term as a MariaDB fulltext phrase, not a bag of words.
+
+    Unquoted, multiple words run in natural-language mode, satisfied by *any*
+    of them appearing anywhere in `search_text` -- see `search_index`'s own
+    comment on why that made a search for "software engineer intern" surface
+    an Account Executive posting. A literal double quote in the term itself
+    would otherwise end the phrase early (or, with a stray unmatched quote,
+    make the whole query malformed), so any quotes the caller typed are
+    stripped rather than escaped -- there is no legitimate reason a job title
+    or free-text query needs one.
+    """
+    return f'"{text.strip().replace(chr(34), "")}"'
+
+
 def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
     """One Appwrite `job_postings` row, reshaped into the tuple
     `_apply_mix_and_rank` has always consumed -- the same fields, in the same
@@ -353,14 +368,46 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
         filters.append(f"posted_at>={cutoff.isoformat()}")
         filters.append("posted_at_estimated=false")
 
-    search_terms = " ".join(
-        t.strip()
-        for t in [*query.title_keywords, query.query or "", query.location or "", query.company or ""]
-        if t and t.strip()
-    )
-    matched_keywords = bool(search_terms)
-    if matched_keywords:
-        raw_queries.append({"method": "search", "attribute": "search_text", "values": [search_terms]})
+    # Quoted, not raw. A live test against the real table on this exact query
+    # ("software engineer intern") is what caught this: an unquoted multi-word
+    # search runs MariaDB's fulltext in natural-language mode, which is
+    # satisfied by *any* of the words appearing anywhere in `search_text`'s up-
+    # to-8000-char JD body -- "software", "engineer", and "intern" are common
+    # enough that this matched almost the whole table (an Account Executive
+    # posting ranked above real software-engineer-intern listings). Wrapping
+    # the phrase in literal double quotes switches MariaDB to phrase mode,
+    # requiring the words adjacent and in order; the same query then returned
+    # exactly the relevant ~30 rows. A rare term ("MongoDB") had already
+    # filtered correctly unquoted, which is what made the bug easy to miss
+    # locally and only surface against real, common-vocabulary data.
+    phrase_alternatives = [
+        _quote_phrase(t) for t in [*query.title_keywords, query.query or ""] if t and t.strip()
+    ]
+    matched_keywords = bool(phrase_alternatives)
+    if len(phrase_alternatives) == 1:
+        raw_queries.append(
+            {"method": "search", "attribute": "search_text", "values": [phrase_alternatives[0]]}
+        )
+    elif phrase_alternatives:
+        raw_queries.append(
+            {
+                "method": "or",
+                "values": [
+                    {"method": "search", "attribute": "search_text", "values": [phrase]}
+                    for phrase in phrase_alternatives
+                ],
+            }
+        )
+    # Required, not an alternative: unlike title_keywords/query above, these
+    # narrow the result set rather than define what counts as a match, so
+    # each is its own top-level entry (Appwrite ANDs the query list) rather
+    # than joining the `or` group. The nearest thing to Postgres's `ILIKE`
+    # substring filter Appwrite's fulltext index actually supports.
+    for narrowing in (query.location, query.company):
+        if narrowing and narrowing.strip():
+            raw_queries.append(
+                {"method": "search", "attribute": "search_text", "values": [_quote_phrase(narrowing)]}
+            )
 
     rows = await appwrite_tables.list_rows(
         filters=filters,
@@ -398,7 +445,7 @@ async def search_index(session: AsyncSession, query: IndexQuery) -> IndexSearchR
         total_matched_capped=total_capped,
         candidates_considered=len(rows),
         took_ms=took_ms,
-        keyword_query=search_terms or None,
+        keyword_query=" OR ".join(phrase_alternatives) or None,
     )
 
 
