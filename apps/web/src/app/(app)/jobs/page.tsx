@@ -298,10 +298,6 @@ export default function DiscoverPage() {
   // Hydrate from localStorage so the result list survives nav, reload, and
   // closing and reopening the browser, until Clear results.
   const initial = useMemo(loadState, []);
-  // Free text for the fast, primary search, kept separate from the advanced
-  // panel's own fields below since the two hit different backends with
-  // different filter vocabularies.
-  const [indexQuery, setIndexQuery] = useState<string>("");
   const [titles, setTitles] = useState<string>(initial.titles ?? "");
   const [techs, setTechs] = useState<string>(initial.techs ?? "");
   const [country, setCountry] = useState<string>(initial.country ?? "US");
@@ -386,16 +382,16 @@ export default function DiscoverPage() {
   // rather than fetched live. No sources to pick, because the crawl already
   // covers the boards that matter; see docs/ingest-index.md.
   //
-  // Takes an optional override so smart search (below) can run its extracted,
-  // structured filters through this same indexed path instead of the manual
-  // free-text box's state. `title_keywords` is matched title-only on the
-  // backend, unlike `query`, which is why smart search's role phrases go there
-  // rather than into `query` alongside the tech terms.
+  // Always called with the search form's own extracted, structured filters
+  // (see `smart` below) -- there is no separate free-text path into this
+  // anymore. `title_keywords` is matched title-only on the backend, unlike
+  // `query`, which is why the extracted role phrases go there rather than
+  // into `query` alongside the tech terms. The bare `override ?? {...}` case
+  // only fires for the blank listing this page loads with on first visit.
   const indexSearch = useMutation({
     mutationFn: (override?: IndexSearchRequest) =>
       api.indexSearch(
         override ?? {
-          query: indexQuery.trim() || undefined,
           country_codes: country ? [country.toUpperCase()] : [],
           max_age_days: maxAgeDays,
           limit,
@@ -642,73 +638,32 @@ export default function DiscoverPage() {
         <InfoChip tone="clay">50-result guardrail</InfoChip>
       </PageIntro>
 
-      {/* Primary search: the pre-built index. No sources to pick here, and
-          no wait -- the crawl already ran. */}
-      <div className="workspace-panel mt-6 p-5 sm:p-6">
-        <label htmlFor="index-search" className="text-sm font-medium">
-          Search
-        </label>
-        <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-          Reads from the index, crawled overnight from Greenhouse, Lever, Ashby and
-          SmartRecruiters. Sorted by fit to your profile by default.
-        </p>
-        <div className="mt-2 flex flex-wrap gap-2">
-          <input
-            id="index-search"
-            type="text"
-            value={indexQuery}
-            onChange={(e) => setIndexQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") indexSearch.mutate(undefined);
-            }}
-            placeholder="software engineer intern, python, remote"
-            className="field-control min-w-0 flex-1 rounded-full"
-          />
-          <button
-            onClick={() => indexSearch.mutate(undefined)}
-            disabled={indexSearch.isPending}
-            className="kinetic-button kinetic-button-primary disabled:opacity-50"
-          >
-            {indexSearch.isPending ? (
-              <Loader2 className="size-3.5 animate-spin" />
-            ) : (
-              <Search className="size-3.5" />
-            )}
-            Search
-          </button>
-          {results !== null && (
-            <button
-              onClick={clearResults}
-              className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
-            >
-              <X className="size-3.5" /> Clear
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Smart search: runs against the same daily index the box above does,
-          just from a sentence instead of one free-text field -- see its
-          onSuccess for why that is now indexSearch rather than the live
-          fan-out below. Lives here, next to the index box, rather than inside
-          "Also search live sources": what it searches no longer has anything
-          to do with that section. */}
+      {/* The one search box: a sentence goes to the fast agent, which
+          extracts structured filters (hydrated into the advanced panel below
+          so the user can see and adjust what it read), then that runs
+          against the pre-built index -- crawled overnight from Greenhouse,
+          Lever, Ashby and SmartRecruiters, sorted by fit to your profile by
+          default. Used to be two boxes (a raw free-text field straight into
+          the index, plus this one); the raw box never got the benefit of
+          title-only matching or proper filter separation, so it was strictly
+          worse, not a faster alternative -- collapsed into one. */}
       <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
         <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
-          <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Smart search
+          <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Search
         </label>
         <p id="smart-search-help" className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-          Type a sentence. The fast agent extracts the filters and runs the search.
+          Type a sentence, e.g. "fullstack intern in Boston with Python and React from
+          the last 2 weeks". The fast agent extracts the filters and runs the search.
         </p>
-        <div className="mt-2 flex gap-2">
+        <div className="mt-2 flex flex-wrap gap-2">
           <input
             id="smart-search"
             aria-describedby="smart-search-help"
             type="text"
             value={smartQuery}
             onChange={(e) => setSmartQuery(e.target.value)}
-            placeholder="e.g. 'fullstack intern in Boston with Python and React from the last 2 weeks'"
-            className="field-control flex-1 rounded-full"
+            placeholder="software engineer intern, python, remote"
+            className="field-control min-w-0 flex-1 rounded-full"
           />
           <button
             type="submit"
@@ -720,8 +675,17 @@ export default function DiscoverPage() {
             ) : (
               <Sparkles className="size-3.5" />
             )}
-            Ask
+            Search
           </button>
+          {results !== null && (
+            <button
+              type="button"
+              onClick={clearResults}
+              className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-sm text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+            >
+              <X className="size-3.5" /> Clear
+            </button>
+          )}
         </div>
       </form>
 
