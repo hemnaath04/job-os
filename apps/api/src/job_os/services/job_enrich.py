@@ -53,10 +53,15 @@ log = structlog.get_logger(__name__)
 # with production evidence about which ones those are.
 ENRICHMENT_KEY = "enrichment"
 
-# Long enough for the whole document on a dense senior JD (the Cisco posting in
-# the evidence set atomizes to 48 skills across must-have and preferred), short
-# enough that a runaway reply fails fast instead of billing for prose.
-MAX_TOKENS = 4096
+# Was 4096, sized against the Cisco posting in the offline evidence set (48
+# skills). Live against the real corpus, a dense staff-level posting truncated
+# the reply mid-object on 3/3 attempts (a real Staff Engineer JD, no fixture),
+# landing on `extraction_gaps: ["invalid_json"]` every time rather than a
+# skill-less score by design -- the fallback path worked exactly as intended,
+# it just fired for a preventable reason. Doubled rather than left honest: a
+# job that scores with no skills is a worse outcome for every user who ever
+# sees it than one enrichment call costing a bit more output.
+MAX_TOKENS = 8192
 
 # The posting text handed to the model. `jd_parse.py` uses 18000 for a much
 # smaller output schema; the same ceiling holds here because JD length past this
