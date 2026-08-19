@@ -116,17 +116,20 @@ class Settings(BaseSettings):
     # see the plan comment on the resume workspace tables in appwrite_common.py
     # for why that matters here specifically).
     #
-    # Currently unused by `services/appwrite_tables.py`, which is what
-    # `job_index.search_index` and `ingest/upsert.py` actually call: there is
-    # no `APPWRITE_API_KEY` value anywhere in this environment for a server
-    # SDK client to authenticate with (minting one needs a `keys.write` scope
-    # this project's role does not have), so that module shells out through
-    # the `appwrite` CLI's own already-authenticated session instead, with
-    # the database/table ids hardcoded to match what was actually created.
-    # These fields are kept for the day a real key exists and it is worth
-    # switching to the SDK -- until then, changing them changes nothing.
-    appwrite_endpoint: str | None = None
-    appwrite_project_id: str | None = None
+    # `services/appwrite_tables.py` (what `job_index.search_index` and
+    # `ingest/upsert.py`/`ingest/worker.py` actually call) talks to Appwrite's
+    # REST API directly over `httpx`, authenticated with `appwrite_api_key`.
+    # A first version of that module shelled out to the `appwrite` CLI's own
+    # locally-authenticated session instead, which worked against the real
+    # data during development and then failed in production with
+    # `FileNotFoundError: 'appwrite'` -- the CLI binary was never in the
+    # deploy image, and even installed, it should not have been running as a
+    # developer's personal login inside a shared server process. `httpx`
+    # against the documented REST API, scoped to a real key with only
+    # `databases.read`/`databases.write`, is the version that is actually
+    # meant to run here.
+    appwrite_endpoint: str = "https://nyc.cloud.appwrite.io/v1"
+    appwrite_project_id: str = "6a6552db0034a120b320"
     appwrite_api_key: str | None = None
     appwrite_database_id: str = "job-os"
     appwrite_job_postings_table_id: str = "job_postings"

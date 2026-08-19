@@ -249,3 +249,55 @@ class TestSearchIndex:
         assert result.keyword_query is None
         assert captured["queries"] == [{"method": "isNull", "attribute": "canonical_id"}]
         assert "active=true" in captured["filters"]
+
+
+class TestFilterTranslation:
+    """`appwrite_tables._parse_filter`/`_query_value`, read directly out of the
+    `appwrite-cli` package's own bundled source rather than guessed -- these
+    pin that translation against every filter shape the codebase actually
+    produces (see job_index.py/upsert.py/worker.py's own `filters=[...]`
+    call sites), so a change to either side is caught here before it is
+    caught by a live 400 from Appwrite.
+    """
+
+    def test_operator_precedence_and_typing(self) -> None:
+        from job_os.services import appwrite_tables as at
+
+        assert at._parse_filter("active=true") == {
+            "method": "equal",
+            "attribute": "active",
+            "values": [True],
+        }
+        assert at._parse_filter("jd_hydrated=false") == {
+            "method": "equal",
+            "attribute": "jd_hydrated",
+            "values": [False],
+        }
+        assert at._parse_filter("salary_max>=40") == {
+            "method": "greaterThanEqual",
+            "attribute": "salary_max",
+            "values": [40],
+        }
+        # `!=` must not be swallowed by the plain `=` pattern.
+        run_id = "b51dcfb4-9a0d-4c51-ab7e-0ae60362c6b9"
+        assert at._parse_filter(f"last_crawl_run_id!={run_id}") == {
+            "method": "notEqual",
+            "attribute": "last_crawl_run_id",
+            "values": [run_id],
+        }
+        # A UUID/string value that happens to not be true/false/null/numeric
+        # stays a plain string, not silently coerced.
+        assert at._parse_filter(f"source_posting_id={run_id}")["values"] == [run_id]
+
+    def test_datetime_filter_stays_a_string(self) -> None:
+        from job_os.services import appwrite_tables as at
+
+        parsed = at._parse_filter("posted_at>=2026-08-01T00:00:00+00:00")
+        assert parsed["method"] == "greaterThanEqual"
+        assert parsed["values"] == ["2026-08-01T00:00:00+00:00"]
+
+    def test_unsupported_expression_raises(self) -> None:
+        from job_os.services import appwrite_tables as at
+
+        with pytest.raises(ValueError):
+            at._parse_filter("active true")

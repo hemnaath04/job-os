@@ -1,52 +1,147 @@
-"""Talk to Appwrite's TablesDB through the `appwrite` CLI's own session.
+"""Talk to Appwrite's TablesDB over its documented REST API.
 
-Not the Appwrite Python SDK. There is no `APPWRITE_API_KEY` value anywhere in
-this environment for a server SDK client to authenticate with, and minting one
-requires a `keys.write` scope this project's role does not have. The `appwrite`
-CLI, by contrast, already carries a working authenticated session (from an
-earlier `appwrite login`) and was the only thing that could actually create the
-`job_postings` table, its 45 columns, and its 9 indexes, and migrate all 34,942
-existing rows. This module is that same mechanism, wrapped for the ingest
-write path and the search read path, instead of re-deriving it per caller.
+A first version of this module shelled out to the `appwrite` CLI's own
+locally-authenticated session instead of a real key -- there was no
+`APPWRITE_API_KEY` value anywhere in this environment, and minting one
+through the Project API needed a `keys.write` scope this project's role did
+not have (Appwrite deprecated creating keys through that API on 2026-08-17
+anyway; the console is now the only way). The CLI approach worked against
+the real 34,942-row migration and every local test, then failed in
+production with `FileNotFoundError: 'appwrite'`: the CLI binary was never
+part of the deploy image, and it should not have been running as one
+developer's personal login inside a shared server process regardless.
 
-Every call shells out via `subprocess.run` with an argv list, never
-`shell=True` -- a job description is untrusted, attacker-adjacent text (a
-company writes it, not us), and building a shell command string out of it
-would be a command-injection bug waiting to be found. Appwrite's own bulk cap
-is 100 rows per call; batches here are smaller (`BATCH_SIZE`) because macOS's
-`ARG_MAX` is ~1MB and a posting's `jd_raw`/`jd_clean` text makes 100 rows a
-real risk of exceeding it.
+This version talks straight to `{endpoint}/tablesdb/{databaseId}/tables/{tableId}/rows`
+over `httpx`, authenticated with a real `X-Appwrite-Key` header (scoped to
+`databases.read`/`databases.write` only), the same REST surface the CLI and
+every server SDK call underneath. The four HTTP verbs below (GET/POST/PUT/
+PATCH) and the filter-string-to-Query-object translation were read directly
+out of the `appwrite-cli` package's own bundled source
+(`dist/cli.cjs`, `parseFilterQuery`/`stringifyQuery`), not guessed, so
+`filters=["active=true"]` produces exactly the query object the CLI's own
+`--filter active=true` would have.
 """
 from __future__ import annotations
 
-import asyncio
-import json
-import subprocess
+import re
 from typing import Any
 
-DATABASE_ID = "job-os"
-TABLE_ID = "job_postings"
-#: Below Appwrite's 100-row bulk cap, sized to stay well under argv limits
-#: with job-posting-sized text fields. See the module docstring.
-BATCH_SIZE = 25
+import httpx
+
+from job_os.settings import get_settings
+
+#: Appwrite's own bulk-write cap per `create-rows`/`upsert-rows` call.
+BATCH_SIZE = 100
+
+#: `(regex, method)`, checked in this order so `!=`/`>=`/`<=` match before
+#: the single-character `=`/`>`/`<` operators they contain. Mirrors
+#: `appwrite-cli`'s `filterOperators` table exactly.
+_FILTER_OPERATORS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"^(.+?)\s*!=\s*(.*)$"), "notEqual"),
+    (re.compile(r"^(.+?)\s*>=\s*(.*)$"), "greaterThanEqual"),
+    (re.compile(r"^(.+?)\s*<=\s*(.*)$"), "lessThanEqual"),
+    (re.compile(r"^(.+?)\s*=\s*(.*)$"), "equal"),
+    (re.compile(r"^(.+?)\s*>\s*(.*)$"), "greaterThan"),
+    (re.compile(r"^(.+?)\s*<\s*(.*)$"), "lessThan"),
+]
+_NUMERIC = re.compile(r"^-?(?:\d+|\d*\.\d+)(?:e[+-]?\d+)?$", re.IGNORECASE)
 
 
-class AppwriteCliError(RuntimeError):
-    """A `appwrite` CLI invocation exited non-zero. `stderr` is the CLI's own message."""
+class AppwriteTablesError(RuntimeError):
+    """A TablesDB REST call returned an error response. `detail` is Appwrite's own message."""
 
-    def __init__(self, args: list[str], stderr: str):
-        self.args = args
-        self.stderr = stderr
-        super().__init__(f"appwrite CLI failed ({' '.join(args[:4])}...): {stderr[:800]}")
+    def __init__(self, status_code: int, detail: str):
+        self.status_code = status_code
+        self.detail = detail
+        super().__init__(f"Appwrite TablesDB call failed ({status_code}): {detail[:800]}")
 
 
-def _run(args: list[str]) -> dict[str, Any]:
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise AppwriteCliError(args, result.stderr)
-    if not result.stdout.strip():
+def _query_value(raw: str) -> Any:
+    """One filter's right-hand side, typed the way `active=true`/`salary_max>=40`
+    need to be to match a boolean/integer column -- a query filed as the string
+    `"true"` against a boolean column matches nothing. Mirrors `appwrite-cli`'s
+    `parseQueryValue` exactly (including `null`, bare numbers, and `[a,b]` arrays)."""
+    value = raw.strip()
+    if value == "true":
+        return True
+    if value == "false":
+        return False
+    if value == "null":
+        return None
+    if _NUMERIC.match(value):
+        return float(value) if ("." in value or "e" in value.lower()) else int(value)
+    if value.startswith("[") and value.endswith("]"):
+        import json as _json
+
+        return _json.loads(value)
+    return value
+
+
+def _parse_filter(expression: str) -> dict[str, Any]:
+    for pattern, method in _FILTER_OPERATORS:
+        match = pattern.match(expression)
+        if not match:
+            continue
+        attribute, raw_value = match.group(1).strip(), match.group(2)
+        return {"method": method, "attribute": attribute, "values": [_query_value(raw_value)]}
+    raise ValueError(f"Unsupported filter expression: {expression!r}")
+
+
+def _base_url() -> tuple[str, dict[str, str]]:
+    settings = get_settings()
+    if not settings.appwrite_api_key:
+        raise AppwriteTablesError(
+            0,
+            "APPWRITE_API_KEY is not configured -- job_postings reads/writes cannot "
+            "reach Appwrite without it. See settings.py's appwrite_api_key field.",
+        )
+    table_id = settings.appwrite_job_postings_table_id
+    url = (
+        f"{settings.appwrite_endpoint}/tablesdb/{settings.appwrite_database_id}"
+        f"/tables/{table_id}/rows"
+    )
+    headers = {
+        "X-Appwrite-Project": settings.appwrite_project_id,
+        "X-Appwrite-Key": settings.appwrite_api_key,
+        "Content-Type": "application/json",
+    }
+    return url, headers
+
+
+async def _request(method: str, *, params: list[tuple[str, str]] | None = None, json_body: dict[str, Any] | None = None) -> dict[str, Any]:
+    url, headers = _base_url()
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.request(method, url, headers=headers, params=params, json=json_body)
+    if response.status_code >= 400:
+        detail = response.text
+        try:
+            detail = response.json().get("message", detail)
+        except ValueError:
+            pass
+        raise AppwriteTablesError(response.status_code, detail)
+    if not response.content:
         return {}
-    return json.loads(result.stdout)
+    return response.json()
+
+
+def _query_params(
+    filters: list[str] | None, queries: list[dict[str, Any]] | None, select: list[str] | None,
+    sort_desc: str | None, limit: int | None,
+) -> list[tuple[str, str]]:
+    import json as _json
+
+    params: list[tuple[str, str]] = []
+    for q in queries or []:
+        params.append(("queries[]", _json.dumps(q)))
+    for f in filters or []:
+        params.append(("queries[]", _json.dumps(_parse_filter(f))))
+    if select:
+        params.append(("queries[]", _json.dumps({"method": "select", "values": select})))
+    if sort_desc:
+        params.append(("queries[]", _json.dumps({"method": "orderDesc", "attribute": sort_desc})))
+    if limit is not None:
+        params.append(("queries[]", _json.dumps({"method": "limit", "values": [limit]})))
+    return params
 
 
 async def list_rows(
@@ -62,27 +157,15 @@ async def list_rows(
     the search read path bounds its own pool size, and the ingest write path's
     lookups are scoped to one batch (<= `BATCH_SIZE` postings) at a time.
     """
-    args = ["appwrite", "tablesdb", "list-rows", "--database-id", DATABASE_ID, "--table-id", TABLE_ID, "--json"]
-    for f in filters or []:
-        args += ["--filter", f]
-    for q in queries or []:
-        args += ["--queries", json.dumps(q)]
-    for s in select or []:
-        args += ["--select", s]
-    if sort_desc:
-        args += ["--sort-desc", sort_desc]
-    if limit is not None:
-        args += ["--limit", str(limit)]
-    payload = await asyncio.to_thread(_run, args)
+    params = _query_params(filters, queries, select, sort_desc, limit)
+    payload = await _request("GET", params=params)
     return payload.get("rows", [])
 
 
 async def create_rows(rows: list[dict[str, Any]]) -> None:
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start : start + BATCH_SIZE]
-        args = ["appwrite", "tablesdb", "create-rows", "--database-id", DATABASE_ID, "--table-id", TABLE_ID, "--json", "--rows"]
-        args += [json.dumps(r) for r in batch]
-        await asyncio.to_thread(_run, args)
+        await _request("POST", json_body={"rows": batch})
 
 
 async def upsert_rows(rows: list[dict[str, Any]]) -> None:
@@ -99,9 +182,7 @@ async def upsert_rows(rows: list[dict[str, Any]]) -> None:
     """
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start : start + BATCH_SIZE]
-        args = ["appwrite", "tablesdb", "upsert-rows", "--database-id", DATABASE_ID, "--table-id", TABLE_ID, "--json", "--rows"]
-        args += [json.dumps(r) for r in batch]
-        await asyncio.to_thread(_run, args)
+        await _request("PUT", json_body={"rows": batch})
 
 
 async def update_rows(
@@ -112,16 +193,14 @@ async def update_rows(
     Real bulk semantics from Appwrite itself here, unlike `upsert_rows` --
     exactly what `deactivate_missing` needs (one WHERE, one SET, no per-row
     round trip), so no lookup-then-write race exists for this path. `queries`
-    exists for the same reason `list_rows` takes it: `--filter` alone cannot
-    express an isNull check, which `mark_duplicates` needs to preserve its
-    "only mark an unmerged row" guard.
+    exists for the same reason `list_rows` takes it: a plain `filters` string
+    cannot express an isNull check, which `mark_duplicates` needs to preserve
+    its "only mark an unmerged row" guard.
     """
-    args = ["appwrite", "tablesdb", "update-rows", "--database-id", DATABASE_ID, "--table-id", TABLE_ID, "--json", "--data", json.dumps(data)]
+    queries_payload = [*(queries or [])]
     for f in filters or []:
-        args += ["--filter", f]
-    for q in queries or []:
-        args += ["--queries", json.dumps(q)]
-    payload = await asyncio.to_thread(_run, args)
+        queries_payload.append(_parse_filter(f))
+    payload = await _request("PATCH", json_body={"data": data, "queries": queries_payload})
     rows = payload.get("rows")
     if isinstance(rows, list):
         return len(rows)
