@@ -242,28 +242,42 @@ async def upsert_postings(
 _LOOKUP_CHAR_BUDGET = 3500
 
 
+async def _lookup_chunk(chunk: list[str]) -> list[dict[str, object]]:
+    try:
+        return await appwrite_tables.list_rows(
+            queries=[{"method": "equal", "attribute": "source_id", "values": chunk}],
+            limit=len(chunk),
+        )
+    except appwrite_tables.AppwriteTablesError:
+        # Temporary diagnostics for a 400 this budget-based chunking should
+        # have prevented but, live, has not -- logs enough about the actual
+        # chunk to tell which of Appwrite's stacked queries[] constraints
+        # (item count, a too-long value, an empty value) is the real one,
+        # then re-raises unchanged.
+        lengths = sorted((len(s) for s in chunk), reverse=True)
+        log.error(
+            "ingest.lookup_chunk_failed",
+            items=len(chunk),
+            max_len=lengths[0] if lengths else None,
+            min_len=lengths[-1] if lengths else None,
+            empties=sum(1 for s in chunk if not s),
+            sample=chunk[:3],
+        )
+        raise
+
+
 async def _lookup_by_source_id(source_ids: list[str]) -> list[dict[str, object]]:
     existing: list[dict[str, object]] = []
     chunk: list[str] = []
     chunk_chars = 0
     for source_id in source_ids:
         if chunk and chunk_chars + len(source_id) > _LOOKUP_CHAR_BUDGET:
-            existing.extend(
-                await appwrite_tables.list_rows(
-                    queries=[{"method": "equal", "attribute": "source_id", "values": chunk}],
-                    limit=len(chunk),
-                )
-            )
+            existing.extend(await _lookup_chunk(chunk))
             chunk, chunk_chars = [], 0
         chunk.append(source_id)
         chunk_chars += len(source_id)
     if chunk:
-        existing.extend(
-            await appwrite_tables.list_rows(
-                queries=[{"method": "equal", "attribute": "source_id", "values": chunk}],
-                limit=len(chunk),
-            )
-        )
+        existing.extend(await _lookup_chunk(chunk))
     return existing
 
 
