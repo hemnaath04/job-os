@@ -52,6 +52,7 @@ ago, still listed 1 hour ago" rather than presenting a re-dated repost as new.
 """
 from __future__ import annotations
 
+import asyncio
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -79,8 +80,20 @@ ENRICHMENT_COLUMN = "enrichment"
 
 #: Enrichment runs inline, per row, the first time a posting reaches a page a
 #: user actually sees -- bounded by the page size a search ever returns, not
-#: by the corpus. `MAX_LIMIT` is the ceiling on that per-search cost.
-MAX_ENRICH_PER_SEARCH = 50
+#: by the corpus. Was 50, run sequentially; a real request with real profile
+#: signal against a page of never-before-seen postings blew straight through
+#: Heroku's 30s router timeout (H12) awaiting enrich_job one at a time. Now
+#: run concurrently (see _attach_match_scores), which changes the cost from
+#: "sum of every call" to "the slowest one" -- lowered anyway, since even
+#: concurrent calls still each cost real gateway capacity and dyno memory.
+MAX_ENRICH_PER_SEARCH = 12
+
+#: Per-call ceiling when enriching concurrently, so one slow or hung gateway
+#: call cannot spend the whole request's remaining time budget under
+#: Heroku's 30s router limit. A skipped enrichment here just means that hit
+#: falls back to the client lexicon this time -- not an error, and it will
+#: very likely be cached and scored by the next search that reaches it.
+ENRICH_DEADLINE_SECONDS = 18.0
 
 #: Half life of the freshness decay. A fortnight is roughly the useful life of a
 #: posting: applying on day 30 is materially worse than on day 2.
@@ -526,29 +539,66 @@ async def _attach_match_scores(
     index, most of which nobody will ever look at". A posting enriched once
     stays enriched: the result is written back to Appwrite so every later
     search reads it for free, exactly like `job_match.score_job` itself.
+
+    Enrichment calls run concurrently, not sequentially -- a first version
+    awaited `enrich_job` one at a time in this loop and produced a real
+    production incident the first time a user with real profile signal hit a
+    page nobody had ever enriched before: up to MAX_ENRICH_PER_SEARCH real
+    Sonnet calls summed past Heroku's 30s router timeout (H12), a 503 on the
+    whole search rather than a slow one. `asyncio.gather` turns that sum into
+    "as long as the slowest call", and `ENRICH_DEADLINE_SECONDS` bounds even
+    that: a hit whose enrichment does not finish in time just falls back to
+    the client lexicon this once, rather than failing the request.
     """
-    to_persist: list[dict[str, Any]] = []
-    enriched_count = 0
+    already_scored: list[tuple[IndexHit, JobEnrichment]] = []
+    to_enrich: list[tuple[IndexHit, dict[str, Any]]] = []
     for hit in hits:
         row = by_id.get(str(hit.id))
         if row is None:
             continue
         enrichment = _load_enrichment(row)
-        if enrichment is None and enriched_count < MAX_ENRICH_PER_SEARCH:
-            enrichment = await job_enrich.enrich_job(
+        if enrichment is not None:
+            already_scored.append((hit, enrichment))
+        elif len(to_enrich) < MAX_ENRICH_PER_SEARCH:
+            to_enrich.append((hit, row))
+
+    for hit, enrichment in already_scored:
+        hit.match = job_match.score_job(enrichment, candidate)
+
+    if not to_enrich:
+        return
+
+    async def _enrich(hit: IndexHit, row: dict[str, Any]) -> JobEnrichment:
+        return await asyncio.wait_for(
+            job_enrich.enrich_job(
                 row.get("jd_clean") or "",
                 title_hint=row.get("title"),
                 company_hint=row.get("company_name"),
                 posted_at=hit.posted_at,
+            ),
+            timeout=ENRICH_DEADLINE_SECONDS,
+        )
+
+    results = await asyncio.gather(
+        *(_enrich(hit, row) for hit, row in to_enrich), return_exceptions=True
+    )
+
+    to_persist: list[dict[str, Any]] = []
+    for (hit, row), result in zip(to_enrich, results, strict=True):
+        if isinstance(result, BaseException):
+            log.warning(
+                "job_index.enrich_deadline_exceeded",
+                source_posting_id=row.get("source_posting_id"),
+                error=repr(result)[:200],
             )
-            enriched_count += 1
-            row_id = row.get("$id")
-            if row_id:
-                to_persist.append(
-                    {"$id": row_id, ENRICHMENT_COLUMN: json.dumps(enrichment.model_dump(mode="json"))}
-                )
-        if enrichment is not None:
-            hit.match = job_match.score_job(enrichment, candidate)
+            continue
+        hit.match = job_match.score_job(result, candidate)
+        row_id = row.get("$id")
+        if row_id:
+            to_persist.append(
+                {"$id": row_id, ENRICHMENT_COLUMN: json.dumps(result.model_dump(mode="json"))}
+            )
+
     if to_persist:
         try:
             await appwrite_tables.upsert_rows(to_persist)
