@@ -1264,9 +1264,12 @@ def generate_latex_source(doc: dict[str, Any]) -> str:
         basics.get("phone"),
         basics.get("email"),
     ]
-    profiles = basics.get("profiles") or []
-    if profiles:
-        contact.append(profiles[0].get("url"))
+    # Every filled-in profile renders, not just the first -- a candidate with
+    # both LinkedIn and GitHub set had the second one silently dropped from
+    # this portable LaTeX contact line even though the primary Typst/LaTeX
+    # templates (latex_render.py's _named_profile) already showed both.
+    for profile in basics.get("profiles") or []:
+        contact.append(profile.get("url"))
     lines = [
         r"\documentclass[11pt,letterpaper]{article}",
         r"\usepackage[top=0.45in,bottom=0.4in,left=0.6in,right=0.6in]{geometry}",
