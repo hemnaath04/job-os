@@ -14,6 +14,15 @@ signatures - this module's calls to them are unchanged from before that move.
 `CrawlRun` bookkeeping is still Postgres (only `job_postings` itself moved),
 so this still needs a real `AsyncSession` for that part.
 
+Cursor is `(since, since_id)`, persisted in `scraper_import_cursor` (one row,
+id="scraper_import") between separate runs - a Heroku Scheduler invocation is
+a fresh process with no memory of the last one, so without this every run
+would restart at the export's beginning and (with a large enough backlog and
+a time-boxed run) never progress past whatever the first run's budget
+covered. Read once at the start of a run, updated after every page so a
+mid-run crash keeps whatever progress was actually committed rather than
+losing it back to the last full run's end.
+
     uv run python -m job_os.ingest.cli import-scraper
 """
 from __future__ import annotations
@@ -26,13 +35,14 @@ import httpx
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from job_os.db.models.ingest import CrawlRun, CrawlStatus
+from job_os.db.models.ingest import CrawlRun, CrawlStatus, ScraperImportCursor
 from job_os.ingest.providers import RawPosting
 from job_os.ingest.upsert import UpsertStats, deactivate_missing, upsert_postings
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
 
+CURSOR_ID = "scraper_import"
 PAGE_LIMIT = 1000
 #: Safety cap, not a tuning knob for the current daily schedule - Heroku
 #: Scheduler gives a job runtime up to its own frequency (a daily job gets up
@@ -96,15 +106,28 @@ def _row_to_posting(row: dict) -> RawPosting:
     )
 
 
-async def _fetch_page(client: httpx.AsyncClient, base_url: str, key: str, since_id: int) -> dict:
+async def _fetch_page(
+    client: httpx.AsyncClient, base_url: str, key: str, since: str, since_id: int
+) -> dict:
     r = await client.get(
         f"{base_url}/export/jobs",
-        params={"since_id": since_id, "limit": PAGE_LIMIT},
+        params={"since": since, "since_id": since_id, "limit": PAGE_LIMIT},
         headers={"x-scraper-key": key},
         timeout=30.0,
     )
     r.raise_for_status()
     return r.json()
+
+
+async def _load_cursor(session: AsyncSession) -> ScraperImportCursor:
+    cursor = await session.get(ScraperImportCursor, CURSOR_ID)
+    if cursor is None:
+        cursor = ScraperImportCursor(
+            id=CURSOR_ID, since=datetime.fromtimestamp(0, tz=UTC), since_id=0
+        )
+        session.add(cursor)
+        await session.flush()
+    return cursor
 
 
 async def run_import(session: AsyncSession, *, max_seconds: int = DEFAULT_MAX_SECONDS) -> ImportResult:
@@ -125,17 +148,21 @@ async def run_import(session: AsyncSession, *, max_seconds: int = DEFAULT_MAX_SE
     result = ImportResult(run_id=run_id)
     started = datetime.now(UTC)
     seen_at = started
+    cursor_row = await _load_cursor(session)
 
     try:
         async with httpx.AsyncClient() as client:
-            cursor = 0
             while True:
                 if (datetime.now(UTC) - started).total_seconds() > max_seconds:
                     result.truncated = True
-                    log.warning("ingest.scraper_import_truncated", run_id=str(run_id), cursor=cursor)
+                    log.warning(
+                        "ingest.scraper_import_truncated", run_id=str(run_id),
+                        since=cursor_row.since.isoformat(), since_id=cursor_row.since_id,
+                    )
                     break
                 page = await _fetch_page(
-                    client, settings.scraper_export_url, settings.scraper_export_key, cursor
+                    client, settings.scraper_export_url, settings.scraper_export_key,
+                    cursor_row.since.isoformat(), cursor_row.since_id,
                 )
                 rows = page.get("jobs", [])
                 result.pages_fetched += 1
@@ -144,10 +171,19 @@ async def run_import(session: AsyncSession, *, max_seconds: int = DEFAULT_MAX_SE
                     postings = [_row_to_posting(r) for r in rows]
                     stats = await upsert_postings(session, postings, run_id=run_id, seen_at=seen_at)
                     result.upsert.merge(stats)
-                    await session.commit()
                     result.boards_touched.update((p.source, p.board_token) for p in postings)
-                cursor = page.get("next_cursor")
-                if cursor is None:
+                next_cursor = page.get("next_cursor")
+                # Advance the durable cursor to the LAST ROW OF THIS PAGE regardless
+                # of whether the export says there's a next page - even on the final
+                # (short) page, its rows have been committed and must not be re-sent
+                # next run. `next_cursor` is only which value to request AS THE
+                # FOLLOWING page's params, not "did this page's progress count".
+                if rows:
+                    last = rows[-1]
+                    cursor_row.since = datetime.fromisoformat(last["last_seen_at"])
+                    cursor_row.since_id = last["id"]
+                await session.commit()
+                if next_cursor is None:
                     break
 
         # Only when the export was exhausted, not time-boxed out: a board's

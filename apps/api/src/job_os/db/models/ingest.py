@@ -190,3 +190,35 @@ class CrawlRun(UUIDPK, Base):
 #: Placeholder run id for code paths that upsert outside a sweep (tests, one-off
 #: backfills). Kept as a module constant so the intent is greppable.
 NO_RUN: uuid.UUID | None = None
+
+
+class ScraperImportCursor(Base):
+    """Where `ingest.scraper_import` left off in the standalone scraper's
+    export, so the next scheduled run resumes instead of restarting at the
+    beginning every time.
+
+    A bare autoincrement-id cursor (the export's original design) can only
+    ever walk forward through rows in insertion order - once this table's
+    cursor passes a row's id, that row is never served again, even when the
+    scraper's own nightly re-crawl bumps its `last_seen_at` or changes its
+    content. The export was switched to a `(last_seen_at, id)` keyset cursor
+    to fix that (see the scraper's own `api/app.py::export_jobs`), and this
+    table is the other half: without persisting *some* cursor across
+    separate process runs, a Heroku Scheduler job has no memory between
+    invocations and would restart at the epoch every time regardless of
+    which cursor shape the export uses.
+
+    Single row by design - `id` is always the literal string "scraper_import",
+    enforced by the primary key rather than a table-level singleton trick,
+    since a second named cursor (another external source, one day) is a
+    plausible future need and this way costs nothing to support.
+    """
+
+    __tablename__ = "scraper_import_cursor"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True)
+    since: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    since_id: Mapped[int] = mapped_column(BigInteger, nullable=False, server_default="0")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default="now()", onupdate=datetime.utcnow
+    )
