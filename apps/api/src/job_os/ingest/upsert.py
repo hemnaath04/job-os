@@ -225,6 +225,42 @@ async def upsert_postings(
     return stats
 
 
+#: Appwrite rejects a `queries[]` entry once its JSON-encoded string exceeds
+#: 4096 chars. Most `source_id` values are short board-native ids, but the
+#: scraper falls back to a full posting URL when a board gives it nothing
+#: else (see `scraper_import._row_to_posting`), and 100 of those in one
+#: `equal` filter's `values` array can blow well past that limit even though
+#: it is still under Appwrite's separate 100-item cap. Chunking by a
+#: character budget rather than a fixed count handles both provider mixes
+#: without needing to know in advance which one a batch contains.
+_LOOKUP_CHAR_BUDGET = 3500
+
+
+async def _lookup_by_source_id(source_ids: list[str]) -> list[dict[str, object]]:
+    existing: list[dict[str, object]] = []
+    chunk: list[str] = []
+    chunk_chars = 0
+    for source_id in source_ids:
+        if chunk and chunk_chars + len(source_id) > _LOOKUP_CHAR_BUDGET:
+            existing.extend(
+                await appwrite_tables.list_rows(
+                    queries=[{"method": "equal", "attribute": "source_id", "values": chunk}],
+                    limit=len(chunk),
+                )
+            )
+            chunk, chunk_chars = [], 0
+        chunk.append(source_id)
+        chunk_chars += len(source_id)
+    if chunk:
+        existing.extend(
+            await appwrite_tables.list_rows(
+                queries=[{"method": "equal", "attribute": "source_id", "values": chunk}],
+                limit=len(chunk),
+            )
+        )
+    return existing
+
+
 async def _write_batch(rows: list[dict[str, object]], *, now: datetime) -> UpsertStats:
     """Look up which of this batch's postings already exist, then upsert.
 
@@ -240,10 +276,7 @@ async def _write_batch(rows: list[dict[str, object]], *, now: datetime) -> Upser
     """
     stats = UpsertStats()
     source_ids = [row["source_id"] for row in rows]
-    existing_rows = await appwrite_tables.list_rows(
-        queries=[{"method": "equal", "attribute": "source_id", "values": source_ids}],
-        limit=len(source_ids),
-    )
+    existing_rows = await _lookup_by_source_id(source_ids)
     # Keyed by (source, source_id): source_id alone already embeds the board
     # token for every provider in this codebase, but a board-token collision
     # across two different `source` values is not something to bet the
