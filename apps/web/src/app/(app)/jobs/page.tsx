@@ -652,8 +652,9 @@ export default function DiscoverPage() {
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Search
         </label>
         <p id="smart-search-help" className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-          Type a sentence, e.g. "fullstack intern in Boston with Python and React from
-          the last 2 weeks". The fast agent extracts the filters and runs the search.
+          Type a sentence, e.g. &ldquo;fullstack intern in Boston with Python and React
+          from the last 2 weeks&rdquo;. The fast agent extracts the filters and runs the
+          search.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <input
