@@ -540,7 +540,7 @@ const handler = createMcpHandler(
       {
         title: "Search Jobs",
         description:
-          "Search a pre-built index of postings crawled overnight from Greenhouse, Lever, Ashby and SmartRecruiters (not yet imported) -- fast, no live board fetch. technology_slugs is folded into the free-text query, since the index matches keywords against the full posting body rather than a separate tech-slug filter.",
+          "Search a pre-built index of postings -- fast, no live board fetch. Covers Greenhouse, Lever, Ashby, and SmartRecruiters directly, plus BambooHR, Workday, and iCIMS pulled in from a standalone scraper's own export. technology_slugs is folded into the free-text query, since the index matches keywords against the full posting body rather than a separate tech-slug filter.",
         inputSchema: z.object({
           title_keywords: z.array(z.string()).optional(),
           technology_slugs: z.array(z.string()).optional(),
