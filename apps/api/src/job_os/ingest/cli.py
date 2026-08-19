@@ -27,7 +27,7 @@ import json
 import sys
 from datetime import UTC, datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from job_os.ingest.corpus import corpus_summary, seed_tokens
 from job_os.ingest.fetcher import PoliteFetcher
@@ -97,31 +97,13 @@ async def _cmd_sweep(args: argparse.Namespace) -> int:
 
 async def _cmd_status(args: argparse.Namespace) -> int:
     from job_os.db.models.ingest import CrawlRun
-    from job_os.db.models.job_posting import JobPosting
     from job_os.db.session import async_session
     from job_os.ingest import liveness
+    from job_os.services import job_index
 
+    postings = await job_index.index_stats()
     async with async_session() as session:
         tokens = await liveness.liveness_summary(session)
-        total = await session.scalar(select(func.count()).select_from(JobPosting))
-        active = await session.scalar(
-            select(func.count())
-            .select_from(JobPosting)
-            .where(JobPosting.active.is_(True), JobPosting.canonical_id.is_(None))
-        )
-        duplicates = await session.scalar(
-            select(func.count())
-            .select_from(JobPosting)
-            .where(JobPosting.canonical_id.is_not(None))
-        )
-        companies = await session.scalar(
-            select(func.count(func.distinct(JobPosting.company_name)))
-        )
-        estimated = await session.scalar(
-            select(func.count())
-            .select_from(JobPosting)
-            .where(JobPosting.posted_at_estimated.is_(True))
-        )
         last_run = await session.scalar(
             select(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(1)
         )
@@ -129,13 +111,7 @@ async def _cmd_status(args: argparse.Namespace) -> int:
     _emit(
         {
             "command": "status",
-            "postings": {
-                "total": int(total or 0),
-                "active_canonical": int(active or 0),
-                "duplicates": int(duplicates or 0),
-                "companies": int(companies or 0),
-                "posted_at_estimated": int(estimated or 0),
-            },
+            "postings": postings,
             "tokens": tokens,
             "last_run": last_run.as_summary() if last_run else None,
         }

@@ -162,6 +162,17 @@ async def list_rows(
     return payload.get("rows", [])
 
 
+async def count_rows(*, filters: list[str] | None = None) -> int:
+    """Matching-row count without paging through the results.
+
+    Appwrite's list response carries `total` (the full match count, not the
+    page size) on every call, so `limit(1)` is enough to read it -- no need
+    to walk pages the way a real scan would."""
+    params = _query_params(filters, None, None, None, 1)
+    payload = await _request("GET", params=params)
+    return int(payload.get("total", 0) or 0)
+
+
 async def create_rows(rows: list[dict[str, Any]]) -> None:
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start : start + BATCH_SIZE]

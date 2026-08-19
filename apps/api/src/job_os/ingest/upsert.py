@@ -26,10 +26,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 import structlog
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from job_os.db.models.job_posting import JobPosting
 from job_os.ingest import normalize
 from job_os.ingest.providers import RawPosting
 from job_os.services import appwrite_tables
@@ -358,19 +356,3 @@ async def mark_duplicates(
     return marked
 
 
-async def postings_for_board(
-    session: AsyncSession, *, source: str, board_token: str, active_only: bool = True
-) -> list[JobPosting]:
-    """Unused anywhere in this repo (checked at the time of the Appwrite move) and
-    stale since: it still reads Postgres's `job_postings`, which nothing has written
-    a new row into since that move. Left as-is rather than deleted or rewritten for
-    a caller that does not exist -- rewrite this against `appwrite_tables` first if
-    one shows up.
-    """
-    statement = select(JobPosting).where(
-        JobPosting.source == source, JobPosting.board_token == board_token
-    )
-    if active_only:
-        statement = statement.where(JobPosting.active.is_(True))
-    result = await session.execute(statement)
-    return list(result.scalars().all())

@@ -59,10 +59,8 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import structlog
-from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from job_os.db.models.job_posting import JobPosting
 from job_os.services import appwrite_tables
 
 log = structlog.get_logger(__name__)
@@ -583,52 +581,38 @@ def _apply_mix_and_rank(
     return scored[offset : offset + limit]
 
 
-async def index_stats(session: AsyncSession) -> dict[str, object]:
-    """Counters for an ops view and for judging whether the index is worth reading."""
-    total = await session.scalar(select(func.count()).select_from(JobPosting))
-    active = await session.scalar(
-        select(func.count())
-        .select_from(JobPosting)
-        .where(JobPosting.active.is_(True), JobPosting.canonical_id.is_(None))
+async def index_stats() -> dict[str, object]:
+    """Counters for an ops view and for judging whether the index is worth reading.
+
+    `job_postings` lives in Appwrite now (see `appwrite_tables.py`), which has
+    no server-side aggregation -- `count_rows` reads Appwrite's own `total`
+    off a `limit(1)` call rather than paging through 35k+ rows, but that only
+    works for a plain filter count. A distinct-company count and a group-by-
+    source breakdown would each need a full table scan on every call to this
+    endpoint, which isn't worth it for an ops view; both are dropped rather
+    than silently wrong or slow.
+    """
+    total = await appwrite_tables.count_rows()
+    active = await appwrite_tables.count_rows(filters=["active=true", "canonical_id=null"])
+    duplicates = await appwrite_tables.count_rows(filters=["canonical_id!=null"])
+    estimated = await appwrite_tables.count_rows(
+        filters=["active=true", "posted_at_estimated=true"]
     )
-    companies = await session.scalar(
-        select(func.count(func.distinct(func.lower(JobPosting.company_name)))).where(
-            JobPosting.active.is_(True)
-        )
+    unhydrated = await appwrite_tables.count_rows(filters=["active=true", "jd_hydrated=false"])
+    newest_rows = await appwrite_tables.list_rows(
+        select=["last_seen_at"], sort_desc="last_seen_at", limit=1
     )
-    duplicates = await session.scalar(
-        select(func.count()).select_from(JobPosting).where(JobPosting.canonical_id.is_not(None))
-    )
-    estimated = await session.scalar(
-        select(func.count())
-        .select_from(JobPosting)
-        .where(JobPosting.active.is_(True), JobPosting.posted_at_estimated.is_(True))
-    )
-    unhydrated = await session.scalar(
-        select(func.count())
-        .select_from(JobPosting)
-        .where(JobPosting.active.is_(True), JobPosting.jd_hydrated.is_(False))
-    )
-    newest = await session.scalar(select(func.max(JobPosting.last_seen_at)))
-    by_source = (
-        await session.execute(
-            select(JobPosting.source, func.count())
-            .where(JobPosting.active.is_(True), JobPosting.canonical_id.is_(None))
-            .group_by(JobPosting.source)
-        )
-    ).all()
+    newest = newest_rows[0]["last_seen_at"] if newest_rows else None
 
     return {
-        "postings_total": int(total or 0),
-        "postings_active": int(active or 0),
-        "companies_active": int(companies or 0),
-        "duplicates_marked": int(duplicates or 0),
+        "postings_total": total,
+        "postings_active": active,
+        "duplicates_marked": duplicates,
         # Reported rather than buried: a searcher deserves to know how much of the
         # index has a date we inferred instead of one the employer published.
-        "posted_at_estimated": int(estimated or 0),
-        "descriptions_missing": int(unhydrated or 0),
+        "posted_at_estimated": estimated,
+        "descriptions_missing": unhydrated,
         "last_crawl_seen_at": newest,
-        "by_source": {source: int(count) for source, count in by_source},
     }
 
 

@@ -75,7 +75,7 @@ async def stats(
 ) -> IndexStatsResponse:
     from job_os.ingest.liveness import liveness_summary
 
-    payload = await job_index.index_stats(session)
+    payload = await job_index.index_stats()
     return IndexStatsResponse(
         **payload,
         tokens=await liveness_summary(session),

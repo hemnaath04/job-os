@@ -149,12 +149,10 @@ class IndexSearchResponse(BaseModel):
 class IndexStatsResponse(BaseModel):
     postings_total: int
     postings_active: int
-    companies_active: int
     duplicates_marked: int
     posted_at_estimated: int
     descriptions_missing: int
     last_crawl_seen_at: datetime | None
-    by_source: dict[str, int]
     tokens: dict[str, dict[str, int]] = Field(
         default_factory=dict, description="Corpus liveness per provider and status."
     )
