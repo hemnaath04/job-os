@@ -51,7 +51,11 @@ export default function ResumeEditorClient({
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<JsonResume | null>(null);
   const [chat, setChat] = useState("");
-  const [mode, setMode] = useState<"edit" | "preview">("edit");
+  // Opening a resume from the library is "look at this", not "change this" --
+  // landing in the full editor by default made every click feel like it put
+  // something at risk. Preview first; Edit is one click away in the toolbar
+  // below for whoever actually means to change it.
+  const [mode, setMode] = useState<"edit" | "preview">("preview");
   const [pendingProposal, setPendingProposal] =
     useState<ResumeChatResponse | null>(null);
   // The blocked finalize review, shown in an in-app panel. Null when there is
