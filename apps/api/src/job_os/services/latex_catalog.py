@@ -176,7 +176,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
     ),
     BuiltinTemplate(
         key="dashline",
-        name="Dashline",
+        name="Co-Op template",
         description=(
             "A plain-case, single-column layout common in early-career "
             "software resumes: company, role and place on one bold line per "
