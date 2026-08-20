@@ -25,11 +25,11 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
-import { downloadPdf } from "@/lib/download";
+import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
 import type {
   BlockedClaim,
@@ -39,6 +39,40 @@ import type {
   ResumeReviewResult,
   ResumeVersion,
 } from "@/lib/types";
+
+/**
+ * "Firstname Lastname Company Role.pdf" instead of a name that never changed
+ * across every resume this account ever downloaded. An uploaded file's own
+ * name is trusted as-is (it's the artifact the user built, not something
+ * this app produced). Otherwise the company/role comes from whichever job
+ * this version was tailored against -- best-effort: an unreachable
+ * application/job degrades to just the person's name rather than blocking
+ * the download itself.
+ */
+async function resolveDownloadFilename(version: ResumeVersion): Promise<string> {
+  if (version.source_filename) return version.source_filename;
+  const person = version.json_resume?.basics?.name;
+  let company: string | undefined;
+  let role: string | undefined;
+  try {
+    if (version.spawned_from_application_id) {
+      const applications = await api.listApplications();
+      const application = applications.find(
+        (a) => a.id === version.spawned_from_application_id,
+      );
+      company = application?.job.company?.name;
+      role = application?.job.title;
+    } else if (version.spawned_from_job_id) {
+      const job = await api.getJob(version.spawned_from_job_id);
+      company = job.company?.name;
+      role = job.title;
+    }
+  } catch {
+    // Best-effort naming only -- an unreachable job/application shouldn't
+    // block the download itself.
+  }
+  return buildResumeFilename([person, company, role]);
+}
 
 export default function ResumeEditorClient({
   resumeId,
@@ -79,6 +113,28 @@ export default function ResumeEditorClient({
     queryFn: () => api.previewDraft(draft ?? {}),
     enabled: mode === "preview" && draft !== null,
   });
+
+  // `previewDraft` now hands back an object URL to a real, blob-backed PDF,
+  // not inline HTML -- one is minted per render and browsers don't reclaim
+  // it on their own. Revoking the *previous* URL (not the current one, which
+  // the iframe below still needs) on every change and on unmount is what
+  // keeps a long editing session from leaking one blob per keystroke-driven
+  // re-preview. `revokeObjectURL` on a plain data: URL (the plain-HTML
+  // fallback) is a harmless no-op, so this doesn't need to know which kind
+  // of URL it got back.
+  const previousPreviewUrl = useRef<string | null>(null);
+  useEffect(() => {
+    const current = previewQuery.data ?? null;
+    if (previousPreviewUrl.current && previousPreviewUrl.current !== current) {
+      URL.revokeObjectURL(previousPreviewUrl.current);
+    }
+    previousPreviewUrl.current = current;
+  }, [previewQuery.data]);
+  useEffect(() => {
+    return () => {
+      if (previousPreviewUrl.current) URL.revokeObjectURL(previousPreviewUrl.current);
+    };
+  }, []);
 
   useEffect(() => {
     if (versionQuery.data) {
@@ -226,8 +282,9 @@ export default function ResumeEditorClient({
     (version as ResumeVersion & { pdf_file_id?: string | null }).pdf_file_id ??
     version.pdf_r2_key;
   const hasRenderedPdf = Boolean(storedFileId) || version.status === "final";
-  const downloadResume = () =>
-    downloadPdf(downloadUrl, version.source_filename ?? "Hemnaath_Balasubramani_Resume.pdf");
+  const downloadResume = async () => {
+    downloadPdf(downloadUrl, await resolveDownloadFilename(version));
+  };
 
   return (
     <div className="workspace-page max-w-[1720px]">
@@ -329,8 +386,7 @@ export default function ResumeEditorClient({
               ) : (
                 <iframe
                   title="Unsaved resume draft preview"
-                  srcDoc={previewQuery.data}
-                  sandbox=""
+                  src={previewQuery.data}
                   className="h-[78dvh] w-full"
                 />
               )}

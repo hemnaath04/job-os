@@ -558,15 +558,21 @@ const legacyApi = {
     `/api/backend/resumes/${resumeId}/versions/${versionId}/download`,
   previewVersionUrl: (resumeId: string, versionId: string) =>
     `/api/backend/resumes/${resumeId}/versions/${versionId}/preview`,
-  previewDraft: async (jsonResume: object) => {
+  // Returns an object URL to a real PDF, not markup: `/resumes/preview`
+  // switched from HTML to a LaTeX-rendered PDF (see that route's own
+  // docstring -- "an HTML approximation would be a different document from
+  // the one that gets sent to an employer"), and callers now feed this
+  // straight into an `<iframe src>`, not `srcDoc`. Caller owns revoking it.
+  previewDraft: async (jsonResume: object, templateKey?: string | null) => {
     const response = await fetch("/api/backend/resumes/preview", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ json_resume: jsonResume }),
+      body: JSON.stringify({ json_resume: jsonResume, template_key: templateKey ?? null }),
       cache: "no-store",
     });
     if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
-    return response.text();
+    const blob = await response.blob();
+    return URL.createObjectURL(blob);
   },
 
   tailorResume: (resumeId: string, jobId: string) =>
@@ -1253,14 +1259,23 @@ export const api = {
       ? appwriteWorkspace.downloadVersionUrl(versionId)
       : legacyApi.previewVersionUrl(resumeId, versionId),
 
-  previewDraft: (jsonResume: object) =>
-    isAppwriteWorkspaceEnabled
-      ? Promise.resolve(
-          renderResumePreview(
-            jsonResume as import("./types").JsonResume,
-          ),
-        )
-      : legacyApi.previewDraft(jsonResume),
+  // The FastAPI container renders this regardless of which store the
+  // resume's own metadata lives in -- `/resumes/preview` takes a raw
+  // json_resume and looks nothing up by id, so the Appwrite-workspace split
+  // that governs where a resume's data lives doesn't apply here. Only truly
+  // falls back to the plain-HTML approximation (resume-preview.ts) if the
+  // real render itself fails (backend unreachable, malformed draft) --
+  // a rough preview beats no preview, but the real one is tried first now,
+  // not skipped outright for every Appwrite-workspace account.
+  async previewDraft(jsonResume: object, templateKey?: string | null): Promise<string> {
+    try {
+      return await legacyApi.previewDraft(jsonResume, templateKey);
+    } catch {
+      return `data:text/html;charset=utf-8,${encodeURIComponent(
+        renderResumePreview(jsonResume as import("./types").JsonResume),
+      )}`;
+    }
+  },
 
   async listCalendar(params?: { days?: number; include_past?: number }) {
     if (!isAppwritePipelineEnabled) {

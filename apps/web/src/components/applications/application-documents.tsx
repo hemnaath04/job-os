@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { Download, FileText } from "lucide-react";
-import { downloadPdf } from "@/lib/download";
+import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { api } from "@/lib/api";
 import { coverLetters } from "@/lib/cover-letters";
 import type { Application } from "@/lib/types";
@@ -62,7 +62,8 @@ export function ApplicationDocuments({ application }: { application: Application
               ? () =>
                   downloadPdf(
                     api.downloadVersionUrl(linkedResume.id, resumeVersion.id),
-                    resumeVersion.source_filename ?? `${linkedResume.name}.pdf`,
+                    resumeVersion.source_filename ??
+                      buildResumeFilename([application.job.company?.name, application.job.title]),
                   )
               : undefined
           }

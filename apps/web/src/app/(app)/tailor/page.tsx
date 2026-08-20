@@ -27,7 +27,7 @@ import {
 } from "@/lib/appwrite/workspace";
 import { isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import { withTimeout } from "@/lib/async";
-import { downloadPdf } from "@/lib/download";
+import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { TemplatePicker } from "@/components/template-picker";
@@ -1124,7 +1124,10 @@ function ResultView({
           />
           <button
             onClick={() =>
-              downloadPdf(downloadUrl, `resume_${result.id.slice(0, 8)}.pdf`)
+              downloadPdf(
+                downloadUrl,
+                buildResumeFilename([result.json_resume?.basics?.name, companyName, jobTitle]),
+              )
             }
             disabled={reviewing || !downloadUrl}
             className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
