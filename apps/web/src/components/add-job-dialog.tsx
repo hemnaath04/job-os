@@ -5,9 +5,17 @@ import { Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { withTimeout } from "@/lib/async";
 import { reportFailure } from "@/lib/errors";
 
 type Mode = "url" | "text";
+
+// A slow or JS-heavy posting page, plus the parse pass on top of it, is
+// exactly the "crosses into the API container" case withTimeout exists for --
+// without a ceiling, an unreachable URL left this dialog spinning on
+// "Importing…" forever, since a plain fetch() has no default timeout of its
+// own and the underlying request has nothing to bound it either.
+const IMPORT_TIMEOUT_MS = 60 * 1_000;
 
 export function AddJobDialog({
   open,
@@ -37,12 +45,25 @@ export function AddJobDialog({
     if (!canSubmit) return;
     setLoading(true);
     try {
-      const job =
+      const job = await withTimeout(
         mode === "url"
-          ? await api.jobFromUrl(url.trim())
-          : await api.jobFromText(jdText.trim(), company.trim() || undefined);
-      await api.createApplication({ job_id: job.id, status: "wishlist" });
-      toast.success(`Added: ${job.title}`);
+          ? api.jobFromUrl(url.trim())
+          : api.jobFromText(jdText.trim(), company.trim() || undefined),
+        IMPORT_TIMEOUT_MS,
+        "That page took too long to load. It may be slow, JS-heavy, or " +
+          "unreachable -- try again, or use 'Paste description' instead.",
+      );
+      // The backend already dedupes the job itself (same URL/text returns the
+      // existing row, not a new one) and rejects a repeat application for it
+      // with a 409 -- this is that "already added" case, not a real failure.
+      let alreadyAdded = false;
+      try {
+        await api.createApplication({ job_id: job.id, status: "wishlist" });
+      } catch (err) {
+        if (!(err instanceof Error) || !err.message.startsWith("409")) throw err;
+        alreadyAdded = true;
+      }
+      toast.success(alreadyAdded ? `Already in your list: ${job.title}` : `Added: ${job.title}`);
       reset();
       onOpenChange(false);
       onCreated();
