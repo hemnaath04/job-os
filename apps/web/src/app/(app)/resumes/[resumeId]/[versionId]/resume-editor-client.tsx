@@ -8,12 +8,14 @@ import {
   ArrowUpRight,
   Bot,
   CheckCircle2,
+  Columns2,
   Download,
   Eye,
   FileCheck2,
   Github,
   Loader2,
   MessageSquareText,
+  Pencil,
   Plus,
   Save,
   Send,
@@ -28,8 +30,10 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { PdfPreviewPane } from "@/components/pdf-preview-pane";
 import { reportFailure } from "@/lib/errors";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
+import { useDebouncedValue } from "@/lib/hooks/use-debounced-value";
 import { versionStatusLabel } from "@/lib/types";
 import type {
   BlockedClaim,
@@ -87,9 +91,9 @@ export default function ResumeEditorClient({
   const [chat, setChat] = useState("");
   // Opening a resume from the library is "look at this", not "change this" --
   // landing in the full editor by default made every click feel like it put
-  // something at risk. Preview first; Edit is one click away in the toolbar
-  // below for whoever actually means to change it.
-  const [mode, setMode] = useState<"edit" | "preview">("preview");
+  // something at risk. Preview first; Edit and Split are one click away in
+  // the toolbar below for whoever actually means to change it.
+  const [mode, setMode] = useState<"edit" | "split" | "preview">("preview");
   const [pendingProposal, setPendingProposal] =
     useState<ResumeChatResponse | null>(null);
   // The blocked finalize review, shown in an in-app panel. Null when there is
@@ -108,10 +112,15 @@ export default function ResumeEditorClient({
     queryKey: ["resume-messages", resumeId, versionId],
     queryFn: () => api.listRevisionMessages(resumeId, versionId),
   });
+  // Debounced so Split mode's live preview compiles once typing pauses, not
+  // on every keystroke; switching into Preview/Split without having just
+  // typed anything sees no delay, since the debounced value already equals
+  // the live one by then.
+  const debouncedDraft = useDebouncedValue(draft, 700);
   const previewQuery = useQuery({
-    queryKey: ["resume-draft-preview", draft],
-    queryFn: () => api.previewDraft(draft ?? {}),
-    enabled: mode === "preview" && draft !== null,
+    queryKey: ["resume-draft-preview", debouncedDraft],
+    queryFn: () => api.previewDraft(debouncedDraft ?? {}),
+    enabled: mode !== "edit" && debouncedDraft !== null,
   });
 
   // `previewDraft` now hands back an object URL to a real, blob-backed PDF,
@@ -320,8 +329,11 @@ export default function ResumeEditorClient({
             aria-label="Editor mode"
             className="flex rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5"
           >
-            <ModeButton active={mode === "edit"} onClick={() => setMode("edit")} icon={Save}>
+            <ModeButton active={mode === "edit"} onClick={() => setMode("edit")} icon={Pencil}>
               Edit
+            </ModeButton>
+            <ModeButton active={mode === "split"} onClick={() => setMode("split")} icon={Columns2}>
+              Split
             </ModeButton>
             <ModeButton active={mode === "preview"} onClick={() => setMode("preview")} icon={Eye}>
               Preview
@@ -376,20 +388,15 @@ export default function ResumeEditorClient({
             and nesting a second one leaves the page with no single primary. */}
         <div className="min-w-0">
           {mode === "preview" ? (
-            <div className="product-panel min-h-[78dvh] overflow-hidden bg-[color:var(--color-surface-hover)]">
-              {previewQuery.isLoading ? (
-                <div className="loading-surface h-[78dvh]" />
-              ) : previewQuery.isError ? (
-                <div className="p-6 text-sm text-[color:var(--color-rose-ink)]">
-                  The draft preview could not be rendered.
-                </div>
-              ) : (
-                <iframe
-                  title="Unsaved resume draft preview"
-                  src={previewQuery.data}
-                  className="h-[78dvh] w-full"
-                />
-              )}
+            <div className="product-panel h-[78dvh]">
+              <PdfPreviewPane query={previewQuery} />
+            </div>
+          ) : mode === "split" ? (
+            <div className="grid gap-3 lg:grid-cols-2">
+              <StructuredEditor value={draft} onChange={setDraft} />
+              <div className="product-panel h-[78dvh] lg:sticky lg:top-16">
+                <PdfPreviewPane query={previewQuery} />
+              </div>
             </div>
           ) : (
             <StructuredEditor value={draft} onChange={setDraft} />

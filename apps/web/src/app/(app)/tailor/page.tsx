@@ -8,10 +8,12 @@ import {
   Check,
   CheckCircle2,
   Download,
+  Eye,
   LibraryBig,
   Loader2,
   Plus,
   RefreshCw,
+  ShieldCheck,
   Sparkles,
   X,
 } from "lucide-react";
@@ -20,6 +22,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { PdfPreviewPane } from "@/components/pdf-preview-pane";
 import { reportFailure } from "@/lib/errors";
 import {
   appwriteWorkspace,
@@ -1061,6 +1064,17 @@ function ResultView({
     return map;
   }, [facts]);
 
+  // Preview first: the real rendered PDF is the actual deliverable, and it's
+  // what the whole run was for. Evidence (the per-bullet diff against the
+  // verified facts backing each rewrite) is one click away for whoever wants
+  // to audit what changed and why, not the first thing shown.
+  const [view, setView] = useState<"preview" | "evidence">("preview");
+  const previewQuery = useQuery({
+    queryKey: ["tailor-result-preview", result.id, templateId],
+    queryFn: () => api.previewDraft(result.json_resume, templateId),
+    enabled: view === "preview",
+  });
+
   // Issues the review raised, held so the user can read them and decide. The
   // review advises; it does not gate. An honest resume scores in the seventies,
   // so refusing anything short of a pass meant never being able to finalize.
@@ -1236,12 +1250,41 @@ function ResultView({
         </div>
       )}
 
-      <div className="mt-4 grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
-        <ResumeRender
-          json={result.json_resume}
-          provenance={result.provenance}
-          originalBulletText={originalBulletText}
-        />
+      <div
+        role="group"
+        aria-label="Result view"
+        className="mt-6 flex w-fit rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5"
+      >
+        <button
+          type="button"
+          onClick={() => setView("preview")}
+          aria-pressed={view === "preview"}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition ${view === "preview" ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}
+        >
+          <Eye className="size-3.5" /> Preview
+        </button>
+        <button
+          type="button"
+          onClick={() => setView("evidence")}
+          aria-pressed={view === "evidence"}
+          className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs transition ${view === "evidence" ? "bg-[color:var(--color-surface-hover)] text-[color:var(--color-text)]" : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"}`}
+        >
+          <ShieldCheck className="size-3.5" /> Evidence
+        </button>
+      </div>
+
+      <div className="mt-3 grid grid-cols-1 gap-4 lg:grid-cols-[1.6fr_1fr]">
+        {view === "preview" ? (
+          <div className="product-panel h-[78dvh]">
+            <PdfPreviewPane query={previewQuery} />
+          </div>
+        ) : (
+          <ResumeRender
+            json={result.json_resume}
+            provenance={result.provenance}
+            originalBulletText={originalBulletText}
+          />
+        )}
         <div className="flex flex-col gap-4">
           <AtsPanel
             matched={result.ats_report?.matched ?? []}
