@@ -470,8 +470,9 @@ export interface MeRead {
 
 // "theirstack" and "github" come from the FastAPI backend; the boards in the
 // middle are the key-free ones aggregated in lib/discover/no-key-sources.ts.
-// "jsearch" and "adzuna" run through that same route but on a key the user
-// pastes into their own browser (lib/discover/keys.ts).
+// "jsearch" and "adzuna" run through that same route on a bring-your-own key;
+// no UI collects one anymore (see jobs/page.tsx's LIVE_SOURCES), so they only
+// run if a dev passes credentials directly.
 export type DiscoverySource =
   | "theirstack"
   | "github"

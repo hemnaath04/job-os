@@ -62,8 +62,8 @@ export type DiscoverNoKeyRequest = {
    */
   hydrate_descriptions?: boolean;
   /**
-   * Bring-your-own-key credentials, read from localStorage at call time. They
-   * ride along with the request instead of living on the server.
+   * Bring-your-own-key credentials. No UI pastes these anymore; the field
+   * stays on the route for a dev who wants to pass one directly.
    */
   keys?: {
     jsearch?: string;
@@ -71,9 +71,9 @@ export type DiscoverNoKeyRequest = {
     adzuna_app_key?: string;
   };
   /**
-   * Endpoints the user hosts themselves, read from localStorage at call time
-   * and gated behind the acceptance on /jobs/keys. Same rule as the keys: they
-   * ride along with the request instead of living on the server.
+   * Endpoints the user hosts themselves. No UI sets this anymore (source
+   * selection is a code-level list, not a per-user picker); the field stays
+   * on the route for a dev who wants to point a search at one directly.
    */
   custom_sources?: {
     id: string;
@@ -698,10 +698,11 @@ const legacyApi = {
       body: JSON.stringify(body),
     }),
   /**
-   * The pre-built index (overnight ingest crawl), not a live fan-out. This is
-   * the fast, default path -- see docs/ingest-index.md. discoverySearch and
-   * discoverNoKey stay as the secondary, opt-in "live sources" path, since
-   * the index only covers Greenhouse/Lever/Ashby/SmartRecruiters today.
+   * The pre-built index (overnight ingest crawl), not a live fan-out --
+   * see docs/ingest-index.md. jobs/page.tsx runs this alongside
+   * discoverySearch/discoverNoKey on every search and merges all three into
+   * one list, rather than treating the index as primary and the live fetch
+   * as a separate, manually-triggered fallback.
    */
   indexSearch: (body: IndexSearchRequest) =>
     request<IndexSearchResponse>("/index/search", {

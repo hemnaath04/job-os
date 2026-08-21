@@ -8,11 +8,8 @@ import {
   CheckCircle2,
   ChevronRight,
   ExternalLink,
-  KeyRound,
   Loader2,
-  Lock,
   MapPin,
-  Plug,
   Radar,
   Search,
   ShieldAlert,
@@ -20,7 +17,6 @@ import {
   Wand2,
   X,
 } from "lucide-react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
@@ -38,27 +34,11 @@ import { indexHitToDiscoveryResult } from "@/lib/discover/index-results";
 import { detectEligibilityFlags } from "@/lib/discover/work-auth";
 import { reportFailure } from "@/lib/errors";
 import {
-  CUSTOM_SOURCES_CHANGED_EVENT,
-  hasAcceptedTerms,
-  loadCustomSources,
-  setCustomEnabled,
-  type CustomSource,
-} from "@/lib/discover/custom-sources";
-import {
-  hasKey,
-  isByoSource,
-  KEYS_CHANGED_EVENT,
-  loadKeys,
-  type DiscoveryKeys,
-} from "@/lib/discover/keys";
-import {
+  BACKEND_SOURCES,
   emptyDiscoveryResponse,
   FREE_SOURCES,
-  KEYED_SOURCES,
   mergeDiscoveryResponses,
   NO_KEY_SOURCES,
-  SOURCE_META,
-  splitSources,
 } from "@/lib/discover/sources";
 import type {
   DiscoveryResult,
@@ -68,8 +48,21 @@ import type {
   DiscoverySourceError,
   IndexMatchScore,
   IndexSearchRequest,
+  IndexSearchResponse,
   SavedSearch,
 } from "@/lib/types";
+
+/**
+ * The one source list every search runs against. No per-user picker: which
+ * sources are live is a code change here (and the constant below), not a
+ * runtime UI toggle -- there is one operator of this deployment, not many
+ * tenants who each want their own board selection or custom feed. TheirStack
+ * costs real money per call, so it needs an explicit `true` here rather than
+ * defaulting on just because it is otherwise configured on the server.
+ */
+const LIVE_SOURCES: DiscoverySource[] = [...FREE_SOURCES];
+const ENABLE_THEIRSTACK = false;
+if (ENABLE_THEIRSTACK) LIVE_SOURCES.push("theirstack");
 
 // Adapts the server's AI-authoritative score to the shape the client
 // heuristic already returns, so ResultCard/sorting need no separate
@@ -91,17 +84,11 @@ const SORT_LABEL: Record<SortMode, string> = {
   location: "My location",
 };
 
-// Bumped to v2 when the free sources landed: v1 sessions persisted the old
-// two-source default, which would have hidden the new boards from anyone who
-// had ever run a search.
-const STORAGE_KEY = "discover:state:v2";
-
-// The FastAPI SavedSearch schema validates `sources` against a Literal of
-// theirstack | github, so a saved query cannot carry the selections that run
-// through /api/discover: the key-free boards or the bring-your-own-key APIs.
-// Keep them alongside, keyed by saved-search id, until the backend catches up.
-// Only the source ids are stored here, never a key.
-const SAVED_NO_KEY_STORAGE_KEY = "discover:saved-no-key:v1";
+// Bumped to v3 when source selection was removed: v1/v2 sessions persisted a
+// `sources` array that no longer means anything (the set is fixed in code
+// now), and replaying a stale one would look like a silent, unexplained
+// filter.
+const STORAGE_KEY = "discover:state:v3";
 
 type PersistedState = {
   titles: string;
@@ -109,7 +96,6 @@ type PersistedState = {
   country: string;
   maxAgeDays: number;
   limit: number;
-  sources: DiscoverySource[];
   results: DiscoveryResult[] | null;
   sort: SortMode;
 };
@@ -136,142 +122,43 @@ function saveState(s: PersistedState) {
   }
 }
 
-function loadSavedNoKey(): Record<string, DiscoverySource[]> {
-  if (typeof window === "undefined") return {};
-  try {
-    const raw = localStorage.getItem(SAVED_NO_KEY_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, DiscoverySource[]>) : {};
-  } catch {
-    return {};
-  }
-}
-
-function saveSavedNoKey(id: string, sources: DiscoverySource[]) {
-  if (typeof window === "undefined") return;
-  try {
-    const all = loadSavedNoKey();
-    all[id] = sources;
-    localStorage.setItem(SAVED_NO_KEY_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    /* non-critical: the saved search still runs its backend half */
-  }
-}
-
-function forgetSavedNoKey(id: string) {
-  if (typeof window === "undefined") return;
-  try {
-    const all = loadSavedNoKey();
-    delete all[id];
-    localStorage.setItem(SAVED_NO_KEY_STORAGE_KEY, JSON.stringify(all));
-  } catch {
-    /* non-critical */
-  }
-}
-
 /**
- * The half of a selection that /api/discover serves: the key-free boards plus
- * whichever bring-your-own-key sources actually have a key pasted. A selected
- * source with no key is dropped rather than sent, so the route never has to
- * answer for a credential the user never gave it.
- */
-function routeSources(
-  selected: DiscoverySource[],
-  keys: DiscoveryKeys,
-): DiscoverySource[] {
-  const { noKey, byoKey } = splitSources(selected);
-  return [...noKey, ...byoKey.filter((s) => hasKey(s, keys))];
-}
-
-/**
- * The custom endpoints a search should hit. Read fresh rather than from state,
- * for the same reason the keys are, and gated on the acceptance: a revoked
- * acceptance must stop the fetching even if a stale toggle is still lit.
- *
- * Custom sources apply globally by their enabled flag rather than per saved
- * search, so this is the one answer for both search paths.
- */
-function enabledCustomSources(): CustomSource[] {
-  if (!hasAcceptedTerms()) return [];
-  return loadCustomSources().filter((s) => s.enabled);
-}
-
-function toCustomPayload(sources: CustomSource[]) {
-  return sources.map((s) => ({
-    id: s.id,
-    name: s.name,
-    url: s.url,
-    auth_header: s.authHeader,
-    auth_value: s.authValue,
-  }));
-}
-
-/**
- * Fan a query out to whichever backends the selected sources live on, then
- * merge. Both halves run in parallel and neither can sink the other: if one
- * rejects, its failure becomes an error row attributed to the sources it was
- * carrying, and the other half's results still render. Only a total failure
+ * Every search -- the sentence box, the advanced-filters button, and a saved
+ * search re-run alike -- answers from both the pre-built index and the fixed
+ * live source set at once and returns one merged, deduped list. There used
+ * to be a second, manually-triggered "also search live sources" action with
+ * its own button and its own source picker; that was two searches wearing
+ * one page, not one search, so it is gone. Both halves run in parallel and
+ * neither can sink the other: if one rejects, its failure becomes an error
+ * row and the other half's results still render. Only a total failure
  * throws, which surfaces as the mutation's error toast.
  */
-async function runSplitSearch(
-  query: DiscoverySearchRequest,
-  keys: DiscoveryKeys,
-  custom: CustomSource[],
-): Promise<DiscoverySearchResponse> {
-  const selected = query.sources ?? [];
-  const { backend } = splitSources(selected);
-  const route = routeSources(selected, keys);
-  // Custom endpoints ride the same /api/discover call as the key-free and
-  // bring-your-own-key sources, so they share that half's fate as well.
-  const routeGroup: string[] = [...route, ...custom.map((s) => `custom:${s.id}`)];
-
-  const [backendPart, routePart] = await Promise.allSettled([
-    backend.length
-      ? api.discoverySearch({ ...query, sources: backend })
-      : Promise.resolve(emptyDiscoveryResponse()),
-    routeGroup.length
-      ? api.discoverNoKey({
-          sources: route,
-          title_keywords: query.title_keywords ?? [],
-          country_codes: query.country_codes ?? [],
-          max_age_days: query.max_age_days,
-          limit: query.limit,
-          keys,
-          custom_sources: toCustomPayload(custom),
-          // The feed renders a description clamp and fit-score reads the same
-          // text, so browsing needs it. Ingest and alerts do not, which is why
-          // this is opt-in per caller rather than on by default.
-          hydrate_descriptions: true,
-        })
-      : Promise.resolve(emptyDiscoveryResponse()),
-  ]);
-
-  if (backendPart.status === "rejected" && routePart.status === "rejected") {
-    throw backendPart.reason as Error;
-  }
-
-  // `limit` is what each backend was asked for, so the merged list is capped
-  // to it as well. Otherwise picking 20 would quietly return up to 40.
-  return combineParts(
-    [...selected, ...routeGroup.filter((s) => s.startsWith("custom:"))],
-    backend,
-    backendPart,
-    routeGroup,
-    routePart,
-    query.limit,
-  );
-}
-
-function combineParts(
-  selected: string[],
-  backend: DiscoverySource[],
+/**
+ * Merge the index half with whichever of the backend/route halves actually
+ * ran. Shared by the main search and a saved-search re-run, which differ only
+ * in how the backend half is produced (a fresh /discovery/search call vs.
+ * /discovery/saved/{id}/run, which also bumps last_run_at/last_run_count).
+ */
+function combineSearchParts(
+  indexPart: PromiseSettledResult<IndexSearchResponse>,
   backendPart: PromiseSettledResult<DiscoverySearchResponse>,
-  route: string[],
+  backend: DiscoverySource[],
   routePart: PromiseSettledResult<DiscoverySearchResponse>,
-  limit?: number,
+  route: DiscoverySource[],
+  limit: number | undefined,
 ): DiscoverySearchResponse {
   const parts: DiscoverySearchResponse[] = [];
   const failures: DiscoverySourceError[] = [];
 
+  if (indexPart.status === "fulfilled") {
+    parts.push({
+      results: indexPart.value.results.map(indexHitToDiscoveryResult),
+      source_counts: { index: indexPart.value.results.length },
+      errors: [],
+    });
+  } else {
+    failures.push({ source: "index", message: (indexPart.reason as Error)?.message ?? "request failed" });
+  }
   for (const [half, group] of [
     [backendPart, backend],
     [routePart, route],
@@ -286,9 +173,48 @@ function combineParts(
     for (const source of group) failures.push({ source, message });
   }
 
-  const merged = mergeDiscoveryResponses(parts, selected, limit);
+  if (parts.length === 0) throw new Error(failures[0]?.message ?? "search failed");
+
+  // `limit` is what each half was asked for, so the merged list is capped to
+  // it as well. Otherwise picking 20 would quietly return up to 60.
+  const merged = mergeDiscoveryResponses(parts, ["index", ...backend, ...route], limit);
   merged.errors = [...merged.errors, ...failures];
   return merged;
+}
+
+async function runUnifiedSearch(
+  filters: DiscoverySearchRequest,
+): Promise<DiscoverySearchResponse> {
+  const backend = LIVE_SOURCES.filter((s) => BACKEND_SOURCES.includes(s));
+  const route = LIVE_SOURCES.filter((s) => NO_KEY_SOURCES.includes(s));
+
+  const [indexPart, backendPart, routePart] = await Promise.allSettled([
+    api.indexSearch({
+      title_keywords: filters.title_keywords ?? [],
+      query: (filters.technology_slugs ?? []).join(" ") || undefined,
+      country_codes: filters.country_codes ?? [],
+      max_age_days: filters.max_age_days,
+      limit: filters.limit,
+    }),
+    backend.length
+      ? api.discoverySearch({ ...filters, sources: backend })
+      : Promise.resolve(emptyDiscoveryResponse()),
+    route.length
+      ? api.discoverNoKey({
+          sources: route,
+          title_keywords: filters.title_keywords ?? [],
+          country_codes: filters.country_codes ?? [],
+          max_age_days: filters.max_age_days,
+          limit: filters.limit,
+          // The feed renders a description clamp and fit-score reads the same
+          // text, so browsing needs it. Ingest and alerts do not, which is why
+          // this is opt-in per caller rather than on by default.
+          hydrate_descriptions: true,
+        })
+      : Promise.resolve(emptyDiscoveryResponse()),
+  ]);
+
+  return combineSearchParts(indexPart, backendPart, backend, routePart, route, filters.limit);
 }
 
 export default function DiscoverPage() {
@@ -317,120 +243,47 @@ export default function DiscoverPage() {
   const [country, setCountry] = useState<string>(initial.country ?? "US");
   const [maxAgeDays, setMaxAgeDays] = useState<number>(initial.maxAgeDays ?? 30);
   const [limit, setLimit] = useState<number>(initial.limit ?? 20);
-  // Everything free is on by default. TheirStack stays off until the user
-  // opts in, so a fresh install never burns credits on its first search.
-  const [sources, setSources] = useState<DiscoverySource[]>(
-    initial.sources ?? [...FREE_SOURCES],
-  );
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
   const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
   // Default to fit so the strongest matches lead. When the profile is empty the
   // fit branch falls back to recency, so this is safe for a fresh account too.
   const [sort, setSort] = useState<SortMode>(initial.sort ?? "fit");
-  // Collapsed by default: the index covers the boards that matter, so the
-  // live multi-source fan-out (smart search, saved searches, source picking)
-  // is a slower, broader fallback rather than the thing you see first.
-  const [showLiveSearch, setShowLiveSearch] = useState(false);
+  // Collapsed by default: most searches just want the sentence box; refining
+  // by title/tech/country/age is the exception, not the default view.
+  const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [smartQuery, setSmartQuery] = useState<string>("");
 
-  // Pasted keys live in localStorage, which the server render cannot see, so
-  // start empty and pick them up on mount. The event fires from /jobs/keys in
-  // this tab; `storage` covers the same page open in another one.
-  const [keys, setKeys] = useState<DiscoveryKeys>({});
-  // Same story for the user's own endpoints and the acceptance that unlocks
-  // them: both live in localStorage and are edited on /jobs/keys.
-  const [customSources, setCustomSources] = useState<CustomSource[]>([]);
-  const [customAccepted, setCustomAccepted] = useState(false);
-  useEffect(() => {
-    const refresh = () => {
-      const next = loadKeys();
-      setKeys(next);
-      // A source whose key was just removed cannot run, so un-select it rather
-      // than leaving it lit and silently skipped.
-      setSources((prev) => {
-        const kept = prev.filter((s) => !isByoSource(s) || hasKey(s, next));
-        return kept.length > 0 && kept.length < prev.length ? kept : prev;
-      });
-      setCustomSources(loadCustomSources());
-      setCustomAccepted(hasAcceptedTerms());
-    };
-    refresh();
-    window.addEventListener(KEYS_CHANGED_EVENT, refresh);
-    window.addEventListener(CUSTOM_SOURCES_CHANGED_EVENT, refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener(KEYS_CHANGED_EVENT, refresh);
-      window.removeEventListener(CUSTOM_SOURCES_CHANGED_EVENT, refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
-
   // Persist on any change so reload restores state.
   useEffect(() => {
-    saveState({ titles, techs, country, maxAgeDays, limit, sources, results, sort });
-  }, [titles, techs, country, maxAgeDays, limit, sources, results, sort]);
+    saveState({ titles, techs, country, maxAgeDays, limit, results, sort });
+  }, [titles, techs, country, maxAgeDays, limit, results, sort]);
 
+  // The one search: every call answers from the pre-built index and the fixed
+  // live source set at once, merged into one deduped list. Used by the
+  // sentence box, the advanced-filters button, and the initial blank-page load.
   const search = useMutation({
-    // Read the keys at call time rather than closing over state: the user may
-    // have connected a source in another tab since this page mounted.
-    mutationFn: (body: DiscoverySearchRequest) =>
-      runSplitSearch(body, loadKeys(), enabledCustomSources()),
+    mutationFn: (body: DiscoverySearchRequest) => runUnifiedSearch(body),
     onSuccess: (data) => {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
       setSourceErrors(data.errors ?? []);
-      const emptySources = sources.filter(
-        (s) => (data.source_counts?.[s] ?? 0) === 0 && !data.errors?.find((e) => e.source === s),
-      );
-      if (emptySources.length > 0)
-        console.log("[discover] sources with 0 hits for these filters:", emptySources);
       if (data.results.length === 0)
         toast("No results", { description: "Try widening the filters." });
     },
     onError: (err: Error) => reportFailure("run that search", err),
   });
 
-  // The primary path: the pre-built index, populated by an overnight crawl
-  // rather than fetched live. No sources to pick, because the crawl already
-  // covers the boards that matter; see docs/ingest-index.md.
-  //
-  // Always called with the search form's own extracted, structured filters
-  // (see `smart` below) -- there is no separate free-text path into this
-  // anymore. `title_keywords` is matched title-only on the backend, unlike
-  // `query`, which is why the extracted role phrases go there rather than
-  // into `query` alongside the tech terms. The bare `override ?? {...}` case
-  // only fires for the blank listing this page loads with on first visit.
-  const indexSearch = useMutation({
-    mutationFn: (override?: IndexSearchRequest) =>
-      api.indexSearch(
-        override ?? {
-          country_codes: country ? [country.toUpperCase()] : [],
-          max_age_days: maxAgeDays,
-          limit,
-        },
-      ),
-    onSuccess: (data) => {
-      setResults(data.results.map(indexHitToDiscoveryResult));
-      setSourceCounts({});
-      setSourceErrors([]);
-      if (data.results.length === 0)
-        toast("No results", { description: "Try a broader query, or search live sources below." });
-    },
-    onError: (err: Error) => reportFailure("search the index", err),
-  });
-
   // Land on a page with something to look at rather than an empty form: only
   // when there is no persisted state from a previous visit.
   useEffect(() => {
-    if (results === null) indexSearch.mutate(undefined);
+    if (results === null) search.mutate(currentQuery());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function currentQuery(): DiscoverySearchRequest {
     return {
-      sources,
       title_keywords: splitCsv(titles),
       technology_slugs: splitCsv(techs),
       country_codes: country ? [country.toUpperCase()] : [],
@@ -449,22 +302,10 @@ export default function DiscoverPage() {
       setCountry((filters.country_codes ?? [])[0] ?? "");
       if (filters.max_age_days) setMaxAgeDays(filters.max_age_days);
       if (filters.limit) setLimit(filters.limit);
-      // The agent runs on FastAPI, which only knows theirstack and github, so
-      // it can never name a key-free source. Take its opinion on the backend
-      // half and leave the user's free-source selection alone.
-      const nextSources = mergeSmartSources(filters.sources, sources);
-      setSources(nextSources);
       if (explanation) toast.success(explanation);
-      // Auto-run against the daily-updated index rather than the live fan-out:
-      // same coverage this page defaults to for the plain search box, and far
-      // broader than the handful of curated boards "Also search live sources"
-      // fans out to live. title_keywords stays structured (matched title-only,
-      // see lib/discover -- job_index.py on the backend); technology_slugs has
-      // no index-side equivalent, so it folds into the free-text `query`,
-      // mirroring how the MCP search_jobs tool does the same fold.
-      indexSearch.mutate({
+      search.mutate({
         title_keywords: filters.title_keywords ?? [],
-        query: (filters.technology_slugs ?? []).join(" ") || undefined,
+        technology_slugs: filters.technology_slugs ?? [],
         country_codes: filters.country_codes ?? [],
         max_age_days: filters.max_age_days ?? 30,
         limit: filters.limit ?? 20,
@@ -474,18 +315,14 @@ export default function DiscoverPage() {
   });
 
   const saveSearch = useMutation({
-    mutationFn: async (name: string) => {
-      const query = currentQuery();
-      const { backend, noKey, byoKey } = splitSources(query.sources ?? []);
-      // FastAPI rejects the key-free ids outright, so strip them from the
-      // stored query and remember them locally against the new id.
-      const saved = await api.createSavedSearch({
+    mutationFn: (name: string) =>
+      api.createSavedSearch({
         name,
-        query: { ...query, sources: backend },
-      });
-      saveSavedNoKey(saved.id, [...noKey, ...byoKey]);
-      return saved;
-    },
+        // FastAPI's SavedSearch schema only knows the backend sources
+        // (theirstack/github); the fixed no-key/index halves re-run on
+        // whatever LIVE_SOURCES says at the time, not what was true when saved.
+        query: { ...currentQuery(), sources: LIVE_SOURCES.filter((s) => BACKEND_SOURCES.includes(s)) },
+      }),
     onSuccess: () => {
       toast.success("Search saved");
       qc.invalidateQueries({ queryKey: ["saved-searches"] });
@@ -495,47 +332,31 @@ export default function DiscoverPage() {
 
   const runSaved = useMutation({
     mutationFn: async (s: SavedSearch) => {
-      const stored = loadSavedNoKey()[s.id] ?? [];
-      const savedKeys = loadKeys();
-      const route = routeSources(stored, savedKeys);
-      // Custom sources are not tied to a saved search: a saved query re-runs
-      // whichever of them are switched on right now.
-      const custom = enabledCustomSources();
-      const routeGroup: string[] = [
-        ...route,
-        ...custom.map((c) => `custom:${c.id}`),
-      ];
       const backend = s.query.sources ?? [];
-      // runSavedSearch is what updates last_run_at / last_run_count upstream,
-      // so keep using it for the backend half rather than replaying the query.
-      const [backendPart, routePart] = await Promise.allSettled([
-        backend.length
-          ? api.runSavedSearch(s.id)
-          : Promise.resolve(emptyDiscoveryResponse()),
-        routeGroup.length
+      const route = LIVE_SOURCES.filter((src) => NO_KEY_SOURCES.includes(src));
+      const [indexPart, backendPart, routePart] = await Promise.allSettled([
+        api.indexSearch({
+          title_keywords: s.query.title_keywords ?? [],
+          query: (s.query.technology_slugs ?? []).join(" ") || undefined,
+          country_codes: s.query.country_codes ?? [],
+          max_age_days: s.query.max_age_days,
+          limit: s.query.limit,
+        }),
+        // runSavedSearch is what updates last_run_at / last_run_count upstream,
+        // so keep using it for the backend half rather than replaying the query.
+        backend.length ? api.runSavedSearch(s.id) : Promise.resolve(emptyDiscoveryResponse()),
+        route.length
           ? api.discoverNoKey({
               sources: route,
               title_keywords: s.query.title_keywords ?? [],
               country_codes: s.query.country_codes ?? [],
               max_age_days: s.query.max_age_days,
               limit: s.query.limit,
-              keys: savedKeys,
-              custom_sources: toCustomPayload(custom),
               hydrate_descriptions: true,
             })
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
-      if (backendPart.status === "rejected" && routePart.status === "rejected") {
-        throw backendPart.reason as Error;
-      }
-      return combineParts(
-        [...backend, ...routeGroup],
-        backend,
-        backendPart,
-        routeGroup,
-        routePart,
-        s.query.limit,
-      );
+      return combineSearchParts(indexPart, backendPart, backend, routePart, route, s.query.limit);
     },
     onSuccess: (data) => {
       setResults(data.results);
@@ -550,10 +371,7 @@ export default function DiscoverPage() {
 
   const deleteSaved = useMutation({
     mutationFn: (id: string) => api.deleteSavedSearch(id),
-    onSuccess: (_data, id) => {
-      forgetSavedNoKey(id);
-      qc.invalidateQueries({ queryKey: ["saved-searches"] });
-    },
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-searches"] }),
     onError: (err: Error) => reportFailure("delete that saved search", err),
   });
 
@@ -563,8 +381,6 @@ export default function DiscoverPage() {
     setCountry((s.query.country_codes ?? [])[0] ?? "");
     setMaxAgeDays(s.query.max_age_days ?? 30);
     setLimit(s.query.limit ?? 20);
-    const restored = [...(s.query.sources ?? []), ...(loadSavedNoKey()[s.id] ?? [])];
-    if (restored.length > 0) setSources(restored);
     runSaved.mutate(s);
   }
 
@@ -572,20 +388,6 @@ export default function DiscoverPage() {
     const name = window.prompt("Name this search (e.g. 'SWE intern · Boston')");
     if (!name) return;
     saveSearch.mutate(name.trim());
-  }
-
-  function toggleCustom(source: CustomSource) {
-    setCustomSources(setCustomEnabled(source.id, !source.enabled));
-  }
-
-  function toggleSource(s: DiscoverySource) {
-    setSources((prev) => {
-      if (prev.includes(s)) {
-        if (prev.length === 1) return prev;
-        return prev.filter((x) => x !== s);
-      }
-      return [...prev, s];
-    });
   }
 
   function runSearch() {
@@ -665,13 +467,12 @@ export default function DiscoverPage() {
 
       {/* The one search box: a sentence goes to the fast agent, which
           extracts structured filters (hydrated into the advanced panel below
-          so the user can see and adjust what it read), then that runs
-          against the pre-built index -- crawled overnight from Greenhouse,
-          Lever, Ashby and SmartRecruiters, sorted by fit to your profile by
-          default. Used to be two boxes (a raw free-text field straight into
-          the index, plus this one); the raw box never got the benefit of
-          title-only matching or proper filter separation, so it was strictly
-          worse, not a faster alternative -- collapsed into one. */}
+          so the user can see and adjust what it read), then every search --
+          this one, the advanced-filters button, and a saved search alike --
+          answers from the pre-built index and the fixed live source set at
+          once, merged into one deduped list. There is no separate "search
+          live sources" action and no source picker: which sources run is a
+          code change (see LIVE_SOURCES above), not something shown here. */}
       <form onSubmit={onSmartSubmit} className="workspace-panel mt-6 p-5 sm:p-6">
         <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Search
@@ -716,20 +517,20 @@ export default function DiscoverPage() {
       </form>
 
       <button
-        onClick={() => setShowLiveSearch((v) => !v)}
-        aria-expanded={showLiveSearch}
+        onClick={() => setShowAdvanced((v) => !v)}
+        aria-expanded={showAdvanced}
         className="mt-4 flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
       >
         <ChevronRight
-          className={`size-3.5 transition-transform ${showLiveSearch ? "rotate-90" : ""}`}
+          className={`size-3.5 transition-transform ${showAdvanced ? "rotate-90" : ""}`}
         />
-        Also search live sources
+        Advanced filters
         <span className="text-[color:var(--color-text-dim)]">
-          (slower, broader: TheirStack, GitHub, and any keys you have added)
+          (refine by title, tech, country, age, and result limit)
         </span>
       </button>
 
-      {showLiveSearch && (
+      {showAdvanced && (
         <>
       {/* Saved searches */}
       {saved.length > 0 && (
@@ -766,111 +567,6 @@ export default function DiscoverPage() {
 
       {/* Manual filters form */}
       <div className="workspace-panel mt-5 grid grid-cols-1 gap-5 p-5 sm:p-6 md:grid-cols-2">
-        {/* A set of toggles rather than one control, so the heading names a
-            group instead of pretending to be a <label> for a single input. */}
-        <div className="md:col-span-2" role="group" aria-labelledby="sources-label">
-          <span id="sources-label" className="block text-sm font-medium">Sources</span>
-          <p className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-            Everything in the first group is fetched live on every search and
-            costs nothing. Add a key only if you want the extra coverage.
-          </p>
-
-          <div className="mt-3">
-            <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-mint)]">
-              Free sources, no key needed
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {FREE_SOURCES.map((s) => (
-                <SourceToggle
-                  key={s}
-                  active={sources.includes(s)}
-                  onClick={() => toggleSource(s)}
-                  label={SOURCE_META[s].label}
-                  hint={SOURCE_META[s].hint}
-                />
-              ))}
-            </div>
-          </div>
-
-          <div className="mt-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
-                Add a key for more coverage
-              </div>
-              <Link
-                href="/jobs/keys"
-                className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
-              >
-                <KeyRound className="size-2.5" /> Connect job sources
-              </Link>
-            </div>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {KEYED_SOURCES.map((s) => {
-                const meta = SOURCE_META[s];
-                // The bring-your-own-key sources are only selectable once a key
-                // is in this browser; until then the tile is a route to the
-                // page that asks for one.
-                if (meta.credential === "byo") {
-                  return (
-                    <ByoSourceToggle
-                      key={s}
-                      connected={hasKey(s, keys)}
-                      active={sources.includes(s) && hasKey(s, keys)}
-                      onToggle={() => toggleSource(s)}
-                      label={meta.label}
-                      hint={meta.hint}
-                    />
-                  );
-                }
-                return (
-                  <SourceToggle
-                    key={s}
-                    active={sources.includes(s)}
-                    onClick={() => toggleSource(s)}
-                    label={meta.label}
-                    hint={meta.hint}
-                    badge="needs key"
-                    keySteps={meta.keySteps}
-                    keyUrl={meta.keyUrl}
-                  />
-                );
-              })}
-            </div>
-          </div>
-
-          {customSources.length > 0 && (
-            <div className="mt-4">
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <div className="text-[11px] font-medium uppercase tracking-wider text-[color:var(--color-text-dim)]">
-                  Your custom sources
-                </div>
-                <Link
-                  href="/jobs/keys#custom"
-                  className="inline-flex items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
-                >
-                  <Plug className="size-2.5" /> Add a custom source
-                </Link>
-              </div>
-              <div className="mt-2 flex flex-wrap gap-2">
-                {customSources.map((s) => (
-                  <CustomSourceToggle
-                    key={s.id}
-                    source={s}
-                    accepted={customAccepted}
-                    active={customAccepted && s.enabled}
-                    onToggle={() => toggleCustom(s)}
-                  />
-                ))}
-              </div>
-              <Link
-                href="/jobs/keys#custom"
-                className="mt-2 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--color-text)]"
-              >
-                <Plug className="size-2.5" /> Manage custom sources
-              </Link>
-            </div>
-          )}
-        </div>
         <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
           {(control) => (
             <input
@@ -885,7 +581,7 @@ export default function DiscoverPage() {
         </Field>
         <Field
           label="Technologies"
-          help="Comma-separated slugs. TheirStack only; the free sources do not expose a tech filter."
+          help="Comma-separated slugs. Folded into the index's free-text query; not every live source exposes a tech filter."
         >
           {(control) => (
             <input
@@ -1358,232 +1054,6 @@ function ResultCard({
   );
 }
 
-// Shared source-tile styling. Selected reads as a clear jasmine fill with a gold
-// border and a check, not the faint mauve tint it used to be, and the label
-// stays at full text colour in both states so it is legible on the light theme.
-const TILE_BASE =
-  "flex w-full flex-col items-start rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs text-[color:var(--color-text)] transition";
-const TILE_ACTIVE =
-  "border-[color:var(--color-accent-ink)]/45 bg-[color:var(--color-accent)]/40 shadow-[0_10px_24px_-18px_rgba(233,198,74,.6)]";
-const TILE_INACTIVE =
-  "border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] hover:border-[color:var(--color-accent-border)] hover:bg-[color:var(--color-surface-hover)]";
-
-function tileClass(active: boolean) {
-  return `${TILE_BASE} ${active ? TILE_ACTIVE : TILE_INACTIVE}`;
-}
-
-function SourceToggle({
-  active,
-  onClick,
-  label,
-  hint,
-  badge,
-  keySteps,
-  keyUrl,
-}: {
-  active: boolean;
-  onClick: () => void;
-  label: string;
-  hint: string;
-  badge?: string;
-  keySteps?: string[];
-  keyUrl?: string;
-}) {
-  const [showHelp, setShowHelp] = useState(false);
-
-  return (
-    <div className="relative">
-      <button onClick={onClick} aria-pressed={active} className={tileClass(active)}>
-        <span className="flex w-full items-center gap-1.5">
-          <span className="text-sm font-medium">{label}</span>
-          {badge && (
-            <span className="rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] font-medium uppercase tracking-wide text-[color:var(--color-amber-ink)]">
-              {badge}
-            </span>
-          )}
-          {active && (
-            <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
-          )}
-        </span>
-        <span className="mt-0.5 text-[10px] text-[color:var(--color-text-muted)]">{hint}</span>
-      </button>
-
-      {keySteps && keySteps.length > 0 && (
-        <>
-          <button
-            type="button"
-            onClick={() => setShowHelp((v) => !v)}
-            aria-expanded={showHelp}
-            className="mt-1 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--color-text)]"
-          >
-            <KeyRound className="size-2.5" /> How to get a key
-          </button>
-          {showHelp && (
-            <div className="glass absolute left-0 top-full z-20 mt-1 w-72 rounded-[var(--radius-card)] border border-[color:var(--color-border)] p-3 text-[11px] leading-relaxed text-[color:var(--color-text-muted)] shadow-lg">
-              <div className="mb-1.5 flex items-center justify-between">
-                <span className="font-medium text-[color:var(--color-text)]">
-                  Set up {label}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setShowHelp(false)}
-                  aria-label="Close"
-                  className="rounded-full p-0.5 hover:bg-[color:var(--color-surface-hover)]"
-                >
-                  <X className="size-3" />
-                </button>
-              </div>
-              <ol className="list-decimal space-y-1 pl-4">
-                {keySteps.map((step) => (
-                  <li key={step}>{step}</li>
-                ))}
-              </ol>
-              {keyUrl && (
-                <a
-                  href={keyUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-2 inline-flex items-center gap-1 text-[color:var(--color-violet)] hover:underline"
-                >
-                  Open {new URL(keyUrl).hostname}
-                  <ExternalLink className="size-2.5" />
-                </a>
-              )}
-            </div>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
-
-/**
- * A source whose key lives in this browser. Locked until the key is pasted:
- * clicking an unconnected tile goes to /jobs/keys rather than selecting a
- * source that would be dropped from the request anyway.
- */
-function ByoSourceToggle({
-  active,
-  connected,
-  onToggle,
-  label,
-  hint,
-}: {
-  active: boolean;
-  connected: boolean;
-  onToggle: () => void;
-  label: string;
-  hint: string;
-}) {
-  const tile = tileClass(active);
-
-  const heading = (
-    <>
-      <span className="flex w-full items-center gap-1.5">
-        <span className="text-sm font-medium">{label}</span>
-        {connected ? (
-          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-mint)]/40 bg-[color:var(--color-mint)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-mint-ink)]">
-            <span className="size-1 rounded-full bg-[color:var(--color-mint)]" />
-            connected
-          </span>
-        ) : (
-          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-amber-ink)]">
-            <Lock className="size-2" /> add key
-          </span>
-        )}
-        {active && (
-          <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
-        )}
-      </span>
-      <span className="text-[10px] text-[color:var(--color-text-muted)]">{hint}</span>
-    </>
-  );
-
-  return (
-    <div className="relative">
-      {connected ? (
-        <button onClick={onToggle} aria-pressed={active} className={tile}>
-          {heading}
-        </button>
-      ) : (
-        <Link href="/jobs/keys" className={tile}>
-          {heading}
-        </Link>
-      )}
-      <Link
-        href="/jobs/keys"
-        className="mt-1 inline-flex items-center gap-1 text-[10px] text-[color:var(--color-text-dim)] underline decoration-dotted underline-offset-2 hover:text-[color:var(--color-text)]"
-      >
-        <KeyRound className="size-2.5" />
-        {connected ? "Manage key" : "Paste your free key"}
-      </Link>
-    </div>
-  );
-}
-
-/**
- * A feed the user hosts themselves. Locked until the terms on /jobs/keys are
- * accepted: clicking an ungated tile goes there rather than selecting a source
- * the search would drop anyway.
- */
-function CustomSourceToggle({
-  source,
-  accepted,
-  active,
-  onToggle,
-}: {
-  source: CustomSource;
-  accepted: boolean;
-  active: boolean;
-  onToggle: () => void;
-}) {
-  const tile = tileClass(active);
-
-  const heading = (
-    <>
-      <span className="flex w-full items-center gap-1.5">
-        <span className="text-sm font-medium">{source.name}</span>
-        <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-violet)]/40 bg-[color:var(--color-violet)]/10 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-violet)]">
-          custom
-        </span>
-        {!accepted && (
-          <span className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-amber)]/45 bg-[color:var(--color-amber)]/12 px-1.5 py-px text-[9px] uppercase tracking-wide text-[color:var(--color-amber-ink)]">
-            <Lock className="size-2" /> accept terms
-          </span>
-        )}
-        {active && (
-          <CheckCircle2 className="ml-auto size-4 shrink-0 text-[color:var(--color-accent-ink)]" />
-        )}
-      </span>
-      <span className="text-[10px] text-[color:var(--color-text-muted)]">
-        {hostnameOf(source.url)}
-      </span>
-    </>
-  );
-
-  if (!accepted) {
-    return (
-      <Link href="/jobs/keys#custom" className={tile}>
-        {heading}
-      </Link>
-    );
-  }
-  return (
-    <button onClick={onToggle} aria-pressed={active} className={tile}>
-      {heading}
-    </button>
-  );
-}
-
-/** The tile shows where a custom source points without showing the full path. */
-function hostnameOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return url;
-  }
-}
-
 function splitCsv(s: string): string[] {
   return s
     .split(",")
@@ -1601,43 +1071,10 @@ function resultKey(r: DiscoveryResult): string {
   return `${r.source}:${r.source_id || r.source_url}`;
 }
 
-/**
- * The smart-search agent only knows the FastAPI sources, so treat its answer
- * as authoritative for that half and preserve whatever key-free sources the
- * user already had switched on.
- */
-function mergeSmartSources(
-  fromAgent: DiscoverySource[] | undefined,
-  current: DiscoverySource[],
-): DiscoverySource[] {
-  const { noKey, byoKey } = splitSources(current);
-  if (!fromAgent || fromAgent.length === 0) return current;
-  const merged = [...splitSources(fromAgent).backend, ...noKey, ...byoKey];
-  return merged.length > 0 ? merged : current;
-}
-
 function prettyError(source: DiscoverySource | string, msg: string): string {
   const lower = msg.toLowerCase();
-  // A custom endpoint is the user's own deployment, so every one of these
-  // points at something they can go and fix.
-  if (source.startsWith("custom:")) {
-    if (lower.includes("timed out")) {
-      return "Your endpoint did not answer in time.";
-    }
-    if (lower.includes("too large")) {
-      return "Your endpoint returned too much data.";
-    }
-    if (lower.includes("blocked host") || lower.includes("https")) {
-      return "That endpoint URL is not allowed (must be a public https URL).";
-    }
-    if (
-      lower.includes("rejected") ||
-      lower.includes("not found") ||
-      lower.includes("error")
-    ) {
-      return `job.os could not reach your custom endpoint: ${msg}.`;
-    }
-    return msg;
+  if (source === "index") {
+    return `The index search failed: ${msg}.`;
   }
   if (source === "theirstack") {
     if (lower.includes("not configured") || lower.includes("api_key")) {
@@ -1648,17 +1085,6 @@ function prettyError(source: DiscoverySource | string, msg: string): string {
     }
     if (lower.includes("402") || lower.includes("credit")) {
       return "Out of TheirStack credits. Top up the account or fall back to GitHub.";
-    }
-  }
-  if (isByoSource(source as DiscoverySource)) {
-    if (lower.includes("add a key")) {
-      return "No key saved in this browser yet. Add one on the Connect job sources page.";
-    }
-    if (lower.includes("key rejected")) {
-      return `${msg}. Re-copy the key on the Connect job sources page.`;
-    }
-    if (lower.includes("quota")) {
-      return `${msg}. The provider is rate-limiting; try again shortly.`;
     }
   }
   if ((NO_KEY_SOURCES as string[]).includes(source)) {

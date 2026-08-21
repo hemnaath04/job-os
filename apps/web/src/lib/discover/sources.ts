@@ -1,27 +1,24 @@
-// Source catalogue shared by the Job Finder UI.
+// Source catalogue for the Job Finder's search. No per-user picker: which
+// sources run is a code change to the fixed set below (see LIVE_SOURCES in
+// jobs/page.tsx), not a runtime UI -- there is one operator of this
+// deployment, not many tenants who each want their own board selection.
 //
-// Discovery now spans two backends and the split is not cosmetic:
+// Discovery spans two backends:
 //
 //   FastAPI (/api/backend/discovery/search)  theirstack, github
 //   this app (/api/discover)                 greenhouse, lever, ashby,
-//                                            remotive, remoteok,
-//                                            jsearch, adzuna
+//                                            remotive, remoteok, feed:*
 //
 // The FastAPI side validates `sources` against a Pydantic
 // Literal["theirstack","github"], so sending it a key-free source id is a 422,
-// not a no-op. Always route a search through splitSources() before calling
-// either backend.
-//
-// jsearch and adzuna share the second route but need a credential, and it is
-// the user's own: splitSources reports them separately so the caller can drop
-// the ones with no key pasted yet.
+// not a no-op -- always split by BACKEND_SOURCES/NO_KEY_SOURCES before
+// calling either backend.
 //
 // Deliberately free of any import from ./no-key-sources: that module is the
 // server-side fetch layer and pulling it in here would drag its country
-// tables into the client bundle. ./keys is client-safe, so its type is fine.
+// tables into the client bundle.
 
 import type { DiscoverySearchResponse, DiscoverySource } from "../types";
-import type { DiscoveryKeys } from "./keys";
 
 export const BACKEND_SOURCES: DiscoverySource[] = ["theirstack", "github"];
 
@@ -48,145 +45,14 @@ export const NO_KEY_SOURCES: DiscoverySource[] = [
   ...FEED_SOURCES,
 ];
 
-/** Served by /api/discover, but only once the user has pasted a key. */
-export const BYO_KEY_SOURCES: DiscoverySource[] = ["jsearch", "adzuna"];
-
 /** Sources that are free but still served by FastAPI. */
 const FREE_BACKEND_SOURCES: DiscoverySource[] = ["github"];
 
-/** Everything the user can run without configuring a credential. */
+/** Everything a search runs without configuring a credential. */
 export const FREE_SOURCES: DiscoverySource[] = [
   ...FREE_BACKEND_SOURCES,
   ...NO_KEY_SOURCES,
 ];
-
-/** Sources gated behind a credential, wherever that credential lives. */
-export const KEYED_SOURCES: DiscoverySource[] = [
-  "theirstack",
-  ...BYO_KEY_SOURCES,
-];
-
-export interface SourceMeta {
-  label: string;
-  hint: string;
-  /** Shown as a badge and used to group the toggle. */
-  needsKey?: boolean;
-  /**
-   * Where the credential lives. "server" is an environment variable on the
-   * API; "byo" is pasted into the browser on /jobs/keys.
-   */
-  credential?: "server" | "byo";
-  /** Rendered by the "How to get a key" disclosure. */
-  keySteps?: string[];
-  keyUrl?: string;
-  /** The inputs /jobs/keys renders for a "byo" source. */
-  keyFields?: {
-    name: keyof DiscoveryKeys;
-    label: string;
-    placeholder: string;
-  }[];
-}
-
-export const SOURCE_META: Record<DiscoverySource, SourceMeta> = {
-  github: {
-    label: "GitHub",
-    hint: "SimplifyJobs internships + new grad",
-  },
-  greenhouse: {
-    label: "Greenhouse",
-    hint: "Stripe, Airbnb, Anthropic and 37 more",
-  },
-  lever: {
-    label: "Lever",
-    hint: "Palantir, Veeva, Shield AI and 6 more",
-  },
-  ashby: {
-    label: "Ashby",
-    hint: "OpenAI, Ramp, Notion and 33 more",
-  },
-  remotive: {
-    label: "Remotive",
-    hint: "Remote roles, worldwide",
-  },
-  remoteok: {
-    label: "RemoteOK",
-    hint: "Remote roles, newest first",
-  },
-  "feed:himalayas": {
-    label: "Himalayas",
-    hint: "Every company on the board, not a fixed list",
-  },
-  "feed:jobicy": {
-    label: "Jobicy",
-    hint: "Remote board, all companies",
-  },
-  "feed:arbeitnow": {
-    label: "Arbeitnow",
-    hint: "Open board feed, Europe-weighted",
-  },
-  theirstack: {
-    label: "TheirStack",
-    hint: "LinkedIn, Lever, Greenhouse, Ashby, Workday",
-    needsKey: true,
-    credential: "server",
-    keyUrl: "https://theirstack.com",
-  },
-  jsearch: {
-    label: "JSearch",
-    hint: "Google-for-Jobs: LinkedIn, Indeed, Glassdoor and more",
-    needsKey: true,
-    credential: "byo",
-    keyUrl: "https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch",
-    keyFields: [
-      {
-        name: "jsearch",
-        label: "RapidAPI key",
-        placeholder: "paste your X-RapidAPI-Key",
-      },
-    ],
-    keySteps: [
-      "Open the JSearch API on RapidAPI and sign in (GitHub login works).",
-      "Subscribe to the free Basic plan (200 searches a month, no credit card).",
-      "Open the Endpoints tab and copy the X-RapidAPI-Key value from the code snippet.",
-      "Paste it below. It is stored only in this browser and sent straight to the job boards.",
-    ],
-  },
-  adzuna: {
-    label: "Adzuna",
-    hint: "Aggregated postings across 15+ countries",
-    needsKey: true,
-    credential: "byo",
-    keyUrl: "https://developer.adzuna.com/signup",
-    keyFields: [
-      { name: "adzuna_app_id", label: "app_id", placeholder: "Adzuna app_id" },
-      {
-        name: "adzuna_app_key",
-        label: "app_key",
-        placeholder: "Adzuna app_key",
-      },
-    ],
-    keySteps: [
-      "Register at developer.adzuna.com/signup (free).",
-      "Adzuna emails you an app_id and an app_key.",
-      "Paste both below. The free tier allows 2,500 searches a month.",
-      "Keys stay in this browser only.",
-    ],
-  },
-};
-
-export interface SplitSources {
-  backend: DiscoverySource[];
-  noKey: DiscoverySource[];
-  byoKey: DiscoverySource[];
-}
-
-export function splitSources(sources: DiscoverySource[]): SplitSources {
-  return {
-    backend: sources.filter((s) => BACKEND_SOURCES.includes(s)),
-    noKey: sources.filter((s) => NO_KEY_SOURCES.includes(s)),
-    byoKey: sources.filter((s) => BYO_KEY_SOURCES.includes(s)),
-  };
-}
 
 /**
  * Merge the halves of a split search.
