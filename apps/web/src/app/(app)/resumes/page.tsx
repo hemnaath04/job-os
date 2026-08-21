@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   Archive,
@@ -13,7 +13,6 @@ import {
   FileText,
   LayoutTemplate,
   LibraryBig,
-  Plus,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -188,29 +187,9 @@ function ResumesInner() {
     },
     onError: (error: Error) => reportFailure("remove that template", error),
   });
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [baseRole, setBaseRole] = useState("");
   const masterInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [importResult, setImportResult] = useState<ResumeImportItem[]>([]);
-
-  const create = useMutation({
-    mutationFn: () =>
-      api.createResume({
-        name: name.trim(),
-        base_role: baseRole.trim() || null,
-        is_master: false,
-      }),
-    onSuccess: () => {
-      toast.success("Source resume created");
-      qc.invalidateQueries({ queryKey: ["resumes"] });
-      setCreating(false);
-      setName("");
-      setBaseRole("");
-    },
-    onError: (err: Error) => reportFailure("create that source resume", err),
-  });
 
   const importFiles = useMutation({
     mutationFn: async ({
@@ -331,12 +310,6 @@ function ResumesInner() {
               <FolderOpen className="size-3.5" />
               Import folder
             </button>
-            <button
-              onClick={() => setCreating((current) => !current)}
-              className="kinetic-button kinetic-button-primary"
-            >
-              <Plus className="size-3.5" /> New source
-            </button>
           </div>
         }
       >
@@ -376,49 +349,6 @@ function ResumesInner() {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-      )}
-
-      {creating && (
-        <div className="workspace-panel mt-5 p-5">
-          <div className="flex flex-col gap-2 sm:flex-row">
-            <label htmlFor="new-source-name" className="sr-only">
-              Source name
-            </label>
-            <input
-              id="new-source-name"
-              type="text"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="Name (e.g. SWE, ML, AI)"
-              autoFocus
-              className="field-control flex-1"
-            />
-            <label htmlFor="new-source-role" className="sr-only">
-              Base role (optional)
-            </label>
-            <input
-              id="new-source-role"
-              type="text"
-              value={baseRole}
-              onChange={(e) => setBaseRole(e.target.value)}
-              placeholder="Base role (optional)"
-              className="field-control sm:w-48"
-            />
-            <button
-              onClick={() => create.mutate()}
-              disabled={create.isPending || !name.trim()}
-              className="kinetic-button kinetic-button-primary disabled:opacity-50"
-            >
-              {create.isPending ? "Creating…" : "Create"}
-            </button>
-            <button
-              onClick={() => setCreating(false)}
-              className="kinetic-button kinetic-button-secondary"
-            >
-              Cancel
-            </button>
           </div>
         </div>
       )}
@@ -542,7 +472,11 @@ function ActionTile({
 }
 
 /** One version of the master, as a folder preview — thumbnail is its own
- * render, since there's no company logo to stand in for it. */
+ * render, since there's no company logo to stand in for it. Removable like
+ * every other version card in the library, even though it belongs to the
+ * master: an old master draft is exactly as safe to archive as an old
+ * company or source draft, and the master identity itself survives (it's the
+ * `Resume` row, not any one of its versions). */
 function MasterVersionPreviewCard({
   resumeId,
   resumeName,
@@ -552,6 +486,7 @@ function MasterVersionPreviewCard({
   resumeName: string;
   version: ResumeVersionSummary;
 }) {
+  const qc = useQueryClient();
   const isUploadedFile = !!version.source_filename;
   const openHref = !isUploadedFile ? `/resumes/${resumeId}/${version.id}` : null;
   const downloadUrl = api.downloadVersionUrl(resumeId, version.id);
@@ -559,6 +494,14 @@ function MasterVersionPreviewCard({
   const label = version.source_filename
     ? version.source_filename.replace(/\.pdf$/i, "").replace(/_/g, " ")
     : format(new Date(version.created_at), "MMM d, yyyy");
+  const removeVersion = useMutation({
+    mutationFn: () => api.deleteVersion(resumeId, version.id),
+    onSuccess: () => {
+      toast.success("Version archived");
+      qc.invalidateQueries({ queryKey: ["versions", resumeId] });
+    },
+    onError: (error: Error) => reportFailure("archive that version", error),
+  });
   const identity = (
     <>
       <span className="block h-16 w-12 overflow-hidden rounded-md border border-[color:var(--color-border)] bg-white">
@@ -581,17 +524,33 @@ function MasterVersionPreviewCard({
       ) : (
         <div className="flex w-full flex-1 flex-col items-center justify-center gap-2">{identity}</div>
       )}
-      {version.status === "final" && (
+      <div className="flex shrink-0 items-center justify-center gap-1.5">
+        {version.status === "final" && (
+          <button
+            type="button"
+            onClick={() => downloadPdf(downloadUrl, downloadName)}
+            aria-label="Download PDF"
+            title="Download PDF"
+            className="flex size-8 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+          >
+            <Download className="size-3.5" />
+          </button>
+        )}
         <button
           type="button"
-          onClick={() => downloadPdf(downloadUrl, downloadName)}
-          aria-label="Download PDF"
-          title="Download PDF"
-          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+          onClick={() => {
+            if (window.confirm(`Archive this master version (${label})? It will remain stored.`)) {
+              removeVersion.mutate();
+            }
+          }}
+          disabled={removeVersion.isPending}
+          aria-label={`Archive version ${label}`}
+          title="Archive this version"
+          className="flex size-8 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
         >
-          <Download className="size-3.5" />
+          <Trash2 className="size-3.5" />
         </button>
-      )}
+      </div>
     </div>
   );
 }
@@ -850,32 +809,37 @@ function CompanyLogo({
 }
 
 /**
- * One resume's card inside a folder overlay: thumbnail, name, and up to two
- * real buttons — the whole thumbnail-and-name area opens the most recent
- * version (a large target, not a tiny icon), and download sits beside it as
- * its own properly sized button. Older versions are named, not stacked into
- * a scrolling list the fixed-size overlay cell can't actually fit.
+ * One version's card inside a folder overlay: thumbnail, name, and up to
+ * three real buttons — the whole thumbnail-and-name area opens that version
+ * (a large target, not a tiny icon), download and archive sit beside it as
+ * their own properly sized buttons, and an optional extra action (currently
+ * just "Use as template") renders first. Every folder in the library shows
+ * one card per version rather than one per resume, so an old version can be
+ * archived on its own without taking the rest of that resume's history with it.
  */
 function FolderResumeCard({
   resume,
-  latestVersion,
-  versionCount,
+  version,
   thumbnail,
   subtitle,
+  onRemove,
+  removing,
+  extra,
 }: {
   resume: Resume;
-  latestVersion: ResumeVersionSummary | undefined;
-  versionCount: number;
+  version: ResumeVersionSummary | undefined;
   thumbnail: React.ReactNode;
   subtitle: string;
+  onRemove?: () => void;
+  removing?: boolean;
+  extra?: React.ReactNode;
 }) {
-  const isUploadedFile = !!latestVersion?.source_filename;
-  const openHref =
-    latestVersion && !isUploadedFile ? `/resumes/${resume.id}/${latestVersion.id}` : null;
-  const downloadUrl = latestVersion ? api.downloadVersionUrl(resume.id, latestVersion.id) : "";
+  const isUploadedFile = !!version?.source_filename;
+  const openHref = version && !isUploadedFile ? `/resumes/${resume.id}/${version.id}` : null;
+  const downloadUrl = version ? api.downloadVersionUrl(resume.id, version.id) : "";
   const downloadName =
-    latestVersion?.source_filename ??
-    fallbackDownloadName(resume.name, latestVersion?.created_at ?? resume.updated_at);
+    version?.source_filename ??
+    fallbackDownloadName(resume.name, version?.created_at ?? resume.updated_at);
 
   // A column flex with items-center sizes children to their own content, not
   // to the card's width -- so a long role title never had anything to
@@ -906,21 +870,35 @@ function FolderResumeCard({
           {identity}
         </div>
       )}
-      <div className="flex w-full shrink-0 items-center justify-center gap-2">
-        {versionCount > 1 && (
-          <span className="text-[10px] text-[color:var(--color-text-dim)]">
-            {versionCount} versions
-          </span>
-        )}
-        {latestVersion?.status === "final" && (
+      <div className="flex w-full shrink-0 items-center justify-center gap-1.5">
+        {extra}
+        {version?.status === "final" && (
           <button
             type="button"
-            onClick={() => downloadPdf(downloadUrl, downloadName)}
+            onClick={(event) => {
+              event.stopPropagation();
+              downloadPdf(downloadUrl, downloadName);
+            }}
             aria-label="Download PDF"
             title="Download PDF"
             className="flex size-8 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
           >
             <Download className="size-3.5" />
+          </button>
+        )}
+        {onRemove && (
+          <button
+            type="button"
+            onClick={(event) => {
+              event.stopPropagation();
+              onRemove();
+            }}
+            disabled={removing}
+            aria-label="Archive this version"
+            title="Archive this version"
+            className="flex size-8 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
+          >
+            <Trash2 className="size-3.5" />
           </button>
         )}
       </div>
@@ -929,31 +907,49 @@ function FolderResumeCard({
 }
 
 /**
- * One company, shown small while peeking out of the single "Company
- * resumes" folder and large inside its open overlay — same element,
- * `ProjectFolder` morphs it between the two. The logo is what tells one
- * company apart from another at a glance.
+ * One version of a company-tailored resume. The logo is what tells one
+ * company apart from another at a glance; the date tells one version of the
+ * same company apart from another once there is more than one.
  */
-function CompanyPreviewCard({
+function CompanyVersionCard({
   resume,
+  version,
+  isLatest,
   applicationRef,
 }: {
   resume: Resume;
+  version: ResumeVersionSummary;
+  isLatest: boolean;
   applicationRef: ApplicationRef | undefined;
 }) {
-  const { data: versions = [] } = useQuery({
-    queryKey: ["versions", resume.id],
-    queryFn: () => api.listVersions(resume.id),
+  const qc = useQueryClient();
+  const dateLabel = format(new Date(version.created_at), "MMM d, yyyy");
+  const removeVersion = useMutation({
+    mutationFn: () => api.deleteVersion(resume.id, version.id),
+    onSuccess: () => {
+      toast.success("Version archived", { description: "It remains stored in the database." });
+      qc.invalidateQueries({ queryKey: ["versions", resume.id] });
+    },
+    onError: (error: Error) => reportFailure("archive that version", error),
   });
   return (
     <FolderResumeCard
       resume={resume}
-      latestVersion={versions[0]}
-      versionCount={versions.length}
-      subtitle={resume.base_role ?? "Tailored resume"}
+      version={version}
+      subtitle={isLatest ? resume.base_role ?? "Tailored resume" : dateLabel}
       thumbnail={
         <CompanyLogo domain={applicationRef?.companyDomain ?? null} name={resume.name} size={48} />
       }
+      onRemove={() => {
+        if (
+          window.confirm(
+            `Archive this version of ${resume.name} (${dateLabel})? It will remain stored.`,
+          )
+        ) {
+          removeVersion.mutate();
+        }
+      }}
+      removing={removeVersion.isPending}
     />
   );
 }
@@ -961,7 +957,9 @@ function CompanyPreviewCard({
 /** Every company-tailored resume, stacked inside one folder rather than one
  * folder per company — almost every company only ever has a single resume,
  * so a folder each read as dozens of near-identical boxes. Hovering fans out
- * a few company logos; clicking opens all of them at once. */
+ * a few company logos; clicking opens all of them at once. One card per
+ * version (not per company), so an old tailored draft can be archived on its
+ * own without touching the version an application actually points at. */
 function CompanyResumesFolder({
   resumes,
   applicationById,
@@ -971,86 +969,99 @@ function CompanyResumesFolder({
   applicationById: Map<string, ApplicationRef>;
   defaultExpanded: boolean;
 }) {
+  const versionQueries = useQueries({
+    queries: resumes.map((resume) => ({
+      queryKey: ["versions", resume.id],
+      queryFn: () => api.listVersions(resume.id),
+    })),
+  });
+  const previews = resumes.flatMap((resume, index) => {
+    const applicationRef = resume.spawned_from_application_id
+      ? applicationById.get(resume.spawned_from_application_id)
+      : undefined;
+    return (versionQueries[index]?.data ?? []).map((version, versionIndex) => ({
+      id: version.id,
+      content: (
+        <CompanyVersionCard
+          resume={resume}
+          version={version}
+          isLatest={versionIndex === 0}
+          applicationRef={applicationRef}
+        />
+      ),
+    }));
+  });
   return (
     <ProjectFolder
       title="Company resumes"
       description="Tailored for one specific application"
-      ariaLabel={`Company resumes — ${resumes.length} compan${resumes.length === 1 ? "y" : "ies"}`}
-      itemLabel="company"
-      count={resumes.length}
+      ariaLabel={`Company resumes — ${previews.length} version${previews.length === 1 ? "" : "s"}`}
+      itemLabel="version"
+      count={previews.length}
       defaultExpanded={defaultExpanded}
       frontVisual={
         <Sparkles className="size-12 text-[color:var(--color-violet)] opacity-40" />
       }
-      previews={resumes.map((resume) => ({
-        id: resume.id,
-        content: (
-          <CompanyPreviewCard
-            resume={resume}
-            applicationRef={
-              resume.spawned_from_application_id
-                ? applicationById.get(resume.spawned_from_application_id)
-                : undefined
-            }
-          />
-        ),
-      }))}
+      previews={previews}
     />
   );
 }
 
 /**
- * One source resume's own most recent render as its thumbnail — there's no
- * company logo to stand in for a general-purpose resume, so the document
- * itself is what tells one apart from another.
+ * One version of a general-purpose source resume. There's no company logo to
+ * stand in for it, so the document's own render is what tells one apart from
+ * another; the date does the same job between two versions of the same one.
  */
-function SourceResumeCard({
+function SourceVersionCard({
   resume,
+  version,
+  isLatest,
   hasOriginal,
   onUseAsTemplate,
   building,
 }: {
   resume: Resume;
+  version: ResumeVersionSummary;
+  isLatest: boolean;
   hasOriginal: boolean;
   onUseAsTemplate: (resume: Resume) => void;
   building: boolean;
 }) {
   const qc = useQueryClient();
-  const { data: versions = [] } = useQuery({
-    queryKey: ["versions", resume.id],
-    queryFn: () => api.listVersions(resume.id),
-  });
-  const latest = versions[0];
-  const removeResume = useMutation({
-    mutationFn: () => api.deleteResume(resume.id),
+  const dateLabel = format(new Date(version.created_at), "MMM d, yyyy");
+  const removeVersion = useMutation({
+    mutationFn: () => api.deleteVersion(resume.id, version.id),
     onSuccess: () => {
-      toast.success("Resume archived", {
-        description: "Its versions remain stored in the database.",
-      });
-      qc.invalidateQueries({ queryKey: ["resumes"] });
+      toast.success("Version archived", { description: "It remains stored in the database." });
+      qc.invalidateQueries({ queryKey: ["versions", resume.id] });
     },
-    onError: (error: Error) => reportFailure("archive that resume", error),
+    onError: (error: Error) => reportFailure("archive that version", error),
   });
   return (
-    <div className="flex h-full w-full flex-col gap-1.5 p-2">
-      <div className="min-h-0 flex-1">
-        <FolderResumeCard
-          resume={resume}
-          latestVersion={latest}
-          versionCount={versions.length}
-          subtitle={resume.base_role ?? "Source resume"}
-          thumbnail={
-            <span className="block h-16 w-12 overflow-hidden rounded-md border border-[color:var(--color-border)] bg-white">
-              <ResumeVersionPreview
-                downloadUrl={latest ? api.downloadVersionUrl(resume.id, latest.id) : null}
-                label={resume.name}
-              />
-            </span>
-          }
-        />
-      </div>
-      <div className="flex shrink-0 items-center justify-center gap-1.5">
-        {hasOriginal && (
+    <FolderResumeCard
+      resume={resume}
+      version={version}
+      subtitle={isLatest ? resume.base_role ?? "Source resume" : dateLabel}
+      thumbnail={
+        <span className="block h-16 w-12 overflow-hidden rounded-md border border-[color:var(--color-border)] bg-white">
+          <ResumeVersionPreview
+            downloadUrl={api.downloadVersionUrl(resume.id, version.id)}
+            label={resume.name}
+          />
+        </span>
+      }
+      onRemove={() => {
+        if (
+          window.confirm(
+            `Archive this version of ${resume.name} (${dateLabel})? It will remain stored.`,
+          )
+        ) {
+          removeVersion.mutate();
+        }
+      }}
+      removing={removeVersion.isPending}
+      extra={
+        isLatest && hasOriginal ? (
           <button
             type="button"
             onClick={(event) => {
@@ -1063,29 +1074,16 @@ function SourceResumeCard({
           >
             {building ? "Reading…" : "Use as template"}
           </button>
-        )}
-        <button
-          type="button"
-          onClick={(event) => {
-            event.stopPropagation();
-            if (window.confirm(`Archive ${resume.name}? Its versions will remain stored.`)) {
-              removeResume.mutate();
-            }
-          }}
-          title="Archive this resume"
-          aria-label={`Archive ${resume.name}`}
-          className="rounded-full p-1.5 text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
-        >
-          <Archive className="size-3" />
-        </button>
-      </div>
-    </div>
+        ) : undefined
+      }
+    />
   );
 }
 
 /** Every general-purpose source resume, stacked inside one folder — the same
  * gallery the company resumes use, so the whole library reads consistently
- * instead of switching visual language section to section. */
+ * instead of switching visual language section to section. One card per
+ * version (not per resume), matching Master and Company resumes. */
 function SourceResumesFolder({
   resumes,
   originals,
@@ -1099,28 +1097,39 @@ function SourceResumesFolder({
   buildingId: string | null;
   defaultExpanded: boolean;
 }) {
+  const versionQueries = useQueries({
+    queries: resumes.map((resume) => ({
+      queryKey: ["versions", resume.id],
+      queryFn: () => api.listVersions(resume.id),
+    })),
+  });
+  const previews = resumes.flatMap((resume, index) =>
+    (versionQueries[index]?.data ?? []).map((version, versionIndex) => ({
+      id: version.id,
+      content: (
+        <SourceVersionCard
+          resume={resume}
+          version={version}
+          isLatest={versionIndex === 0}
+          hasOriginal={originals[resume.id] ?? false}
+          onUseAsTemplate={onUseAsTemplate}
+          building={buildingId === resume.id}
+        />
+      ),
+    })),
+  );
   return (
     <ProjectFolder
       title="Source resumes"
       description="The data, not the look"
-      ariaLabel={`Source resumes — ${resumes.length} resume${resumes.length === 1 ? "" : "s"}`}
-      itemLabel="resume"
-      count={resumes.length}
+      ariaLabel={`Source resumes — ${previews.length} version${previews.length === 1 ? "" : "s"}`}
+      itemLabel="version"
+      count={previews.length}
       defaultExpanded={defaultExpanded}
       frontVisual={
         <FolderOpen className="size-12 text-[color:var(--color-text-muted)] opacity-40" />
       }
-      previews={resumes.map((resume) => ({
-        id: resume.id,
-        content: (
-          <SourceResumeCard
-            resume={resume}
-            hasOriginal={originals[resume.id] ?? false}
-            onUseAsTemplate={onUseAsTemplate}
-            building={buildingId === resume.id}
-          />
-        ),
-      }))}
+      previews={previews}
     />
   );
 }
