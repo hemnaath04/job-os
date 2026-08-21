@@ -1,7 +1,8 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileText } from "lucide-react";
+import { Download, FileText, Sparkles } from "lucide-react";
+import Link from "next/link";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { api } from "@/lib/api";
 import { coverLetters } from "@/lib/cover-letters";
@@ -42,12 +43,22 @@ export function ApplicationDocuments({ application }: { application: Application
     enabled: !!linkedLetter,
   });
   const letterVersion = letterVersions[0];
+  // The one action that actually produces a document for this application --
+  // pre-selects the job the same way the Job Finder's own Tailor button does,
+  // so this is the shortest path from "I'm looking at an application with
+  // nothing tailored yet" to a draft, not a second trip through the job picker.
+  const tailorHref = `/tailor?job_id=${application.job.id}`;
 
   if (!linkedResume && !linkedLetter) {
     return (
-      <p className="text-xs text-[color:var(--color-text-dim)]">
-        No resume or cover letter tailored for this application yet.
-      </p>
+      <div className="flex flex-col gap-2">
+        <p className="text-xs text-[color:var(--color-text-dim)]">
+          No resume or cover letter tailored for this application yet.
+        </p>
+        <Link href={tailorHref} className="product-button product-button-primary w-fit">
+          <Sparkles className="size-3.5" /> Tailor a resume for this role
+        </Link>
+      </div>
     );
   }
 
@@ -76,6 +87,12 @@ export function ApplicationDocuments({ application }: { application: Application
           onDownload={undefined}
         />
       )}
+      <Link
+        href={tailorHref}
+        className="mt-1 inline-flex w-fit items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
+      >
+        <Sparkles className="size-3" /> Tailor another version
+      </Link>
     </div>
   );
 }

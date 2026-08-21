@@ -7,8 +7,10 @@ import {
   Check,
   ExternalLink,
   MoreHorizontal,
+  Sparkles,
   StickyNote,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { ApplicationDocuments } from "@/components/applications/application-documents";
@@ -59,6 +61,7 @@ export function ApplicationInspector({
   onRestore: (application: Application) => Promise<unknown>;
   onClose?: () => void;
 }) {
+  const router = useRouter();
   const { job } = application;
   const fit = scoreApplicationJob(job, vocab);
   const [notes, setNotes] = useState(application.notes ?? "");
@@ -181,6 +184,12 @@ export function ApplicationInspector({
                 </button>
               </DropdownMenuTrigger>
               <DropdownMenuContent>
+                <DropdownMenuItem
+                  icon={<Sparkles className="size-3.5" />}
+                  onSelect={() => router.push(`/tailor?job_id=${job.id}`)}
+                >
+                  Tailor a resume
+                </DropdownMenuItem>
                 {job.source_url && (
                   <DropdownMenuItem
                     icon={<ExternalLink className="size-3.5" />}
