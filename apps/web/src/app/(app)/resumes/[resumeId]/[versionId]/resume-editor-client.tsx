@@ -380,6 +380,7 @@ export default function ResumeEditorClient({
         finalizing={finalize.isPending && finalizeReview === null}
         pdfReady={finalizePdfReady}
         hasRenderedPdf={hasRenderedPdf}
+        pageCount={reviewResult?.page_count ?? null}
         onDownload={downloadResume}
       />
 
@@ -529,12 +530,17 @@ function FinalizeStatus({
   finalizing,
   pdfReady,
   hasRenderedPdf,
+  pageCount,
   onDownload,
 }: {
   status: string;
   finalizing: boolean;
   pdfReady: boolean;
   hasRenderedPdf: boolean;
+  /** From the review, once it's run. Null while still finalizing/unreviewed --
+   * "one-page" was previously asserted here unconditionally, which was simply
+   * wrong on any resume whose real content ran past one page. */
+  pageCount: number | null;
   onDownload: () => void;
 }) {
   if (finalizing) {
@@ -564,14 +570,25 @@ function FinalizeStatus({
     );
   }
   if (status === "final") {
+    const overLength = pageCount !== null && pageCount > 1;
     return (
-      <div className="notice notice-positive mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div
+        className={`mb-4 flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between ${
+          overLength ? "notice notice-caution" : "notice notice-positive"
+        }`}
+      >
         <div className="flex items-center gap-2.5">
-          <CheckCircle2 className="size-5 shrink-0" />
+          {overLength ? (
+            <AlertTriangle className="size-5 shrink-0" />
+          ) : (
+            <CheckCircle2 className="size-5 shrink-0" />
+          )}
           <div>
             <p className="text-sm font-semibold">Resume finalized</p>
             <p className="notice-detail text-xs leading-5">
-              Your one-page PDF is rendered and stored. Download it here.
+              {overLength
+                ? `Your PDF is rendered and stored, but it's ${pageCount} pages, not one. See the quality panel below for what to trim.`
+                : "Your one-page PDF is rendered and stored. Download it here."}
             </p>
           </div>
         </div>
