@@ -687,6 +687,60 @@ export const appwriteWorkspace = {
     return rememberVersionFile(version);
   },
 
+  /**
+   * A version with no parent to edit from -- for a resume that has none yet
+   * (a brand-new source, e.g. one seeded from GitHub repos). `editVersion`
+   * cannot serve this: it reads a parent row's own fields to carry forward,
+   * and a fresh resume has no row to read.
+   */
+  async createVersion(
+    resumeId: string,
+    jsonResume: JsonResume,
+    options: { revisionNote?: string | null; sourceFilename?: string | null } = {},
+  ): Promise<ResumeVersion> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const timestamp = now();
+    const version: ResumeVersion = {
+      id: ID.unique(),
+      resume_id: resumeId,
+      ats_score: null,
+      approved_by_user: false,
+      pdf_r2_key: null,
+      docx_r2_key: null,
+      spawned_from_job_id: null,
+      spawned_from_application_id: null,
+      status: "draft",
+      review_score: null,
+      review_report: null,
+      parent_version_id: null,
+      source_filename: options.sourceFilename ?? null,
+      revision_note: options.revisionNote ?? null,
+      finalized_at: null,
+      archived_at: null,
+      created_at: timestamp,
+      updated_at: timestamp,
+      json_resume: jsonResume,
+      provenance: [],
+      ats_report: null,
+      latex_source: null,
+    };
+    await getAppwriteServices().tables.createRow<VersionRow>({
+      databaseId: config.databaseId,
+      tableId: config.resumeVersionsTableId,
+      rowId: version.id,
+      data: {
+        owner_id: getCurrentAppwriteUserId(),
+        resume_id: resumeId,
+        status: "draft",
+        archived: false,
+        source_updated_at: timestamp,
+        snapshot: JSON.stringify(version),
+      },
+    });
+    return rememberVersionFile(version);
+  },
+
   async archiveVersion(versionId: string): Promise<void> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();

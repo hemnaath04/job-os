@@ -512,6 +512,14 @@ const legacyApi = {
     request<ResumeVersionSummary[]>(`/resumes/${resumeId}/versions`),
   getVersion: (resumeId: string, versionId: string) =>
     request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}`),
+  createVersion: (
+    resumeId: string,
+    body: { json_resume: object; revision_note?: string | null },
+  ) =>
+    request<ResumeVersion>(`/resumes/${resumeId}/versions`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
   approveVersion: (resumeId: string, versionId: string) =>
     request<ResumeVersion>(`/resumes/${resumeId}/versions/${versionId}/approve`, {
       method: "POST",
@@ -1034,6 +1042,28 @@ export const api = {
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.approveVersion(versionId)
       : legacyApi.approveVersion(resumeId, versionId),
+
+  /**
+   * A version with no parent to edit from -- for a resume that has none yet.
+   * `editVersion` needs an existing row to carry fields forward from; this is
+   * for the one moment that row doesn't exist (a brand-new source resume,
+   * e.g. one seeded from GitHub repos on creation).
+   */
+  createVersion: (
+    resumeId: string,
+    jsonResume: object,
+    options: { revisionNote?: string | null; sourceFilename?: string | null } = {},
+  ) =>
+    isAppwriteWorkspaceEnabled
+      ? appwriteWorkspace.createVersion(
+          resumeId,
+          jsonResume as import("./types").JsonResume,
+          options,
+        )
+      : legacyApi.createVersion(resumeId, {
+          json_resume: jsonResume,
+          revision_note: options.revisionNote,
+        }),
 
   editVersion: (
     resumeId: string,

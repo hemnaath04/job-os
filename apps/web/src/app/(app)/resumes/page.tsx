@@ -13,6 +13,7 @@ import {
   FileText,
   LayoutTemplate,
   LibraryBig,
+  Plus,
   Sparkles,
   Trash2,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
+import { AddSourceDialog } from "@/components/add-source-dialog";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { ProjectFolder } from "@/components/project-folder";
@@ -52,6 +54,11 @@ interface ApplicationRef {
 function resumeTimestamp(resume: Resume): number {
   const parsed = Date.parse(resume.updated_at || resume.created_at);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+/** Made for one specific role, by either path that can set that. */
+function isCompanySpecific(resume: Resume): boolean {
+  return !!(resume.spawned_from_application_id || resume.job_posting_id);
 }
 
 type ResumeSort = "priority" | "newest" | "oldest" | "name";
@@ -98,24 +105,42 @@ function ResumesInner() {
     }
     return map;
   }, [applications]);
+  // The web Tailor flow names its resume container after the job by setting
+  // `job_posting_id`, not `spawned_from_application_id` (that field is set
+  // only by the MCP upload path) -- so a lookup keyed on application id alone
+  // never resolves for a resume made through Tailor. This is the job-id
+  // equivalent, used as the fallback in isCompanySpecific/applicationRef below.
+  const applicationByJobId = useMemo(() => {
+    const map = new Map<string, ApplicationRef>();
+    for (const a of applications as Application[]) {
+      map.set(a.job.id, {
+        company: a.job.company?.name ?? null,
+        companyDomain: a.job.company?.domain ?? null,
+        jobTitle: a.job.title,
+      });
+    }
+    return map;
+  }, [applications]);
   const [sort, setSort] = useState<ResumeSort>("priority");
   // The master is pinned as its own preview above these.
   const master = resumes.find((r) => r.is_master);
-  // Company-tailored resumes (spawned_from_application_id set) are a
-  // different kind of thing from a general-purpose data identity like the
-  // master or "AI / Backend SWE" — one is a specific output for one
-  // application, the other is a base every tailored version traces back to.
-  // Mixing them into one "Source resumes" list is how a handful of real
-  // sources ends up buried under dozens of one-off company resumes.
+  // Company-tailored resumes are a different kind of thing from a
+  // general-purpose data identity like the master or "AI / Backend SWE" --
+  // one is a specific output for one application, the other is a base every
+  // tailored version traces back to. Mixing them into one "Source resumes"
+  // list is how a handful of real sources ends up buried under dozens of
+  // one-off company resumes. Checks both identities a resume can carry: MCP
+  // uploads set spawned_from_application_id, the web Tailor flow sets
+  // job_posting_id -- either one means "made for one specific role."
   const companyResumes = useMemo(
     () =>
       resumes
-        .filter((r) => !r.is_master && !!r.spawned_from_application_id)
+        .filter((r) => !r.is_master && isCompanySpecific(r))
         .sort((left, right) => resumeTimestamp(right) - resumeTimestamp(left)),
     [resumes],
   );
   const sorted = useMemo(() => {
-    const rows = resumes.filter((r) => !r.is_master && !r.spawned_from_application_id);
+    const rows = resumes.filter((r) => !r.is_master && !isCompanySpecific(r));
     if (sort === "name") {
       return rows.sort((left, right) => left.name.localeCompare(right.name));
     }
@@ -190,6 +215,7 @@ function ResumesInner() {
   const masterInput = useRef<HTMLInputElement>(null);
   const folderInput = useRef<HTMLInputElement>(null);
   const [importResult, setImportResult] = useState<ResumeImportItem[]>([]);
+  const [addingSource, setAddingSource] = useState(false);
 
   const importFiles = useMutation({
     mutationFn: async ({
@@ -310,6 +336,12 @@ function ResumesInner() {
               <FolderOpen className="size-3.5" />
               Import folder
             </button>
+            <button
+              onClick={() => setAddingSource(true)}
+              className="kinetic-button kinetic-button-primary"
+            >
+              <Plus className="size-3.5" /> Add source
+            </button>
           </div>
         }
       >
@@ -403,6 +435,7 @@ function ResumesInner() {
             <CompanyResumesFolder
               resumes={companyResumes}
               applicationById={applicationById}
+              applicationByJobId={applicationByJobId}
               defaultExpanded={companyResumes.some((r) => r.id === openId)}
             />
 
@@ -431,6 +464,12 @@ function ResumesInner() {
           </div>
         </>
       )}
+
+      <AddSourceDialog
+        open={addingSource}
+        onOpenChange={setAddingSource}
+        onCreated={() => qc.invalidateQueries({ queryKey: ["resumes"] })}
+      />
     </div>
   );
 }
@@ -963,10 +1002,12 @@ function CompanyVersionCard({
 function CompanyResumesFolder({
   resumes,
   applicationById,
+  applicationByJobId,
   defaultExpanded,
 }: {
   resumes: Resume[];
   applicationById: Map<string, ApplicationRef>;
+  applicationByJobId: Map<string, ApplicationRef>;
   defaultExpanded: boolean;
 }) {
   const versionQueries = useQueries({
@@ -976,9 +1017,14 @@ function CompanyResumesFolder({
     })),
   });
   const previews = resumes.flatMap((resume, index) => {
-    const applicationRef = resume.spawned_from_application_id
-      ? applicationById.get(resume.spawned_from_application_id)
-      : undefined;
+    // Prefer the MCP-upload identity when both happen to be set; fall back to
+    // the web Tailor flow's job_posting_id, which is the one that actually
+    // fires for a resume made in-app.
+    const applicationRef =
+      (resume.spawned_from_application_id
+        ? applicationById.get(resume.spawned_from_application_id)
+        : undefined) ??
+      (resume.job_posting_id ? applicationByJobId.get(resume.job_posting_id) : undefined);
     return (versionQueries[index]?.data ?? []).map((version, versionIndex) => ({
       id: version.id,
       content: (
