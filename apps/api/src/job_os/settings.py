@@ -97,6 +97,33 @@ class Settings(BaseSettings):
     manifest_tier_quality: str = "job-os-quality"
     manifest_tier_sonnet: str = "job-os-sonnet"
 
+    # `create_message` (services/llm_json.py) already retries a rate-limited or
+    # overloaded Manifest gateway on its own schedule. This key is for what
+    # that schedule cannot fix: Manifest genuinely out of capacity for minutes
+    # at a stretch, across many requests in a row rather than one blip.
+    # Without a fallback, every one of those requests exhausts the retry
+    # schedule and then raises -- and in the tailoring pipeline specifically,
+    # `tailor.py`'s `compose_and_score` responds to that by shipping whatever
+    # the *earlier, already-succeeded* pass produced rather than losing prior
+    # good work. That is the right call for one transient failure; repeated
+    # across a sustained outage it means every tailored resume in the window
+    # quietly ships from only its first shallow pass while still reporting
+    # success, which is what a user actually sees as "my resumes for different
+    # companies look the same."
+    #
+    # Defaults to None/unset, which keeps this feature completely inert:
+    # `create_message` falls back to exactly today's behaviour (raise once
+    # Manifest's own retries are exhausted) until a real key is configured as
+    # a Heroku config var. Not read anywhere but that one fallback path, and
+    # only after Manifest's retry budget is spent on a 429/529 -- a capacity
+    # failure, never in place of Manifest's own retries and never for an
+    # ordinary 4xx that would just fail the same way on another provider.
+    #
+    # A second fallback (Ramp Router) was drafted alongside this one and
+    # pulled before shipping -- see llm_json.py's fallback-provider comment
+    # for why -- so there is deliberately no `ramp_router_api_key` here yet.
+    openrouter_api_key: str | None = None
+
     firecrawl_api_key: str | None = None
     apify_api_token: str | None = None
     browserbase_api_key: str | None = None

@@ -24,6 +24,8 @@ import httpx
 import structlog
 from pydantic import BaseModel
 
+from job_os.settings import Settings, get_settings
+
 log = structlog.get_logger(__name__)
 
 # Prefer the contents of a fenced block when there is one: a reply shaped like
@@ -85,6 +87,240 @@ _NON_RETRYABLE_TRANSPORT_ERRORS = (httpx.TimeoutException, anthropic.APITimeoutE
 # much bigger blast radius than "do not really wait forty-five seconds".
 _sleep = asyncio.sleep
 
+# ---------------------------------------------------------------------------
+# Fallback provider.
+#
+# Tried only once Manifest's own retry schedule above has been spent on a
+# *sustained* 429/529 -- the last of the four attempts in `create_message`'s
+# loop, still rate-limited or overloaded. That is deliberately narrower than
+# "any failure": a 4xx that is not 429 is a bad request and would just fail
+# identically against a different provider, and a transport error (dropped
+# socket) is a connectivity blip the schedule above already exists to absorb,
+# not the "capacity is actually gone" case this provider is for. See
+# settings.py's comment on `openrouter_api_key` for the user-visible
+# consequence this fixes.
+#
+# Model choice: the user who asked for this called it "DeepSeek flash".
+# DeepSeek's historical lineup (V3, V3.1, R1, Chat, Reasoner) never had a
+# "Flash" tier -- Flash is Gemini's naming, not DeepSeek's -- so this was
+# checked against OpenRouter's live catalog rather than assumed. DeepSeek in
+# fact shipped a V4 line on 2026-07-31 that *does* include a "Flash" tier (a
+# sparse MoE model, 13B active of 284B total parameters). Re-verified live
+# 2026-08-21 against OpenRouter's machine-readable `/api/v1/models` catalog:
+# still listed, $0.08/M input + $0.18/M output tokens -- cheaper than
+# gpt-4o-mini, gemini-2.5-flash-lite, and claude-haiku-4.5 on the same
+# catalog, and beaten only by a couple of small Qwen variants. Pinned to that
+# dated snapshot (`-0731`) rather than the provider's floating "latest"
+# alias, so a provider-side model swap can't silently change what this
+# pipeline ships.
+#
+# A second fallback (Ramp Router) was built and then pulled before ever
+# shipping: verifying it here caught that it was written against the wrong
+# API shape (Ramp Router is OpenAI-Responses-compatible, `POST /v1/responses`
+# with account-specific model ids -- not an Anthropic-Messages-compatible
+# `/v1/messages` endpoint taking a bare "deepseek-v4-flash-0731" the way this
+# first draft assumed). Re-add it once there is a real Ramp Router account to
+# confirm the correct request shape and valid model id against, rather than
+# guessing a second time.
+_OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
+_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash-0731"
+
+# A fallback reply is a best-effort emergency draft, not a guarantee of
+# matching the primary call's own ceiling (which on some steps here goes as
+# high as 48000). Capping it keeps a fallback attempt bounded in latency and
+# cost regardless of what the primary call asked for.
+_FALLBACK_MAX_TOKENS_CEILING = 16000
+_FALLBACK_HTTP_TIMEOUT = httpx.Timeout(120.0, connect=10.0)
+
+# OpenAI-compatible `finish_reason` values, mapped to the Anthropic
+# `stop_reason` vocabulary this codebase's callers actually check --
+# `latex_from_document.py` compares `stop_reason == "max_tokens"` directly, so
+# this mapping has to be exact, not just readable.
+_FINISH_REASON_TO_STOP_REASON: dict[str, str] = {
+    "stop": "end_turn",
+    "length": "max_tokens",
+    "tool_calls": "tool_use",
+    "content_filter": "refusal",
+}
+
+
+class _FallbackUntranslatableError(Exception):
+    """Raised when a request can't be expressed to a fallback provider.
+
+    Every retry message built in this codebase is plain text or a list of
+    `{"type": "text", ...}` blocks -- except the PDF/image blocks
+    `latex_from_document.py` attaches for template extraction. Nothing here
+    knows how to turn a PDF into something a text-only DeepSeek endpoint can
+    read, and guessing would ship silently wrong output rather than the
+    honest failure the caller already handles. Caught in
+    `_try_fallback_providers`, which treats it exactly like a provider that
+    was unreachable: skip to the next one, or give up.
+    """
+
+
+class _ShimTextBlock:
+    """Stands in for one `TextBlock` of an Anthropic `Message.content`."""
+
+    __slots__ = ("text", "type")
+
+    def __init__(self, text: str) -> None:
+        self.type = "text"
+        self.text = text
+
+
+class _ShimUsage:
+    """Stands in for `Message.usage`.
+
+    Only `output_tokens` is real; the rest are `None` because an
+    OpenAI-compatible provider's `usage` object has nothing to fill them
+    with, and every read of them elsewhere in this codebase goes through
+    `getattr(..., None)` (see `response_diagnostics` and
+    `tailor._log_prompt_cache`), so `None` is a value those call sites
+    already treat as "not reported" rather than an error.
+    """
+
+    __slots__ = (
+        "cache_creation_input_tokens",
+        "cache_read_input_tokens",
+        "input_tokens",
+        "output_tokens",
+    )
+
+    def __init__(self, output_tokens: int | None) -> None:
+        self.output_tokens = output_tokens
+        self.input_tokens: int | None = None
+        self.cache_read_input_tokens: int | None = None
+        self.cache_creation_input_tokens: int | None = None
+
+
+class _ShimMessage:
+    """A minimal stand-in for an Anthropic `Message`, built from an
+    OpenAI-compatible chat-completions response (OpenRouter).
+
+    Every caller of `create_message` in this codebase reaches the response
+    only through `response_text` and `response_diagnostics` -- confirmed by
+    grepping every call site for direct field access -- so satisfying those
+    two functions is the whole contract. Normalizing here, instead of handing
+    callers a raw OpenAI-shaped dict, is what lets every existing caller stay
+    unaware a fallback ever happened.
+    """
+
+    __slots__ = ("content", "stop_reason", "usage")
+
+    def __init__(self, *, text: str, stop_reason: str, output_tokens: int | None) -> None:
+        self.content = [_ShimTextBlock(text)]
+        self.stop_reason = stop_reason
+        self.usage = _ShimUsage(output_tokens)
+
+
+def _flatten_content_to_text(content: Any) -> str:
+    """Reduce one Anthropic message `content` value to plain text.
+
+    `content` here is always either a plain string, or a list of blocks that
+    are all `{"type": "text", "text": ...}` -- except the PDF/image blocks
+    `latex_from_document.py` builds, which raise rather than being silently
+    dropped or mistranslated.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            block_type = (
+                block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+            )
+            if block_type != "text":
+                raise _FallbackUntranslatableError(
+                    f"unsupported content block type: {block_type!r}"
+                )
+            text = block.get("text") if isinstance(block, dict) else getattr(block, "text", None)
+            parts.append(text or "")
+        return "".join(parts)
+    raise _FallbackUntranslatableError(f"unsupported content shape: {type(content)!r}")
+
+
+def _to_openai_messages(system: Any, messages: list[Any]) -> list[dict[str, str]]:
+    """Translate Anthropic-SDK-shaped `system` + `messages` kwargs into the
+    OpenAI chat-completions `messages` array OpenRouter expects."""
+    openai_messages: list[dict[str, str]] = []
+    if system:
+        openai_messages.append({"role": "system", "content": _flatten_content_to_text(system)})
+    for entry in messages:
+        role = entry["role"] if isinstance(entry, dict) else entry.role
+        content = entry["content"] if isinstance(entry, dict) else entry.content
+        openai_messages.append({"role": role, "content": _flatten_content_to_text(content)})
+    return openai_messages
+
+
+def _fallback_max_tokens(kwargs: dict[str, Any]) -> int:
+    requested = kwargs.get("max_tokens")
+    if isinstance(requested, int) and requested > 0:
+        return min(requested, _FALLBACK_MAX_TOKENS_CEILING)
+    return _FALLBACK_MAX_TOKENS_CEILING
+
+
+async def _call_openrouter(settings: Settings, kwargs: dict[str, Any]) -> Any | None:
+    """One best-effort call to OpenRouter's OpenAI-compatible chat-completions
+    endpoint. Returns `None` -- not an error -- when the request can't be
+    expressed in that shape at all, which `_try_fallback_providers` treats the
+    same as "this provider has nothing to offer, try the next one."
+    """
+    try:
+        openai_messages = _to_openai_messages(kwargs.get("system"), kwargs.get("messages") or [])
+    except _FallbackUntranslatableError as exc:
+        log.info("llm.fallback_skipped", provider="openrouter", reason=str(exc))
+        return None
+    payload = {
+        "model": _OPENROUTER_MODEL,
+        "messages": openai_messages,
+        "max_tokens": _fallback_max_tokens(kwargs),
+    }
+    async with httpx.AsyncClient(timeout=_FALLBACK_HTTP_TIMEOUT) as http_client:
+        response = await http_client.post(
+            f"{_OPENROUTER_BASE_URL}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {settings.openrouter_api_key}",
+                "Content-Type": "application/json",
+            },
+            json=payload,
+        )
+    response.raise_for_status()
+    data = response.json()
+    choice = data["choices"][0]
+    text = (choice.get("message") or {}).get("content") or ""
+    finish_reason = choice.get("finish_reason")
+    usage = data.get("usage") or {}
+    return _ShimMessage(
+        text=text,
+        stop_reason=_FINISH_REASON_TO_STOP_REASON.get(finish_reason, finish_reason or "end_turn"),
+        output_tokens=usage.get("completion_tokens"),
+    )
+
+
+async def _try_fallback_providers(kwargs: dict[str, Any]) -> Any | None:
+    """Ask OpenRouter for the same completion Manifest just exhausted its
+    retries on. Returns `None` -- "give up, raise the real error" -- the
+    instant there is nothing left to try: no key is configured, the request
+    can't be expressed to OpenRouter, or OpenRouter itself failed too. The
+    caller re-raises Manifest's own exhausted error in every one of those
+    cases, so a genuine failure is never swallowed -- it is either fixed by
+    OpenRouter answering, or it surfaces exactly as it always has.
+    """
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        return None
+    try:
+        result = await _call_openrouter(settings, kwargs)
+    except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure here
+        # just means the fallback didn't work either, and the caller's own
+        # re-raise of the real Manifest error is the failure a reader
+        # actually needs to see, not this one.
+        log.warning("llm.fallback_provider_failed", provider="openrouter", error=repr(exc)[:200])
+        return None
+    if result is not None:
+        log.warning("llm.fallback_provider_served", provider="openrouter")
+    return result
+
 
 def _retry_after_seconds(exc: anthropic.APIStatusError) -> float | None:
     """The wait the gateway asked for, when it asked for one we can honour."""
@@ -123,8 +359,16 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
     400 is a bad request that will fail again, a 500 has already been retried by
     the SDK, and a timeout means the gateway stopped answering.
 
-    The caller gets the same object `messages.create` would have returned, so
-    `response_text` and `response_diagnostics` work unchanged.
+    If Manifest is still rate-limited or overloaded after that whole schedule --
+    a sustained capacity failure, not the blip the schedule above exists for --
+    and `OPENROUTER_API_KEY` is configured, this falls to OpenRouter for the
+    same completion (a DeepSeek model, see the constants above) before giving
+    up. Unconfigured, this is a no-op and behaviour is exactly what it was
+    before this fallback existed: Manifest's own exhausted error surfaces.
+
+    The caller gets the same object `messages.create` would have returned --
+    or, if a fallback provider answered instead, an object shaped enough like
+    one that `response_text` and `response_diagnostics` still work unchanged.
     """
     last_error: Exception | None = None
     for attempt, backoff in enumerate((*_RETRY_BACKOFF_SECONDS, None)):
@@ -148,9 +392,22 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
             )
             await _sleep(wait)
         except anthropic.APIStatusError as exc:
-            if exc.status_code not in _RETRYABLE_STATUSES or backoff is None:
+            if exc.status_code not in _RETRYABLE_STATUSES:
                 raise
             last_error = exc
+            if backoff is None:
+                # This is the exhaustion point: every attempt in
+                # `_RETRY_BACKOFF_SECONDS` has now come back 429/529, so
+                # Manifest is not blipping, it is out of capacity. Try the
+                # fallback providers before giving up -- `None` from this call
+                # means "nothing configured, nothing translatable, or every
+                # configured provider also failed," in which case `raise`
+                # below surfaces this exact exhausted error exactly as it did
+                # before fallback existed.
+                fallback = await _try_fallback_providers(kwargs)
+                if fallback is not None:
+                    return fallback
+                raise
             # Jitter so a tailor loop that hits the limit on one pass does not
             # march every later pass into the same window. Spreading retries is
             # not a security decision, so the fast PRNG is the right one.
