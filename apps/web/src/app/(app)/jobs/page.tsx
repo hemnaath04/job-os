@@ -64,6 +64,29 @@ const LIVE_SOURCES: DiscoverySource[] = [...FREE_SOURCES];
 const ENABLE_THEIRSTACK = false;
 if (ENABLE_THEIRSTACK) LIVE_SOURCES.push("theirstack");
 
+/**
+ * A permanent entry in the live fan-out, wired through job.os's existing
+ * custom-endpoint plumbing (still used server-side; see /api/discover) --
+ * just no longer user-editable now that the picker is gone. A dev adds or
+ * removes an entry here directly, rather than through a runtime toggle.
+ *
+ * freehire.me (github.com/strelov1/freehire) is a keyless, MIT-licensed
+ * public API that beats every one of the standalone scraper's own 7 ATS
+ * sources on its own numbers; verified live 2026-08-21 (real, current
+ * postings, HTTP 200, no auth needed).
+ */
+const DEV_CUSTOM_SOURCES: { id: string; name: string; url: string }[] = [
+  {
+    id: "freehire",
+    name: "freehire.me",
+    url:
+      "https://freehire.me/api/v1/jobs/search?seniority=intern&employment_type=internship" +
+      "&category=software_engineering,backend,frontend,fullstack,mobile,devops,sre," +
+      "network_engineering,data_engineering,data_science,data_analytics,ml_ai,ai_engineering," +
+      "qa,security,hardware,embedded,architecture,solutions_engineering&posted_within_days=120",
+  },
+];
+
 // Adapts the server's AI-authoritative score to the shape the client
 // heuristic already returns, so ResultCard/sorting need no separate
 // rendering path for the two -- see fitByKey's own comment for the handoff
@@ -123,28 +146,20 @@ function saveState(s: PersistedState) {
 }
 
 /**
- * Every search -- the sentence box, the advanced-filters button, and a saved
- * search re-run alike -- answers from both the pre-built index and the fixed
- * live source set at once and returns one merged, deduped list. There used
- * to be a second, manually-triggered "also search live sources" action with
- * its own button and its own source picker; that was two searches wearing
- * one page, not one search, so it is gone. Both halves run in parallel and
- * neither can sink the other: if one rejects, its failure becomes an error
- * row and the other half's results still render. Only a total failure
- * throws, which surfaces as the mutation's error toast.
- */
-/**
  * Merge the index half with whichever of the backend/route halves actually
  * ran. Shared by the main search and a saved-search re-run, which differ only
  * in how the backend half is produced (a fresh /discovery/search call vs.
  * /discovery/saved/{id}/run, which also bumps last_run_at/last_run_count).
+ * `routeGroup` is a superset of the typed `DiscoverySource[]` sources actually
+ * sent, since a custom endpoint (freehire) reports as "custom:<id>", which no
+ * union can enumerate.
  */
 function combineSearchParts(
   indexPart: PromiseSettledResult<IndexSearchResponse>,
   backendPart: PromiseSettledResult<DiscoverySearchResponse>,
   backend: DiscoverySource[],
   routePart: PromiseSettledResult<DiscoverySearchResponse>,
-  route: DiscoverySource[],
+  routeGroup: string[],
   limit: number | undefined,
 ): DiscoverySearchResponse {
   const parts: DiscoverySearchResponse[] = [];
@@ -160,8 +175,8 @@ function combineSearchParts(
     failures.push({ source: "index", message: (indexPart.reason as Error)?.message ?? "request failed" });
   }
   for (const [half, group] of [
-    [backendPart, backend],
-    [routePart, route],
+    [backendPart, backend as string[]],
+    [routePart, routeGroup],
   ] as const) {
     if (half.status === "fulfilled") {
       parts.push(half.value);
@@ -177,16 +192,31 @@ function combineSearchParts(
 
   // `limit` is what each half was asked for, so the merged list is capped to
   // it as well. Otherwise picking 20 would quietly return up to 60.
-  const merged = mergeDiscoveryResponses(parts, ["index", ...backend, ...route], limit);
+  const merged = mergeDiscoveryResponses(parts, ["index", ...backend, ...routeGroup], limit);
   merged.errors = [...merged.errors, ...failures];
   return merged;
 }
 
+/**
+ * Every search -- the sentence box, the advanced-filters button, and a saved
+ * search re-run alike -- answers from both the pre-built index and the fixed
+ * live source set at once and returns one merged, deduped list. There used
+ * to be a second, manually-triggered "also search live sources" action with
+ * its own button and its own source picker; that was two searches wearing
+ * one page, not one search, so it is gone. Both halves run in parallel and
+ * neither can sink the other: if one rejects, its failure becomes an error
+ * row and the other half's results still render. Only a total failure
+ * throws, which surfaces as the mutation's error toast.
+ */
 async function runUnifiedSearch(
   filters: DiscoverySearchRequest,
 ): Promise<DiscoverySearchResponse> {
   const backend = LIVE_SOURCES.filter((s) => BACKEND_SOURCES.includes(s));
   const route = LIVE_SOURCES.filter((s) => NO_KEY_SOURCES.includes(s));
+  const routeGroup: string[] = [
+    ...route,
+    ...DEV_CUSTOM_SOURCES.map((s) => `custom:${s.id}`),
+  ];
 
   const [indexPart, backendPart, routePart] = await Promise.allSettled([
     api.indexSearch({
@@ -199,13 +229,14 @@ async function runUnifiedSearch(
     backend.length
       ? api.discoverySearch({ ...filters, sources: backend })
       : Promise.resolve(emptyDiscoveryResponse()),
-    route.length
+    routeGroup.length
       ? api.discoverNoKey({
           sources: route,
           title_keywords: filters.title_keywords ?? [],
           country_codes: filters.country_codes ?? [],
           max_age_days: filters.max_age_days,
           limit: filters.limit,
+          custom_sources: DEV_CUSTOM_SOURCES,
           // The feed renders a description clamp and fit-score reads the same
           // text, so browsing needs it. Ingest and alerts do not, which is why
           // this is opt-in per caller rather than on by default.
@@ -214,7 +245,7 @@ async function runUnifiedSearch(
       : Promise.resolve(emptyDiscoveryResponse()),
   ]);
 
-  return combineSearchParts(indexPart, backendPart, backend, routePart, route, filters.limit);
+  return combineSearchParts(indexPart, backendPart, backend, routePart, routeGroup, filters.limit);
 }
 
 export default function DiscoverPage() {
@@ -334,6 +365,10 @@ export default function DiscoverPage() {
     mutationFn: async (s: SavedSearch) => {
       const backend = s.query.sources ?? [];
       const route = LIVE_SOURCES.filter((src) => NO_KEY_SOURCES.includes(src));
+      const routeGroup: string[] = [
+        ...route,
+        ...DEV_CUSTOM_SOURCES.map((c) => `custom:${c.id}`),
+      ];
       const [indexPart, backendPart, routePart] = await Promise.allSettled([
         api.indexSearch({
           title_keywords: s.query.title_keywords ?? [],
@@ -345,18 +380,19 @@ export default function DiscoverPage() {
         // runSavedSearch is what updates last_run_at / last_run_count upstream,
         // so keep using it for the backend half rather than replaying the query.
         backend.length ? api.runSavedSearch(s.id) : Promise.resolve(emptyDiscoveryResponse()),
-        route.length
+        routeGroup.length
           ? api.discoverNoKey({
               sources: route,
               title_keywords: s.query.title_keywords ?? [],
               country_codes: s.query.country_codes ?? [],
               max_age_days: s.query.max_age_days,
               limit: s.query.limit,
+              custom_sources: DEV_CUSTOM_SOURCES,
               hydrate_descriptions: true,
             })
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
-      return combineSearchParts(indexPart, backendPart, backend, routePart, route, s.query.limit);
+      return combineSearchParts(indexPart, backendPart, backend, routePart, routeGroup, s.query.limit);
     },
     onSuccess: (data) => {
       setResults(data.results);
@@ -1075,6 +1111,12 @@ function prettyError(source: DiscoverySource | string, msg: string): string {
   const lower = msg.toLowerCase();
   if (source === "index") {
     return `The index search failed: ${msg}.`;
+  }
+  if (source.startsWith("custom:")) {
+    const name = DEV_CUSTOM_SOURCES.find((s) => `custom:${s.id}` === source)?.name ?? source;
+    if (lower.includes("timed out")) return `${name} did not answer in time.`;
+    if (lower.includes("too large")) return `${name} returned too much data.`;
+    return `Could not reach ${name}: ${msg}.`;
   }
   if (source === "theirstack") {
     if (lower.includes("not configured") || lower.includes("api_key")) {
