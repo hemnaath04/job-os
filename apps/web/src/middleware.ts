@@ -1,4 +1,6 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
+import { isMaintenanceModeOn, MAINTENANCE_BYPASS_COOKIE } from "@/lib/maintenance";
 
 // Public routes: marketing page + auth handlers
 const isPublic = createRouteMatcher([
@@ -15,9 +17,39 @@ const isPublic = createRouteMatcher([
   "/mcp(.*)",
   "/.well-known/oauth-authorization-server(.*)",
   "/.well-known/oauth-protected-resource(.*)",
+  "/maintenance",
+  "/api/maintenance-bypass(.*)",
+]);
+
+// Reachable during maintenance regardless of the bypass cookie: the splash
+// itself, the one route that sets that cookie, and the health check the FE
+// polls from the splash page and elsewhere.
+const isMaintenanceExempt = createRouteMatcher([
+  "/maintenance",
+  "/api/maintenance-bypass(.*)",
+  "/api/backend/health(.*)",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
+  if (!isMaintenanceExempt(req)) {
+    const bypassed =
+      req.cookies.get(MAINTENANCE_BYPASS_COOKIE)?.value === process.env.MAINTENANCE_BYPASS_SECRET;
+    if (!bypassed && (await isMaintenanceModeOn())) {
+      if (req.nextUrl.pathname.startsWith("/api/")) {
+        return NextResponse.json(
+          {
+            error:
+              "job.os is temporarily unavailable while we deploy an update. Try again in a moment.",
+          },
+          { status: 503 },
+        );
+      }
+      const url = req.nextUrl.clone();
+      url.pathname = "/maintenance";
+      return NextResponse.rewrite(url);
+    }
+  }
+
   if (!isPublic(req)) {
     await auth.protect();
   }
