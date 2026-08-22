@@ -41,7 +41,6 @@ import {
   appwriteWorkspace,
   type AgentJob,
 } from "./appwrite/workspace";
-import { renderResumePreview } from "./resume-preview";
 import { withTimeout } from "./async";
 
 /** Body accepted by the /api/discover route handler. */
@@ -571,15 +570,31 @@ const legacyApi = {
   // docstring -- "an HTML approximation would be a different document from
   // the one that gets sent to an employer"), and callers now feed this
   // straight into an `<iframe src>`, not `srcDoc`. Caller owns revoking it.
+  //
+  // Deliberately lets a real failure raise rather than substituting anything
+  // -- an earlier version of this caught the error here and returned a crude
+  // client-only HTML approximation instead, which "succeeded" from the
+  // caller's point of view and so never showed as an error. It looked enough
+  // like a resume that a transient render failure read as "the preview is
+  // just wrong," not as a failure with a retry -- exactly the confusion this
+  // was meant to avoid. `PdfPreviewPane` already has a real error+retry state
+  // for exactly this; let it do that job.
   previewDraft: async (jsonResume: object, templateKey?: string | null) => {
-    const response = await fetch("/api/backend/resumes/preview", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ json_resume: jsonResume, template_key: templateKey ?? null }),
-      cache: "no-store",
-    });
+    const response = await withTimeout(
+      fetch("/api/backend/resumes/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ json_resume: jsonResume, template_key: templateKey ?? null }),
+        cache: "no-store",
+      }),
+      RENDER_TIMEOUT_MS,
+      "The preview did not render in time. Try again in a moment.",
+    );
     if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
     const blob = await response.blob();
+    if (!blob.type.includes("pdf")) {
+      throw new Error("The preview response was not a valid PDF.");
+    }
     return URL.createObjectURL(blob);
   },
 
@@ -1293,20 +1308,9 @@ export const api = {
   // The FastAPI container renders this regardless of which store the
   // resume's own metadata lives in -- `/resumes/preview` takes a raw
   // json_resume and looks nothing up by id, so the Appwrite-workspace split
-  // that governs where a resume's data lives doesn't apply here. Only truly
-  // falls back to the plain-HTML approximation (resume-preview.ts) if the
-  // real render itself fails (backend unreachable, malformed draft) --
-  // a rough preview beats no preview, but the real one is tried first now,
-  // not skipped outright for every Appwrite-workspace account.
-  async previewDraft(jsonResume: object, templateKey?: string | null): Promise<string> {
-    try {
-      return await legacyApi.previewDraft(jsonResume, templateKey);
-    } catch {
-      return `data:text/html;charset=utf-8,${encodeURIComponent(
-        renderResumePreview(jsonResume as import("./types").JsonResume),
-      )}`;
-    }
-  },
+  // that governs where a resume's data lives doesn't apply here.
+  previewDraft: (jsonResume: object, templateKey?: string | null): Promise<string> =>
+    legacyApi.previewDraft(jsonResume, templateKey),
 
   async listCalendar(params?: { days?: number; include_past?: number }) {
     if (!isAppwritePipelineEnabled) {
