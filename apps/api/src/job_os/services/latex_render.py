@@ -422,7 +422,19 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
     # One ordered list so every template writes the same contact line the same
     # way, and so no template has to know how to build a mailto or decide what
     # to do when a link is missing.
+    #
+    # Location leads rather than trails: jakes/deedy/dashline lay this whole
+    # list out as one run of `\mbox`/`box`-wrapped items joined by " | " and
+    # centered, wrapping wherever it runs out of width -- exactly like a line
+    # of justified text. Whichever item lands last is what gets isolated onto
+    # its own line when that happens, and a lone centered "Boston, MA" reads
+    # as a second, unstyled heading under the name rather than as leftover
+    # contact info. altacv/moderncv/awesome-cv are unaffected either way: they
+    # already re-sort or filter this list themselves rather than trusting
+    # input order.
     contact: list[dict[str, str]] = []
+    if where:
+        contact.append({"kind": "location", "text": where, "url": ""})
     if basics.get("phone"):
         contact.append({"kind": "phone", "text": latex_escape(basics.get("phone")), "url": ""})
     if basics.get("email"):
@@ -449,8 +461,6 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
                 "url": profile["url"],
             }
         )
-    if where:
-        contact.append({"kind": "location", "text": where, "url": ""})
 
     # Awesome-CV's \name takes two arguments, and its header sets them in
     # different weights. Split here rather than in a template, where the value

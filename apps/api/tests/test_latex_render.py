@@ -195,6 +195,28 @@ def test_render_model_drops_a_hostile_profile_url_but_keeps_the_label() -> None:
     assert model["profiles"][0]["username"] == "x"
 
 
+def test_location_leads_the_contact_line_not_trails_it() -> None:
+    """jakes/deedy/dashline render `contact` as one run of boxed items joined
+    by " | " and centered, wrapping wherever it runs out of width. Whichever
+    item is last is what gets isolated onto its own line on a wrap, and a
+    lone centered "Boston, MA" reads as an unstyled second heading under the
+    name. Location goes first so a wrap isolates a link instead."""
+    model = build_render_model(
+        {
+            "basics": {
+                "name": "A Candidate",
+                "phone": "+1 555 555 5555",
+                "email": "a@example.com",
+                "location": {"city": "Boston", "region": "MA"},
+                "profiles": [{"network": "GitHub", "username": "x", "url": "https://github.com/x"}],
+            }
+        }
+    )
+    kinds = [item["kind"] for item in model["contact"]]
+    assert kinds[0] == "location"
+    assert kinds == ["location", "phone", "email", "github"]
+
+
 def test_missing_sections_render_as_nothing_rather_than_failing() -> None:
     model = build_render_model({"basics": {"name": "A Candidate"}})
     assert model["work"] == []

@@ -351,7 +351,20 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
     # One ordered list so every template writes the same contact line the same
     # way, and so no template has to know how to build a mailto or decide what
     # to do when a link is missing.
+    #
+    # Location leads rather than trails: jakes/deedy/dashline lay this whole
+    # list out as one run of `box`-wrapped items joined by " | " and centered,
+    # wrapping wherever it runs out of width -- exactly like a line of
+    # justified text. Whichever item lands last is what gets isolated onto
+    # its own line when that happens, and a lone centered "Boston, MA" reads
+    # as a second, unstyled heading under the name rather than as leftover
+    # contact info. altacv/moderncv/awesome-cv are unaffected either way: they
+    # already re-sort or filter this list themselves rather than trusting
+    # input order. Mirrors the identical fix in latex_render.py's own
+    # build_render_model -- same contract, separate implementation.
     contact: list[dict[str, str]] = []
+    if where:
+        contact.append({"kind": "location", "text": where, "url": ""})
     if basics.get("phone"):
         contact.append({"kind": "phone", "text": sanitize(basics.get("phone")), "url": ""})
     if basics.get("email"):
@@ -378,8 +391,6 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
                 "url": profile["url"],
             }
         )
-    if where:
-        contact.append({"kind": "location", "text": where, "url": ""})
 
     raw_name = str(basics.get("name") or "").strip()
     first, _, last = raw_name.partition(" ")
