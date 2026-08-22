@@ -1,0 +1,133 @@
+%-------------------------
+% Resume in LaTeX: "husky"
+%
+% Not a port of anyone else's design: this reproduces a resume the user
+% (a Northeastern Khoury co-op applicant) actually uses for internship and
+% co-op applications, field for field against their own reference .tex. A
+% tight single-column page set in Times (mathptmx) rather than Computer
+% Modern, with a two-column \entry line (bold title + date, italic subtitle
+% below it) and a \skillrow line per skill group. Order is Education > Skills
+% > Work Experience > Projects, which is the order most co-op postings ask an
+% early-career applicant to lead with. See ATTRIBUTION.md.
+%
+% Placeholder syntax is documented in latex_render.py; note that a LaTeX
+% comment does not hide one, so this comment deliberately spells none of them
+% out.
+%-------------------------
+
+\documentclass[11pt,letterpaper]{article}
+\usepackage[top=0.45in, bottom=0.4in, left=0.6in, right=0.6in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{mathptmx}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage[hidelinks]{hyperref}
+\usepackage{xcolor}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{1pt}
+
+\titleformat{\section}
+  {\large\bfseries}{}{0em}{\MakeUppercase}[\vspace{-2pt}\titlerule]
+\titlespacing*{\section}{0pt}{5pt}{3pt}
+
+\newlist{bullets}{itemize}{1}
+\setlist[bullets]{leftmargin=1.4em, label=$\bullet$,
+                  itemsep=1pt, topsep=1pt, parsep=0pt, after=\vspace{1pt}}
+
+% The two-column entry line every section below shares: bold title and
+% italic subtitle stacked on the left, the date range and a second
+% right-hand line stacked on the right. #4 is empty in every call here --
+% education, work and projects only ever need three of the four slots -- but
+% it stays a real argument so a section that needs a second right-hand line
+% later does not need a new macro.
+\newcommand{\entry}[4]{%
+  \begin{minipage}[t]{0.72\textwidth}\raggedright\textbf{#1}\\\textit{#3}\end{minipage}%
+  \hfill%
+  \begin{minipage}[t]{0.27\textwidth}\raggedleft #2\\#4\end{minipage}\par%
+}
+\newcommand{\skillrow}[2]{\textbf{\textit{#1:}} #2\par\vspace{2pt}}
+
+\begin{document}
+
+% ---------- HEADER ----------
+\begin{center}
+  {\Large\bfseries \MakeUppercase{<<name>>}}\mbox{}\\[2pt]
+  \small
+<% for item in contact %>
+  \mbox{<% if item.url %>\href{<<item.url>>}{<<item.text>>}<% else %><<item.text>><% endif %><% if not loop.last %> $|$<% endif %>}
+<% endfor %>
+
+\end{center}
+
+<% if education %>
+% ---------- EDUCATION ----------
+\section{Education}
+<% for school in education %>
+\entry{<<school.institution>><% if school.location %>, <<school.location>><% endif %>}{<<school.dates>>}
+      {<<school.degree>>}{}
+<% if school.bullets %>
+Relevant coursework: <<school.bullets | join('; ')>>
+<% endif %>
+\vspace{2pt}
+
+<% endfor %>
+<% endif %>
+
+<% if skills or certificates %>
+% ---------- SKILLS ----------
+\section{Technical Skills}
+<% for group in skills %>
+\skillrow{<<group.name>>}{<<group.keywords_line>>}
+<% endfor %>
+<% if certificates %>
+\skillrow{Certifications}{<% for cert in certificates %><<cert.name>><% if cert.issuer %>, <<cert.issuer>><% endif %><% if cert.date %> (<<cert.date>>)<% endif %><% if not loop.last %>; <% endif %><% endfor %>}
+<% endif %>
+<% endif %>
+
+<% if work %>
+% ---------- WORK EXPERIENCE ----------
+\section{Professional Experience}
+<% for job in work %>
+\entry{<<job.company>><% if job.location %>, <<job.location>><% endif %>}{<<job.dates>>}
+      {<<job.position>>}{}
+<% if job.bullets %>
+\begin{bullets}
+<% for bullet in job.bullets %>
+  \item <<bullet>>
+<% endfor %>
+\end{bullets}
+<% elif job.summary %>
+\begin{bullets}
+  \item <<job.summary>>
+\end{bullets}
+<% endif %>
+
+<% endfor %>
+<% endif %>
+
+<% if projects %>
+% ---------- PROJECTS ----------
+\section{Projects}
+<% for project in projects %>
+\entry{<% if project.url %>\href{<<project.url>>}{<<project.name>>}<% else %><<project.name>><% endif %>}{<<project.dates>>}
+      {<<project.keywords_line>>}{}
+<% if project.bullets %>
+\begin{bullets}
+<% for bullet in project.bullets %>
+  \item <<bullet>>
+<% endfor %>
+\end{bullets}
+<% elif project.description %>
+\begin{bullets}
+  \item <<project.description>>
+\end{bullets}
+<% endif %>
+
+<% endfor %>
+<% endif %>
+
+\end{document}

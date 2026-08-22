@@ -184,6 +184,23 @@ LETTER_STYLES: dict[str, LetterStyle] = {
         small_caps=False,
         tracking=0,
     ),
+    # husky is set in Times (mathptmx) on the resume side. Typst's
+    # --ignore-system-fonts embeds no Times-alike -- see typst_render's own
+    # embedded-font list -- so this is the nearest analog rather than an exact
+    # match, the same reasoning moderncv's Latin Modern Sans pairing above uses.
+    # The resume's own header carries no rule under the name, just centred text.
+    "husky": LetterStyle(
+        font="Libertinus Serif",
+        name_font="Libertinus Serif",
+        base_size=11,
+        name_size=19,
+        margin_x=0.9,
+        margin_y=0.9,
+        align="center",
+        rule=False,
+        small_caps=False,
+        tracking=0,
+    ),
 }
 
 DEFAULT_LETTER_STYLE = LETTER_STYLES[DEFAULT_TEMPLATE_KEY]

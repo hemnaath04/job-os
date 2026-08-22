@@ -71,6 +71,7 @@ const RESUME_TEMPLATE_ID = z.enum([
   "moderncv",
   "deedy",
   "dashline",
+  "husky",
 ]);
 
 const EMPTY = z.object({});
@@ -368,7 +369,7 @@ const handler = createMcpHandler(
       {
         title: "Start Resume Finalize",
         description:
-          "Run the quality review and produce a final PDF for a drafted resume version (the output of start_resume_tailor), and return immediately with a job_id rather than waiting -- the review takes real time. Poll get_resume_finalize_status with the same version_id and job_id to get the result. Only works on a version job.os drafted itself; a version that was uploaded as a file has no structured resume to review. template_id picks the rendered look; omit it for the default (jakes -- single column, no colour, the safest of the set for applicant tracking systems). Options: jakes (default, described above), sb2nov (compact single column, narrower header), awesome-cv (single column with a coloured header and contact icons), altacv (two-column with a sidebar -- some ATS parsers flatten the columns), moderncv (traditional single column, renders noticeably slower than the rest), deedy (two-column, the most designed of the set, same ATS caveat as altacv), dashline (\"Co-Op template\" -- single column, denser one-line entry headers and en-dash bullets, education-before-experience ordering; the one to pick for an internship or co-op application specifically).",
+          "Run the quality review and produce a final PDF for a drafted resume version (the output of start_resume_tailor), and return immediately with a job_id rather than waiting -- the review takes real time. Poll get_resume_finalize_status with the same version_id and job_id to get the result. Only works on a version job.os drafted itself; a version that was uploaded as a file has no structured resume to review. template_id picks the rendered look; omit it for the default (jakes -- single column, no colour, the safest of the set for applicant tracking systems). Options: jakes (default, described above), sb2nov (compact single column, narrower header), awesome-cv (single column with a coloured header and contact icons), altacv (two-column with a sidebar -- some ATS parsers flatten the columns), moderncv (traditional single column, renders noticeably slower than the rest), deedy (two-column, the most designed of the set, same ATS caveat as altacv), dashline (single column, denser one-line entry headers and en-dash bullets, education-before-experience ordering), husky (\"Co-Op\" -- single column in Times rather than Computer Modern, a two-line entry block with a bold title and italic subtitle, education-before-experience ordering; the one to pick for an internship or co-op application specifically).",
         inputSchema: z.object({
           version_id: z.string().min(1).max(36),
           template_id: RESUME_TEMPLATE_ID.optional(),

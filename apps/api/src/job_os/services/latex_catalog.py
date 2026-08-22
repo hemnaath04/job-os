@@ -1,4 +1,4 @@
-"""The seven bundled LaTeX resume templates, and the sample data that previews them.
+"""The eight bundled LaTeX resume templates, and the sample data that previews them.
 
 Each entry names a directory under `latex_templates/`, which holds the
 template's `template.tex.j2`, whatever class file and fonts it needs, and the
@@ -176,7 +176,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
     ),
     BuiltinTemplate(
         key="dashline",
-        name="Co-Op template",
+        name="Dashline",
         description=(
             "A plain-case, single-column layout common in early-career "
             "software resumes: company, role and place on one bold line per "
@@ -197,6 +197,31 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
         ),
         tags=("single column", "compact", "ats safe"),
         typst_ready=True,
+    ),
+    BuiltinTemplate(
+        key="husky",
+        name="Co-Op",
+        description=(
+            "A tight single-column page in Times (mathptmx), reproduced "
+            "field for field from an actual co-op applicant's own resume: a "
+            "two-column entry line with a bold title and italic subtitle, a "
+            "labelled skill row per group, and Education before Experience."
+        ),
+        columns=1,
+        ats_note=(
+            "Single column and plain text throughout. As safe for applicant "
+            "tracking systems as Jake's."
+        ),
+        upstream="",
+        licence="",
+        author="Hemnaath Balasubramani",
+        changes=(
+            "Not a port of a public repository: the layout is the user's own "
+            "personal resume, supplied directly as the reference to match. See "
+            "ATTRIBUTION.md for what was copied exactly and what was "
+            "generalised into the template contract."
+        ),
+        tags=("single column", "compact", "ats safe", "co-op", "times"),
     ),
 )
 
