@@ -37,6 +37,7 @@ from job_os.schemas.discovery import (
     SmartSearchResponse,
 )
 from job_os.services.jd_parse import _strip_json_fence
+from job_os.services.llm_json import create_message, response_text
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -147,7 +148,7 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
         # single title keyword so the FE can still run something.
         return SmartSearchResponse(
             filters=DiscoverySearchRequest(title_keywords=[query.strip()]),
-            explanation="(LLM not configured — using your text as the title keyword.)",
+            explanation="(LLM not configured, so we're using your text as the title keyword.)",
         )
 
     client = anthropic.AsyncAnthropic(
@@ -160,17 +161,36 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
         "Extract the filters. Respond with a single JSON object matching the schema."
     )
 
-    msg = await client.messages.create(
-        model=settings.anthropic_model_extract,
-        max_tokens=1024,
-        system=SYSTEM_PROMPT.format(
-            schema=json.dumps(SmartSearchResponse.model_json_schema())
-        ),
-        messages=[{"role": "user", "content": user_prompt}],
-        extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
-    )
+    try:
+        msg = await create_message(
+            client,
+            model=settings.anthropic_model_extract,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT.format(
+                schema=json.dumps(SmartSearchResponse.model_json_schema())
+            ),
+            messages=[{"role": "user", "content": user_prompt}],
+            extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+        )
+    except anthropic.APIError as exc:
+        # Already retried, and tried the fallback provider, inside
+        # create_message. This is a real outage (Manifest's OAuth expiring
+        # mid-flight is exactly what happened the day this was added), and
+        # the search itself does not need parsed filters to run: the raw
+        # query still works as a title keyword against the index/DB search
+        # the FE runs next, same as the no-key and invalid-JSON fallbacks
+        # below. Smart search degrading to plain keyword search beats a 500
+        # that blocks the search entirely.
+        log.warning("smart_search.gateway_failed", error=str(exc)[:300])
+        return SmartSearchResponse(
+            filters=DiscoverySearchRequest(title_keywords=[query.strip()]),
+            explanation=(
+                "(The AI query parser is unavailable right now, so we're using "
+                "your text as the title keyword.)"
+            ),
+        )
 
-    text = "".join(b.text for b in msg.content if b.type == "text")
+    text = response_text(msg)
     raw = _strip_json_fence(text)
     try:
         return SmartSearchResponse.model_validate_json(raw)
@@ -178,5 +198,5 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
         log.warning("smart_search.invalid_json", error=str(e), preview=raw[:300])
         return SmartSearchResponse(
             filters=DiscoverySearchRequest(title_keywords=[query.strip()]),
-            explanation="(Couldn't parse the query — using the raw text as a fallback.)",
+            explanation="(Couldn't parse the query, so we're using the raw text as a fallback.)",
         )

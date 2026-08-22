@@ -23,6 +23,8 @@ out of the `appwrite-cli` package's own bundled source
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import re
 from typing import Any
 
@@ -30,8 +32,25 @@ import httpx
 
 from job_os.settings import get_settings
 
+# Indirected so a test can shorten the retry wait by patching this name alone,
+# the same reasoning llm_json._sleep documents: patching `asyncio.sleep`
+# itself would reach every coroutine in the process, not just this retry.
+_sleep = asyncio.sleep
+
 #: Appwrite's own bulk-write cap per `create-rows`/`upsert-rows` call.
 BATCH_SIZE = 100
+
+#: Appwrite answers a slow MariaDB query with its own 408, not a transport
+#: timeout -- the request completed, Appwrite's own query just ran past its
+#: internal ceiling ("Database timed out. Try adjusting your queries or
+#: adding an index."). Observed on `job_postings` search under load: four
+#: requests failed this way inside ninety seconds, then an equivalent request
+#: later succeeded in nine. That shape -- borderline, not structurally
+#: impossible -- is exactly what one retry is for; a query that is
+#: *genuinely* missing an index would fail identically every time, and this
+#: still surfaces the real error if it does.
+_TIMEOUT_STATUS = 408
+_TIMEOUT_RETRY_DELAY_SECONDS = 1.0
 
 #: `(regex, method)`, checked in this order so `!=`/`>=`/`<=` match before
 #: the single-character `=`/`>`/`<` operators they contain. Mirrors
@@ -110,18 +129,23 @@ def _base_url() -> tuple[str, dict[str, str]]:
 
 async def _request(method: str, *, params: list[tuple[str, str]] | None = None, json_body: dict[str, Any] | None = None) -> dict[str, Any]:
     url, headers = _base_url()
-    async with httpx.AsyncClient(timeout=30.0) as client:
-        response = await client.request(method, url, headers=headers, params=params, json=json_body)
-    if response.status_code >= 400:
-        detail = response.text
-        try:
-            detail = response.json().get("message", detail)
-        except ValueError:
-            pass
-        raise AppwriteTablesError(response.status_code, detail)
-    if not response.content:
-        return {}
-    return response.json()
+    for attempt in (1, 2):
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.request(
+                method, url, headers=headers, params=params, json=json_body
+            )
+        if response.status_code >= 400:
+            detail = response.text
+            with contextlib.suppress(ValueError):
+                detail = response.json().get("message", detail)
+            if response.status_code == _TIMEOUT_STATUS and attempt == 1:
+                await _sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
+                continue
+            raise AppwriteTablesError(response.status_code, detail)
+        if not response.content:
+            return {}
+        return response.json()
+    raise AssertionError("unreachable: loop always returns or raises on its second pass")
 
 
 def _query_params(

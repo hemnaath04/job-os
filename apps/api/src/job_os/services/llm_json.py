@@ -90,13 +90,18 @@ _sleep = asyncio.sleep
 # ---------------------------------------------------------------------------
 # Fallback provider.
 #
-# Tried only once Manifest's own retry schedule above has been spent on a
-# *sustained* 429/529 -- the last of the four attempts in `create_message`'s
-# loop, still rate-limited or overloaded. That is deliberately narrower than
-# "any failure": a 4xx that is not 429 is a bad request and would just fail
-# identically against a different provider, and a transport error (dropped
-# socket) is a connectivity blip the schedule above already exists to absorb,
-# not the "capacity is actually gone" case this provider is for. See
+# Tried in two places below: immediately, for any non-retryable
+# `APIStatusError` (a 401 like Manifest's own OAuth-expired M102, a 403, a
+# plain 500 -- Manifest itself could not serve the request at all, which is a
+# stronger signal than a 429/529 blip, not a weaker one); and after Manifest's
+# own retry schedule has been spent on a *sustained* 429/529, the last of the
+# four attempts in `create_message`'s loop, still rate-limited or overloaded.
+# `_try_fallback_providers` is a no-op (returns `None`) when nothing is
+# configured or OpenRouter also fails, so trying it here costs nothing when it
+# cannot help -- the caller's `raise` below is unchanged in that case. A
+# transport error (dropped socket) is excluded on purpose: that is a
+# connectivity blip the retry schedule above already exists to absorb, not the
+# "the primary is actually unusable" case this provider is for. See
 # settings.py's comment on `openrouter_api_key` for the user-visible
 # consequence this fixes.
 #
@@ -359,12 +364,13 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
     400 is a bad request that will fail again, a 500 has already been retried by
     the SDK, and a timeout means the gateway stopped answering.
 
-    If Manifest is still rate-limited or overloaded after that whole schedule --
-    a sustained capacity failure, not the blip the schedule above exists for --
-    and `OPENROUTER_API_KEY` is configured, this falls to OpenRouter for the
-    same completion (a DeepSeek model, see the constants above) before giving
-    up. Unconfigured, this is a no-op and behaviour is exactly what it was
-    before this fallback existed: Manifest's own exhausted error surfaces.
+    If Manifest fails outright -- any status code other than a retryable
+    429/529, including a 401 like the OAuth-expired M102 error, a 403, or its
+    own 500 -- or is still rate-limited or overloaded after that whole retry
+    schedule, and `OPENROUTER_API_KEY` is configured, this falls to OpenRouter
+    for the same completion (a DeepSeek model, see the constants above) before
+    giving up. Unconfigured, this is a no-op and behaviour is exactly what it
+    was before this fallback existed: Manifest's own error surfaces.
 
     The caller gets the same object `messages.create` would have returned --
     or, if a fallback provider answered instead, an object shaped enough like
@@ -393,6 +399,16 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
             await _sleep(wait)
         except anthropic.APIStatusError as exc:
             if exc.status_code not in _RETRYABLE_STATUSES:
+                # Not a capacity blip: Manifest rejected or failed the
+                # request outright (auth, a bad gateway, its own 5xx). Give
+                # the fallback provider one shot before surfacing this,
+                # since it is no less likely to help here than after a
+                # sustained 429/529 below -- if anything, more likely, since
+                # an OpenRouter key is independent of whatever broke
+                # Manifest's own upstream auth.
+                fallback = await _try_fallback_providers(kwargs)
+                if fallback is not None:
+                    return fallback
                 raise
             last_error = exc
             if backoff is None:

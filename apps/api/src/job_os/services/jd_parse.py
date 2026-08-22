@@ -12,6 +12,7 @@ import anthropic
 import structlog
 from pydantic import BaseModel, Field, ValidationError
 
+from job_os.services.llm_json import create_message, response_text
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -72,15 +73,25 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         f"{ParsedJD.model_json_schema()}"
     )
 
-    msg = await client.messages.create(
-        model=settings.anthropic_model_extract,
-        max_tokens=2048,
-        system=SYSTEM_PROMPT,
-        messages=[{"role": "user", "content": user_prompt}],
-        extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
-    )
+    try:
+        msg = await create_message(
+            client,
+            model=settings.anthropic_model_extract,
+            max_tokens=2048,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": user_prompt}],
+            extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+        )
+    except anthropic.APIError as exc:
+        # Already retried, and tried the fallback provider, inside
+        # create_message. A job can still be added without structured JD
+        # fields -- they just don't get filled in -- so this degrades the
+        # same way the no-key branch above does, rather than failing the
+        # add-job request outright over an extraction step.
+        log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
+        return {"title": title_hint} if title_hint else {}
 
-    text = "".join(b.text for b in msg.content if b.type == "text")
+    text = response_text(msg)
     raw = _strip_json_fence(text)
     try:
         return ParsedJD.model_validate_json(raw).model_dump(exclude_none=False)

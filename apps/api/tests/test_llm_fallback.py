@@ -1,15 +1,18 @@
-"""Fallback provider for a Manifest gateway that is genuinely out of capacity.
+"""Fallback provider for a Manifest gateway that cannot serve a request at all.
 
 `create_message` already retries a rate-limited or overloaded Manifest on its
-own schedule (see `test_gateway_retry.py`); these tests cover what happens
-once that whole schedule is spent and Manifest is *still* 429/529 -- a
-sustained capacity failure, not the blip the schedule above exists to absorb.
-With `OPENROUTER_API_KEY` configured, that is exactly when `create_message`
-falls to OpenRouter for the same completion (a DeepSeek model) before giving
-up. The cases that matter: Manifest succeeding never touches any of this,
-Manifest exhausted with OpenRouter healthy ships OpenRouter's answer, and
-OpenRouter also down surfaces Manifest's own real error rather than
-swallowing it into something misleading.
+own schedule (see `test_gateway_retry.py`); these tests cover the two ways
+that schedule stops helping: Manifest fails outright with something other
+than a 429/529 (a 401 like the M102 "OAuth credentials could not be
+refreshed" error seen in production, a 403, its own 500), tried immediately
+without waiting; or Manifest stays 429/529 for the whole retry schedule, a
+sustained capacity failure rather than the blip that schedule exists to
+absorb. With `OPENROUTER_API_KEY` configured, either case falls to OpenRouter
+for the same completion (a DeepSeek model) before giving up. The cases that
+matter: Manifest succeeding never touches any of this, either failure mode
+with OpenRouter healthy ships OpenRouter's answer, and OpenRouter also down
+(or unconfigured) surfaces Manifest's own real error rather than swallowing
+it into something misleading.
 """
 from __future__ import annotations
 
@@ -186,6 +189,58 @@ async def test_no_provider_configured_is_a_no_op(
         await llm_json.create_message(_ManifestClient(messages), **_TAILOR_KWARGS)
 
     assert messages.calls == len(llm_json._RETRY_BACKOFF_SECONDS) + 1
+
+
+# ---------------------------------------------------------------------------
+# 1b. Manifest fails outright (not a 429/529) -- e.g. the M102 "OAuth
+# credentials could not be refreshed" error, a real 401 seen in production.
+# The fallback is tried immediately, without spending the retry schedule on
+# a capacity blip this plainly is not.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_openrouter_serves_immediately_on_a_non_retryable_status(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    monkeypatch.setattr(
+        llm_json, "get_settings", lambda: _FakeSettings(openrouter_api_key="or-key")
+    )
+    fake_http = _FakeHTTPClient(
+        response=_FakeHTTPResponse(
+            200,
+            {
+                "choices": [
+                    {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+                ],
+                "usage": {"completion_tokens": 5},
+            },
+        )
+    )
+    monkeypatch.setattr(llm_json.httpx, "AsyncClient", lambda **_kw: fake_http)
+
+    # One 401, not ten 429s: this must not wait out the retry schedule.
+    messages = _ManifestMessages([_status_error(401)])
+    result = await llm_json.create_message(_ManifestClient(messages), **_TAILOR_KWARGS)
+
+    assert messages.calls == 1
+    assert fake_http.calls == 1
+    assert llm_json.response_text(result) == '{"ok": true}'
+    assert gateway_waits == []
+
+
+@pytest.mark.asyncio
+async def test_non_retryable_status_with_no_provider_still_raises(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    monkeypatch.setattr(llm_json, "get_settings", lambda: _FakeSettings())
+    messages = _ManifestMessages([_status_error(401)])
+
+    with pytest.raises(anthropic.APIStatusError) as excinfo:
+        await llm_json.create_message(_ManifestClient(messages), **_TAILOR_KWARGS)
+
+    assert excinfo.value.status_code == 401
+    assert messages.calls == 1
 
 
 # ---------------------------------------------------------------------------
