@@ -4,8 +4,8 @@
 - Author: LianTze Lim.
 - Licence: LPPL 1.3 or later. `LICENSE.md` in this directory is the upstream
   file, unchanged.
-- Vendored here: `altacv-tectonic.cls`. No fonts: Roboto Slab and Lato both
-  ship inside Tectonic's bundle.
+- Vendored here: `altacv-tectonic.cls`, and (see below) Lato. Roboto Slab
+  still ships inside Tectonic's bundle and needs nothing local.
 
 ## Why the class is renamed
 
@@ -35,3 +35,22 @@ with two deliberate differences:
 2. Education entries in the sidebar pass an empty location to `\cvevent` and
    print the location on its own line. `\cvevent` lays date and location out as
    two half-width boxes, which overlap in a column this narrow.
+
+## Lato is vendored here, not left to Tectonic's bundle
+
+This directory originally carried no font files at all, on the assumption
+that Tectonic's own remote bundle would resolve `Lato-Regular.ttf` and its
+three weights by that exact filename the way it resolves `RobotoSlab-*.otf`.
+That held until a production image build failed outright on
+`Lato-BoldItalic.ttf` specifically -- "the font ... cannot be found" -- which
+is a build-time network dependency on a resource this repository already
+has a licensed copy of one directory over. `deedy/fonts/lato/` vendors the
+same family (abbreviated filenames: `Lato-Reg.ttf`, `Lato-Bol.ttf`,
+`Lato-RegIta.ttf`, `Lato-BolIta.ttf`) for its own template; the four files
+here are copies of those, renamed to the full-word filenames this template's
+`\setsansfont` call already named, plus `OFL.txt` alongside them. Not a
+symlink or a build-time copy: `compile_pdf`'s asset step only copies files
+that already live in a template's own directory, so a shared source would
+need its own cross-template plumbing this codebase does not have. Two copies
+of the same four files, under the same open licence, is the honest cost of
+that.
