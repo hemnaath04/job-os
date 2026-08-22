@@ -191,6 +191,28 @@ class InterviewPrepRead(InterviewPrepSummary):
     company_name: str | None = None
 
 
+class InterviewPrepJobStart(BaseModel):
+    job_id: str
+
+
+class InterviewPrepJobStatus(BaseModel):
+    """Polled while a prep-generation job runs in the background.
+
+    "running" until the background task finishes; then either "done" with
+    the same payload `/generate` used to return directly, or "error" with
+    the message the caller would otherwise have gotten as an HTTP error.
+    Same shape as resumes.py's `RenderReviewJobStatus`, for the same reason:
+    Heroku's router kills any request still waiting past 30 seconds, and one
+    real model pass over the JD, the vault and the resume routinely runs
+    longer than that -- every real `/generate` call was failing this way,
+    not occasionally.
+    """
+
+    status: Literal["running", "done", "error"]
+    result: InterviewPrepRead | None = None
+    error: str | None = None
+
+
 class VaultBullet(BaseModel):
     id: str = Field(max_length=64)
     text: str = Field(max_length=2000)

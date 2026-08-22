@@ -10,9 +10,11 @@ application it points at. A cross-tenant session leak has already cost this
 codebase once, and a filter that depends on a join being right is a filter that
 can be got wrong by a later refactor of the join.
 """
+import asyncio
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,15 +28,19 @@ from job_os.db.models import (
     Job,
     User,
 )
-from job_os.db.session import get_session
+from job_os.db.session import async_session, get_session
 from job_os.schemas.interviews import (
     InterviewPrepGenerateRequest,
+    InterviewPrepJobStart,
+    InterviewPrepJobStatus,
     InterviewPrepRead,
     InterviewPrepSummary,
     InterviewQuestionPatch,
     InterviewQuestionRead,
 )
 from job_os.services.interview_prep import next_review_at, prep_for_application
+
+log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/interview-prep")
 
@@ -60,12 +66,18 @@ async def generate(
     user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> InterviewPrepRead:
-    """Generate a pack for one application.
+    """Generate a pack for one application, and wait for it.
 
     Slow: one model call over the JD, the vault and the tailored resume. The
     readiness half runs on rules and is returned even when the model call fails,
     so a 201 with an empty question list and an honest note is a real outcome
     rather than a swallowed error. See `generate_prep`.
+
+    That model call routinely runs past Heroku's hard 30-second router
+    timeout -- see `/generate/start`'s own docstring for the numbers that
+    made this the wrong default for a browser to call directly. Kept for any
+    caller that still wants the blocking form; the web app uses the
+    background-job pair below instead.
     """
     try:
         prep, _result = await prep_for_application(
@@ -77,6 +89,91 @@ async def generate(
     except LookupError as exc:
         raise HTTPException(404, "application not found") from exc
     return await _read(session, prep.id, user)
+
+
+# In-process job store, for the same reason resumes.py's render-review pair
+# needs one: Heroku's router kills any request still waiting past 30
+# seconds, and one real model pass over the JD, the vault and the resume
+# routinely runs longer than that -- both real production calls to
+# `/generate` failed with an H12 at exactly 30.0s, not occasionally. A single
+# dict is safe because this image runs `--workers 1` (see Dockerfile.vercel's
+# CMD): there is exactly one process that could ever read or write it.
+# Cleared per job on the read that finishes it, so this cannot grow unbounded
+# across a long-running dyno.
+_PREP_JOBS: dict[str, InterviewPrepJobStatus] = {}
+
+
+async def _generate_and_read(
+    payload: InterviewPrepGenerateRequest, user: User
+) -> InterviewPrepRead:
+    """The whole slow half of `/generate`, in its own session.
+
+    Split out so the background job below has exactly one call to make and
+    exactly one thing to monkeypatch in a test -- the same shape resumes.py's
+    `_render_and_review` gives the render-review job it was modelled on.
+    """
+    async with async_session() as session:
+        try:
+            prep, _result = await prep_for_application(
+                session,
+                user_id=user.id,
+                application_id=payload.application_id,
+                supplied_facts=payload.verified_facts,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+        return await _read(session, prep.id, user)
+
+
+@router.post("/generate/start", response_model=InterviewPrepJobStart, status_code=202)
+async def start_generate_job(
+    payload: InterviewPrepGenerateRequest,
+    user: User = Depends(get_current_user),
+) -> InterviewPrepJobStart:
+    """Start generating a pack in the background; poll `/generate/status/{job_id}`.
+
+    Returns almost immediately; the actual wait happens in the poller's own
+    loop, as a series of fast, individually-fine requests instead of one
+    long one that Heroku's router would kill at 30 seconds regardless of
+    what this container or the browser were willing to wait for.
+
+    `_generate_and_read` opens its own session rather than reusing the
+    request's: that session is handed back to the pool the moment this
+    handler returns, and the real generation keeps running well past that
+    point.
+    """
+    job_id = str(uuid4())
+    _PREP_JOBS[job_id] = InterviewPrepJobStatus(status="running")
+
+    async def run() -> None:
+        try:
+            result = await _generate_and_read(payload, user)
+            _PREP_JOBS[job_id] = InterviewPrepJobStatus(status="done", result=result)
+        except LookupError:
+            _PREP_JOBS[job_id] = InterviewPrepJobStatus(
+                status="error", error="application not found"
+            )
+        except Exception as exc:  # noqa: BLE001 -- a job that dies must reach the poller
+            log.exception("interview_prep.generate_job_failed", job_id=job_id)
+            _PREP_JOBS[job_id] = InterviewPrepJobStatus(status="error", error=str(exc))
+
+    asyncio.create_task(run())
+    return InterviewPrepJobStart(job_id=job_id)
+
+
+@router.get("/generate/status/{job_id}", response_model=InterviewPrepJobStatus)
+async def get_generate_job(
+    job_id: str,
+    _user: User = Depends(get_current_user),
+) -> InterviewPrepJobStatus:
+    job = _PREP_JOBS.get(job_id)
+    if job is None:
+        raise HTTPException(404, "job not found")
+    if job.status != "running":
+        del _PREP_JOBS[job_id]
+    return job
 
 
 @router.get("/latest", response_model=InterviewPrepRead)

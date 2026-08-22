@@ -819,15 +819,34 @@ const legacyApi = {
   generateInterviewPrep: async (applicationId: string) => {
     const verifiedFacts = await verifiedFactsForPrep();
     await warmBackend();
-    return withTimeout(
-      request<InterviewPrep>("/interview-prep/generate", {
-        method: "POST",
-        body: JSON.stringify({
-          application_id: applicationId,
-          verified_facts: verifiedFacts,
-        }),
+    // Kicked off as a background job rather than awaited directly, the same
+    // reason renderReviewDraft is: the model pass alone routinely runs past
+    // Heroku's hard 30-second router timeout, and calling /generate directly
+    // was failing every real request with an H12, not occasionally. The
+    // start call returns almost immediately; the actual wait happens in the
+    // poll loop below, as fast, individually-fine requests instead of one
+    // long one the router kills regardless of what either side expected.
+    const { job_id } = await request<{ job_id: string }>("/interview-prep/generate/start", {
+      method: "POST",
+      body: JSON.stringify({
+        application_id: applicationId,
+        verified_facts: verifiedFacts,
       }),
-      PREP_TIMEOUT_MS,
+    });
+    const deadline = Date.now() + PREP_TIMEOUT_MS;
+    while (Date.now() < deadline) {
+      const status = await request<{
+        status: "running" | "done" | "error";
+        result?: InterviewPrep;
+        error?: string;
+      }>(`/interview-prep/generate/status/${job_id}`);
+      if (status.status === "done") return status.result as InterviewPrep;
+      if (status.status === "error") {
+        throw new Error(status.error ?? "Generating the prep pack failed.");
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, AGENT_POLL_MS));
+    }
+    throw new Error(
       "Generating the prep pack timed out. The API container may be waking up, try again in a moment.",
     );
   },
