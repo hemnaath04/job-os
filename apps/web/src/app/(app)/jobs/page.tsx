@@ -61,6 +61,19 @@ import type {
  * defaulting on just because it is otherwise configured on the server.
  */
 const LIVE_SOURCES: DiscoverySource[] = [...FREE_SOURCES];
+
+/**
+ * Default and ceiling for the "Limit" field. 20 (the old default) hid most of
+ * a search's real results: `mergeDiscoveryResponses` caps the FINAL merged
+ * list to exactly this number, so with several sources each returning a
+ * couple dozen matches a 20-cap discarded most of them silently -- the banner
+ * still showed each source's own true count, which was the tell. Matches
+ * `DEFAULT_LIMIT`/`MAX_LIMIT` in job_index.py and no-key-sources.ts, which
+ * were already this generous on the backend; only this page's own default
+ * and the "Limit" field's ceiling were still the old, tighter numbers.
+ */
+const DEFAULT_RESULT_LIMIT = 60;
+const MAX_RESULT_LIMIT = 200;
 const ENABLE_THEIRSTACK = false;
 if (ENABLE_THEIRSTACK) LIVE_SOURCES.push("theirstack");
 
@@ -273,7 +286,7 @@ export default function DiscoverPage() {
   const [techs, setTechs] = useState<string>(initial.techs ?? "");
   const [country, setCountry] = useState<string>(initial.country ?? "US");
   const [maxAgeDays, setMaxAgeDays] = useState<number>(initial.maxAgeDays ?? 30);
-  const [limit, setLimit] = useState<number>(initial.limit ?? 20);
+  const [limit, setLimit] = useState<number>(initial.limit ?? DEFAULT_RESULT_LIMIT);
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
   const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
@@ -299,7 +312,7 @@ export default function DiscoverPage() {
     onSuccess: (data) => {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
-      setSourceErrors(data.errors ?? []);
+      setSourceErrors(dropLeverNoise(data.errors ?? []));
       if (data.results.length === 0)
         toast("No results", { description: "Try widening the filters." });
     },
@@ -339,7 +352,7 @@ export default function DiscoverPage() {
         technology_slugs: filters.technology_slugs ?? [],
         country_codes: filters.country_codes ?? [],
         max_age_days: filters.max_age_days ?? 30,
-        limit: filters.limit ?? 20,
+        limit: filters.limit ?? DEFAULT_RESULT_LIMIT,
       });
     },
     onError: (err: Error) => reportFailure("read that sentence", err),
@@ -397,7 +410,7 @@ export default function DiscoverPage() {
     onSuccess: (data) => {
       setResults(data.results);
       setSourceCounts(data.source_counts ?? {});
-      setSourceErrors(data.errors ?? []);
+      setSourceErrors(dropLeverNoise(data.errors ?? []));
       qc.invalidateQueries({ queryKey: ["saved-searches"] });
       if (data.results.length === 0)
         toast("No results", { description: "Saved query returned nothing today." });
@@ -416,7 +429,7 @@ export default function DiscoverPage() {
     setTechs((s.query.technology_slugs ?? []).join(", "));
     setCountry((s.query.country_codes ?? [])[0] ?? "");
     setMaxAgeDays(s.query.max_age_days ?? 30);
-    setLimit(s.query.limit ?? 20);
+    setLimit(s.query.limit ?? DEFAULT_RESULT_LIMIT);
     runSaved.mutate(s);
   }
 
@@ -662,9 +675,9 @@ export default function DiscoverPage() {
                 {...control}
                 type="number"
                 min={1}
-                max={50}
+                max={MAX_RESULT_LIMIT}
                 value={limit}
-                onChange={(e) => setLimit(Number(e.target.value) || 20)}
+                onChange={(e) => setLimit(Number(e.target.value) || DEFAULT_RESULT_LIMIT)}
                 className="field-control"
               />
             )}
@@ -1088,6 +1101,25 @@ function ResultCard({
       </div>
     </motion.div>
   );
+}
+
+/**
+ * Lever's own boards are the noisiest of the fixed source set: some
+ * companies' Lever postings run to several megabytes of embedded HTML/CSS
+ * (over the 1.0MB cap `custom-fetch.ts` enforces), and Lever itself is
+ * slower to answer than the other boards on a bad day. That is routine,
+ * board-by-board partial failure inherent to fanning out to 100+ boards
+ * every search, not something wrong with THIS search that the user needs to
+ * see a warning banner about -- so it goes to the console instead, the same
+ * "quiet unless it's actionable" treatment zero-hit sources already get.
+ * Every other source's errors still render in the banner unchanged.
+ */
+function dropLeverNoise(errors: DiscoverySourceError[]): DiscoverySourceError[] {
+  return errors.filter((e) => {
+    if (e.source !== "lever") return true;
+    console.warn("[jobs] lever board fan-out:", e.message);
+    return false;
+  });
 }
 
 function splitCsv(s: string): string[] {

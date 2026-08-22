@@ -122,7 +122,7 @@ Rules for the rest:
    internships go up from around June 2026, so a 30 day window silently hides
    most of the season and the search comes back empty for a reason that has
    nothing to do with the role.
-5. limit: integer, default 20, cap 50.
+5. limit: integer, default 60, cap 200.
 6. sources: leave empty. The user picks sources with toggles in the UI and
    their choice wins over anything you put here.
 

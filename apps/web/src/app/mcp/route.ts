@@ -547,7 +547,10 @@ const handler = createMcpHandler(
           technology_slugs: z.array(z.string()).optional(),
           country_codes: z.array(z.string()).optional(),
           max_age_days: z.number().int().min(1).max(180).optional(),
-          limit: z.number().int().min(1).max(50).optional(),
+          // 200 matches MAX_LIMIT in job_index.py, which is what /index/search
+          // itself actually enforces -- this was capping an agent to a quarter
+          // of what the endpoint already supports.
+          limit: z.number().int().min(1).max(200).optional(),
         }),
         // POST at the HTTP layer, but it only reads the index and never
         // writes anything to the user's account.

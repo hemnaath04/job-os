@@ -92,7 +92,14 @@ class DiscoverySearchRequest(ORMModel):
         default_factory=list, description="Tech slugs (TheirStack only)."
     )
     max_age_days: int = Field(default=30, ge=1, le=180)
-    limit: int = Field(default=20, ge=1, le=50)
+    # 20/50 quietly discarded most of a search's real results: the FE's
+    # cross-source merge caps the final list to this same number, and with
+    # several sources each returning a couple dozen matches, a 20-cap threw
+    # most of them away before they were ever seen. Matches DEFAULT_LIMIT/
+    # MAX_LIMIT in job_index.py and no-key-sources.ts, which were already
+    # this generous -- only this schema's numbers (and the FE's own mirrors
+    # of them) were still the old, tighter ones.
+    limit: int = Field(default=60, ge=1, le=200)
     page: int = Field(default=0, ge=0)
 
 
