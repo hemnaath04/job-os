@@ -16,6 +16,7 @@ import {
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { CompanyAvatar } from "@/components/company-avatar";
+import { OnboardingChecklist } from "@/components/onboarding-checklist";
 import { StatusPill } from "@/components/status-pill";
 import { api } from "@/lib/api";
 import type { Application, AppStatus } from "@/lib/types";
@@ -102,6 +103,7 @@ export default function DashboardClient({
         </div>
       </motion.header>
 
+      <OnboardingChecklist />
       <AgentBanner />
 
       {/* One bordered slab split by hairlines rather than four floating cards.
