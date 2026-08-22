@@ -4,11 +4,11 @@ Run at image build time, when the network is still reachable. Tectonic fetches
 LaTeX packages, fonts and its format file from a remote bundle the first time a
 document needs them, so a container that has never compiled anything would go to
 the network on a user's first render, and would fail outright if that render
-happened to be offline. Compiling all six here lands every file they need in
+happened to be offline. Compiling all eight here lands every file they need in
 TECTONIC_CACHE_DIR, which is baked into the image, and lets requests render with
 `--only-cached`.
 
-It doubles as the build's own check that the seven templates still compile: a
+It doubles as the build's own check that the eight templates still compile: a
 failure here fails the image, rather than shipping a template that cannot
 render.
 
