@@ -45,11 +45,20 @@ BATCH_SIZE = 100
 #: internal ceiling ("Database timed out. Try adjusting your queries or
 #: adding an index."). Observed on `job_postings` search under load: four
 #: requests failed this way inside ninety seconds, then an equivalent request
-#: later succeeded in nine. That shape -- borderline, not structurally
-#: impossible -- is exactly what one retry is for; a query that is
-#: *genuinely* missing an index would fail identically every time, and this
-#: still surfaces the real error if it does.
+#: later succeeded in nine -- but a single retry (this file's first version)
+#: still wasn't enough: the very next occurrence after that fix shipped took
+#: 26.8s to fail. Confirmed against `job_postings`' real indexes (all eleven
+#: present, including the composite `active`+`canonical_id`+`last_seen_at
+#: DESC` this search's own filters need) that this is not a missing index;
+#: MariaDB fulltext MATCH cannot use a second B-tree index for the filter
+#: and ORDER BY in the same query plan, so a broad keyword match still means
+#: an expensive in-memory sort over however many rows matched. Two retries
+#: (three attempts total) rather than one, since the shape is "borderline
+#: under load," not "impossible": a query that is *genuinely* incapable of
+#: finishing would fail identically on every attempt, and this still
+#: surfaces the real error if all three do.
 _TIMEOUT_STATUS = 408
+_TIMEOUT_RETRIES = 2
 _TIMEOUT_RETRY_DELAY_SECONDS = 1.0
 
 #: `(regex, method)`, checked in this order so `!=`/`>=`/`<=` match before
@@ -129,7 +138,8 @@ def _base_url() -> tuple[str, dict[str, str]]:
 
 async def _request(method: str, *, params: list[tuple[str, str]] | None = None, json_body: dict[str, Any] | None = None) -> dict[str, Any]:
     url, headers = _base_url()
-    for attempt in (1, 2):
+    total_attempts = _TIMEOUT_RETRIES + 1
+    for attempt in range(1, total_attempts + 1):
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.request(
                 method, url, headers=headers, params=params, json=json_body
@@ -138,14 +148,14 @@ async def _request(method: str, *, params: list[tuple[str, str]] | None = None, 
             detail = response.text
             with contextlib.suppress(ValueError):
                 detail = response.json().get("message", detail)
-            if response.status_code == _TIMEOUT_STATUS and attempt == 1:
+            if response.status_code == _TIMEOUT_STATUS and attempt < total_attempts:
                 await _sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
                 continue
             raise AppwriteTablesError(response.status_code, detail)
         if not response.content:
             return {}
         return response.json()
-    raise AssertionError("unreachable: loop always returns or raises on its second pass")
+    raise AssertionError("unreachable: loop always returns or raises on its final pass")
 
 
 def _query_params(

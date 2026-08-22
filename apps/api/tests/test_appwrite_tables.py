@@ -2,9 +2,12 @@
 
 Seen in production on `job_postings` search under load: four requests failed
 this way inside ninety seconds, then an equivalent request later succeeded in
-nine -- borderline, not a structurally missing index, which is exactly the
-shape one retry is for. A non-408 error, and a 408 that recurs on the retry
-too, must still surface rather than loop forever or swallow the real failure.
+nine -- borderline, not a structurally missing index (confirmed against the
+table's real indexes), which is exactly the shape retries are for. A single
+retry (this file's first version) still wasn't enough against a later,
+slower occurrence, hence two. A non-408 error, and 408s that recur through
+every attempt, must still surface rather than loop forever or swallow the
+real failure.
 """
 from __future__ import annotations
 
@@ -79,7 +82,37 @@ async def test_a_single_408_is_retried_and_the_retry_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_two_consecutive_408s_surface_as_the_real_error(
+async def test_two_consecutive_408s_then_the_second_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+    sleeps: list[float] = []
+
+    async def _instant_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(appwrite_tables, "_sleep", _instant_sleep)
+    fake_client = _FakeHTTPClient(
+        [
+            _FakeResponse(408, {"message": "Database timed out."}),
+            _FakeResponse(408, {"message": "Database timed out."}),
+            _FakeResponse(200, {"rows": [{"id": "1"}]}),
+        ]
+    )
+    monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", lambda **_kw: fake_client)
+
+    rows = await appwrite_tables.list_rows(filters=["active=true"])
+
+    assert rows == [{"id": "1"}]
+    assert fake_client.calls == 3
+    assert sleeps == [
+        appwrite_tables._TIMEOUT_RETRY_DELAY_SECONDS,
+        appwrite_tables._TIMEOUT_RETRY_DELAY_SECONDS,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_three_consecutive_408s_surface_as_the_real_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
@@ -92,6 +125,7 @@ async def test_two_consecutive_408s_surface_as_the_real_error(
         [
             _FakeResponse(408, {"message": "Database timed out."}),
             _FakeResponse(408, {"message": "Database timed out."}),
+            _FakeResponse(408, {"message": "Database timed out."}),
         ]
     )
     monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", lambda **_kw: fake_client)
@@ -100,7 +134,7 @@ async def test_two_consecutive_408s_surface_as_the_real_error(
         await appwrite_tables.list_rows(filters=["active=true"])
 
     assert excinfo.value.status_code == 408
-    assert fake_client.calls == 2
+    assert fake_client.calls == 3
 
 
 @pytest.mark.asyncio

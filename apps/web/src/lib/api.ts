@@ -142,6 +142,20 @@ export type ProfileFactCreate = {
 
 const BASE = "/api/backend";
 
+/** What a non-JSON error response almost always means, in a sentence a
+ * person can act on rather than the HTML page that said it. */
+function friendlyStatusText(status: number): string {
+  switch (status) {
+    case 502:
+    case 504:
+      return "The server is temporarily unreachable. Try again in a moment.";
+    case 503:
+      return "The service is temporarily unavailable, possibly restarting after a deploy. Try again shortly.";
+    default:
+      return "Something went wrong on the server. Try again in a moment.";
+  }
+}
+
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -164,7 +178,13 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     try {
       detail = JSON.parse(text);
     } catch {
-      /* not JSON, keep the raw text */
+      // Not JSON: a platform's own error page (Heroku's "Application Error"
+      // HTML for a crashed/asleep dyno, a CDN's 502/503/504 page), not
+      // anything the app returned. Every caller reads Error.message as the
+      // whole story, several by showing it verbatim, so this is the one
+      // place that has to turn "the server sent markup" into a sentence
+      // instead of dumping raw HTML into the UI.
+      throw new Error(`${res.status}: ${friendlyStatusText(res.status)}`);
     }
     throw new Error(`${res.status}: ${JSON.stringify(detail)}`);
   }
