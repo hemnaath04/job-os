@@ -45,7 +45,19 @@ SYSTEM_PROMPT = (
     "You extract structured job description fields. "
     "Return ONLY valid JSON matching the schema. "
     "Never invent values — leave a field null or empty if the JD doesn't state it. "
-    "Use the exact phrasing from the JD for skills/technologies (do not paraphrase)."
+    "Use the exact phrasing from the JD for skills/technologies (do not paraphrase). "
+    "When the JD asks for one or more of a list ('one or more of Go, Node.js or "
+    "Python', 'proficiency in at least one of the following languages: ...'), "
+    "keep that WHOLE list as a single required_skills/qualifications entry, "
+    "written out with 'or' between the items, exactly as the JD phrases it. Do "
+    "not split it into separate entries: a candidate meeting any one of them "
+    "meets the requirement, and splitting the list is what scores that "
+    "candidate as missing the other eight languages they were never asked for. "
+    "Do not extract an internal team, product, or organization name (e.g. "
+    "'you'll work with our Infra and Foundational AI teams') into "
+    "required_skills, technologies, or keywords — a resume can never state a "
+    "team name it has never heard of, so counting one as a missing skill "
+    "penalizes every candidate for not having read the org chart."
 )
 
 

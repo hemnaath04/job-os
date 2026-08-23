@@ -2234,6 +2234,11 @@ _NON_SKILL_RE = re.compile(
     # Soft-skill boilerplate
     r"work ethic|fast[- ]paced|team player|self[- ]starter|detail[- ]oriented|"
     r"passion for|genuine interest|interest in|communication skills|"
+    # Enthusiasm/attitude phrasing. A real posting supplied "excited to learn"
+    # and "open to feedback" as required_skills entries, each scored as a
+    # missing skill no bullet could ever contain.
+    r"excited to learn|excited about|open to feedback|eager to learn|"
+    r"growth mindset|"
     # Career stage and spoken languages, which a skills match cannot speak to.
     # A real posting supplied "New grad or early-career engineer" and "English
     # required, French a plus", and both were scored as missing skills.

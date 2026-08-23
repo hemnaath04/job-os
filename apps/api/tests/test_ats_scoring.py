@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from job_os.services.tailor import _compute_ats_from_document, _is_candidate_skill
+from job_os.services.tailor import (
+    _compute_ats_from_document,
+    _is_candidate_skill,
+    _jd_requirements,
+)
 
 # The real Point72 internship JD that scored 30 before this was fixed.
 JD = {
@@ -87,6 +91,39 @@ def test_skills_buried_in_a_prose_requirement_are_recovered() -> None:
     assert {"data structures", "algorithms", "systems"} <= matched
 
 
+def test_an_any_one_of_language_list_is_one_requirement_not_nine() -> None:
+    """A real Roblox JD's 'one or more of Go, Node.js, Ruby, Python, C++, Lua,
+    Swift, C#, Java' scored a Go+Python+Java candidate 9/26 required_met and
+    read as a failed match. `_jd_requirements` already collapses this
+    correctly when it arrives as ONE comma/or-joined string (the shape
+    jd_parse.py's prompt now asks the extraction model to produce) -- this
+    guards that contract. The failure mode this guards against is the
+    extraction model splitting the list into nine separate required_skills
+    entries instead, which this function has no way to recover from after the
+    fact: see test_ats_scoring.py's own history and jd_parse.SYSTEM_PROMPT.
+    """
+    reqs, _prose, _excluded = _jd_requirements(
+        {
+            "required_skills": [
+                "Go, Node.js, Ruby, Python, C++, Lua, Swift, C#, or Java",
+            ]
+        }
+    )
+    assert len(reqs) == 1
+    assert set(reqs[0].alternatives) == {
+        "Go",
+        "Node.js",
+        "Ruby",
+        "Python",
+        "C++",
+        "Lua",
+        "Swift",
+        "C#",
+        "Java",
+    }
+    assert reqs[0].covered_by("built backend services in go and python")
+
+
 def test_genuinely_absent_skills_still_count_against_the_score() -> None:
     score, report = _score()
     missing = {term.casefold() for term in report["missing"]}
@@ -127,6 +164,20 @@ def test_is_candidate_skill_boundaries() -> None:
     for term in ("firmware", "Python", "C++", "distributed systems", "trading"):
         assert _is_candidate_skill(term), term
     for term in ("Minimum 3.0 GPA", "a proprietary trading firm", "internship"):
+        assert not _is_candidate_skill(term), term
+
+
+def test_enthusiasm_phrases_are_not_scoreable_skills() -> None:
+    """A real posting's required_skills included 'excited to learn' and 'open
+    to feedback' verbatim, each scored as a missing skill no bullet could ever
+    contain."""
+    for term in (
+        "excited to learn",
+        "open to feedback",
+        "excited about generative AI",
+        "eager to learn",
+        "growth mindset",
+    ):
         assert not _is_candidate_skill(term), term
 
 
