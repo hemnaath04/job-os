@@ -148,6 +148,20 @@ function now(): string {
  */
 const VERSION_STATUS_COLUMN_VALUES = new Set(["draft", "reviewed", "final"]);
 
+// The Appwrite Function's own hard ceiling on one execution is 900s (see the
+// function's `timeout` setting), plus a buffer for the write round trip. A job
+// row is written to exactly once at the end of a normal run -- on success, on a
+// caught exception, or (per the retry work in ae6a396) on a caught transport
+// error -- so "running" past this point almost always means the run never
+// reached any of those: the process itself died (a real incident showed
+// Appwrite's own execution record as `failed`, 500, "general_unknown", no
+// logs, no traceback, ~107s in) rather than the job's code choosing to keep
+// going. A row like that stays "running" forever with nothing left to update
+// it, so every future poll -- this run's and any later one against the same
+// job_id -- would otherwise spin for the full client-side AGENT_TIMEOUT_MS
+// before giving up, every single time.
+const AGENT_JOB_STALE_MS = 16 * 60 * 1_000;
+
 function versionStatusColumn(status: string): string {
   return VERSION_STATUS_COLUMN_VALUES.has(status) ? status : "draft";
 }
@@ -1241,7 +1255,22 @@ export const appwriteWorkspace = {
       tableId: config.agentJobsTableId,
       rowId: jobId,
     });
-    return parseSnapshot<AgentJob<T>>(row);
+    const job = parseSnapshot<AgentJob<T>>(row);
+    if (job.status !== "running") return job;
+    const lastSeen = job.progress?.updated_at ?? job.updated_at ?? job.created_at;
+    if (Date.now() - Date.parse(lastSeen) <= AGENT_JOB_STALE_MS) return job;
+    // See AGENT_JOB_STALE_MS: this run went quiet for longer than the function
+    // itself is ever allowed to run, so nothing is coming. Reported here rather
+    // than written back to the row -- a read is not the place to mutate state
+    // on someone else's behalf, and every caller already knows what to do with
+    // status "failed".
+    return {
+      ...job,
+      status: "failed",
+      error:
+        job.error ??
+        "This run stopped responding partway through and never reported back. Try again.",
+    };
   },
 
   downloadVersionUrl(versionId: string): string {
