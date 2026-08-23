@@ -15,6 +15,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Sparkles,
+  Trash2,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -561,6 +562,20 @@ function TailorInner() {
           setError(null);
           clearLastTailor();
         }}
+        onTailorAgain={() => {
+          // Same job, same resume: rerun the exact run this page is already
+          // configured for, rather than sending the user back to the picker
+          // to choose the very same job again. jobId/resumeId are untouched,
+          // so `start` targets this run's own job and adds another version.
+          setResult(null);
+          setError(null);
+          start.mutate();
+        }}
+        onVersionDeleted={() => {
+          setResult(null);
+          setError(null);
+          clearLastTailor();
+        }}
       />
     );
   }
@@ -1026,8 +1041,10 @@ function reviewNeedsRetry(result: TailorResponse): boolean {
 
 function ResultView({
   result,
-  // resumeName is still accepted so callers need no change, but it is not read:
-  // it is derived from the company and job title this header already shows.
+  // Not shown in the header, which derives its own label from the company and
+  // job title -- read only by the delete confirmation below, which is about
+  // the resume/version pair, not the job.
+  resumeName,
   jobTitle,
   companyName,
   reviewing,
@@ -1035,6 +1052,8 @@ function ResultView({
   onRunReview,
   onFinalized,
   onReset,
+  onTailorAgain,
+  onVersionDeleted,
 }: {
   result: TailorResponse;
   resumeName: string;
@@ -1045,9 +1064,26 @@ function ResultView({
   onRunReview: () => void;
   onFinalized: (version: ResumeVersion) => void;
   onReset: () => void;
+  onTailorAgain: () => void;
+  onVersionDeleted: () => void;
 }) {
   const qc = useQueryClient();
   const downloadUrl = api.downloadVersionUrl(result.resume_id, result.id);
+
+  // Archiving, not a hard delete: the version stays in the database (same
+  // guarantee every other "remove" action on a version makes elsewhere in
+  // this app), just off this resume's active list and out of this page.
+  const deleteVersion = useMutation({
+    mutationFn: () => appwriteWorkspace.archiveVersion(result.id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["versions", result.resume_id] });
+      toast.success("Version archived", {
+        description: "It remains stored in the database.",
+      });
+      onVersionDeleted();
+    },
+    onError: (err: Error) => reportFailure("archive this version", err),
+  });
 
   // Pull all facts so we can show the ORIGINAL bullet text under each rewritten
   // bullet — that's the diff signal users care about for the no-hallucination
@@ -1109,12 +1145,34 @@ function ResultView({
 
   return (
     <div className="workspace-page max-w-7xl">
-      <button
-        onClick={onReset}
-        className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
-      >
-        <ArrowLeft className="size-3" /> Tailor another
-      </button>
+      <div className="flex items-center justify-between gap-4">
+        <button
+          onClick={onReset}
+          className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-text)]"
+        >
+          <ArrowLeft className="size-3" /> Tailor another
+        </button>
+        <button
+          onClick={() => {
+            if (
+              window.confirm(
+                `Archive this version of ${resumeName}? It will remain stored.`,
+              )
+            ) {
+              deleteVersion.mutate();
+            }
+          }}
+          disabled={deleteVersion.isPending}
+          className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)] hover:text-[color:var(--color-rose-ink)] disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {deleteVersion.isPending ? (
+            <Loader2 className="size-3 animate-spin" />
+          ) : (
+            <Trash2 className="size-3" />
+          )}
+          Delete this version
+        </button>
+      </div>
 
       <header className="mt-3 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -1133,15 +1191,23 @@ function ResultView({
           </div>
         </div>
         <div className="flex items-center gap-2">
-          {/* "Re-tailor" used to live here calling the same onReset as the
-              "Tailor another" link above, two labels for one action. Kept the
-              top link, since it says what onReset actually does: go back to
-              picking a job, not regenerate this one in place. */}
           <QualityStatus
             reviewing={reviewing}
             result={result}
             onRunReview={onRunReview}
           />
+          {/* Distinct from "Tailor another" at the top of the page, which
+              goes back to the picker to choose a different job. This reruns
+              the exact same job against the same resume in place, adding
+              another version rather than replacing this one -- for when the
+              draft is usable but a second pass might reach a better score. */}
+          <button
+            onClick={onTailorAgain}
+            disabled={reviewing}
+            className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            <RefreshCw className="size-3" /> Tailor again
+          </button>
           <button
             onClick={() =>
               downloadPdf(
