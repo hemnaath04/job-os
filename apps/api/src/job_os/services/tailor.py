@@ -340,6 +340,22 @@ ATS:
 - `ats_keywords_missing`: JD keywords that do not appear and have no matching
   fact. These usually become gap_questions too.
 
+SKILLS: the Skills section is assembled from the candidate's skill facts above
+(the ones with `"kind": "skill"`), grouped by category, exactly as written --
+you do not rewrite or select them. What you CAN do is `skills_dedup_drop`: a
+list of skill keyword strings, copied verbatim from those facts, that are safe
+to remove because the same vendor, tool, or library already appears in another
+row. A profile that has one skill titled "LLM integration (OpenAI, Anthropic,
+Qwen)" and a separate one titled "OpenAI / Anthropic SDKs" is naming OpenAI and
+Anthropic twice; put "OpenAI / Anthropic SDKs" in `skills_dedup_drop` and keep
+the fuller listing. This is exactly the no-keyword-stuffing rule above, applied
+to the one section that is not bullets: a name is evidence once, and reading it
+twice does not add a second name's worth of it. Every string you list here must
+match one of the candidate's own skill titles character for character; a string
+that does not match anything real is silently ignored, so there is no reward
+for guessing. An empty list is a normal, common outcome: most profiles do not
+carry a duplicate.
+
 KEEP THE NON-BULLET OUTPUT SHORT. The bullets are the product; the rest is
 scaffolding the user skims once, and every extra word there is time the user
 waits for no gain:
@@ -1219,6 +1235,7 @@ def _build_document(
         selected_bullets=safe_bullets,
         bullets_by_fact=bullets_by_fact,
         summary_objective=summary_objective,
+        skills_dedup_drop=agent.skills_dedup_drop,
     )
     return json_resume, provenance, summary_rejection
 
@@ -1792,6 +1809,7 @@ def _assemble_json_resume(
     selected_bullets: list[SelectedBullet],
     bullets_by_fact: dict[str, list[TailorBullet]],
     summary_objective: str | None,
+    skills_dedup_drop: list[str] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
     """Build the tailored JSON Resume + provenance.
 
@@ -2015,7 +2033,7 @@ def _assemble_json_resume(
         "projects": projects,
         "volunteer": volunteer,
         "education": education,
-        "skills": _consolidate_skills(skills_by_category),
+        "skills": _consolidate_skills(skills_by_category, drop=skills_dedup_drop),
         "certificates": certificates,
         "publications": publications,
         "awards": awards,
@@ -2076,6 +2094,8 @@ def _skill_aliases(keyword: str) -> set[str]:
 
 def _consolidate_skills(
     skills_by_category: dict[str, list[str]],
+    *,
+    drop: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     """One row per real category, each keyword appearing once on the page.
 
@@ -2083,7 +2103,17 @@ def _consolidate_skills(
     spelled several ways ("AI / ML" and "AI & ML") and the same tools listed
     under several of them, which rendered eight skill rows where five belonged
     and spent a fifth of a one-page resume repeating itself.
+
+    `drop` is the compose agent's `skills_dedup_drop`: keyword strings it
+    judged redundant because the same vendor or tool already appears in
+    another row -- something the automatic alias matching below cannot see,
+    since it matches one whole keyword spelling against another, not a name
+    nested inside a longer phrase like "LLM integration (OpenAI, Anthropic,
+    Qwen)". Matched by `_identity_text`, the same fold used everywhere else in
+    this function, so a string that does not land on a real keyword drops
+    nothing rather than guessing.
     """
+    folded_drop = {_identity_text(item) for item in (drop or [])}
     merged: dict[str, dict[str, Any]] = {}
     for label, titles in skills_by_category.items():
         # Same words, different punctuation, is the same category.
@@ -2106,6 +2136,9 @@ def _consolidate_skills(
                 # The playbook fixes the Languages row, and a skill the candidate
                 # cannot defend in an interview costs more than it adds.
                 log.info("tailor.skill_withheld_from_page", skill=keyword)
+                continue
+            if folded in folded_drop:
+                log.info("tailor.skill_dedup_dropped", skill=keyword)
                 continue
             aliases = _skill_aliases(keyword)
             existing = next(

@@ -348,6 +348,16 @@ class TailorAgentOutput(BaseModel):
     ats_keywords_matched: list[str] = Field(default_factory=list)
     ats_keywords_missing: list[str] = Field(default_factory=list)
     agent_note: str = ""
+    # Verbatim skill keyword strings (must exact-match one already in the
+    # candidate's profile) that are safe to drop from the Skills section
+    # because the same vendor or tool already appears in another row. A drop
+    # list rather than a rewritten skills section: the model can only ever
+    # remove a keyword it names, never rename or invent one, which is what
+    # keeps this inside the same no-hallucination contract as every other
+    # field here. See tailor.py's SYSTEM_PROMPT for the exact rule and
+    # _assemble_json_resume for where a keyword that does not match anything
+    # verified is silently ignored rather than trusted.
+    skills_dedup_drop: list[str] = Field(default_factory=list)
 
 
 class ProvenanceEntry(BaseModel):

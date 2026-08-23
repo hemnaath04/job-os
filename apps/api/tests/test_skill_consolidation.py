@@ -34,6 +34,34 @@ def test_a_qualified_skill_is_not_folded_into_the_bare_one() -> None:
     assert groups[0]["keywords"] == ["Python", "Async Python"]
 
 
+def test_agent_drop_list_removes_a_vendor_named_in_two_rows() -> None:
+    """The alias matcher above deliberately does not do this (see
+    test_aliases_stay_narrow): "OpenAI" inside a parenthetical provider list
+    is not the same claim as the skill it lists providers for, so it will not
+    fold "OpenAI / Anthropic SDKs" into "LLM integration (OpenAI, Anthropic,
+    Qwen)" on its own. That is what skills_dedup_drop is for: the compose
+    agent sees both and names the redundant one for removal.
+    """
+    groups = _consolidate_skills(
+        {
+            "AI / ML": [
+                "LLM integration (OpenAI, Anthropic, Qwen)",
+                "OpenAI / Anthropic SDKs",
+            ]
+        },
+        drop=["OpenAI / Anthropic SDKs"],
+    )
+    assert groups[0]["keywords"] == ["LLM integration (OpenAI, Anthropic, Qwen)"]
+
+
+def test_a_drop_string_that_matches_nothing_real_drops_nothing() -> None:
+    groups = _consolidate_skills(
+        {"AI / ML": ["LLM integration (OpenAI, Anthropic, Qwen)"]},
+        drop=["a skill the candidate never listed"],
+    )
+    assert groups[0]["keywords"] == ["LLM integration (OpenAI, Anthropic, Qwen)"]
+
+
 def test_aliases_stay_narrow() -> None:
     assert _skill_aliases("Retrieval-Augmented Generation (RAG)") == {
         "retrieval augmented generation rag",
