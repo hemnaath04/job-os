@@ -1459,7 +1459,13 @@ function KeywordGroup({
         {items.map((k) => (
           <span
             key={k}
-            className={`rounded-full px-2 py-0.5 text-[11px] ${colorClass}`}
+            // rounded-full, not rounded-lg: fine for a short keyword, but a
+            // few of these are full JD phrases ("Experience using modern AI
+            // systems such as...") that wrap to two or three lines, and a
+            // pill's radius is half its own height -- on a wrapped block
+            // that reads as a bulging stadium shape with the text spilling
+            // past the curve at both ends instead of a normal tag.
+            className={`rounded-lg px-2 py-0.5 text-[11px] leading-relaxed ${colorClass}`}
           >
             {k}
           </span>
