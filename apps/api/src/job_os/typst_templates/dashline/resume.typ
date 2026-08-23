@@ -84,6 +84,11 @@
 // Body
 // ---------------------------------------------------------------------------
 
+#if d.summary != "" {
+  section[Summary]
+  text(size: small, d.summary)
+}
+
 #if d.education.len() > 0 {
   section[Education]
   for school in d.education {
