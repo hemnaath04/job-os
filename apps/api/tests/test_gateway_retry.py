@@ -10,6 +10,7 @@ bounded so a sustained outage still fails rather than hanging.
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 import anthropic
@@ -234,3 +235,49 @@ async def test_a_broken_stream_still_gives_up_eventually(slept: list[float]) -> 
         await llm_json.create_message(_Client(messages))
     assert messages.calls == len(llm_json._RETRY_BACKOFF_SECONDS) + 1
     assert len(slept) == len(llm_json._RETRY_BACKOFF_SECONDS)
+
+
+class _HangingStream:
+    """A stream that opens and then never produces a final message.
+
+    Distinct from `_BrokenStream`: nothing ever raises here, so httpx's own
+    read timeout (which resets on every chunk it receives) never fires either
+    -- this is what a gateway keep-alive that trickles bytes without real
+    progress looks like from the caller's side.
+    """
+
+    async def __aenter__(self) -> _HangingStream:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    async def get_final_message(self) -> Any:
+        await asyncio.sleep(3600)
+
+
+class _HangingMessages:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def stream(self, **_kwargs: Any) -> Any:
+        self.calls += 1
+        return _HangingStream()
+
+
+@pytest.mark.asyncio
+async def test_a_stream_that_never_finishes_is_cut_off_and_not_retried(
+    slept: list[float], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The real failure this guards against: a resume_tailor job sat at
+    # "Finding the real gaps" for over 12 minutes with `status: "running"` and
+    # no error, because nothing ever raised for the retry ladder to catch --
+    # the stream just never finished. `_STREAM_WALL_CLOCK_TIMEOUT_SECONDS`
+    # enforces a real deadline via `asyncio.wait_for` regardless of what the
+    # stream is doing; shortened here so the test does not itself hang.
+    monkeypatch.setattr(llm_json, "_STREAM_WALL_CLOCK_TIMEOUT_SECONDS", 0.05)
+    messages = _HangingMessages()
+    with pytest.raises(TimeoutError):
+        await llm_json.create_message(_Client(messages))
+    assert messages.calls == 1
+    assert slept == []

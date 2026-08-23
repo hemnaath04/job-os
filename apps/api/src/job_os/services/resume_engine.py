@@ -895,11 +895,15 @@ async def review_resume(
         json.JSONDecodeError,
         anthropic.APIError,
         httpx.HTTPError,
+        TimeoutError,
         RuntimeError,
     ) as exc:
         # `httpx.HTTPError` for a stream that dies mid-reply: it arrives raw, past
         # every anthropic class, and the point of this block is that a missing
         # model review is a warning on a real review rather than a failed request.
+        # `TimeoutError` for the same reason: `create_message`'s wall-clock
+        # deadline (llm_json.py) raises it bare when a stream stays technically
+        # alive without making real progress, past every anthropic/httpx class.
         log.warning("resume.review_model_failed", error=repr(exc))
         rule_issues.append(
             ResumeReviewIssue(

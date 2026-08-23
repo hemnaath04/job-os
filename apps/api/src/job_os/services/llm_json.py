@@ -82,6 +82,20 @@ _RETRYABLE_TRANSPORT_ERRORS = (httpx.TransportError, anthropic.APIConnectionErro
 # means the gateway stopped answering rather than the connection glitching, which
 # a second identical request is unlikely to fix.
 _NON_RETRYABLE_TRANSPORT_ERRORS = (httpx.TimeoutException, anthropic.APITimeoutError)
+# httpx's read timeout resets on every chunk it receives, not on real progress --
+# a gateway that keeps a stream alive with periodic bytes (a keep-alive ping, a
+# slow trickle) while the actual completion is stalled upstream never trips it,
+# and `get_final_message()` can then hang well past the 600s this module's own
+# retry-vs-timeout tradeoff assumes as the outer bound. A real resume_tailor job
+# sat at "Finding the real gaps" for over 12 minutes with no error, still
+# `status: "running"`, headed straight for Appwrite's 900s hard kill -- at which
+# point the process is killed outright and the job row never gets the chance to
+# become "failed" that the comment above this constant promises. `wait_for`
+# enforces the 600s as a genuine wall-clock deadline regardless of what the
+# stream is doing, and raises plain `TimeoutError`, which (like the SDK's own
+# timeout errors) matches no retry branch below and propagates straight out --
+# same clean, non-retried failure the comment above already argues for.
+_STREAM_WALL_CLOCK_TIMEOUT_SECONDS = 600.0
 # Indirected so a test can shorten the wait by patching this name alone. Patching
 # `asyncio.sleep` itself would reach every coroutine in the process, which is a
 # much bigger blast radius than "do not really wait forty-five seconds".
@@ -380,7 +394,9 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
     for attempt, backoff in enumerate((*_RETRY_BACKOFF_SECONDS, None)):
         try:
             async with client.messages.stream(**kwargs) as stream:
-                return await stream.get_final_message()
+                return await asyncio.wait_for(
+                    stream.get_final_message(), timeout=_STREAM_WALL_CLOCK_TIMEOUT_SECONDS
+                )
         except _RETRYABLE_TRANSPORT_ERRORS as exc:
             if isinstance(exc, _NON_RETRYABLE_TRANSPORT_ERRORS) or backoff is None:
                 raise

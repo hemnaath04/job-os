@@ -832,7 +832,7 @@ async def run_tailor(
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
                 output_config={"effort": COMPOSE_EFFORT},
             )
-        except (anthropic.APIError, httpx.HTTPError) as exc:
+        except (anthropic.APIError, httpx.HTTPError, TimeoutError) as exc:
             # A refine pass is an improvement on something that already works, so a
             # transient gateway failure on one must never throw away the passes that
             # succeeded. A real run reached 78.3 over three good passes and then lost
@@ -842,6 +842,11 @@ async def run_tailor(
             # `httpx.HTTPError` because a stream that dies mid-reply raises the
             # transport error raw, past every anthropic class, and a run that lost
             # a good pass to one would be this comment's own failure again.
+            #
+            # `TimeoutError` because `create_message`'s own wall-clock deadline
+            # (see llm_json.py's `_STREAM_WALL_CLOCK_TIMEOUT_SECONDS`) raises the
+            # bare builtin, past every anthropic/httpx class too, for the same
+            # "gateway went quiet" case a dropped stream already covers here.
             log.warning(
                 "tailor.pass_failed_keeping_best",
                 iteration=iteration,
@@ -2818,10 +2823,15 @@ async def _analyse_requirements(
             seconds=round(time.perf_counter() - started, 1),
         )
         analysis = parse_model_json(TailorAnalysis, response_text(msg))
-    except (anthropic.APIError, httpx.HTTPError, ValidationError) as exc:
+    except (anthropic.APIError, httpx.HTTPError, TimeoutError, ValidationError) as exc:
         # An empty analysis is a planned degradation: `analysis_settled` downstream
         # knows the gaps were never checked. A dropped stream has to land here too,
         # or the one step that is allowed to fail softly takes the run down with it.
+        # Same for `TimeoutError`: `create_message`'s wall-clock deadline (see
+        # llm_json.py) raises it bare, past every anthropic/httpx class, for a
+        # stream that stays technically alive on gateway keep-alives without the
+        # per-read timeout ever tripping -- a real run sat here past 12 minutes
+        # with no error before this existed.
         log.warning("tailor.analysis_failed", error=repr(exc)[:200])
         return TailorAnalysis()
     # A bullet id the analyst invented would send the writer looking for evidence
