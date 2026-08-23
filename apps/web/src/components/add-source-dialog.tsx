@@ -1,15 +1,15 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { CheckCircle2, Github, Loader2, Search, X } from "lucide-react";
-import { useState } from "react";
+import { CheckCircle2, FileUp, Github, Loader2, Search, X } from "lucide-react";
+import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { withTimeout } from "@/lib/async";
 import { reportFailure } from "@/lib/errors";
 import type { JsonResume } from "@/lib/types";
 
-type Mode = "blank" | "github";
+type Mode = "blank" | "github" | "upload";
 
 interface GitHubRepo {
   id: number;
@@ -51,12 +51,16 @@ export function AddSourceDialog({
   const [fetchingRepos, setFetchingRepos] = useState(false);
   const [selected, setSelected] = useState<Set<number>>(new Set());
 
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+
   function reset() {
     setName("");
     setBaseRole("");
     setUsername("");
     setRepos(null);
     setSelected(new Set());
+    setUploadFile(null);
   }
 
   function close() {
@@ -167,6 +171,32 @@ export function AddSourceDialog({
     }
   }
 
+  async function createFromUpload() {
+    if (!uploadFile) return;
+    setCreating(true);
+    try {
+      // The same AI-parsed import "Set master" already uses on the library
+      // page, just without a master_filename -- so this always lands as a
+      // plain (non-master) resume, which is exactly a source. sourceLabel
+      // names the resume in the library; falls back to the filename, minus
+      // its extension, when the Name field is left blank.
+      const { items } = await api.importResumes(
+        [uploadFile],
+        name.trim() || uploadFile.name.replace(/\.[^.]+$/, ""),
+      );
+      const item = items[0];
+      if (!item?.imported) {
+        throw new Error(item?.note || "Could not read that file as a resume.");
+      }
+      toast.success("Source resume created from upload");
+      close();
+    } catch (err) {
+      reportFailure("import that resume", err);
+    } finally {
+      setCreating(false);
+    }
+  }
+
   return (
     <Dialog.Root
       open={open}
@@ -183,8 +213,8 @@ export function AddSourceDialog({
               <div>
                 <Dialog.Title className="text-lg font-medium">Add a source</Dialog.Title>
                 <Dialog.Description className="text-sm text-[color:var(--color-text-muted)]">
-                  A new general-purpose resume identity — blank, or seeded from your real
-                  GitHub projects.
+                  A new general-purpose resume identity — blank, seeded from your real
+                  GitHub projects, or parsed from a resume file you already have.
                 </Dialog.Description>
               </div>
               <Dialog.Close
@@ -200,7 +230,7 @@ export function AddSourceDialog({
               aria-label="Source type"
               className="mt-4 inline-flex rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-0.5 text-xs"
             >
-              {(["blank", "github"] as Mode[]).map((m) => (
+              {(["blank", "github", "upload"] as Mode[]).map((m) => (
                 <button
                   key={m}
                   type="button"
@@ -213,7 +243,8 @@ export function AddSourceDialog({
                   }`}
                 >
                   {m === "github" && <Github className="size-3" />}
-                  {m === "blank" ? "Blank" : "From GitHub"}
+                  {m === "upload" && <FileUp className="size-3" />}
+                  {m === "blank" ? "Blank" : m === "github" ? "From GitHub" : "From a file"}
                 </button>
               ))}
             </div>
@@ -268,7 +299,7 @@ export function AddSourceDialog({
                   </button>
                 </div>
               </form>
-            ) : (
+            ) : mode === "github" ? (
               <div className="mt-4 flex flex-col gap-3">
                 <form onSubmit={fetchRepos} className="flex gap-2">
                   <label htmlFor="gh-username" className="sr-only">
@@ -358,6 +389,62 @@ export function AddSourceDialog({
                   </button>
                 </div>
               </div>
+            ) : (
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  createFromUpload();
+                }}
+                className="mt-4 flex flex-col gap-3"
+              >
+                <label
+                  htmlFor="source-upload-name"
+                  className="text-xs font-medium text-[color:var(--color-text-muted)]"
+                >
+                  Name (optional — defaults to the filename)
+                </label>
+                <input
+                  id="source-upload-name"
+                  type="text"
+                  placeholder="e.g. SWE, ML, AI"
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  className="field-control"
+                />
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept=".pdf,.docx,.json,application/pdf,application/json"
+                  className="hidden"
+                  onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInput.current?.click()}
+                  className="flex items-center gap-2 rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-2.5 text-left text-sm text-[color:var(--color-text-muted)] hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
+                >
+                  <FileUp className="size-3.5 shrink-0" />
+                  {uploadFile ? uploadFile.name : "Choose a PDF, DOCX, or JSON resume…"}
+                </button>
+                <p className="text-xs text-[color:var(--color-text-dim)]">
+                  Parsed by the same AI extraction the library&apos;s own resume import
+                  uses. Never becomes the protected master from here — that still needs
+                  its own upload on the library page.
+                </p>
+                <div className="mt-2 flex justify-end gap-2">
+                  <Dialog.Close className="product-button product-button-secondary">
+                    Cancel
+                  </Dialog.Close>
+                  <button
+                    type="submit"
+                    disabled={creating || !uploadFile}
+                    className="product-button product-button-primary disabled:opacity-50"
+                  >
+                    {creating && <Loader2 className="size-3.5 animate-spin" />}
+                    {creating ? "Importing…" : "Create"}
+                  </button>
+                </div>
+              </form>
             )}
           </div>
         </Dialog.Content>
