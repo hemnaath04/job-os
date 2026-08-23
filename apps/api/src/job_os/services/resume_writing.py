@@ -84,6 +84,9 @@ _JD_PADDING_RE = re.compile(
     r"cross[- ]functional environment|dynamic environment|"
     r"in a collaborative environment|"
     r"applying (?:core |computer science )?(?:fundamentals|data[- ]structures)|"
+    r"appl(?:ying|ied) problem[- ]solving(?: and communication)?|"
+    r"addressing \w+ considerations|"
+    r"natural[- ]language,? prompt[- ]based generative[- ]ai application|"
     r"demonstrating|showcasing|underscoring|highlighting my|"
     r"strong grasp of|solid grasp of"
     r")\b",
@@ -109,11 +112,12 @@ BANNED_WORDING = (
     "showcased",
     "cutting-edge",
     "state-of-the-art",
-    "innovative solution",
-    "robust architecture",
+    "innovative",
+    "robust",
+    "foundational",
+    "passionate",
     "seamlessly",
     "seamless",
-    "end-to-end solution",
     "comprehensive",
     "sophisticated",
     "holistic",
@@ -121,6 +125,11 @@ BANNED_WORDING = (
     "meticulous",
     "pivotal",
 )
+
+# "end to end" and "end-to-end" both read as the same brochure phrase; matched
+# separately from BANNED_WORDING's plain substring check because the hyphen is
+# optional and a model writes it either way.
+_END_TO_END_RE = re.compile(r"\bend[\s-]to[\s-]end\b", re.I)
 
 # Openers that hedge away the candidate's own contribution. The benchmark's
 # ownership rule cuts both ways: do not overclaim, but do not open a bullet with
@@ -502,7 +511,10 @@ def bullet_flags(text: str, *, source_text: str | None = None) -> list[str]:
     if _WEAK_OPENER_RE.match(text.strip()):
         flags.append("weak_opener")
     lowered = text.casefold()
-    banned = sorted(phrase for phrase in BANNED_WORDING if phrase in lowered)
+    banned = {phrase for phrase in BANNED_WORDING if phrase in lowered}
+    if _END_TO_END_RE.search(text):
+        banned.add("end-to-end")
+    banned = sorted(banned)
     if banned:
         flags.append(f"banned_wording({','.join(banned)})")
     padding = {match.group(0).casefold() for match in _JD_PADDING_RE.finditer(text)}

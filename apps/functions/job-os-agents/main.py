@@ -686,6 +686,18 @@ async def _import_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
         raise ValueError("Only PDF, DOCX, and JSON resumes are supported.")
     validate_json_resume_document(document)
 
+    # Every fact and bullet this document backs, added to the vault right now
+    # rather than waiting on a separate "extract profile" action the user has
+    # to remember to run again. Tailoring reads the vault, not this upload, so
+    # a source or master resume that isn't reflected here is evidence the next
+    # tailor run cannot see. `_extract_facts_from_document` keys on
+    # `_profile_key` and only adds what is genuinely new, so re-uploading the
+    # same resume, or uploading a second one that shares a job or degree with
+    # the first, never duplicates a fact.
+    facts_created, facts_skipped, bullets_created = _extract_facts_from_document(
+        workspace, document
+    )
+
     now = _now()
     version_id = str(uuid4())
     is_master = bool(payload.get("is_master"))
@@ -769,24 +781,25 @@ async def _import_resume(workspace: Workspace, payload: dict[str, Any]) -> dict[
             "archived": False,
         },
     )
-    return {"resume": resume, "version": version}
+    return {
+        "resume": resume,
+        "version": version,
+        "facts_created": facts_created,
+        "facts_skipped": facts_skipped,
+        "bullets_created": bullets_created,
+    }
 
 
-async def _extract_profile(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
-    filename = str(payload["filename"])
-    file_id = str(payload["file_id"])
-    raw = workspace.storage.get_file_download(workspace.files_bucket, file_id)
-    lowered = filename.lower()
-    if lowered.endswith(".pdf"):
-        document = await extract_json_resume_from_pdf(raw)
-    elif lowered.endswith(".docx"):
-        document = await extract_json_resume_from_docx(raw)
-    elif lowered.endswith(".json"):
-        document = json.loads(raw)
-    else:
-        raise ValueError("Only PDF, DOCX, and JSON resumes are supported.")
-    validate_json_resume_document(document)
-
+def _extract_facts_from_document(
+    workspace: Workspace, document: dict[str, Any]
+) -> tuple[int, int, int]:
+    """Add whatever facts and bullets in `document` the vault does not already
+    have, and report how many of each. Keyed by `_profile_key`, so calling this
+    twice on the same document (or on two resumes that share a job) creates
+    nothing the second time -- safe to call on every upload rather than only
+    the one explicit "extract profile" action, which is what let the vault fall
+    behind a master or source resume that got re-uploaded with new content.
+    """
     existing_rows = workspace.tables.list_rows(
         workspace.database_id,
         workspace.profile_facts_table,
@@ -835,6 +848,28 @@ async def _extract_profile(workspace: Workspace, payload: dict[str, Any]) -> dic
                 fields={"fact_id": fact_id},
             )
             bullets_created += 1
+    return facts_created, facts_skipped, bullets_created
+
+
+async def _extract_profile(workspace: Workspace, payload: dict[str, Any]) -> dict[str, Any]:
+    filename = str(payload["filename"])
+    file_id = str(payload["file_id"])
+    raw = workspace.storage.get_file_download(workspace.files_bucket, file_id)
+    lowered = filename.lower()
+    if lowered.endswith(".pdf"):
+        document = await extract_json_resume_from_pdf(raw)
+    elif lowered.endswith(".docx"):
+        document = await extract_json_resume_from_docx(raw)
+    elif lowered.endswith(".json"):
+        document = json.loads(raw)
+    else:
+        raise ValueError("Only PDF, DOCX, and JSON resumes are supported.")
+    validate_json_resume_document(document)
+
+    facts_created, facts_skipped, bullets_created = _extract_facts_from_document(
+        workspace, document
+    )
+    timestamp = _now()
 
     if workspace.master_resume() is None:
         resume_id = str(uuid4())

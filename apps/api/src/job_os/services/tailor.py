@@ -237,6 +237,9 @@ HARD CONSTRAINTS — these are non-negotiable:
    the top of the page, so keep it under 45 words and do not restate a JD
    requirement in the employer's own words ("a strong grasp of data structures,
    algorithms, and systems"). Say what he has built, not what they asked for.
+   It is checked against the same banned-word list as every bullet below
+   ("end to end" included); a summary that fails it comes back with no
+   summary at all, which costs the page its lede for nothing.
 
 SEMANTIC KEYWORD MATCHING (this is how you raise ATS coverage without
 inventing experience):
@@ -292,11 +295,20 @@ BULLET WRITING (this is what a human reader judges):
 - No em dashes, en dashes or double hyphens. Use commas, colons or periods.
 - Banned words, with no exceptions: leveraged, utilized, spearheaded,
   cutting-edge, state-of-the-art, innovative, robust, seamlessly, synergized,
-  revolutionized, facilitated, enabled, end-to-end. They are the vocabulary of a
-  brochure, and a reader who has seen twenty resumes today reads them as filler
-  or as machine-written. Say the plain verb: built, wrote, tested, migrated,
-  measured, fixed. "Utilized Python to facilitate data ingestion" is
-  "Wrote a Python ingestion job".
+  revolutionized, facilitated, enabled, end-to-end (with or without the
+  hyphens), foundational, passionate, comprehensive, sophisticated, holistic,
+  meticulous, pivotal. They are the vocabulary of a brochure, and a reader who
+  has seen twenty resumes today reads them as filler or as machine-written. Say
+  the plain verb: built, wrote, tested, migrated, measured, fixed. "Utilized
+  Python to facilitate data ingestion" is "Wrote a Python ingestion job".
+- Banned phrases, for the same reason: "applying problem solving and
+  communication" (name the actual thing done, not the two skills it supposedly
+  used), "addressing responsible-AI/security/reliability considerations" (name
+  the specific guardrail, e.g. "refusing off-topic queries", not the category
+  it belongs to), "a natural-language, prompt-based generative-AI application"
+  (say what it actually does: a search, a chatbot, a query answerer). Any
+  phrase that names a skill category instead of showing the skill is this same
+  failure, banned or not on this list: delete it and say what was built.
 - Prefer the constraint over the technique. "Running the big model on every
   image cost too much, so it labelled a small set and a smaller model scored the
   rest" beats "implemented knowledge distillation": it shows the judgement, which
@@ -1423,7 +1435,9 @@ def _sanitize_selected_bullets(
             for flag in bullet_flags(
                 selected_bullet.rewritten_text, source_text=source.text
             )
-            if flag.startswith(("jd_padding", "inflated_rewrite", "first_person"))
+            if flag.startswith(
+                ("jd_padding", "inflated_rewrite", "first_person", "banned_wording")
+            )
         ]
         # A rewrite can invent no metric and no technology and still promote a
         # demoed prototype into something that shipped.
@@ -1483,6 +1497,17 @@ def _safe_summary(
     ):
         log.warning("tailor.unsafe_summary_reverted")
         return None, "summary_rejected(introduced an unverified metric or technology)"
+    # The one line every reader sees first is also the one place a banned word
+    # or vague-gesture phrase costs the most: bullet_flags catches the same
+    # brochure vocabulary and JD padding here that it catches in a bullet.
+    writing_flags = [
+        flag
+        for flag in bullet_flags(summary)
+        if flag.startswith(("banned_wording", "jd_padding"))
+    ]
+    if writing_flags:
+        log.warning("tailor.unsafe_summary_reverted", writing_flags=writing_flags)
+        return None, f"summary_rejected({','.join(writing_flags)})"
     # The summary is one line about several facts, so it is the easiest place to
     # promote a status. A real run wrote "has shipped ... an AI agent for
     # automated test generation" about work the fact records as demoed and
@@ -1738,6 +1763,27 @@ def _collapse_duplicate_entries(
     return collapsed
 
 
+# A fact's own title is stored data, not a rendered field: this one reads
+# "Junior Software Test Automation Engineer · Client: leading global rideshare
+# platform (Fares team)" because whatever created or edited it wrote client
+# context straight into the title, and nothing downstream ever separated the
+# two. Rendered verbatim, that title is the resume entry's bold heading, wraps
+# across two lines, and pushes the role itself off the first one -- the exact
+# "title stays on one line" failure a resume gets marked down for. The client
+# context is not lost by trimming it here: the compose pass already sees the
+# untouched fact title in facts_payload and, in practice, folds context like
+# this into a bullet on its own ("...the Fares pricing engine..."). Splitting
+# on punctuation rather than a hard character cutoff means a title with no
+# such clause is never truncated mid-word.
+_TITLE_CONTEXT_SPLIT_RE = re.compile(
+    r"\s*[,·|–-]\s*(?:client|customer|team|for)\s*:?\s+", re.IGNORECASE
+)
+
+
+def _entry_title(title: str) -> str:
+    return _TITLE_CONTEXT_SPLIT_RE.split(title, maxsplit=1)[0].strip() or title.strip()
+
+
 def _assemble_json_resume(
     *,
     master_json_resume: dict[str, Any],
@@ -1830,7 +1876,7 @@ def _assemble_json_resume(
         work.append(
             {
                 "name": f.org or "",
-                "position": f.title,
+                "position": _entry_title(f.title),
                 "startDate": f.start_date.isoformat() if f.start_date else None,
                 "endDate": f.end_date.isoformat() if f.end_date else None,
                 "location": f.location,
@@ -1874,7 +1920,7 @@ def _assemble_json_resume(
         volunteer.append(
             {
                 "organization": f.org or "",
-                "position": f.title,
+                "position": _entry_title(f.title),
                 "startDate": f.start_date.isoformat() if f.start_date else None,
                 "endDate": f.end_date.isoformat() if f.end_date else None,
                 "url": f.source_url,
