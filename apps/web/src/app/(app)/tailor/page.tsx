@@ -1071,7 +1071,14 @@ function ResultView({
   const [view, setView] = useState<"preview" | "evidence">("preview");
   const previewQuery = useQuery({
     queryKey: ["tailor-result-preview", result.id, templateId],
-    queryFn: () => api.previewDraft(result.json_resume, templateId),
+    // `?? {}` matches the same guard resume-editor-client.tsx already has on
+    // its own previewDraft call: `result` can flow in from a version re-fetch
+    // (see the "recent run finished" effect above) a render or two before
+    // json_resume is actually populated, and json_resume is a required field
+    // on the backend -- JSON.stringify silently drops it when it's undefined,
+    // which the backend correctly 422s on. `{}` renders as an empty draft for
+    // that one frame instead of failing outright.
+    queryFn: () => api.previewDraft(result.json_resume ?? {}, templateId),
     enabled: view === "preview",
   });
 
