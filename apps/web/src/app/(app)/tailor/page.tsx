@@ -1310,7 +1310,7 @@ function PageShell({ loading = false }: { loading?: boolean }) {
 }
 
 // Used to be a full-width `notice` banner sitting between the header and the
-// resume, the same visual weight as the Job Match ring above it and the
+// resume, the same visual weight as the Keyword Match ring above it and the
 // blocked-review notice below it — three things reading as competing grades
 // on one scroll. It carries real information (in-progress state, pass/fail,
 // a retry action) so nothing here was cut, only shrunk and moved next to the
@@ -1413,7 +1413,7 @@ function AtsBadge({ score }: { score: string | null }) {
         </div>
       </div>
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
-        Job Match
+        Keyword Match
       </span>
     </div>
   );
