@@ -366,7 +366,9 @@ async def preview_draft(
 
     try:
         rendered = await render_resume_pdf_async(
-            payload.json_resume, template_key=payload.template_key
+            payload.json_resume,
+            template_key=payload.template_key,
+            latex_source=payload.latex_source,
         )
     except LatexRenderError as exc:
         raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc

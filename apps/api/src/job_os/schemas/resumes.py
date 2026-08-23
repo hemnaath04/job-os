@@ -100,7 +100,15 @@ class ResumeDirectEditRequest(ORMModel):
 
 class ResumePreviewRequest(ORMModel):
     json_resume: dict[str, Any]
+    # Same pair as ResumeRenderReviewRequest below, and for the same reason:
+    # `template_key` names a bundled template, `latex_source` supplies a stored
+    # custom one. Only `template_key` used to be accepted here, so a preview of a
+    # custom template could not render the look it was asked for at all -- and
+    # the browser, having only one field to put it in, sent the template's
+    # workspace row id (`builtin-dashline`) as the bundled key (`dashline`),
+    # which is not one and 422'd every preview with a look selected.
     template_key: str | None = None
+    latex_source: str | None = None
 
 
 class ResumeReviewIssue(BaseModel):

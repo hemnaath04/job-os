@@ -599,12 +599,27 @@ const legacyApi = {
   // just wrong," not as a failure with a retry -- exactly the confusion this
   // was meant to avoid. `PdfPreviewPane` already has a real error+retry state
   // for exactly this; let it do that job.
-  previewDraft: async (jsonResume: object, templateKey?: string | null) => {
+  //
+  // Takes a template's workspace ROW ID, not a bundled template key, and
+  // resolves it the same way `renderReviewDraft` does. It used to pass whatever
+  // it was given straight through as `template_key`, while every caller had a
+  // row id to hand: selecting "Co-Op template" sent `builtin-dashline` where the
+  // backend wanted `dashline`, so it 422'd with "Unknown resume template" on
+  // every single preview with a look selected, while the review of the very same
+  // document succeeded because it resolved the id first.
+  previewDraft: async (jsonResume: object, templateId?: string | null) => {
+    const look = templateId
+      ? await appwriteWorkspace.getTemplateSource(templateId)
+      : null;
     const response = await withTimeout(
       fetch("/api/backend/resumes/preview", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ json_resume: jsonResume, template_key: templateKey ?? null }),
+        body: JSON.stringify({
+          json_resume: jsonResume,
+          template_key: look?.template_key ?? null,
+          latex_source: look?.latex_source ?? null,
+        }),
         cache: "no-store",
       }),
       RENDER_TIMEOUT_MS,
@@ -1347,9 +1362,11 @@ export const api = {
   // The FastAPI container renders this regardless of which store the
   // resume's own metadata lives in -- `/resumes/preview` takes a raw
   // json_resume and looks nothing up by id, so the Appwrite-workspace split
-  // that governs where a resume's data lives doesn't apply here.
-  previewDraft: (jsonResume: object, templateKey?: string | null): Promise<string> =>
-    legacyApi.previewDraft(jsonResume, templateKey),
+  // that governs where a resume's data lives doesn't apply here. The template
+  // is the one exception, and it is resolved from its row id inside
+  // `legacyApi.previewDraft` before the request goes out.
+  previewDraft: (jsonResume: object, templateId?: string | null): Promise<string> =>
+    legacyApi.previewDraft(jsonResume, templateId),
 
   async listCalendar(params?: { days?: number; include_past?: number }) {
     if (!isAppwritePipelineEnabled) {
