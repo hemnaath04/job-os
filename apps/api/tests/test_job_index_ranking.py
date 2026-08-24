@@ -18,6 +18,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from conftest import requires_appwrite_key
 from job_os.ingest.providers import RawPosting
 from job_os.ingest.upsert import upsert_postings
 from job_os.services.job_index import (
@@ -27,7 +28,7 @@ from job_os.services.job_index import (
     search_index,
 )
 
-pytestmark = pytest.mark.asyncio
+pytestmark = [pytest.mark.asyncio, requires_appwrite_key]
 
 NOW = datetime.now(UTC)
 

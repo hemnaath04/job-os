@@ -43,7 +43,10 @@ async def test_a_retitled_reimport_is_recognized_as_the_same_job(db_session) -> 
     first = await import_json_resume(
         db_session,
         user=user,
-        doc=_resume("Junior Software Test Automation Engineer, Client: leading global rideshare platform (Fares team)"),
+        doc=_resume(
+            "Junior Software Test Automation Engineer, Client: leading "
+            "global rideshare platform (Fares team)"
+        ),
     )
     # The one contact fact (from `basics`) plus the one experience fact.
     assert first.facts_created == 2
