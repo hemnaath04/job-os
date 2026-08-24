@@ -2,6 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import {
+  Archive,
+  ArchiveRestore,
   Award,
   BadgeCheck,
   Briefcase,
@@ -51,9 +53,19 @@ const KIND_META: Record<
 
 export default function ProfilePage() {
   const [addOpen, setAddOpen] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
   const { data: facts = [], isLoading, refetch } = useQuery({
     queryKey: ["facts"],
     queryFn: () => api.listFacts(),
+  });
+  const {
+    data: archivedFacts = [],
+    isLoading: archivedLoading,
+    refetch: refetchArchived,
+  } = useQuery({
+    queryKey: ["facts", "archived"],
+    queryFn: () => api.listArchivedFacts(),
+    enabled: showArchived,
   });
 
   const grouped = facts.reduce<Record<string, ProfileFact[]>>((acc, f) => {
@@ -71,6 +83,16 @@ export default function ProfilePage() {
         fact.verified ? "un-verify this fact" : "verify this fact",
         error,
       );
+    }
+  }
+
+  async function handleRestore(fact: ProfileFact) {
+    try {
+      await api.restoreFact(fact.id);
+      await Promise.all([refetchArchived(), refetch()]);
+      toast.success(`Restored "${fact.title}"`);
+    } catch (error) {
+      reportFailure("restore this fact", error);
     }
   }
 
@@ -120,6 +142,72 @@ export default function ProfilePage() {
           />
         ))}
       </div>
+
+      <div className="mt-10 border-t border-[color:var(--color-border)] pt-6">
+        <button
+          type="button"
+          onClick={() => setShowArchived((v) => !v)}
+          className="inline-flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text-muted)]"
+        >
+          <Archive className="size-3.5" />
+          {showArchived ? "Hide archived" : "Show archived"}
+        </button>
+        {showArchived && (
+          <div className="mt-4">
+            {archivedLoading && <div className="loading-surface" />}
+            {!archivedLoading && archivedFacts.length === 0 && (
+              <p className="text-sm text-[color:var(--color-text-dim)]">
+                Nothing archived.
+              </p>
+            )}
+            {!archivedLoading && archivedFacts.length > 0 && (
+              <div className="grid grid-cols-1 gap-2">
+                {archivedFacts.map((fact) => (
+                  <ArchivedFactRow
+                    key={fact.id}
+                    fact={fact}
+                    onRestore={handleRestore}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ArchivedFactRow({
+  fact,
+  onRestore,
+}: {
+  fact: ProfileFact;
+  onRestore: (fact: ProfileFact) => void;
+}) {
+  const subtitle = formatRange(fact.start_date, fact.end_date);
+  return (
+    <div className="workspace-panel flex items-center justify-between gap-3 p-4 opacity-70">
+      <div className="min-w-0">
+        <h3 className="truncate text-sm font-medium">{fact.title}</h3>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[color:var(--color-text-dim)]">
+          {fact.org && <span>{fact.org}</span>}
+          {subtitle && (
+            <>
+              <span>·</span>
+              <span className="font-mono">{subtitle}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        onClick={() => onRestore(fact)}
+        className="kinetic-button kinetic-button-secondary shrink-0 text-xs"
+      >
+        <ArchiveRestore className="size-3.5" />
+        Restore
+      </button>
     </div>
   );
 }
