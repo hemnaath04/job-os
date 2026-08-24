@@ -20,16 +20,34 @@ set -uo pipefail
 # Phase C's Appwrite dual-write work (fix/phase-b-ci's 2026-08-04 numbers were
 # 24/46; this session's unpushed commits had drifted to 29/60 before any of it
 # had ever actually run through CI).
-RUFF_CEILING=14
-MYPY_CEILING=45
+#
+# Reset 2026-08-24 to the real count: the api job's pytest step has failed
+# outright on every CI run since (missing APPWRITE_API_KEY, fixed separately),
+# so this script never actually ran in CI and both backlogs grew unseen across
+# many parallel branches before anyone could catch a single violation at the
+# old ceilings. Those were stale numbers this ratchet had no chance to
+# enforce, not real targets abandoned on purpose. Numbers taken from a clean
+# checkout of the actual commit, not this (or any) shared working tree: with
+# several other sessions actively editing files here, a check run against the
+# dirty tree reads a different, wrong count depending on the instant it runs,
+# which is what produced the first, incorrect version of this reset.
+RUFF_CEILING=36
+MYPY_CEILING=71
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 
-ruff_out=$(uv run ruff check src tests 2>&1 || true)
+# --color=never / --no-color-output: without this, mypy colors its summary
+# line by default in a local terminal (CI's non-interactive runner does not),
+# which prepends ANSI escapes before "Found" and silently breaks the `^Found`
+# anchor below -- ruff_count/mypy_count then default to 0 via `:-0`, and this
+# script reports a clean run no matter how many real errors exist. That is
+# exactly the kind of local-passes-when-CI-would-fail gap this script exists
+# to prevent, so it needs to not have one itself.
+ruff_out=$(uv run ruff check --color=never src tests 2>&1 || true)
 ruff_count=$(printf '%s' "$ruff_out" | sed -nE 's/^Found ([0-9]+) error.*/\1/p' | tail -1)
 ruff_count=${ruff_count:-0}
 
-mypy_out=$(uv run mypy src 2>&1 || true)
+mypy_out=$(uv run mypy --no-color-output src 2>&1 || true)
 mypy_count=$(printf '%s' "$mypy_out" | sed -nE 's/^Found ([0-9]+) error.*/\1/p' | tail -1)
 mypy_count=${mypy_count:-0}
 

@@ -21,6 +21,21 @@ os.environ.setdefault(
 )
 
 from job_os.services import llm_json  # noqa: E402
+from job_os.settings import get_settings  # noqa: E402
+
+# The ingest upsert and job-index ranking tests read and write job_postings
+# through real Appwrite TablesDB calls (see services/appwrite_tables.py), not a
+# mock, for the same reason `db_session` below wants a real Postgres: faking
+# the one thing under test defeats the point. Unlike the database, there is no
+# way to attempt the call and skip on failure, since a misconfigured key looks
+# identical to a missing one until the request is already made -- so this
+# checks the setting directly, at collection time, the same way a missing
+# `DATABASE_URL` would be checked if that were optional instead of defaulted
+# above. Import once here rather than duplicating the predicate in both files.
+requires_appwrite_key = pytest.mark.skipif(
+    not get_settings().appwrite_api_key,
+    reason="APPWRITE_API_KEY is not configured",
+)
 
 
 @pytest.fixture(autouse=True)

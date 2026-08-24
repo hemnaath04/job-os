@@ -14,9 +14,12 @@ import pytest
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from conftest import requires_appwrite_key
 from job_os.db.models.job_posting import JobPosting
 from job_os.ingest.providers import RawPosting
 from job_os.ingest.upsert import deactivate_missing, mark_duplicates, upsert_postings
+
+pytestmark = requires_appwrite_key
 
 
 def make_posting(
