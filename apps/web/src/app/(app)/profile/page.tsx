@@ -14,11 +14,13 @@ import {
   Plus,
   ShieldCheck,
   Sparkles,
+  Trash2,
   Upload,
 } from "lucide-react";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddFactDialog } from "@/components/add-fact-dialog";
+import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
@@ -139,6 +141,7 @@ export default function ProfilePage() {
             kind={kind}
             items={grouped[kind] ?? []}
             onToggleVerified={handleToggleVerified}
+            onDeleted={() => refetch()}
           />
         ))}
       </div>
@@ -216,10 +219,12 @@ function Section({
   kind,
   items,
   onToggleVerified,
+  onDeleted,
 }: {
   kind: ProfileFact["kind"];
   items: ProfileFact[];
   onToggleVerified: (fact: ProfileFact) => void;
+  onDeleted: () => void;
 }) {
   const meta = KIND_META[kind];
   const Icon = meta.icon;
@@ -239,7 +244,12 @@ function Section({
       </div>
       <div className="grid grid-cols-1 gap-2">
         {items.map((f) => (
-          <FactCard key={f.id} fact={f} onToggleVerified={onToggleVerified} />
+          <FactCard
+            key={f.id}
+            fact={f}
+            onToggleVerified={onToggleVerified}
+            onDeleted={onDeleted}
+          />
         ))}
       </div>
     </section>
@@ -294,11 +304,30 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
 function FactCard({
   fact,
   onToggleVerified,
+  onDeleted,
 }: {
   fact: ProfileFact;
   onToggleVerified: (fact: ProfileFact) => void;
+  onDeleted: () => void;
 }) {
   const subtitle = formatRange(fact.start_date, fact.end_date);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  async function handleDelete() {
+    setDeleting(true);
+    try {
+      await api.deleteFact(fact.id);
+      setConfirmingDelete(false);
+      toast.success(`Archived "${fact.title}"`);
+      onDeleted();
+    } catch (error) {
+      reportFailure("archive this fact", error);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div className="workspace-panel workspace-panel-interactive p-5">
       <div className="flex items-start justify-between gap-3">
@@ -350,6 +379,15 @@ function FactCard({
             )}
           </div>
         </div>
+        <button
+          type="button"
+          onClick={() => setConfirmingDelete(true)}
+          aria-label={`Archive "${fact.title}"`}
+          title="Archive this fact"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
+        >
+          <Trash2 className="size-3.5" />
+        </button>
       </div>
       {fact.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-sm text-[color:var(--color-text)]">
@@ -361,6 +399,15 @@ function FactCard({
           ))}
         </ul>
       )}
+      <ConfirmDialog
+        open={confirmingDelete}
+        onOpenChange={setConfirmingDelete}
+        title="Archive this fact?"
+        description={`"${fact.title}" will be archived. It will remain stored and can be restored from "Show archived".`}
+        confirmLabel={deleting ? "Archiving..." : "Archive"}
+        loading={deleting}
+        onConfirm={handleDelete}
+      />
     </div>
   );
 }
