@@ -4,9 +4,10 @@ The mapping is intentionally conservative — every bullet imported is a
 verbatim copy of a `highlights[]` entry from the source document, so the
 no-hallucination invariant starts from a clean baseline.
 
-Re-running the import is idempotent: facts are keyed by (kind, org, title);
-existing rows are skipped, never overwritten. Use `replace_existing=True`
-to nuke and re-import.
+Re-running the import is idempotent: facts are matched by `identity.fact_identity`
+(the same key rendering uses to merge duplicates at tailor time — see that
+module's docstring); existing rows are skipped, never overwritten. Use
+`replace_existing=True` to nuke and re-import.
 """
 from __future__ import annotations
 
@@ -20,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from job_os.db.models import FactBullet, ProfileFact, Resume, ResumeVersion, User
 from job_os.schemas.profile import ImportReport
 from job_os.services.embeddings import embed_many
+from job_os.services.identity import fact_identity
 
 log = structlog.get_logger(__name__)
 
@@ -33,10 +35,6 @@ def _parse_date(value: str | None) -> date | None:
     if len(parts) == 2:
         return date(int(parts[0]), int(parts[1]), 1)
     return date(int(parts[0]), int(parts[1]), int(parts[2]))
-
-
-def _key(kind: str, org: str | None, title: str) -> tuple[str, str, str]:
-    return (kind, (org or "").strip().lower(), title.strip().lower())
 
 
 def _contact_fact(doc: dict[str, Any]) -> ProfileFact | None:
@@ -231,18 +229,35 @@ async def import_json_resume(
 
     existing = (
         await session.execute(
-            select(ProfileFact.kind, ProfileFact.org, ProfileFact.title).where(
-                ProfileFact.user_id == user.id
-            )
+            select(
+                ProfileFact.kind,
+                ProfileFact.org,
+                ProfileFact.title,
+                ProfileFact.start_date,
+                ProfileFact.end_date,
+            ).where(ProfileFact.user_id == user.id)
         )
     ).all()
-    existing_keys = {_key(k, o, t) for k, o, t in existing}
+    existing_keys = {
+        fact_identity(
+            {"kind": k, "org": o, "title": t, "start_date": s, "end_date": e}
+        )
+        for k, o, t, s, e in existing
+    }
 
     pending_bullets: list[FactBullet] = []
     pending_texts: list[str] = []
 
     for fact, bullets in _facts_from_json_resume(doc):
-        key = _key(fact.kind, fact.org, fact.title)
+        key = fact_identity(
+            {
+                "kind": fact.kind,
+                "org": fact.org,
+                "title": fact.title,
+                "start_date": fact.start_date,
+                "end_date": fact.end_date,
+            }
+        )
         if key in existing_keys:
             report.facts_skipped += 1
             continue
