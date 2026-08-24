@@ -86,9 +86,11 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     assert len(calls) == 2
     assert all("analyst step" not in call["system"] for call in calls)
     assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
-    # Same resume plus the same JD writes the same bullets every run: pinned
-    # so a re-tailor is reproducible, not a fresh roll of the dice.
-    assert all(call["temperature"] == 0 for call in calls)
+    # temperature=0 on the streaming compose call was reverted: a live run
+    # threw `AsyncMessages.stream() got an unexpected keyword argument
+    # 'temperature'`, which this suite's own kwargs-accept-anything fakes
+    # could not have caught. Not reapplying until that gap is closed.
+    assert "temperature" not in calls[0]
     # The loop scores the document it would actually ship, not the model's own
     # account of how it did. Pass two claims every keyword matched, but the
     # assembled document is empty, so both passes score 0 internally and the

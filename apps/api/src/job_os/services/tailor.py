@@ -892,12 +892,6 @@ async def run_tailor(
                 messages=state["messages"],
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
                 output_config={"effort": COMPOSE_EFFORT},
-                # Same resume plus the same JD writes the same bullets every
-                # run, which the user chose over the variety a real-roll
-                # temperature gives -- he will hand-edit phrasing himself if
-                # he wants a different wording, rather than re-run the agent
-                # and hope for one.
-                temperature=0,
             )
         except (anthropic.APIError, httpx.HTTPError, TimeoutError) as exc:
             # A refine pass is an improvement on something that already works, so a
@@ -969,10 +963,6 @@ async def run_tailor(
                 messages=retry_messages,
                 extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
                 output_config={"effort": COMPOSE_EFFORT},
-                # Still the compose step asking for the same TailorAgentOutput,
-                # just after an invalid first reply -- same reproducibility
-                # reasoning as the call above.
-                temperature=0,
             )
             log.info(
                 "tailor.call_timing",
