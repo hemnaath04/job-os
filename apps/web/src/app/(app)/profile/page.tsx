@@ -20,7 +20,6 @@ import {
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddFactDialog } from "@/components/add-fact-dialog";
-import { ConfirmDialog } from "@/components/confirm-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
@@ -311,14 +310,19 @@ function FactCard({
   onDeleted: () => void;
 }) {
   const subtitle = formatRange(fact.start_date, fact.end_date);
-  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete() {
+    if (
+      !window.confirm(
+        `Archive "${fact.title}"? It will remain stored and can be restored from "Show archived".`,
+      )
+    ) {
+      return;
+    }
     setDeleting(true);
     try {
       await api.deleteFact(fact.id);
-      setConfirmingDelete(false);
       toast.success(`Archived "${fact.title}"`);
       onDeleted();
     } catch (error) {
@@ -381,10 +385,11 @@ function FactCard({
         </div>
         <button
           type="button"
-          onClick={() => setConfirmingDelete(true)}
+          onClick={handleDelete}
+          disabled={deleting}
           aria-label={`Archive "${fact.title}"`}
           title="Archive this fact"
-          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)]"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:bg-[color:var(--color-rose)]/10 hover:text-[color:var(--color-rose-ink)] disabled:opacity-50"
         >
           <Trash2 className="size-3.5" />
         </button>
@@ -399,15 +404,6 @@ function FactCard({
           ))}
         </ul>
       )}
-      <ConfirmDialog
-        open={confirmingDelete}
-        onOpenChange={setConfirmingDelete}
-        title="Archive this fact?"
-        description={`"${fact.title}" will be archived. It will remain stored and can be restored from "Show archived".`}
-        confirmLabel={deleting ? "Archiving..." : "Archive"}
-        loading={deleting}
-        onConfirm={handleDelete}
-      />
     </div>
   );
 }
