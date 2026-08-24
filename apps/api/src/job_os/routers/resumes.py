@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import json
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -379,9 +380,25 @@ async def preview_draft(
     )
 
 
-async def _render_and_review(payload: ResumeRenderReviewRequest) -> ResumeRenderReviewResponse:
+async def _render_and_review(
+    payload: ResumeRenderReviewRequest,
+    *,
+    on_partial: Callable[[ResumeRenderReviewResponse], None] | None = None,
+) -> ResumeRenderReviewResponse:
     from job_os.services.latex_render import LatexRenderError
     from job_os.services.resume_engine import generate_latex_source, review_resume
+
+    latex_source = generate_latex_source(payload.json_resume)
+
+    def _on_partial(review: ResumeReviewResult, pdf_bytes: bytes) -> None:
+        if on_partial is not None:
+            on_partial(
+                ResumeRenderReviewResponse(
+                    review=review,
+                    latex_source=latex_source,
+                    pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
+                )
+            )
 
     try:
         review, pdf_bytes = await review_resume(
@@ -389,12 +406,13 @@ async def _render_and_review(payload: ResumeRenderReviewRequest) -> ResumeRender
             template_key=payload.template_key,
             latex_source=payload.latex_source,
             verified_facts=payload.verified_facts,
+            on_partial=_on_partial,
         )
     except LatexRenderError as exc:
         raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return ResumeRenderReviewResponse(
         review=review,
-        latex_source=generate_latex_source(payload.json_resume),
+        latex_source=latex_source,
         pdf_base64=base64.b64encode(pdf_bytes).decode("ascii"),
     )
 
@@ -447,9 +465,17 @@ async def start_render_review_job(
     job_id = str(uuid4())
     _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(status="running")
 
+    def _on_partial(partial: ResumeRenderReviewResponse) -> None:
+        # Still "running": only the poller's read of a finished job clears the
+        # dict entry (see get_render_review_job), and this fires well before
+        # that, in the middle of the same background task.
+        _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(
+            status="running", partial=partial
+        )
+
     async def run() -> None:
         try:
-            result = await _render_and_review(payload)
+            result = await _render_and_review(payload, on_partial=_on_partial)
             _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(status="done", result=result)
         except HTTPException as exc:
             _RENDER_REVIEW_JOBS[job_id] = RenderReviewJobStatus(

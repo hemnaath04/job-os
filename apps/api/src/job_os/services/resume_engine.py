@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import re
+from collections.abc import Callable
 from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
@@ -737,6 +738,7 @@ async def review_resume(
     template_key: str | None = None,
     latex_source: str | None = None,
     verified_facts: list[dict[str, Any]] | None = None,
+    on_partial: Callable[[ResumeReviewResult, bytes], None] | None = None,
 ) -> tuple[ResumeReviewResult, bytes]:
     """Render, inspect, then run an independent quality-model review.
 
@@ -755,6 +757,17 @@ async def review_resume(
     blocking issues against the candidate's own history: a real job title, a
     real client domain and real coursework were all called fabrications on the
     same pass. Pass it wherever it is available.
+
+    `on_partial`, if given, fires once the PDF and the deterministic checks are
+    ready but before the GitHub-evidence lookup or the model call -- the two
+    things that make this call take a minute plus. The PDF is fully real by
+    that point (page count and selectable text both come from the same
+    render), so a caller wanting the finalized document as soon as possible
+    does not have to wait on the model's advisory notes to show it. The score
+    at this point already IS the final score: `source == "rule"` issues are
+    the only ones `_score_from_issues` counts (see that function), and the
+    model call below can only ever ADD advisory issues, never rule ones, so
+    nothing past this point moves the number.
     """
     validate_json_resume_document(doc)
     try:
@@ -767,6 +780,31 @@ async def review_resume(
         log.warning("resume_render_unavailable", error=str(exc))
         pdf_bytes = b""
     rule_issues, page_count, text_selectable = deterministic_review(doc, pdf_bytes)
+    if on_partial is not None:
+        partial_score, partial_breakdown = _score_from_issues(rule_issues)
+        on_partial(
+            ResumeReviewResult(
+                score=partial_score.quantize(Decimal("0.1")),
+                # Not a verdict yet: the model call can still raise a
+                # blocking issue (a fabrication) that a rule cannot see, and
+                # `passed` is not a pass until that has actually run. Mirrors
+                # the same stance provisional_review takes for the same reason.
+                passed=False,
+                page_count=page_count,
+                text_selectable=text_selectable,
+                issues=rule_issues,
+                strengths=[],
+                github_projects_checked=[],
+                model_summary=(
+                    "Deterministic score and PDF are final. The independent "
+                    "AI review is still running and will add advisory notes "
+                    "shortly; they will not change this score."
+                ),
+                model_estimate=None,
+                score_breakdown=partial_breakdown,
+            ),
+            pdf_bytes,
+        )
     github_context, checked, missing_repos = await load_github_context(doc)
     for slug, reason in missing_repos.items():
         # A repository the resume links to that does not answer is the resume's

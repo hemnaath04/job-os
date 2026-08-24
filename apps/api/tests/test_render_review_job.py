@@ -33,7 +33,7 @@ def _fake_review() -> ResumeRenderReviewResponse:
 
 @pytest.mark.asyncio
 async def test_job_completes_and_status_reports_done(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def fake_render_and_review(payload):
+    async def fake_render_and_review(payload, **_kwargs):
         return _fake_review()
 
     monkeypatch.setattr(resumes_module, "_render_and_review", fake_render_and_review)
@@ -54,7 +54,7 @@ async def test_status_is_running_before_the_background_task_finishes(
 ) -> None:
     gate = asyncio.Event()
 
-    async def slow_render_and_review(payload):
+    async def slow_render_and_review(payload, **_kwargs):
         await gate.wait()
         return _fake_review()
 
@@ -71,7 +71,7 @@ async def test_status_is_running_before_the_background_task_finishes(
 
 @pytest.mark.asyncio
 async def test_a_failed_review_reports_as_an_error_status(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def failing_render_and_review(payload):
+    async def failing_render_and_review(payload, **_kwargs):
         raise HTTPException(422, "could not compile the document")
 
     monkeypatch.setattr(resumes_module, "_render_and_review", failing_render_and_review)
@@ -86,6 +86,41 @@ async def test_a_failed_review_reports_as_an_error_status(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_a_partial_result_appears_while_the_job_is_still_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The perceived-latency fix: the PDF and the deterministic score are
+    ready well before the GitHub-evidence lookup and the model call finish,
+    and a caller polling in should see that partial result immediately
+    rather than waiting on the full job -- without the job itself reporting
+    "done" a beat early.
+    """
+    gate = asyncio.Event()
+
+    async def render_and_review_with_partial(payload, *, on_partial=None):
+        if on_partial is not None:
+            on_partial(_fake_review())
+        await gate.wait()
+        return _fake_review()
+
+    monkeypatch.setattr(
+        resumes_module, "_render_and_review", render_and_review_with_partial
+    )
+
+    start = await start_render_review_job(
+        ResumeRenderReviewRequest(json_resume={"basics": {}}), _user=None
+    )
+    await asyncio.sleep(0.05)
+    status = await get_render_review_job(start.job_id, _user=None)
+    assert status.status == "running"
+    assert status.partial is not None
+    assert status.partial.review.score == 90
+    assert status.result is None
+    gate.set()
+    await asyncio.sleep(0.05)
+
+
+@pytest.mark.asyncio
 async def test_status_404s_on_an_unknown_job(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(HTTPException) as exc_info:
         await get_render_review_job("no-such-job", _user=None)
@@ -96,7 +131,7 @@ async def test_status_404s_on_an_unknown_job(monkeypatch: pytest.MonkeyPatch) ->
 async def test_a_finished_job_is_cleared_on_the_read_that_reports_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    async def fake_render_and_review(payload):
+    async def fake_render_and_review(payload, **_kwargs):
         return _fake_review()
 
     monkeypatch.setattr(resumes_module, "_render_and_review", fake_render_and_review)

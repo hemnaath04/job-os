@@ -129,6 +129,35 @@ def _stub_model(
 
 
 @pytest.mark.asyncio
+async def test_on_partial_fires_before_the_model_call_with_the_final_score(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The perceived-latency fix: the caller gets the real PDF and the real
+    score before the GitHub-evidence lookup and the model call even start, so
+    it can show the finalized document immediately instead of waiting on the
+    model's advisory notes. The score at that point already matches the final
+    one, because model issues never move it (see _score_from_issues)."""
+    partial_calls: list[Any] = []
+    calls = _stub_model(
+        monkeypatch,
+        [json.dumps({"score": 88, "issues": [], "strengths": ["clear"], "summary": "solid"})],
+    )
+
+    def on_partial(review: Any, pdf_bytes: bytes) -> None:
+        partial_calls.append(review)
+        assert pdf_bytes  # the real render, not empty bytes
+        assert review.passed is False  # no verdict yet, the model hasn't run
+        # Fires strictly before the model call, not just before the function
+        # returns.
+        assert len(calls) == 0
+
+    result, _pdf = await resume_engine.review_resume(GOOD_RESUME, on_partial=on_partial)
+    assert len(partial_calls) == 1
+    assert len(calls) == 1
+    assert partial_calls[0].score == result.score
+
+
+@pytest.mark.asyncio
 async def test_a_good_resume_can_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     _stub_model(
         monkeypatch,

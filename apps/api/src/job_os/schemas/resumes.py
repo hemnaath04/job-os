@@ -233,6 +233,15 @@ class RenderReviewJobStatus(BaseModel):
     status: Literal["running", "done", "error"]
     result: ResumeRenderReviewResponse | None = None
     error: str | None = None
+    # Set once, mid-run, the moment the PDF and the deterministic score are
+    # ready -- before the GitHub-evidence lookup or the model call, which are
+    # what make this job take a minute plus. `score` in here already IS the
+    # final score (see review_resume's on_partial docstring), so a caller
+    # showing this the moment it appears is not showing a number that can
+    # later change; only `issues`/`strengths`/`model_summary` grow once
+    # `result` lands. Never cleared back to None once set, so a caller that
+    # polls in after it appeared still sees it.
+    partial: ResumeRenderReviewResponse | None = None
 
 
 class ResumeRenderResponse(BaseModel):

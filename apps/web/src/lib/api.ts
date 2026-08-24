@@ -651,7 +651,22 @@ const legacyApi = {
    */
   renderReviewDraft: async (
     jsonResume: object,
-    { templateId }: { templateId?: string | null } = {},
+    {
+      templateId,
+      onPartial,
+    }: {
+      templateId?: string | null;
+      // Fires once, the moment the backend has a real PDF and a final score
+      // (the deterministic checks) but before the GitHub-evidence lookup and
+      // the model call, which are what make this call take a minute plus.
+      // Lets a caller show the finalized document immediately instead of
+      // waiting on the model's advisory notes to render at all. Awaited
+      // before the next poll tick (not fired detached): a caller that writes
+      // this to storage must finish that write before the final result can
+      // possibly arrive, or a slow partial write could land after a fast
+      // final one and overwrite it with the stale, rule-only version.
+      onPartial?: (partial: RenderReviewResult) => void | Promise<void>;
+    } = {},
   ) => {
     // A template supplies the look only. Fetched here rather than held in page
     // state so the render always uses what is actually stored. The verified
@@ -679,15 +694,21 @@ const legacyApi = {
       }),
     });
     const deadline = Date.now() + RENDER_TIMEOUT_MS;
+    let reportedPartial = false;
     while (Date.now() < deadline) {
       const status = await request<{
         status: "running" | "done" | "error";
         result?: RenderReviewResult;
+        partial?: RenderReviewResult;
         error?: string;
       }>(`/resumes/render-review/status/${job_id}`);
       if (status.status === "done") return status.result as RenderReviewResult;
       if (status.status === "error") {
         throw new Error(status.error ?? "The quality review failed.");
+      }
+      if (!reportedPartial && status.partial) {
+        reportedPartial = true;
+        await onPartial?.(status.partial);
       }
       await new Promise((resolve) => window.setTimeout(resolve, AGENT_POLL_MS));
     }

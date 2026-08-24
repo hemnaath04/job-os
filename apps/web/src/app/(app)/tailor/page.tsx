@@ -251,6 +251,23 @@ function TailorInner() {
       try {
         const rendered = await api.renderReviewDraft(version.json_resume, {
           templateId: look ?? null,
+          // Fires once the PDF and the deterministic (rule-only) score are
+          // ready -- before the GitHub-evidence lookup and the model call,
+          // which are what make this take a minute plus. Attaching it right
+          // away unblocks Download on a real, final-scored PDF instead of
+          // making the user wait on the model's advisory notes just to get a
+          // file. `reviewing` stays true: the AI review genuinely has not
+          // run yet, so QualityStatus's "still checking" state is still
+          // correct, it is Download specifically that no longer needs to
+          // wait on it (see its disabled condition below).
+          onPartial: async (partial) => {
+            const reviewedPartial = await appwriteWorkspace.attachReview(version.id, partial);
+            setResult((current) =>
+              current && current.id === version.id
+                ? ({ ...current, ...reviewedPartial } as TailorResponse)
+                : current,
+            );
+          },
         });
         const reviewed = await appwriteWorkspace.attachReview(version.id, rendered);
         setResult((current) =>
@@ -1215,7 +1232,14 @@ function ResultView({
                 buildResumeFilename([result.json_resume?.basics?.name, companyName, jobTitle]),
               )
             }
-            disabled={reviewing || !downloadUrl}
+            // Not gated on `reviewing`: once a real PDF is attached (which
+            // now happens as soon as the deterministic score is ready, not
+            // once the full AI review finishes -- see runReview's onPartial),
+            // there is a real file to download. `downloadUrl` is the actual
+            // gate; waiting on `reviewing` too made Download sit disabled for
+            // the whole minute-plus the model review used to take, for a PDF
+            // that had already been sitting there, finished and unchanging.
+            disabled={!downloadUrl}
             className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <Download className="size-3" /> Download PDF
