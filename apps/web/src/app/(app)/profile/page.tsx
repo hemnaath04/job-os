@@ -62,6 +62,18 @@ export default function ProfilePage() {
   }, {});
   const verifiedCount = facts.filter((fact) => fact.verified).length;
 
+  async function handleToggleVerified(fact: ProfileFact) {
+    try {
+      await api.verifyFact(fact.id, !fact.verified);
+      await refetch();
+    } catch (error) {
+      reportFailure(
+        fact.verified ? "un-verify this fact" : "verify this fact",
+        error,
+      );
+    }
+  }
+
   return (
     <div className="workspace-page max-w-6xl">
       <AddFactDialog
@@ -100,7 +112,12 @@ export default function ProfilePage() {
 
       <div className="mt-7 space-y-10">
         {KIND_ORDER.filter((k) => grouped[k]?.length).map((kind) => (
-          <Section key={kind} kind={kind} items={grouped[kind] ?? []} />
+          <Section
+            key={kind}
+            kind={kind}
+            items={grouped[kind] ?? []}
+            onToggleVerified={handleToggleVerified}
+          />
         ))}
       </div>
     </div>
@@ -110,9 +127,11 @@ export default function ProfilePage() {
 function Section({
   kind,
   items,
+  onToggleVerified,
 }: {
   kind: ProfileFact["kind"];
   items: ProfileFact[];
+  onToggleVerified: (fact: ProfileFact) => void;
 }) {
   const meta = KIND_META[kind];
   const Icon = meta.icon;
@@ -132,7 +151,7 @@ function Section({
       </div>
       <div className="grid grid-cols-1 gap-2">
         {items.map((f) => (
-          <FactCard key={f.id} fact={f} />
+          <FactCard key={f.id} fact={f} onToggleVerified={onToggleVerified} />
         ))}
       </div>
     </section>
@@ -184,7 +203,13 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
   );
 }
 
-function FactCard({ fact }: { fact: ProfileFact }) {
+function FactCard({
+  fact,
+  onToggleVerified,
+}: {
+  fact: ProfileFact;
+  onToggleVerified: (fact: ProfileFact) => void;
+}) {
   const subtitle = formatRange(fact.start_date, fact.end_date);
   return (
     <div className="workspace-panel workspace-panel-interactive p-5">
@@ -192,13 +217,23 @@ function FactCard({ fact }: { fact: ProfileFact }) {
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <h3 className="truncate text-sm font-semibold">{fact.title}</h3>
-            {fact.verified && (
-              <BadgeCheck
-                className="size-3.5 shrink-0 text-[color:var(--color-mint)]"
-                role="img"
-                aria-label="Verified"
-              />
-            )}
+            <button
+              type="button"
+              onClick={() => onToggleVerified(fact)}
+              aria-pressed={fact.verified}
+              title={fact.verified ? "Verified, click to un-verify" : "Not verified, click to verify"}
+              className={
+                fact.verified
+                  ? "inline-flex shrink-0 items-center rounded-full p-0.5 text-[color:var(--color-mint)] hover:bg-[color:var(--color-surface-2)]"
+                  : "inline-flex shrink-0 items-center gap-1 rounded-full border border-[color:var(--color-border)] px-1.5 py-0.5 text-[10px] font-medium text-[color:var(--color-text-dim)] hover:bg-[color:var(--color-surface-2)]"
+              }
+            >
+              {fact.verified ? (
+                <BadgeCheck className="size-3.5" role="img" aria-label="Verified" />
+              ) : (
+                "Verify"
+              )}
+            </button>
           </div>
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-[color:var(--color-text-muted)]">
             {fact.org && <span>{fact.org}</span>}

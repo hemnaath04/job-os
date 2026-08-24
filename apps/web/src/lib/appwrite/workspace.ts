@@ -1027,6 +1027,37 @@ export const appwriteWorkspace = {
     });
   },
 
+  /** Flip whether a fact is verified. The only thing that gates whether the
+   * tailoring agent can cite it, so this is its own call rather than a
+   * general-purpose patch, to keep that one flag impossible to change as a
+   * side effect of an unrelated edit. */
+  async verifyFact(factId: string, verified: boolean): Promise<ProfileFact> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+    });
+    const fact = {
+      ...parseSnapshot<ProfileFact>(row),
+      verified,
+      updated_at: now(),
+    };
+    await tables.updateRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+      data: {
+        verified,
+        source_updated_at: fact.updated_at,
+        snapshot: JSON.stringify(fact),
+      },
+    });
+    return fact;
+  },
+
   async uploadResume(file: File, isMaster: boolean): Promise<AgentJob> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();

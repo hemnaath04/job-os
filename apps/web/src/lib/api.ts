@@ -478,6 +478,11 @@ const legacyApi = {
   },
   deleteFact: (id: string) =>
     request<void>(`/profile/facts/${id}`, { method: "DELETE" }),
+  patchFact: (id: string, patch: { verified?: boolean }) =>
+    request<ProfileFact>(`/profile/facts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
 
   uploadResumeForm: async (file: File, opts?: { replaceExisting?: boolean }) => {
     const fd = new FormData();
@@ -927,6 +932,11 @@ export const api = {
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.archiveFact(id)
       : legacyApi.deleteFact(id),
+
+  verifyFact: (id: string, verified: boolean) =>
+    isAppwriteWorkspaceEnabled
+      ? appwriteWorkspace.verifyFact(id, verified)
+      : legacyApi.patchFact(id, { verified }),
 
   createFact: (body: ProfileFactCreate) =>
     isAppwriteWorkspaceEnabled
