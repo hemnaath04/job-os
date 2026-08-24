@@ -116,6 +116,17 @@ class ResumeReviewIssue(BaseModel):
     code: str
     message: str
     section: str | None = None
+    # "rule" for everything deterministic_review/_document_review/the
+    # github-evidence check construct (every ResumeReviewIssue built in this
+    # codebase except one place), "model" for an issue the reviewing LLM
+    # returned. Defaults to "rule" so no existing construction site needs to
+    # know this field exists; review_resume is the one place that overrides it,
+    # at the single point model issues enter the list. _score_from_issues reads
+    # this to score only the reproducible half: same resume, same JD, same
+    # score every time, with the model's editorial judgment (missing flagship
+    # project, lane focus, tighten a bullet) surfaced as advice that does not
+    # move the number.
+    source: Literal["rule", "model"] = "rule"
 
 
 class ResumeReviewResult(BaseModel):

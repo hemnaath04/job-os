@@ -653,7 +653,18 @@ def _score_from_issues(
     makes every deducted point traceable to a named issue, and makes a no-PDF draft
     agree with a render-backed finalize except for the one check a draft genuinely
     cannot run, the page count.
+
+    Only `source == "rule"` issues are counted here. A model-judged issue
+    (missing flagship project, lane focus, a bullet worth tightening) is real
+    editorial input, but it is the reviewing model's own judgment call on THIS
+    run, not a reproducible fact about the document -- the same resume review
+    twice can surface a different set of these at default temperature, and a
+    score built from them stops being a function of the resume. Passed as
+    `issues` still carries them; the caller reports them as advisory notes with
+    no point value attached, which is what keeps them informative without
+    reopening the whiplash this function was built to end.
     """
+    issues = [issue for issue in issues if issue.source == "rule"]
     blocking = sum(1 for issue in issues if issue.severity == "blocking")
     warning = sum(1 for issue in issues if issue.severity == "warning")
     suggestion = sum(1 for issue in issues if issue.severity == "suggestion")
@@ -928,6 +939,10 @@ async def review_resume(
                 code=issue.code,
                 message=issue.message,
                 section=issue.section,
+                # The one place a "model" issue enters the list. See
+                # ResumeReviewIssue.source and _score_from_issues: these are
+                # reported to the user but do not move the score.
+                source="model",
             )
             for issue in (model_review.issues if model_review else [])
         ],

@@ -92,6 +92,13 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
             max_tokens=2048,
             system=SYSTEM_PROMPT,
             messages=[{"role": "user", "content": user_prompt}],
+            # ats_score is a pure function of jd_parsed, but jd_parsed itself
+            # came from a default-temperature parse, so the same raw JD text
+            # could parse into a different required_skills set on a re-run and
+            # produce a different score for a customer re-pasting the same
+            # posting. Pinned to 0 for that reproducibility, not for quality;
+            # this reduces but does not guarantee identical output run to run.
+            temperature=0,
             extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
         )
     except anthropic.APIError as exc:

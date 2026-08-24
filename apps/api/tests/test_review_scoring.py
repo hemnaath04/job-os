@@ -215,18 +215,53 @@ async def test_the_grade_is_deterministic_across_model_moods(
 
     Three real container reviews of one document self-reported 85, 89 and 80 while
     the issue counts barely moved, and that swing was the score the user watched
-    crater at finalize. The grade now comes from the weighted issues, not the mood,
-    so two reviews that disagree only on the number land on the same score.
+    crater at finalize. The grade now comes from the weighted RULE issues, not the
+    model's mood, so two reviews that disagree only on the self-reported number
+    land on the same score. The warning is a rule issue here (not one the model
+    reports) precisely because a model-reported issue no longer moves the score at
+    all -- see test_a_model_reported_issue_costs_no_points below for that half.
     """
-    warning = {"severity": "warning", "code": "overclaim", "message": "x", "section": None}
     for model_score in (55, 92):
         _stub_model(
             monkeypatch,
-            [json.dumps({"score": model_score, "issues": [warning], "strengths": [], "summary": "s"})],
+            [json.dumps({"score": model_score, "issues": [], "strengths": [], "summary": "s"})],
+            rule_issues=[
+                ResumeReviewIssue(severity="warning", code="overclaim", message="x")
+            ],
         )
         result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
         assert result.score == 95  # 100 - one warning, whatever the model said
         assert result.model_estimate == model_score
+
+
+@pytest.mark.asyncio
+async def test_a_model_reported_issue_costs_no_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other half of the reproducibility fix: a model-judged issue (missing
+    flagship project, lane focus, a bullet worth tightening) is real editorial
+    input, but it is the model's own call on this one run, not a reproducible
+    fact about the document -- the same review can surface a different set of
+    these at default temperature. It is reported to the user as an advisory
+    note; it no longer costs the score anything, however severe the model marks
+    it, so "same resume, same JD, same score" holds regardless of the model's
+    editorial mood.
+    """
+    blocking_but_advisory = {
+        "severity": "blocking",
+        "code": "missing_flagship_project",
+        "message": "x",
+        "section": None,
+    }
+    _stub_model(
+        monkeypatch,
+        [json.dumps(
+            {"score": 40, "issues": [blocking_but_advisory], "strengths": [], "summary": "s"}
+        )],
+    )
+    result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
+    assert result.score == 100
+    assert any(issue.source == "model" for issue in result.issues)
 
 
 @pytest.mark.asyncio
@@ -236,15 +271,19 @@ async def test_many_small_suggestions_do_not_sink_a_clean_resume(
     """A thorough reviewer listing nine polish notes must not fail a good resume.
 
     The suggestion total is capped, so being thorough about small things cannot
-    score a resume down the way one real defect does.
+    score a resume down the way one real defect does. Rule issues, for the same
+    reason the test above switched to them: a model-reported suggestion costs
+    nothing regardless of the cap, so this has to use rule issues to still be
+    testing the cap at all.
     """
     suggestions = [
-        {"severity": "suggestion", "code": f"polish_{i}", "message": "m", "section": None}
+        ResumeReviewIssue(severity="suggestion", code=f"polish_{i}", message="m")
         for i in range(9)
     ]
     _stub_model(
         monkeypatch,
-        [json.dumps({"score": 70, "issues": suggestions, "strengths": [], "summary": "s"})],
+        [json.dumps({"score": 70, "issues": [], "strengths": [], "summary": "s"})],
+        rule_issues=suggestions,
     )
     result, _pdf = await resume_engine.review_resume(GOOD_RESUME)
     assert result.score == 95  # nine suggestions capped at a 5-point deduction
