@@ -1,4 +1,8 @@
-anthropic>=0.40.0
+# <1.0.0: v1.0.0 (2026-08-20) drops temperature/top_p/top_k from Messages
+# methods entirely, and this file has no lockfile, so an unpinned ceiling
+# meant the next rebuild silently jumped to it and broke every temperature
+# kwarg on a live tailor/parse call.
+anthropic>=0.40.0,<1.0.0
 appwrite>=22.2.0
 httpx>=0.28.0
 jinja2>=3.1

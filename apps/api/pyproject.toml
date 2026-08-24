@@ -22,7 +22,12 @@ dependencies = [
     "pgvector>=0.3.6",
     "psycopg[binary]>=3.2",  # for alembic sync ops
     # llm + agents (Claude only — Anthropic is the single LLM provider)
-    "anthropic>=0.40.0",
+    # <1.0.0: v1.0.0 (2026-08-20) drops temperature/top_p/top_k from Messages
+    # methods entirely. uv.lock currently freezes this below that line, but
+    # the ceiling is here too so a future `uv lock --upgrade` can't cross it
+    # unnoticed the way job-os-agents' unpinned copy of this same constraint
+    # already did.
+    "anthropic>=0.40.0,<1.0.0",
     "pydantic-ai-slim[anthropic]>=0.0.40",
     "langgraph>=0.2.50",
     "langgraph-checkpoint-postgres>=2.0.0",
