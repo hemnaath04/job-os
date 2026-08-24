@@ -871,12 +871,12 @@ export const appwriteWorkspace = {
     };
   },
 
-  async listFacts(kind?: string): Promise<ProfileFact[]> {
+  async listFacts(kind?: string, archived = false): Promise<ProfileFact[]> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
     const tables = getAppwriteServices().tables;
     const factQueries = [
-      Query.equal("archived", false),
+      Query.equal("archived", archived),
       Query.orderDesc("source_updated_at"),
       Query.limit(500),
     ];
@@ -1021,6 +1021,34 @@ export const appwriteWorkspace = {
       rowId: factId,
       data: {
         archived: true,
+        source_updated_at: fact.updated_at,
+        snapshot: JSON.stringify(fact),
+      },
+    });
+  },
+
+  /** Bring an archived fact back. The whole point of archiving being a soft
+   * flag instead of a delete: a fact removed by mistake, or reconsidered
+   * later, is not gone. */
+  async restoreFact(factId: string): Promise<void> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+    });
+    const fact = {
+      ...parseSnapshot<ProfileFact>(row),
+      updated_at: now(),
+    };
+    await tables.updateRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+      data: {
+        archived: false,
         source_updated_at: fact.updated_at,
         snapshot: JSON.stringify(fact),
       },

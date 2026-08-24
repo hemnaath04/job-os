@@ -928,10 +928,28 @@ export const api = {
       ? appwriteWorkspace.listFacts(kind)
       : legacyApi.listFacts(kind),
 
+  // Archived facts only ever exist on the Appwrite side: the legacy Postgres
+  // DELETE is a real hard delete with nothing left to list back.
+  listArchivedFacts: (): Promise<ProfileFact[]> =>
+    isAppwriteWorkspaceEnabled
+      ? appwriteWorkspace.listFacts(undefined, true)
+      : Promise.resolve([]),
+
   deleteFact: (id: string) =>
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.archiveFact(id)
       : legacyApi.deleteFact(id),
+
+  restoreFact: (id: string): Promise<void> => {
+    if (!isAppwriteWorkspaceEnabled) {
+      return Promise.reject(
+        new Error(
+          "Restoring isn't available here: this account's delete is permanent.",
+        ),
+      );
+    }
+    return appwriteWorkspace.restoreFact(id);
+  },
 
   verifyFact: (id: string, verified: boolean) =>
     isAppwriteWorkspaceEnabled
