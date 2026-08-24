@@ -30,7 +30,7 @@ class _FakeSettings:
 async def test_no_api_key_returns_just_the_title_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings(anthropic_api_key=None))
     result = await jd_parse.parse_jd("some jd text", title_hint="Backend Engineer")
-    assert result == {"title": "Backend Engineer"}
+    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
 
 
 @pytest.mark.asyncio
@@ -47,7 +47,7 @@ async def test_gateway_failure_degrades_instead_of_raising(
     monkeypatch.setattr(jd_parse, "create_message", _raise_gateway_error)
 
     result = await jd_parse.parse_jd("some jd text", title_hint="Backend Engineer")
-    assert result == {"title": "Backend Engineer"}
+    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
 
 
 @pytest.mark.asyncio
@@ -64,4 +64,4 @@ async def test_gateway_failure_with_no_title_hint_returns_empty_dict(
     monkeypatch.setattr(jd_parse, "create_message", _raise_gateway_error)
 
     result = await jd_parse.parse_jd("some jd text")
-    assert result == {}
+    assert result == {"parse_incomplete": True}

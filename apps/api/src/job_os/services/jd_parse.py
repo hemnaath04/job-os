@@ -39,6 +39,13 @@ class ParsedJD(BaseModel):
     keywords: list[str] = Field(default_factory=list)
     sponsorship: str | None = None
     years_experience: str | None = None
+    # True only on the degraded path: the extraction call failed (timeout,
+    # gateway error) or came back as invalid JSON, so every list field below
+    # is empty for lack of an answer, not because the JD stated none of them.
+    # _compute_ats_from_document reads this to tell "we could not check" apart
+    # from "this job genuinely asks for nothing scoreable" -- both currently
+    # read as zero requirements, and only one of those is a real 0% match.
+    parse_incomplete: bool = False
 
 
 SYSTEM_PROMPT = (
@@ -61,11 +68,25 @@ SYSTEM_PROMPT = (
 )
 
 
+def _incomplete(title_hint: str | None) -> dict:
+    """The degraded return every failure path below shares.
+
+    Not just `{"title": title_hint}`: that shape is indistinguishable from a
+    JD that genuinely named nothing, which is what let a timed-out parse
+    reach the scorer as a confident 0% Keyword Match instead of an honest
+    "we don't know."
+    """
+    result: dict = {"parse_incomplete": True}
+    if title_hint:
+        result["title"] = title_hint
+    return result
+
+
 async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
     settings = get_settings()
     if not settings.anthropic_api_key:
         log.warning("jd_parse.no_anthropic_key")
-        return {"title": title_hint} if title_hint else {}
+        return _incomplete(title_hint)
 
     # The SDK's own default timeout is ten minutes, which is fine for a
     # background pass but not for a request a user is sitting in front of.
@@ -108,7 +129,7 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         # same way the no-key branch above does, rather than failing the
         # add-job request outright over an extraction step.
         log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
-        return {"title": title_hint} if title_hint else {}
+        return _incomplete(title_hint)
 
     text = response_text(msg)
     raw = _strip_json_fence(text)
@@ -116,7 +137,7 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         return ParsedJD.model_validate_json(raw).model_dump(exclude_none=False)
     except ValidationError as e:
         log.warning("jd_parse.invalid_json", error=str(e), preview=raw[:300])
-        return {"title": title_hint} if title_hint else {}
+        return _incomplete(title_hint)
 
 
 def _strip_json_fence(text: str) -> str:

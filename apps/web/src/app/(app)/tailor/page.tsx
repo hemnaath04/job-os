@@ -1442,7 +1442,18 @@ function QualityStatus({
 }
 
 function AtsBadge({ score }: { score: string | null }) {
-  if (score === null || score === undefined) return null;
+  // Null here means the backend explicitly withheld a number (the JD failed
+  // to parse, or named nothing this scorer could check) rather than "not
+  // computed yet" -- ResultView only renders once a run has finished. Saying
+  // so beats silently showing nothing, which reads as the ring simply being
+  // gone rather than as a real, honest "we don't know" state.
+  if (score === null || score === undefined) {
+    return (
+      <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
+        Keyword Match unavailable
+      </span>
+    );
+  }
   const numeric = Number(score);
   const ringFrom =
     numeric >= 75 ? "#10B981" : numeric >= 50 ? "#F5B544" : "#FF6B8A";

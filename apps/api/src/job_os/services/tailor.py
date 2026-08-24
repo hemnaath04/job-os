@@ -629,7 +629,7 @@ async def tailor_resume(
     resume: Resume,
     master_version: ResumeVersion,
     job: Job,
-) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
+) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Postgres-backed entry point.
 
     Loads verified facts/bullets from the DB, adapts them into backend-agnostic
@@ -675,6 +675,39 @@ async def tailor_resume(
     )
 
 
+def _finalize_ats_score(
+    ats_score: Decimal,
+    ats_report: dict[str, Any],
+    jd_parsed: dict[str, Any],
+) -> tuple[Decimal | None, str | None]:
+    """The customer-facing score, or an honest reason there isn't one.
+
+    `_compute_ats`'s total==0 branch returns a confident 0.0 whether the JD
+    named zero requirements or the requirement list simply could not be built
+    -- a JD-parse failure (gateway timeout, invalid model JSON) reaches here
+    with `jd_parsed` empty or `{"parse_incomplete": True, ...}`, and
+    `_jd_requirements` correctly reads that as zero requirements too. Those
+    are different facts: one is "this resume was never actually measured
+    against this JD," which a bare 0% reports as a real, fabricated score.
+
+    Deliberately not inside `_compute_ats`/`_compute_ats_from_document`
+    themselves: the compose/repair loop above calls those every iteration, and
+    a 0.0 there is a reasonable "no coverage yet" signal for that internal
+    loop to keep working with. This runs once, at the one point the score
+    leaves `run_tailor` for the caller.
+    """
+    if jd_parsed.get("parse_incomplete"):
+        ats_report["scoring"] = "unavailable_parse_incomplete"
+        return None, "unavailable_parse_incomplete"
+    if ats_report.get("required_total") == 0:
+        # The JD parsed fine and genuinely named nothing this scorer could
+        # check -- rare, but a bare 0% here reads as "matches nothing" when
+        # the honest fact is "nothing to measure against."
+        ats_report["scoring"] = "no_scoreable_requirements"
+        return None, "no_scoreable_requirements"
+    return ats_score, None
+
+
 async def run_tailor(
     *,
     facts: list[TailorFact],
@@ -683,7 +716,7 @@ async def run_tailor(
     jd_parsed: dict[str, Any],
     jd_clean: str,
     on_progress: Callable[[TailorStage], None] | None = None,
-) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal, dict[str, Any], str]:
+) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
 
     Reads the job against the evidence, composes once with the scoring rubric in
@@ -1151,7 +1184,18 @@ async def run_tailor(
     # third and fourth time on one screen.
     note = agent.agent_note
     passes = len(iteration_scores)
-    if ats_score >= TARGET_ATS_SCORE:
+    ats_score, incomplete_reason = _finalize_ats_score(ats_score, ats_report, jd_parsed)
+    if incomplete_reason == "unavailable_parse_incomplete":
+        note += (
+            "\n(Could not parse this job description, so Keyword Match is "
+            "unavailable rather than a real score. Try tailoring again.)"
+        )
+    elif incomplete_reason == "no_scoreable_requirements":
+        note += (
+            "\n(This job description named no requirements this score could "
+            "check, so Keyword Match is not shown.)"
+        )
+    elif ats_score >= TARGET_ATS_SCORE:
         note += f"\n(Hit the Job Match target in {_plural(passes, 'pass')}.)"
     elif ats_report["missing_needs_new_facts"] and not still_reachable:
         note += (

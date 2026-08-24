@@ -88,9 +88,13 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
     # The loop scores the document it would actually ship, not the model's own
     # account of how it did. Pass two claims every keyword matched, but the
-    # assembled document is empty, so both passes score 0 and the second pass
-    # ends the run by failing to improve on the first.
-    assert score == 0
+    # assembled document is empty, so both passes score 0 internally and the
+    # second pass ends the run by failing to improve on the first. The
+    # CUSTOMER-FACING score is None, not 0: this JD parses to zero
+    # requirements, and _finalize_ats_score reports that honestly rather than
+    # as a confident 0% match (see test_ats_scoring.py's own coverage of that
+    # function).
+    assert score is None
     # An empty document has no keywords to cover and cannot fill a page, so both
     # passes come in at zero coverage minus the thin-page penalty.
     # -12: four flags at 3 points each against an intentionally empty document
@@ -99,7 +103,7 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # subject here: the score comes from the rendered document, not from what
     # the pass claims about itself.
     assert report["iterations"] == [-12.0, -12.0]
-    assert report["scoring"] == "deterministic_required_requirements"
+    assert report["scoring"] == "no_scoreable_requirements"
     # The empty fixture also has no education entry and no links, which the
     # reader-side checks report alongside the thin page.
     assert report["writing_flags"] == {
@@ -112,8 +116,13 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # the later pass regardless is how a padded rewrite used to win a tie.
     # The score and pass trail are not in the note text: both are already on
     # the page as `report["iterations"]` (asserted above) and the Job Match
-    # ring, so the note only says what those two do not.
-    assert note == "first pass\n(Did not reach the Job Match target after 2 passes.)"
+    # ring, so the note only says what those two do not. This JD has no real
+    # requirements at all, so the note explains the missing score instead of
+    # a pass count that would not mean anything here.
+    assert note == (
+        "first pass\n(This job description named no requirements this score "
+        "could check, so Keyword Match is not shown.)"
+    )
     # The repair turn must hand back measurements, not the model's own numbers.
     refine_turn = calls[1]["messages"][-1]["content"]
     assert "not from your own" in refine_turn

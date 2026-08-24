@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
 from job_os.services.tailor import (
     _compute_ats_from_document,
+    _finalize_ats_score,
     _is_candidate_skill,
     _jd_requirements,
 )
@@ -122,6 +125,38 @@ def test_an_any_one_of_language_list_is_one_requirement_not_nine() -> None:
         "Java",
     }
     assert reqs[0].covered_by("built backend services in go and python")
+
+
+def test_a_parse_failure_reports_unavailable_not_a_fabricated_zero() -> None:
+    """A JD-parse timeout leaves jd_parsed empty (or {"parse_incomplete": True,
+    ...} if a title hint survived), which _jd_requirements reads as zero
+    requirements the exact same way a JD that genuinely names none does.
+    _compute_ats's total==0 branch cannot tell the two apart and returns a
+    confident 0.0 either way -- a real, fabricated score for a resume that was
+    never actually measured against this JD."""
+    score, reason = _finalize_ats_score(
+        Decimal("0.0"), {"required_total": 0}, {"parse_incomplete": True}
+    )
+    assert score is None
+    assert reason == "unavailable_parse_incomplete"
+
+
+def test_a_jd_with_no_real_requirements_reports_unavailable_too() -> None:
+    """Rarer, but the same fix: a JD that parsed fine and genuinely named
+    nothing scoreable should not read as a confident 0% match either."""
+    score, reason = _finalize_ats_score(
+        Decimal("0.0"), {"required_total": 0}, {"required_skills": []}
+    )
+    assert score is None
+    assert reason == "no_scoreable_requirements"
+
+
+def test_a_real_score_passes_through_unchanged() -> None:
+    score, reason = _finalize_ats_score(
+        Decimal("73.9"), {"required_total": 10}, {"required_skills": ["Python"]}
+    )
+    assert score == Decimal("73.9")
+    assert reason is None
 
 
 def test_genuinely_absent_skills_still_count_against_the_score() -> None:

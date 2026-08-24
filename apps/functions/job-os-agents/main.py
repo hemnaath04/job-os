@@ -1230,7 +1230,10 @@ async def _tailor_resume(
         "resume_id": resume_id,
         "json_resume": json_resume,
         "provenance": [p.model_dump(mode="json") for p in provenance],
-        "ats_score": str(ats_score),
+        # None when the JD parse failed or named nothing scoreable (see
+        # tailor.py's run_tailor). str(None) would have stored the literal
+        # string "None" here instead of a real null.
+        "ats_score": str(ats_score) if ats_score is not None else None,
         "ats_report": ats_report,
         "approved_by_user": False,
         "pdf_r2_key": None,
