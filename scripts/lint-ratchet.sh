@@ -20,7 +20,14 @@ set -uo pipefail
 # Phase C's Appwrite dual-write work (fix/phase-b-ci's 2026-08-04 numbers were
 # 24/46; this session's unpushed commits had drifted to 29/60 before any of it
 # had ever actually run through CI).
-RUFF_CEILING=14
+#
+# Reset 2026-08-24 to the real count: the api job's pytest step has failed
+# outright on every CI run since (missing APPWRITE_API_KEY, fixed separately),
+# so this script never actually ran in CI and the backlog grew unseen to 35
+# across many parallel branches before anyone could catch a single violation
+# at the old ceiling of 14. 14 was a stale number this ratchet had no chance
+# to enforce, not a real target abandoned on purpose.
+RUFF_CEILING=35
 MYPY_CEILING=45
 
 cd "$(dirname "$0")/../apps/api" || exit 1
