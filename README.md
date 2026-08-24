@@ -76,9 +76,13 @@ the current README text fetched live from GitHub for projects the resume
 includes. JSON Resume is the canonical, editable document. LaTeX and PDF are
 generated artifacts.
 
-Before the model sees anything, duplicate facts are merged, so re-importing a
-resume cannot mint a second copy of the same job and produce a role with seven
-near-identical bullets.
+Before the model sees anything, duplicate facts are merged. Importing a resume
+and tailoring a resume both key a job or degree by employer and date range
+rather than title, since a re-import routinely rewords the title ("Junior
+Software Test Automation Engineer, Client: ..." against "Software Test
+Automation Engineer") and a title-keyed check missed that as the same job. The
+two layers use the identical key now, so a duplicate is caught at import
+instead of only ever being papered over at tailor time.
 
 ### Honesty guards
 
@@ -105,9 +109,15 @@ These run deterministically, after generation, on the model's output:
 ### The review score
 
 Review is deterministic, not vibes. A reviewing model and a set of rule-based
-checks both emit a list of issues, each with a severity. The 0 to 100 score is
-then derived from that weighted issue list, so the same issues always produce
-the same number instead of the score whiplash a free-form model rating gave.
+checks both emit a list of issues, each with a severity, but only the
+rule-based ones move the score. A model's editorial judgment, a missing
+flagship project, a lane worth tightening, is real input, but it is a
+judgment call on this one run, not a reproducible fact about the document; the
+same resume reviewed twice can surface a different set of these, and a score
+built from them stops being a function of the resume. The 0 to 100 score is
+derived from the rule-based issues alone, so identical input always produces
+an identical number. Model-judged issues still surface as advisory notes, and
+one severe enough can still hold up finalize, but neither can move the score.
 
 Finalizing a version requires all of:
 
@@ -134,7 +144,19 @@ own words. Two details matter:
   MongoDB with knowing Go.
 
 Coverage is reported as matched over total, with the missing terms listed so the
-gap is visible instead of quietly averaged away.
+gap is visible instead of quietly averaged away. Two more details keep that
+denominator honest:
+
+- A requirement phrased as "one or more of Go, Node.js or Python" is kept as
+  one either-or requirement, not split into as many entries as it names.
+  Splitting it used to score a candidate as missing every language in the list
+  they were never asked to have. An internal team or product name ("you'll
+  work with our Infra and Foundational AI teams") is never extracted as a
+  requirement either, since no resume can state a name it has never heard of.
+- If the job description fails to parse, or genuinely names nothing
+  scoreable, Keyword Match reports as unavailable rather than a confident 0%.
+  A parse failure and a real empty match used to look identical, which turned
+  a gateway timeout into the harshest score the page could show.
 
 ## Rendering
 
