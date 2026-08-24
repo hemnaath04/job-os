@@ -65,3 +65,69 @@ async def test_gateway_failure_with_no_title_hint_returns_empty_dict(
 
     result = await jd_parse.parse_jd("some jd text")
     assert result == {"parse_incomplete": True}
+
+
+class _FakeMessage:
+    def __init__(self, text: str) -> None:
+        self.content = [type("Block", (), {"type": "text", "text": text})()]
+
+
+@pytest.mark.asyncio
+async def test_a_single_timeout_is_retried_once_and_the_retry_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A normal-length JD hit this 3/3 for real in one session: a timeout on
+    the first attempt should not immediately give up when one retry has a
+    real chance of landing."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    slept: list[float] = []
+
+    async def _fake_sleep(seconds: float) -> None:
+        slept.append(seconds)
+
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+    calls = 0
+
+    async def _flaky(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            request = httpx.Request("POST", "https://gateway.test/v1/messages")
+            raise anthropic.APITimeoutError(request=request)
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    monkeypatch.setattr(jd_parse, "create_message", _flaky)
+
+    result = await jd_parse.parse_jd("some jd text")
+    assert calls == 2
+    assert slept == [jd_parse._JD_PARSE_RETRY_DELAY_SECONDS]
+    assert result["title"] == "Backend Engineer"
+    assert result["parse_incomplete"] is False
+
+
+@pytest.mark.asyncio
+async def test_two_consecutive_timeouts_still_degrade_honestly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The retry reduces how often a user hits this, it does not remove the
+    honest fallback: a second timeout in a row still reports incomplete
+    rather than hanging or raising."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+
+    async def _fake_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+    calls = 0
+
+    async def _always_times_out(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        request = httpx.Request("POST", "https://gateway.test/v1/messages")
+        raise anthropic.APITimeoutError(request=request)
+
+    monkeypatch.setattr(jd_parse, "create_message", _always_times_out)
+
+    result = await jd_parse.parse_jd("some jd text", title_hint="Backend Engineer")
+    assert calls == 2
+    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}

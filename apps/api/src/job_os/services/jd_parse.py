@@ -6,9 +6,11 @@ Pydantic-validated dict; never invents the company name (callers fall back to UR
 """
 from __future__ import annotations
 
+import asyncio
 from typing import Literal
 
 import anthropic
+import httpx
 import structlog
 from pydantic import BaseModel, Field, ValidationError
 
@@ -16,6 +18,25 @@ from job_os.services.llm_json import create_message, response_text
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
+
+# `create_message`'s own retry ladder deliberately excludes timeouts (see
+# llm_json._NON_RETRYABLE_TRANSPORT_ERRORS): a timeout means the gateway
+# stopped answering rather than the connection glitching, and retrying one
+# there would trade a clean failure for a run that could exceed a caller's own
+# deadline. That reasoning holds for tailoring, which is already a multi-
+# minute background job with nothing waiting on one extra try. A JD parse is
+# different: it blocks add-job-from-url/text, which a user IS sitting in
+# front of, and one retry with a short, fixed backoff is a small, bounded cost
+# against a real failure rate a normal-length JD hit 3/3 in practice. Scoped
+# to this one call, not the shared retry ladder: raising a caller's own
+# tolerance for a timeout is that caller's call to make, not a change to what
+# every other agent in this codebase considers safe to retry.
+_JD_PARSE_TIMEOUT_ERRORS = (anthropic.APITimeoutError, httpx.TimeoutException)
+_JD_PARSE_RETRY_DELAY_SECONDS = 2.0
+# Indirected for the same reason llm_json._sleep is: a test can shorten this
+# without patching asyncio.sleep globally, which would slow down every other
+# test that happens to await something in the same process.
+_sleep = asyncio.sleep
 
 
 class ParsedJD(BaseModel):
@@ -106,30 +127,41 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         f"{ParsedJD.model_json_schema()}"
     )
 
-    try:
-        msg = await create_message(
-            client,
-            model=settings.anthropic_model_extract,
-            max_tokens=2048,
-            system=SYSTEM_PROMPT,
-            messages=[{"role": "user", "content": user_prompt}],
-            # ats_score is a pure function of jd_parsed, but jd_parsed itself
-            # came from a default-temperature parse, so the same raw JD text
-            # could parse into a different required_skills set on a re-run and
-            # produce a different score for a customer re-pasting the same
-            # posting. Pinned to 0 for that reproducibility, not for quality;
-            # this reduces but does not guarantee identical output run to run.
-            temperature=0,
-            extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
-        )
-    except anthropic.APIError as exc:
-        # Already retried, and tried the fallback provider, inside
-        # create_message. A job can still be added without structured JD
-        # fields -- they just don't get filled in -- so this degrades the
-        # same way the no-key branch above does, rather than failing the
-        # add-job request outright over an extraction step.
-        log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
-        return _incomplete(title_hint)
+    msg = None
+    for attempt in (1, 2):
+        try:
+            msg = await create_message(
+                client,
+                model=settings.anthropic_model_extract,
+                max_tokens=2048,
+                system=SYSTEM_PROMPT,
+                messages=[{"role": "user", "content": user_prompt}],
+                # ats_score is a pure function of jd_parsed, but jd_parsed itself
+                # came from a default-temperature parse, so the same raw JD text
+                # could parse into a different required_skills set on a re-run and
+                # produce a different score for a customer re-pasting the same
+                # posting. Pinned to 0 for that reproducibility, not for quality;
+                # this reduces but does not guarantee identical output run to run.
+                temperature=0,
+                extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+            )
+            break
+        except _JD_PARSE_TIMEOUT_ERRORS as exc:
+            if attempt == 1:
+                log.warning("jd_parse.timeout_retrying", error=str(exc)[:300])
+                await _sleep(_JD_PARSE_RETRY_DELAY_SECONDS)
+                continue
+            log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
+            return _incomplete(title_hint)
+        except anthropic.APIError as exc:
+            # Already retried, and tried the fallback provider, inside
+            # create_message. A job can still be added without structured JD
+            # fields -- they just don't get filled in -- so this degrades the
+            # same way the no-key branch above does, rather than failing the
+            # add-job request outright over an extraction step.
+            log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
+            return _incomplete(title_hint)
+    assert msg is not None  # every loop exit above either breaks with msg set or returns
 
     text = response_text(msg)
     raw = _strip_json_fence(text)
