@@ -41,7 +41,7 @@ testpaths = ["tests"]
 # services.identity, services.resume_engine, services.tailor). Production
 # gets those from `pip install --no-deps ./apps/api` (see README.md), which
 # installs the job_os package's files without apps/api's own web-only
-# dependencies (fastapi, sqlalchemy, celery, ...) -- none of which main.py or
+# dependencies (fastapi, sqlalchemy, celery, ...), none of which main.py or
 # these tests import. Pointing pythonpath at apps/api/src directly gets the
 # same modules the same way, without a second install step or a copy that
 # could drift from the real source.

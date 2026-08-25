@@ -3,8 +3,8 @@
 This has to be right in both directions. Reap too little and an orphaned row
 (the function was killed by Appwrite's 900s timeout, see STALE_RUNNING_AFTER_S
 in main.py) sits at "running" until the browser's own poll ceiling gives up on
-it. Reap too much -- someone else's row, the job that is dispatching right
-now, or one that is merely slow rather than dead -- and a real in-flight run
+it. Reap too much, someone else's row, the job that is dispatching right
+now, or one that is merely slow rather than dead, and a real in-flight run
 gets its status column overwritten out from under it.
 
 Every case below goes through the real reap_stale_running_jobs and update_job,
