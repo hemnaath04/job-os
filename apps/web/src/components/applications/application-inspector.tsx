@@ -27,8 +27,13 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MatchScoreChip, MatchScoreMeter, SkillChip, scoreLabel } from "@/components/ui/match-score";
 import { Select } from "@/components/ui/select";
-import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
+import {
+  clearDraft,
+  setDraft,
+  startEnrich,
+  usePendingEnrich,
+} from "@/lib/pending-enrich";
 import type { ProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
 import type { Application, AppStatus } from "@/lib/types";
@@ -97,9 +102,13 @@ export function ApplicationInspector({
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const queryClient = useQueryClient();
   const thin = !hasParseSignal(job);
-  const [pastingDescription, setPastingDescription] = useState(false);
-  const [descriptionDraft, setDescriptionDraft] = useState("");
-  const [savingDescription, setSavingDescription] = useState(false);
+  // Both live outside this component, keyed by job, so selecting another
+  // application or leaving the page does not take them with it.
+  const { running: savingDescription, draft: descriptionDraft } = usePendingEnrich(job.id);
+  const [openedPaste, setOpenedPaste] = useState(false);
+  // Reopened by its own state: an unsent draft or a save still in flight is
+  // reason enough to show the editor without the person clicking again.
+  const pastingDescription = openedPaste || savingDescription || descriptionDraft.length > 0;
 
   // The inspector's own draft state has to resync when the selection changes
   // underneath it, since it is one mounted panel reused across every row
@@ -110,45 +119,26 @@ export function ApplicationInspector({
     setNextActionDate(application.next_action_at ? application.next_action_at.slice(0, 10) : "");
   }, [application.id, application.notes, application.next_action_label, application.next_action_at]);
 
-  // The paste editor is a draft about ONE job, so it closes rather than
-  // following the selection to a different one and offering that job text
-  // typed for another.
+  // Only the locally-opened flag resets with the selection. The draft and the
+  // in-flight state are keyed by job in the store, so they neither follow the
+  // selection to another job nor get thrown away by leaving this one.
   useEffect(() => {
-    setPastingDescription(false);
-    setDescriptionDraft("");
+    setOpenedPaste(false);
   }, [application.id]);
 
   function openDescriptionPaste() {
-    setPastingDescription(true);
+    setOpenedPaste(true);
     setTimeout(() => descriptionRef.current?.focus(), 0);
   }
 
-  async function saveDescription() {
+  function saveDescription() {
     const text = descriptionDraft.trim();
     if (!text) return;
-    setSavingDescription(true);
-    try {
-      const result = await api.addJobDescription(job.id, text);
-      // The score is derived from the job on every render, so refetching the
-      // list is what recomputes it. Nothing here recomputes it by hand.
-      await queryClient.invalidateQueries({ queryKey: ["applications"] });
-      setPastingDescription(false);
-      setDescriptionDraft("");
-      if (result.filled.length > 0) {
-        toast.success(`Description saved, and it filled in ${result.filled.join(", ")}`);
-      } else if (result.parse_used) {
-        toast.success("Description saved, and the match has been rescored");
-      } else {
-        // Deliberately not a success dressed up as more than it was: the text
-        // is stored and useful to the tailor, but nothing could be read out
-        // of it, so the match stays honestly unavailable.
-        toast.success("Description saved, but no details could be read from it");
-      }
-    } catch (err) {
-      reportFailure("save that description", err);
-    } finally {
-      setSavingDescription(false);
-    }
+    // Hands off to the store and returns. The toast, the cache invalidation
+    // and clearing the draft all happen there, so none of them depend on this
+    // panel still being mounted when the request comes back.
+    startEnrich(job.id, text, queryClient);
+    setOpenedPaste(false);
   }
 
   async function saveNotes() {
@@ -451,15 +441,16 @@ export function ApplicationInspector({
                   <textarea
                     ref={descriptionRef}
                     value={descriptionDraft}
-                    onChange={(event) => setDescriptionDraft(event.target.value)}
+                    onChange={(event) => setDraft(job.id, event.target.value)}
                     placeholder="Paste the job description here"
                     rows={8}
+                    readOnly={savingDescription}
                     className="field-control !py-2 !text-xs"
                   />
                   <p className="text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
-                    This fills in the job you are already tracking. Pasting skips
-                    fetching the page, so it also works for postings behind a
-                    login.
+                    {savingDescription
+                      ? "Reading the description. This keeps going if you look at something else, and you will get a toast when it lands."
+                      : "This fills in the job you are already tracking. Pasting skips fetching the page, so it also works for postings behind a login."}
                   </p>
                   <div className="flex items-center gap-1.5">
                     <button
@@ -473,13 +464,13 @@ export function ApplicationInspector({
                     <button
                       type="button"
                       onClick={() => {
-                        setPastingDescription(false);
-                        setDescriptionDraft("");
+                        setOpenedPaste(false);
+                        clearDraft(job.id);
                       }}
                       disabled={savingDescription}
                       className="rounded-lg border border-[color:var(--color-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
                     >
-                      Cancel
+                      Discard
                     </button>
                   </div>
                 </div>
