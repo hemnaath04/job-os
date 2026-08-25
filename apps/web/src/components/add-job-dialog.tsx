@@ -4,7 +4,7 @@ import * as Dialog from "@radix-ui/react-dialog";
 import { Loader2, X } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { withTimeout } from "@/lib/async";
 import { reportFailure } from "@/lib/errors";
 
@@ -60,7 +60,7 @@ export function AddJobDialog({
       try {
         await api.createApplication({ job_id: job.id, status: "wishlist" });
       } catch (err) {
-        if (!(err instanceof Error) || !err.message.startsWith("409")) throw err;
+        if (!(err instanceof ApiError) || err.status !== 409) throw err;
         alreadyAdded = true;
       }
       toast.success(alreadyAdded ? `Already in your list: ${job.title}` : `Added: ${job.title}`);
