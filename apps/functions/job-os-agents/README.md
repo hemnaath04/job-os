@@ -19,3 +19,18 @@ Recommended Appwrite configuration:
 Set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, the three model variables, and
 the two Manifest tier variables as secret function variables. Appwrite injects
 the project ID, endpoint, and dynamic API key.
+
+## Tests
+
+`pyproject.toml` beside this file is a test-only environment, not part of the
+deploy: `main.py` still ships as a single file per the build command above.
+
+```
+cd apps/functions/job-os-agents
+uv sync
+uv run pytest
+```
+
+Not wired into `.github/workflows/ci.yml` yet: the `ci` workflow's `api` job
+only runs against `apps/api`, so this directory has no CI coverage of its own
+regardless of what runs locally.

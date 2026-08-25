@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { PdfPreviewPane } from "@/components/pdf-preview-pane";
 import { reportFailure } from "@/lib/errors";
+import { cancelOperation } from "@/lib/operations-store";
 import {
   appwriteWorkspace,
   type AgentJobProgress,
@@ -615,6 +616,11 @@ function TailorInner() {
           // Stop watching and return to the form. The server run cannot be
           // aborted mid-execution, so it may still finish and save a version;
           // this just detaches the UI so the user is not stuck on the spinner.
+          // The global operations pill is a separate store fed by the same
+          // job id (see operations-store.ts), and it does not detach on its
+          // own, so it has to be told about this cancellation directly or it
+          // is left showing "running" forever with no way to dismiss it.
+          cancelOperation(active.jobId);
           clearActiveTailor();
           setActive(null);
           setProgress(null);
