@@ -1,31 +1,13 @@
 "use client";
 
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { isToday, isYesterday, isThisWeek, isThisMonth, parseISO } from "date-fns";
 import { SearchX } from "lucide-react";
 import { useEffect, useMemo, useRef } from "react";
 import { ApplicationRow, ROW_HEIGHT } from "@/components/applications/application-row";
+import { buildListItems } from "@/lib/application-groups";
 import type { Application } from "@/lib/types";
 
 const GROUP_HEIGHT = 28;
-
-/** Buckets recency into the words someone would actually use for it. */
-function bucketOf(iso: string): string {
-  try {
-    const date = parseISO(iso);
-    if (isToday(date)) return "Today";
-    if (isYesterday(date)) return "Yesterday";
-    if (isThisWeek(date, { weekStartsOn: 1 })) return "This week";
-    if (isThisMonth(date)) return "This month";
-    return "Earlier";
-  } catch {
-    return "Earlier";
-  }
-}
-
-type Item =
-  | { kind: "group"; key: string; label: string }
-  | { kind: "row"; key: string; application: Application };
 
 /**
  * The scrolling half of the master-detail layout.
@@ -37,45 +19,26 @@ type Item =
  * sequence -- nesting would mean measuring groups separately and giving up
  * the fixed-size fast path.
  *
- * Grouping only applies when the sort is recency-based. Grouping a list
- * sorted by match score under date headings would produce headings that
- * repeat and mean nothing.
+ * Which sorts carry date headings, and what each heading says, is decided by
+ * `buildListItems` rather than here: the heading and the order it sits in have
+ * to be read off the same date, so one module owns both.
  */
 export function ApplicationList({
   applications,
   selectedId,
   matchScores,
-  grouped = false,
+  sort,
   onSelect,
 }: {
   applications: Application[];
   selectedId: string | null;
   matchScores: Map<string, number>;
-  grouped?: boolean;
+  sort: string;
   onSelect: (application: Application) => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  const items = useMemo<Item[]>(() => {
-    if (!grouped) {
-      return applications.map((application) => ({
-        kind: "row" as const,
-        key: application.id,
-        application,
-      }));
-    }
-    const out: Item[] = [];
-    let current: string | null = null;
-    for (const application of applications) {
-      const bucket = bucketOf(application.applied_at ?? application.updated_at);
-      if (bucket !== current) {
-        current = bucket;
-        out.push({ kind: "group", key: `group:${bucket}`, label: bucket });
-      }
-      out.push({ kind: "row", key: application.id, application });
-    }
-    return out;
-  }, [applications, grouped]);
+  const items = useMemo(() => buildListItems(applications, sort), [applications, sort]);
 
   const virtualizer = useVirtualizer({
     count: items.length,
