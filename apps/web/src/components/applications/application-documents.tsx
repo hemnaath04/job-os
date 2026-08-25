@@ -47,7 +47,11 @@ export function ApplicationDocuments({ application }: { application: Application
   // pre-selects the job the same way the Job Finder's own Tailor button does,
   // so this is the shortest path from "I'm looking at an application with
   // nothing tailored yet" to a draft, not a second trip through the job picker.
-  const tailorHref = `/tailor?job_id=${application.job.id}`;
+  // application_id rides along so Tailor can link the resulting resume's
+  // container back to this application (see api.tailorResume) -- without it,
+  // a tailor run started from here would produce a real draft that never
+  // shows up here afterward, which is the bug this wiring exists to close.
+  const tailorHref = `/tailor?job_id=${application.job.id}&application_id=${application.id}`;
 
   if (!linkedResume && !linkedLetter) {
     return (

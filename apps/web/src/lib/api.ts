@@ -1396,7 +1396,18 @@ export const api = {
     };
   },
 
-  async tailorResume(resumeId: string, jobId: string): Promise<TailorResponse> {
+  /**
+   * `applicationId` links the resume's container to that pipeline entry (see
+   * appwriteWorkspace.tailorResume), so application-documents.tsx finds it
+   * afterward. Legacy/Postgres path ignores it: that workspace has no
+   * equivalent field-and-lookup pair to link, and is not the one in active
+   * use (see isAppwriteWorkspaceEnabled).
+   */
+  async tailorResume(
+    resumeId: string,
+    jobId: string,
+    applicationId?: string,
+  ): Promise<TailorResponse> {
     if (!isAppwriteWorkspaceEnabled) {
       return legacyApi.tailorResume(resumeId, jobId);
     }
@@ -1409,6 +1420,7 @@ export const api = {
       jobId,
       (job.jd_parsed ?? {}) as Record<string, unknown>,
       "",
+      applicationId,
     );
     const version = await waitForAgentJob<TailorResponse>(agentJob);
     appwriteWorkspace.registerVersionFile(version);

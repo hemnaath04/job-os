@@ -304,10 +304,11 @@ const handler = createMcpHandler(
       {
         title: "Start Resume Tailor",
         description:
-          "Kick off the AI tailoring agent for one resume against one job posting (from get_job/search_jobs/add_job_from_url), and return immediately with an agent_job_id rather than waiting for it to finish -- drafting a resume takes real time. Poll get_resume_tailor_status with that id to get the result. Call this as many times as you want for different resumes or jobs; each is its own independent agent job, so several builds genuinely run at once rather than queueing behind each other. The result is a draft resume version, not yet quality-reviewed or finalized.",
+          "Kick off the AI tailoring agent for one resume against one job posting (from get_job/search_jobs/add_job_from_url), and return immediately with an agent_job_id rather than waiting for it to finish -- drafting a resume takes real time. Poll get_resume_tailor_status with that id to get the result. Call this as many times as you want for different resumes or jobs; each is its own independent agent job, so several builds genuinely run at once rather than queueing behind each other. The result is a draft resume version, not yet quality-reviewed or finalized. Pass application_id (from list_applications/get_application) to link resume_id's container to that pipeline entry -- the same field the web app's application view reads to show its tailored documents -- so it shows up there afterward. Only takes effect when the container has no conflicting link already: a master resume, one already linked to a different application, or an application some other container already claims are all left untouched.",
         inputSchema: z.object({
           resume_id: z.string().min(1).max(36),
           job_id: z.string().uuid(),
+          application_id: z.string().uuid().optional(),
         }),
         annotations: {
           readOnlyHint: false,
@@ -330,6 +331,7 @@ const handler = createMcpHandler(
             args.job_id,
             job.jd_parsed ?? {},
             "",
+            args.application_id,
           );
           return toolText({ agent_job_id: id });
         } catch (e) {

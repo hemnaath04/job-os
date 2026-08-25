@@ -29,6 +29,7 @@ import {
 } from "node-appwrite";
 import { InputFile } from "node-appwrite/file";
 import { appwriteUserIdForClerk } from "@/lib/appwrite/user-id";
+import { shouldLinkResumeToApplication } from "@/lib/resume-application-link";
 import type {
   Application,
   FactBullet,
@@ -494,11 +495,59 @@ interface AgentJobRow extends Models.Row {
 }
 
 /**
+ * Links a resume container to the application an MCP tailor call targets, so
+ * application-documents.tsx's own lookup (`resumes.find(r =>
+ * spawned_from_application_id === application.id)`) finds it afterward.
+ * Same decision rules as the browser path (see resume-application-link.ts):
+ * only fills in a missing link, never reassigns one that already points
+ * somewhere.
+ */
+async function linkResumeCardToApplication(
+  appwriteUserId: string,
+  resumeId: string,
+  applicationId: string,
+): Promise<void> {
+  const resumes = await listResumeCards(appwriteUserId);
+  if (!shouldLinkResumeToApplication(resumes, resumeId, applicationId)) return;
+
+  const { databaseId, resumesTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<ResumeCardRow>({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resumeId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("resume not found");
+
+  const updatedAt = new Date().toISOString();
+  const resume: Resume = {
+    ...(JSON.parse(row.snapshot) as Resume),
+    spawned_from_application_id: applicationId,
+    updated_at: updatedAt,
+  };
+  await tables.updateRow({
+    databaseId,
+    tableId: resumesTableId,
+    rowId: resumeId,
+    data: {
+      source_updated_at: updatedAt,
+      snapshot: JSON.stringify(resume),
+    },
+  });
+}
+
+/**
  * Dispatches the tailor agent for one resume against one job posting, and
  * returns immediately with the agent job's id. The draft it produces lands as
  * a new resume version, polled with getResumeTailorJobStatus below — mirrors
  * the browser's tailorResume + getAgentJob split exactly, since that split is
  * what already lets the web app poll without blocking.
+ *
+ * `applicationId` is optional and links the resume CONTAINER before
+ * dispatching (see linkResumeCardToApplication) rather than something the
+ * agent job's own input carries: the agent has no notion of applications,
+ * only jobs, and the link is a synchronous write that should exist even if
+ * the run itself later fails.
  */
 export async function startResumeTailorJob(
   appwriteUserId: string,
@@ -506,6 +555,7 @@ export async function startResumeTailorJob(
   jobPostingId: string,
   jdParsed: Record<string, unknown>,
   jdClean: string,
+  applicationId?: string,
 ): Promise<{ id: string }> {
   const { databaseId, resumesTableId, agentJobsTableId, agentFunctionId } = config();
   const tables = tablesClient();
@@ -517,6 +567,20 @@ export async function startResumeTailorJob(
   });
   if (resumeRow.owner_id !== appwriteUserId) {
     throw new Error("resume not found");
+  }
+
+  if (applicationId) {
+    try {
+      await linkResumeCardToApplication(appwriteUserId, resumeId, applicationId);
+    } catch (error) {
+      // Best effort: a link failure should not block dispatching the run
+      // itself, which is what the caller is actually waiting on.
+      console.error("[mcp-tailor] could not link resume to application", {
+        resumeId,
+        applicationId,
+        error,
+      });
+    }
   }
 
   const id = ID.unique();

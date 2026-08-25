@@ -26,6 +26,7 @@ import {
 } from "./client";
 import { requirePublicAppwriteConfig } from "./config";
 import { registerAgentOperation } from "@/lib/operations-bus";
+import { shouldLinkResumeToApplication } from "@/lib/resume-application-link";
 
 interface SnapshotRow extends Models.Row {
   owner_id: string;
@@ -259,22 +260,63 @@ async function createAgentJob<TInput extends Record<string, unknown>>(
   return job;
 }
 
+/** Every non-archived resume this user owns. Factored out of listResumes so
+ * linkResumeToApplication below can reuse the same read to check "does some
+ * other container already own this application" without a second query. */
+async function fetchAllResumes(): Promise<Resume[]> {
+  await ensureAppwriteSession();
+  const config = requirePublicAppwriteConfig();
+  const result = await getAppwriteServices().tables.listRows<ResumeRow>({
+    databaseId: config.databaseId,
+    tableId: config.resumesTableId,
+    queries: [
+      Query.equal("archived", false),
+      Query.orderDesc("source_updated_at"),
+      Query.limit(500),
+    ],
+    total: false,
+    ttl: 0,
+  });
+  return result.rows.map((row) => parseSnapshot<Resume>(row));
+}
+
+/**
+ * Links a resume container to the application a tailor run targets, so
+ * application-documents.tsx's own lookup (`resumes.find(r =>
+ * spawned_from_application_id === application.id)`) finds it afterward.
+ * See resume-application-link.ts for the full reasoning on when this is
+ * skipped instead -- it only ever fills in a missing link.
+ */
+async function linkResumeToApplication(resumeId: string, applicationId: string): Promise<void> {
+  const resumes = await fetchAllResumes();
+  if (!shouldLinkResumeToApplication(resumes, resumeId, applicationId)) return;
+
+  const config = requirePublicAppwriteConfig();
+  const tables = getAppwriteServices().tables;
+  const row = await tables.getRow<ResumeRow>({
+    databaseId: config.databaseId,
+    tableId: config.resumesTableId,
+    rowId: resumeId,
+  });
+  const resume: Resume = {
+    ...parseSnapshot<Resume>(row),
+    spawned_from_application_id: applicationId,
+    updated_at: now(),
+  };
+  await tables.updateRow<ResumeRow>({
+    databaseId: config.databaseId,
+    tableId: config.resumesTableId,
+    rowId: resumeId,
+    data: {
+      source_updated_at: resume.updated_at,
+      snapshot: JSON.stringify(resume),
+    },
+  });
+}
+
 export const appwriteWorkspace = {
-  async listResumes(): Promise<Resume[]> {
-    await ensureAppwriteSession();
-    const config = requirePublicAppwriteConfig();
-    const result = await getAppwriteServices().tables.listRows<ResumeRow>({
-      databaseId: config.databaseId,
-      tableId: config.resumesTableId,
-      queries: [
-        Query.equal("archived", false),
-        Query.orderDesc("source_updated_at"),
-        Query.limit(500),
-      ],
-      total: false,
-      ttl: 0,
-    });
-    return result.rows.map((row) => parseSnapshot<Resume>(row));
+  listResumes(): Promise<Resume[]> {
+    return fetchAllResumes();
   },
 
   async createResume(input: {
@@ -1136,12 +1178,33 @@ export const appwriteWorkspace = {
   // container instead: see api.reviewVersion and api.finalizeVersion, which pair
   // /resumes/render-review with attachReview below.
 
-  tailorResume(
+  /**
+   * `applicationId` is optional and is not sent to the agent job's input --
+   * the tailor agent has no notion of applications, only jobs (see
+   * spawned_from_job_id). It links the resume CONTAINER before dispatching,
+   * a separate, synchronous write rather than something the async job does,
+   * so the link exists even if the run itself later fails.
+   */
+  async tailorResume(
     resumeId: string,
     jobId: string,
     jdParsed: Record<string, unknown>,
     jdClean: string,
+    applicationId?: string,
   ): Promise<AgentJob> {
+    if (applicationId) {
+      try {
+        await linkResumeToApplication(resumeId, applicationId);
+      } catch (error) {
+        // Best effort: a link failure should not block the run itself,
+        // which is the thing the user is actually waiting on.
+        console.error("[tailor] could not link resume to application", {
+          resumeId,
+          applicationId,
+          error,
+        });
+      }
+    }
     return createAgentJob("resume_tailor", "/resume/tailor", {
       resume_id: resumeId,
       spawned_from_job_id: jobId,
