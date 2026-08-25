@@ -162,7 +162,7 @@ async def create_from_url(
             log.warning("jobs.from_url.fetch_failed", url=url, error=str(e))
             raise HTTPException(
                 502,
-                "Could not fetch that job posting right now — the fetch service is "
+                "Could not fetch that job posting right now, the fetch service is "
                 "temporarily unavailable. Try again in a moment, or use "
                 "'Paste the description' instead.",
             ) from e

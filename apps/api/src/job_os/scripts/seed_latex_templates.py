@@ -1,4 +1,4 @@
-"""Migrate the Appwrite `templates` table to LaTeX, and seed the seven builtins.
+"""Migrate the Appwrite `templates` table to LaTeX, and seed the eight builtins.
 
 Idempotent, and additive by design. It adds the columns the LaTeX engine needs
 and leaves `html_source` and `css_source` in place: those columns hold two rows

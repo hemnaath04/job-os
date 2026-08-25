@@ -121,7 +121,7 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
 
     user_prompt = (
         "Extract structured fields from this job description. "
-        f"Hint — page title: {title_hint!r}.\n\n"
+        f"Hint. Page title: {title_hint!r}.\n\n"
         f"<jd>\n{jd_text[:18000]}\n</jd>\n\n"
         "Respond with a single JSON object matching this schema:\n"
         f"{ParsedJD.model_json_schema()}"

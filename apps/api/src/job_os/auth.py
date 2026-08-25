@@ -68,7 +68,7 @@ async def _verify_clerk_jwt(token: str, jwks_url: str) -> dict:
         )
         raise HTTPException(
             status_code=401,
-            detail=f"unknown signing key — kid={kid}, available={available}",
+            detail=f"unknown signing key: kid={kid}, available={available}",
         )
 
     public_key = jwt.algorithms.RSAAlgorithm.from_jwk(key)
