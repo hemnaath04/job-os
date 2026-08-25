@@ -31,6 +31,7 @@ import {
   type AgentJobProgress,
 } from "@/lib/appwrite/workspace";
 import { isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
+import { shouldRestoreTailor } from "@/lib/tailor-restore";
 import { withTimeout } from "@/lib/async";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { InfoChip, PageIntro } from "@/components/page-intro";
@@ -219,6 +220,15 @@ function TailorInner() {
 
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string>(initialJobId);
+
+  // A query-only navigation does not remount this page, so the initial state
+  // above would keep serving the previous job. Following an explicit job_id
+  // whenever it changes is what makes a second "Tailor a resume for this role"
+  // click, from a different application, actually retarget.
+  useEffect(() => {
+    if (!initialJobId) return;
+    setJobId(initialJobId);
+  }, [initialJobId]);
   // Not a choice the user makes. The run resolves or creates a resume named after
   // the job, and this holds it so the progress and result views can label it.
   const [resumeId, setResumeId] = useState<string>("");
@@ -308,6 +318,10 @@ function TailorInner() {
   // ResultView and the progress copy have the right resume/job on hand.
   useEffect(() => {
     const stored = loadActiveTailor();
+    // An explicit job_id means the visit came from "Tailor a resume for this
+    // role" and names the role. Seeding from a remembered run here is what
+    // silently retargeted the page at the last job tailored.
+    if (!shouldRestoreTailor(initialJobId, stored)) return;
     if (!stored) return;
     const age = tailorAgeMs(stored);
     if (age === null || age > TAILOR_MAX_AGE_MS) {
@@ -325,6 +339,9 @@ function TailorInner() {
   useEffect(() => {
     if (!isAppwriteWorkspaceEnabled) return;
     const last = loadLastTailor();
+    // Same rule as the in-flight restore above: a named job wins, so nobody is
+    // shown a finished resume for a company they did not ask about.
+    if (!shouldRestoreTailor(initialJobId, last)) return;
     if (!last || loadActiveTailor()) return;
     let cancelled = false;
     void (async () => {
