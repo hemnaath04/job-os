@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/empty-state";
 import { KanbanBoard } from "@/components/kanban-board";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import { compareByGroupDate } from "@/lib/application-groups";
 import { buildProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
 import { isActiveStatus, matchesStatuses, PRIMARY_STAGES, SECONDARY_STAGES } from "@/lib/application-stage";
@@ -156,7 +157,7 @@ export default function ApplicationsPage() {
     if (sort === "company") {
       sorted.sort((a, b) => (a.job.company?.name ?? "").localeCompare(b.job.company?.name ?? ""));
     } else if (sort === "applied") {
-      sorted.sort((a, b) => (b.applied_at ?? "").localeCompare(a.applied_at ?? ""));
+      sorted.sort((a, b) => compareByGroupDate(a, b, "applied"));
     } else if (sort === "match") {
       sorted.sort((a, b) => (matchScores.get(b.id) ?? -1) - (matchScores.get(a.id) ?? -1));
     } else if (sort === "match_asc") {
@@ -177,7 +178,7 @@ export default function ApplicationsPage() {
         return at - bt;
       });
     } else {
-      sorted.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+      sorted.sort((a, b) => compareByGroupDate(a, b, "updated"));
     }
     return sorted;
   }, [baseApplications, stage, stageDef, location, workType, minMatch, dateWindow, query, sort, matchScores]);
@@ -340,9 +341,7 @@ export default function ApplicationsPage() {
                   applications={filtered}
                   selectedId={selectedId}
                   matchScores={matchScores}
-                  // Date headings only make sense when the order is a date.
-                  // Under "highest match" they would repeat and mean nothing.
-                  grouped={sort === "updated" || sort === "applied"}
+                  sort={sort}
                   onSelect={(application) => setSelectedId(application.id)}
                 />
               </div>
