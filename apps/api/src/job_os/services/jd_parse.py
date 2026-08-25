@@ -32,6 +32,15 @@ log = structlog.get_logger(__name__)
 # tolerance for a timeout is that caller's call to make, not a change to what
 # every other agent in this codebase considers safe to retry.
 _JD_PARSE_TIMEOUT_ERRORS = (anthropic.APITimeoutError, httpx.TimeoutException)
+
+# Measured against the live gateway: a healthy parse of a full-length internship
+# JD returns in about five seconds using 508 to 555 output tokens, so 2048 was
+# four times what the answer needs and still was not enough. In a degraded
+# window the tier answers slowly and spends the budget before finishing the
+# JSON, which arrives cut off mid-value or empty, and 2048 is what it runs out
+# of. The extra headroom costs nothing on the normal path, since billing is on
+# tokens produced rather than the ceiling.
+_JD_PARSE_MAX_TOKENS = 4096
 _JD_PARSE_RETRY_DELAY_SECONDS = 2.0
 # Indirected for the same reason llm_json._sleep is: a test can shorten this
 # without patching asyncio.sleep globally, which would slow down every other
@@ -127,13 +136,12 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
         f"{ParsedJD.model_json_schema()}"
     )
 
-    msg = None
     for attempt in (1, 2):
         try:
             msg = await create_message(
                 client,
                 model=settings.anthropic_model_extract,
-                max_tokens=2048,
+                max_tokens=_JD_PARSE_MAX_TOKENS,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_prompt}],
                 # temperature=0 was here for reproducibility (same JD -> same
@@ -147,7 +155,6 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
                 # redeployed.
                 extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
             )
-            break
         except _JD_PARSE_TIMEOUT_ERRORS as exc:
             if attempt == 1:
                 log.warning("jd_parse.timeout_retrying", error=str(exc)[:300])
@@ -163,15 +170,41 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
             # add-job request outright over an extraction step.
             log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
             return _incomplete(title_hint)
-    assert msg is not None  # every loop exit above either breaks with msg set or returns
 
-    text = response_text(msg)
-    raw = _strip_json_fence(text)
-    try:
-        return ParsedJD.model_validate_json(raw).model_dump(exclude_none=False)
-    except ValidationError as e:
-        log.warning("jd_parse.invalid_json", error=str(e), preview=raw[:300])
-        return _incomplete(title_hint)
+        # Parsing lives inside the loop so that an answer which arrived but is
+        # unusable gets the same second chance a timeout already got. It used to
+        # sit after it, so a reply cut off mid-value was final: one truncated
+        # JSON object and the job kept an empty parse for good, with the user
+        # told only that no details could be read. Observed live three times in
+        # a row and then not at all across eleven consecutive runs on the same
+        # key and model, so it is a window rather than a property of the input,
+        # which is exactly the shape a retry answers.
+        text = response_text(msg)
+        raw = _strip_json_fence(text)
+        try:
+            return ParsedJD.model_validate_json(raw).model_dump(exclude_none=False)
+        except ValidationError as e:
+            if attempt == 1:
+                log.warning(
+                    "jd_parse.invalid_json_retrying",
+                    error=str(e)[:300],
+                    # stop_reason and output_tokens are what distinguish "the
+                    # model rambled past the ceiling" from "the gateway sent
+                    # prose": worth having in the log so the next person can
+                    # tell which without reproducing it.
+                    stop_reason=getattr(msg, "stop_reason", None),
+                    output_tokens=getattr(getattr(msg, "usage", None), "output_tokens", None),
+                    preview=raw[:300],
+                )
+                # No sleep. Unlike a timeout, nothing here is rate limited, and
+                # the callers are interactive requests inside Heroku's 30s
+                # ceiling: two seconds of waiting is two seconds the retry does
+                # not get.
+                continue
+            log.warning("jd_parse.invalid_json", error=str(e), preview=raw[:300])
+            return _incomplete(title_hint)
+
+    return _incomplete(title_hint)  # pragma: no cover - the loop returns on every path
 
 
 def _strip_json_fence(text: str) -> str:
