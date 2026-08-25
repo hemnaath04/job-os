@@ -57,12 +57,23 @@ router = APIRouter(prefix="/jobs")
 # so that is real, separate follow-up work, not this fix.
 _FROM_URL_DEADLINE_SECONDS = 27.0
 
-# A parse is one model call with its own 30s client timeout and a retry, so its
-# own worst case can outlive Heroku's hard 30s router ceiling the same way the
+# A parse is one model call with its own client timeout and a retry, so its own
+# worst case can outlive Heroku's hard 30s router ceiling the same way the
 # fetch-and-parse path can. This budget keeps the request inside that ceiling.
 # It is spent on the parse alone, since a paste skips the fetch entirely, which
 # is most of why this route is the fast way to fix a thin job.
-_PARSE_BUDGET_SECONDS = 22.0
+#
+# Was 22s, which turned out to be the tightest thing in the chain: two real
+# pastes were cut off at 22.1s and 22.2s while the gateway was in a slow window,
+# and the person was told no details could be read from a JD that plainly had
+# them. 27s matches _FROM_URL_DEADLINE_SECONDS above and leaves the same room
+# for the write and the response to land before the router gives up.
+#
+# Honest about what this does not do: it buys five seconds, and a slow attempt
+# plus jd_parse's retry can still exceed it. That is a ceiling a synchronous
+# request cannot get past, and getting past it means a background job the caller
+# polls, the same conclusion _FROM_URL_DEADLINE_SECONDS reached.
+_PARSE_BUDGET_SECONDS = 27.0
 
 
 async def _load_job(session: AsyncSession, job_id: UUID) -> Job | None:
