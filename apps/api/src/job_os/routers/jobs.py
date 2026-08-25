@@ -1,3 +1,5 @@
+import asyncio
+from typing import Any
 from uuid import UUID
 
 import structlog
@@ -15,6 +17,38 @@ from job_os.services.companies import upsert_company
 log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/jobs")
+
+# Heroku's router hard-kills a request that has not responded within 30s
+# (H12 "Request timeout"), regardless of whether the dyno is doing anything
+# useful. Confirmed from Heroku's own router logs on this exact endpoint:
+# `service=30000ms` on every failing request, `connect=0ms` (the dyno was
+# healthy and reachable instantly, it simply never answered in time).
+# fetch_url_markdown's own retries (Firecrawl's tenacity ladder, then a
+# plain-fetch fallback) and parse_jd's own one-retry-on-timeout loop (added
+# for a real JD that hit this in practice, see jd_parse.py) can together run
+# well past 30s even when nothing unusual is happening, so this endpoint
+# needs its own deadline that fires before Heroku's kill does, and returns
+# something a caller can act on instead of Heroku's opaque error page.
+#
+# Set as close to Heroku's 30s ceiling as safe, not conservative: every
+# import that already finishes inside 30s today (the common case, these same
+# logs show plenty of real 201s) has to keep succeeding, so cutting this much
+# lower than necessary would newly fail requests that were never actually the
+# problem. The remaining ~2-3s below 30 is margin for the DB work still to
+# come after this deadline resolves (upsert_company, the insert, flush and
+# refresh) and for the response to actually reach Heroku's router before its
+# own clock runs out. It is not slack to spend on a slow fetch or parse.
+#
+# This does not make a genuinely slow JD import succeed: parse_jd's own worst
+# case (two 30s attempts plus a backoff, roughly 62s) is already past this
+# deadline on its own, so a JD that would hit that path still fails. It just
+# fails with this endpoint's own honest message instead of riding all the way
+# to Heroku's opaque 503. Making a slow-but-real import actually complete
+# needs a background job plus polling, which this Postgres/FastAPI side has
+# no existing infrastructure for (the Appwrite side's agent-job pattern, used
+# for tailoring and review, is a different system on a different database),
+# so that is real, separate follow-up work, not this fix.
+_FROM_URL_DEADLINE_SECONDS = 27.0
 
 
 async def _load_job(session: AsyncSession, job_id: UUID) -> Job | None:
@@ -101,7 +135,7 @@ async def create_from_url(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
-    from job_os.integrations.firecrawl import fetch_url_markdown
+    from job_os.integrations.firecrawl import FetchedPage, fetch_url_markdown
     from job_os.services.jd_parse import parse_jd
 
     url = str(payload.url)
@@ -121,18 +155,46 @@ async def create_from_url(
     if existing:
         return existing
 
-    try:
-        fetched = await fetch_url_markdown(url)
-    except Exception as e:
-        log.warning("jobs.from_url.fetch_failed", url=url, error=str(e))
-        raise HTTPException(
-            502,
-            "Could not fetch that job posting right now — the fetch service is "
-            "temporarily unavailable. Try again in a moment, or use "
-            "'Paste the description' instead.",
-        ) from e
+    async def _fetch_and_parse() -> tuple[FetchedPage, dict[str, Any]]:
+        try:
+            fetched = await fetch_url_markdown(url)
+        except Exception as e:
+            log.warning("jobs.from_url.fetch_failed", url=url, error=str(e))
+            raise HTTPException(
+                502,
+                "Could not fetch that job posting right now — the fetch service is "
+                "temporarily unavailable. Try again in a moment, or use "
+                "'Paste the description' instead.",
+            ) from e
+        parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
+        return fetched, parsed
 
-    parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
+    try:
+        fetched, parsed = await asyncio.wait_for(
+            _fetch_and_parse(), timeout=_FROM_URL_DEADLINE_SECONDS
+        )
+    except TimeoutError:
+        # Only the outer deadline lands here. A real fetch failure raises its
+        # own HTTPException(502) above, inside the wrapped coroutine, before
+        # this can fire, and parse_jd never raises a bare timeout: it always
+        # returns its own honest `parse_incomplete` dict once IT gives up on
+        # its own retry budget (see jd_parse.py). This branch means fetch and
+        # parse combined ran past the deadline with neither one having
+        # resolved at all, which is a different, less honest-looking outcome
+        # than either of those: the caller would get nothing back, not even a
+        # degraded parse, so it gets its own clear message instead of
+        # silently becoming Heroku's opaque error page.
+        log.warning(
+            "jobs.from_url.deadline_exceeded",
+            url=url,
+            deadline_seconds=_FROM_URL_DEADLINE_SECONDS,
+        )
+        raise HTTPException(
+            504,
+            "That job posting is taking too long to fetch and parse. Try "
+            "again in a moment, or use 'Paste the description' instead: it "
+            "skips the live fetch entirely and finishes right away.",
+        ) from None
 
     company_name = parsed.get("company") or fetched.company_hint or "Unknown"
     domain = parsed.get("company_domain")
