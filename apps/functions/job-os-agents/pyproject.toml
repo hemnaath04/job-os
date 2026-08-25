@@ -1,0 +1,48 @@
+[project]
+name = "job-os-agents-tests"
+version = "0.0.0"
+description = """
+Test environment for the job-os-agents Appwrite Function (main.py). Not a
+package: main.py itself ships to Appwrite as a single file per README.md's
+build command, never through this pyproject. This file exists only so
+`uv run pytest` has something to resolve against.
+"""
+requires-python = ">=3.12,<3.14"
+
+# Mirrors requirements.txt, the file Appwrite actually installs from. Kept as
+# a second list rather than parsed from requirements.txt because uv wants
+# project dependency syntax, not a requirements file; requirements.txt stays
+# the one source of truth for what ships, this just has to not drift from it.
+dependencies = [
+    "anthropic>=0.40.0,<1.0.0",
+    "appwrite>=22.2.0",
+    "httpx>=0.28.0",
+    "jinja2>=3.1",
+    "langgraph>=0.2.50",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "pypdf>=5.1",
+    "python-docx>=1.1",
+    "sentry-sdk>=2.35",
+    "structlog>=24.4",
+]
+
+[dependency-groups]
+dev = ["pytest>=8.3"]
+
+# No build backend, no wheel: this project is never installed anywhere, only
+# synced into a local .venv for pytest to run against.
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# main.py imports job_os.* (observability, services.profile_extract,
+# services.identity, services.resume_engine, services.tailor). Production
+# gets those from `pip install --no-deps ./apps/api` (see README.md), which
+# installs the job_os package's files without apps/api's own web-only
+# dependencies (fastapi, sqlalchemy, celery, ...) -- none of which main.py or
+# these tests import. Pointing pythonpath at apps/api/src directly gets the
+# same modules the same way, without a second install step or a copy that
+# could drift from the real source.
+pythonpath = [".", "../../api/src"]
