@@ -332,7 +332,27 @@ async def add_description(
     plan = plan_enrichment(job, parsed, jd_text)
     apply_enrichment(job, plan)
     await session.flush()
-    await session.refresh(job, attribute_names=["company"])
+
+    # Re-SELECT rather than refresh a named attribute, because this endpoint
+    # UPDATEs a row where every other one here INSERTs, and that difference is
+    # what decides whether the object is safe to serialise.
+    #
+    # `updated_at` carries `onupdate=func.now()` (db/models/_mixins.py), so the
+    # flush's UPDATE leaves it expired: only the database knows its new value.
+    # Reading an expired attribute costs a round trip, and doing that from
+    # `JobRead.model_validate` inside an async request is precisely what raises
+    # MissingGreenlet. An INSERT never hits this, since SQLAlchemy fetches
+    # server-generated columns back as part of the insert, which is why
+    # `refresh(attribute_names=["company"])` is sufficient in create_from_url
+    # and create_from_text and was silently insufficient here.
+    #
+    # A bare `session.refresh(job)` would repopulate the columns but expire the
+    # `company` relationship, moving the same failure onto a different field.
+    # One eager-loading SELECT settles both: it fills every expired column and
+    # loads the relationship in the same statement.
+    job = await _load_job(session, job_id)
+    if job is None:  # pragma: no cover - the row was loaded moments ago
+        raise HTTPException(404, "Job not found.")
 
     log.info(
         "jobs.description.enriched",

@@ -90,6 +90,15 @@ async def patch_fact(
     for k, v in payload.model_dump(exclude_unset=True).items():
         setattr(fact, k, v)
     await session.flush()
+
+    # `updated_at` carries onupdate=func.now() (db/models/_mixins.py), so the
+    # UPDATE this flush emits leaves it expired: only the database knows its new
+    # value. response_model serialisation then reads it, and reading an expired
+    # attribute from an async request is what raises MissingGreenlet. Refreshing
+    # repopulates it here, where there is a session to do the IO. `bullets` is
+    # lazy="selectin", so it reloads with the columns rather than being left
+    # expired for the serialiser to trip over next.
+    await session.refresh(fact)
     return fact
 
 
