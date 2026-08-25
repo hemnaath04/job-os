@@ -31,6 +31,6 @@ uv sync
 uv run pytest
 ```
 
-Not wired into `.github/workflows/ci.yml` yet: the `ci` workflow's `api` job
-only runs against `apps/api`, so this directory has no CI coverage of its own
-regardless of what runs locally.
+Wired into `.github/workflows/ci.yml` as its own `functions` job, running the
+same two commands above on every push and pull request, in parallel with
+`api` and `web` and independent of both.
