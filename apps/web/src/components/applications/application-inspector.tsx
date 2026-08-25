@@ -1,11 +1,13 @@
 "use client";
 
+import { useQueryClient } from "@tanstack/react-query";
 import { format } from "date-fns";
 import {
   ArrowLeft,
   Archive,
   Check,
   ExternalLink,
+  FileText,
   MoreHorizontal,
   Sparkles,
   StickyNote,
@@ -25,6 +27,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MatchScoreChip, MatchScoreMeter, SkillChip, scoreLabel } from "@/components/ui/match-score";
 import { Select } from "@/components/ui/select";
+import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
 import type { ProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
@@ -44,6 +47,26 @@ function formatSalary(job: Application["job"]): string | null {
     return `${fmt(job.salary_min)} to ${fmt(job.salary_max)}`;
   }
   return fmt(job.salary_min ?? job.salary_max ?? 0);
+}
+
+/**
+ * Whether a job carries the structured detail the match score reads.
+ *
+ * A URL import can land with an empty parse, and the difference between that
+ * and "parsed fine, but this role names few recognisable skills" is the
+ * difference between an offer to fix it and an honest dead end. Reads the same
+ * four lists `scoreApplicationJob` builds its text from, so this cannot claim
+ * a job is scoreable when the scorer would disagree.
+ */
+function hasParseSignal(job: Application["job"]): boolean {
+  const parsed = job.jd_parsed;
+  if (!parsed) return false;
+  return Boolean(
+    parsed.required_skills?.length ||
+      parsed.preferred_skills?.length ||
+      parsed.technologies?.length ||
+      parsed.keywords?.length,
+  );
 }
 
 export function ApplicationInspector({
@@ -71,6 +94,12 @@ export function ApplicationInspector({
   );
   const notesRef = useRef<HTMLTextAreaElement>(null);
   const nextActionRef = useRef<HTMLInputElement>(null);
+  const descriptionRef = useRef<HTMLTextAreaElement>(null);
+  const queryClient = useQueryClient();
+  const thin = !hasParseSignal(job);
+  const [pastingDescription, setPastingDescription] = useState(false);
+  const [descriptionDraft, setDescriptionDraft] = useState("");
+  const [savingDescription, setSavingDescription] = useState(false);
 
   // The inspector's own draft state has to resync when the selection changes
   // underneath it, since it is one mounted panel reused across every row
@@ -80,6 +109,47 @@ export function ApplicationInspector({
     setNextActionLabel(application.next_action_label ?? "");
     setNextActionDate(application.next_action_at ? application.next_action_at.slice(0, 10) : "");
   }, [application.id, application.notes, application.next_action_label, application.next_action_at]);
+
+  // The paste editor is a draft about ONE job, so it closes rather than
+  // following the selection to a different one and offering that job text
+  // typed for another.
+  useEffect(() => {
+    setPastingDescription(false);
+    setDescriptionDraft("");
+  }, [application.id]);
+
+  function openDescriptionPaste() {
+    setPastingDescription(true);
+    setTimeout(() => descriptionRef.current?.focus(), 0);
+  }
+
+  async function saveDescription() {
+    const text = descriptionDraft.trim();
+    if (!text) return;
+    setSavingDescription(true);
+    try {
+      const result = await api.addJobDescription(job.id, text);
+      // The score is derived from the job on every render, so refetching the
+      // list is what recomputes it. Nothing here recomputes it by hand.
+      await queryClient.invalidateQueries({ queryKey: ["applications"] });
+      setPastingDescription(false);
+      setDescriptionDraft("");
+      if (result.filled.length > 0) {
+        toast.success(`Description saved, and it filled in ${result.filled.join(", ")}`);
+      } else if (result.parse_used) {
+        toast.success("Description saved, and the match has been rescored");
+      } else {
+        // Deliberately not a success dressed up as more than it was: the text
+        // is stored and useful to the tailor, but nothing could be read out
+        // of it, so the match stays honestly unavailable.
+        toast.success("Description saved, but no details could be read from it");
+      }
+    } catch (err) {
+      reportFailure("save that description", err);
+    } finally {
+      setSavingDescription(false);
+    }
+  }
 
   async function saveNotes() {
     if (notes === (application.notes ?? "")) return;
@@ -198,6 +268,12 @@ export function ApplicationInspector({
                     Open job posting
                   </DropdownMenuItem>
                 )}
+                <DropdownMenuItem
+                  icon={<FileText className="size-3.5" />}
+                  onSelect={() => setTimeout(openDescriptionPaste, 0)}
+                >
+                  Add description
+                </DropdownMenuItem>
                 <DropdownMenuItem
                   icon={<StickyNote className="size-3.5" />}
                   onSelect={() => setTimeout(() => notesRef.current?.focus(), 0)}
@@ -333,9 +409,24 @@ export function ApplicationInspector({
               <p className="text-xs font-medium text-[color:var(--color-text-muted)]">
                 Match unavailable
               </p>
+              {/* Two different dead ends were wearing one sentence. A posting
+                  that imported without its description has a fix; one that
+                  parsed fine and simply names few skills does not, and
+                  offering to paste a description there would be busywork. */}
               <p className="mt-0.5 text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
-                This posting names too few recognizable skills to score reliably.
+                {thin
+                  ? "This posting was imported without its description, so there is nothing to score against."
+                  : "This posting names too few recognizable skills to score reliably."}
               </p>
+              {thin && !pastingDescription && (
+                <button
+                  type="button"
+                  onClick={openDescriptionPaste}
+                  className="mt-2 flex items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)]"
+                >
+                  <FileText className="size-3" /> Add description
+                </button>
+              )}
             </div>
           )}
         </Section>
@@ -348,6 +439,53 @@ export function ApplicationInspector({
               <ApplicationDocuments application={application} />
             </Section>
           </div>
+
+          {/* Full width for the same reason Notes is: a job description is
+              prose, and it arrives by the paragraph. It also sits next to
+              Notes rather than beside the match it fixes, because the match
+              column is the narrow one. */}
+          {pastingDescription && (
+            <div className="min-w-0 border-t border-[color:var(--color-border)] pt-4 @2xl:col-span-2">
+              <Section title="Job description">
+                <div className="flex flex-col gap-1.5">
+                  <textarea
+                    ref={descriptionRef}
+                    value={descriptionDraft}
+                    onChange={(event) => setDescriptionDraft(event.target.value)}
+                    placeholder="Paste the job description here"
+                    rows={8}
+                    className="field-control !py-2 !text-xs"
+                  />
+                  <p className="text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
+                    This fills in the job you are already tracking. Pasting skips
+                    fetching the page, so it also works for postings behind a
+                    login.
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={saveDescription}
+                      disabled={savingDescription || !descriptionDraft.trim()}
+                      className="flex items-center gap-1 rounded-lg border border-[color:var(--color-accent-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-accent-ink)] transition-colors hover:bg-[color:var(--color-accent)]/20 disabled:cursor-not-allowed disabled:opacity-50"
+                    >
+                      {savingDescription ? "Saving..." : "Save description"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPastingDescription(false);
+                        setDescriptionDraft("");
+                      }}
+                      disabled={savingDescription}
+                      className="rounded-lg border border-[color:var(--color-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </Section>
+            </div>
+          )}
 
           {/* Notes spans both columns: a note is prose, and prose in a
               0.85fr column is a column of two-word lines. */}

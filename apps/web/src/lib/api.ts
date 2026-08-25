@@ -10,6 +10,7 @@ import type {
   InterviewPrep,
   InterviewQuestion,
   Job,
+  JobEnrichResult,
   MeRead,
   OutreachContact,
   OutreachContactCreate,
@@ -451,6 +452,15 @@ const legacyApi = {
     request<Job>("/jobs/from-text", {
       method: "POST",
       body: JSON.stringify({ jd_text, company_hint }),
+    }),
+  // Fills in a job that was imported thin, in place. Deliberately not
+  // jobFromText: that creates a row, and a job the person is already tracking
+  // has an application, documents and a history hanging off the row it
+  // already has.
+  addJobDescription: (jobId: string, jd_text: string) =>
+    request<JobEnrichResult>(`/jobs/${jobId}/description`, {
+      method: "POST",
+      body: JSON.stringify({ jd_text }),
     }),
 
   listFacts: (kind?: string) => {
