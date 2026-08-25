@@ -1050,7 +1050,7 @@ async def export_version(
             presigned_url=None,
             rendered=True,
             note=(
-                f"Rendered {len(rendered.bytes_)} bytes — "
+                f"Rendered {len(rendered.bytes_)} bytes. "
                 "R2 not configured, use /download instead."
             ),
         )
@@ -1347,7 +1347,7 @@ async def tailor_version(
     ).scalar_one_or_none()
     if master is None:
         raise HTTPException(
-            409, "No master resume found — create one (is_master=true) and import a JSON Resume."
+            409, "No master resume found. Create one (is_master=true) and import a JSON Resume."
         )
 
     baseline = (
@@ -1364,7 +1364,7 @@ async def tailor_version(
     if baseline is None:
         raise HTTPException(
             409,
-            "Master resume has no baseline version yet — import a JSON Resume into the master "
+            "Master resume has no baseline version yet. Import a JSON Resume into the master "
             "resume first (POST /profile/import).",
         )
 
