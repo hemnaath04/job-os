@@ -92,6 +92,51 @@ jobs:
       - name: ruff + mypy ratchet
         run: ./scripts/lint-ratchet.sh
 
+  functions:
+    name: functions (pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: apps/functions/job-os-agents/uv.lock
+
+      # apps/functions/job-os-agents is the Appwrite Function that actually runs the
+      # tailor/review/finalize agent (main.py), and until the reap_stale_running_jobs
+      # suite landed here it had zero test coverage, so this file never ran anything
+      # against it either. That was not a harmless gap: an unpinned anthropic ceiling
+      # in this directory's requirements.txt (what Appwrite actually installs from)
+      # once crossed a breaking major version and silently broke a live tailor call,
+      # and neither the api nor the web job below would ever have caught it, because
+      # neither touches apps/functions/ at all.
+      #
+      # This runs as its own job rather than a step folded into `api`, because the
+      # two directories' dependencies are deliberately separate: this one has its own
+      # requirements.txt, its own capped anthropic<1.0.0, and now its own test-only
+      # pyproject.toml/uv.lock (mirrors requirements.txt, never shipped; main.py still
+      # deploys as the single file the README's build command expects). A `uv sync`
+      # here resolves and installs only that graph, in its own venv, so it can never
+      # be quietly satisfied or masked by whatever apps/api happens to have installed.
+      # These tests do import job_os.* straight from apps/api/src (see this
+      # pyproject.toml's pythonpath), but only as source, never as an installed
+      # package, so apps/api's own web-only dependencies (fastapi, sqlalchemy,
+      # celery, ...) are never pulled in and never need to be.
+      #
+      # No paths: filter, here or on this workflow's `on:` block above: every push
+      # and pull request runs this job, so a change to main.py or anything it imports
+      # can never be the one change that silently skips it.
+      - name: Sync dependencies
+        working-directory: apps/functions/job-os-agents
+        run: uv sync --frozen
+
+      - name: pytest
+        working-directory: apps/functions/job-os-agents
+        run: uv run pytest -q
+
   web:
     name: web (lint, typecheck, build)
     runs-on: ubuntu-latest
