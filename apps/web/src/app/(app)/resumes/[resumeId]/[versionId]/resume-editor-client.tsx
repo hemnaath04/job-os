@@ -162,7 +162,20 @@ export default function ResumeEditorClient({
     onError: (error: Error) => reportFailure("save this revision", error),
   });
   const review = useMutation({
-    mutationFn: () => api.reviewVersion(resumeId, versionId),
+    mutationFn: () =>
+      api.reviewVersion(resumeId, versionId, {
+        // Fires once the PDF is rendered and the deterministic score is
+        // final, well before the AI model call returns. Refetching here is
+        // what flips `hasRenderedPdf` below and lights up Download while the
+        // button still reads "Reviewing…" -- the PDF does not change again
+        // after this point, only the model's advisory notes do. Mirrors
+        // finalize's onPdfReady and the Tailor page's onPartial.
+        onPartial: () => {
+          queryClient.invalidateQueries({
+            queryKey: ["resume-version", resumeId, versionId],
+          });
+        },
+      }),
     onSuccess: (result) => {
       toast[result.passed ? "success" : "warning"](
         result.passed ? "Quality gate passed" : "Review found changes",

@@ -1213,7 +1213,20 @@ export const api = {
   async reviewVersion(
     resumeId: string,
     versionId: string,
-    { templateId }: { templateId?: string | null } = {},
+    {
+      templateId,
+      onPartial,
+    }: {
+      templateId?: string | null;
+      // Fires once the PDF and the deterministic (rule-only) score are ready,
+      // before the GitHub-evidence lookup and the model call that make a
+      // review take over a minute. Attaching it right away persists a real,
+      // final-scored PDF the caller can invalidate its version query on and
+      // unblock Download for, instead of making the user wait on the model's
+      // advisory notes just to get a file. Same shape as the Tailor page's
+      // runReview onPartial.
+      onPartial?: (partial: ResumeVersion) => void | Promise<void>;
+    } = {},
   ) {
     if (!isAppwriteWorkspaceEnabled) {
       return legacyApi.reviewVersion(resumeId, versionId);
@@ -1221,6 +1234,10 @@ export const api = {
     const version = await appwriteWorkspace.getVersion(versionId);
     const rendered = await legacyApi.renderReviewDraft(version.json_resume, {
       templateId,
+      onPartial: async (partial) => {
+        const reviewedPartial = await appwriteWorkspace.attachReview(versionId, partial);
+        await onPartial?.(reviewedPartial);
+      },
     });
     await appwriteWorkspace.attachReview(versionId, rendered);
     return rendered.review;
