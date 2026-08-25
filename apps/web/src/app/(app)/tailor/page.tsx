@@ -211,6 +211,10 @@ export default function TailorPage() {
 function TailorInner() {
   const params = useSearchParams();
   const initialJobId = params.get("job_id") ?? "";
+  // Not stateful like jobId: no picker ever changes this, it only ever
+  // arrives from application-documents.tsx's "Tailor a resume for this role"
+  // link and rides straight through to the dispatch call below.
+  const applicationId = params.get("application_id") || undefined;
 
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string>(initialJobId);
@@ -480,7 +484,7 @@ function TailorInner() {
       if (!isAppwriteWorkspaceEnabled) {
         const target = await resolveTargetResume(await api.getJob(jobId));
         setResumeId(target.id);
-        const version = await api.tailorResume(target.id, jobId);
+        const version = await api.tailorResume(target.id, jobId, applicationId);
         return { kind: "done" as const, version };
       }
       // Job postings still live in Postgres, so fetch the JD here and hand it to
@@ -505,7 +509,7 @@ function TailorInner() {
       const target = await resolveTargetResume(jobPosting);
       setResumeId(target.id);
       const agentJob = await withTimeout(
-        appwriteWorkspace.tailorResume(target.id, jobId, jdParsed, ""),
+        appwriteWorkspace.tailorResume(target.id, jobId, jdParsed, "", applicationId),
         TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not queue the tailoring agent. Check your connection and try again.",
       );
