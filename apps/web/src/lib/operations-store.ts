@@ -253,6 +253,29 @@ function markFailed(id: string, message: string) {
   }));
 }
 
+/**
+ * Mark a running operation canceled, on the user's own explicit action.
+ *
+ * This is the escape hatch dismissOperation deliberately does not have: a
+ * page's own Cancel button (e.g. the Tailor page) can only detach itself, it
+ * cannot abort the server run, so without this the pill it fed stayed
+ * "running" (and therefore un-dismissable) forever even though the person
+ * had already left. Same shape as markFailed, an honest "you did this"
+ * message instead of a poll-detected error, so the card in the stack now
+ * flips to failed and becomes dismissable right away.
+ */
+export function cancelOperation(id: string) {
+  updateOp(id, (op) => ({
+    ...op,
+    status: "failed",
+    stage: null,
+    pct: null,
+    href: metaForKind(op.kind).origin(op.input),
+    message: "You canceled this run.",
+    finishedAt: nowIso(),
+  }));
+}
+
 // ---- tailor page hand-off (mirror of app/(app)/tailor/page.tsx) -------------
 
 function writeJson(key: string, value: unknown) {

@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import Any
 from uuid import uuid4
@@ -54,6 +54,15 @@ DAILY_LIMITS: dict[str, int] = {
     "review": 40,
     "extract": 5,
 }
+
+# Appwrite Functions have a hard 900 second execution timeout (see README).
+# When a gateway call inside a run hangs past that, Appwrite kills the process
+# from outside: the except Exception handler in main() below never runs, and
+# the job row is left at status="running" forever, with whatever progress it
+# last wrote. 15 minutes is comfortably past every real stage's own timeout
+# budget, so a row still "running" that long past its last write is dead, not
+# slow.
+STALE_RUNNING_AFTER_S = 15 * 60
 
 # Which budget each agent path draws from. Revision is a chat edit and is
 # metered with review rather than given a bucket of its own.
@@ -596,6 +605,55 @@ class Workspace:
             self._last_progress[job_id] = signature
         except Exception:  # noqa: BLE001 - progress is advisory, never fatal
             pass
+
+    def reap_stale_running_jobs(self, *, skip_job_id: str | None = None) -> None:
+        """Fail this caller's own orphaned runs before starting a new one.
+
+        There is no scheduled function in this codebase to sweep the
+        agent_jobs table, so the cheapest correct fix is opportunistic: every
+        dispatch already resolves the caller's user_id, and the job_queue
+        index (owner_id, status, source_updated_at) turns this into a single
+        indexed read rather than a table scan. A row stuck at status="running"
+        long after its last write was killed by the function timeout (see
+        STALE_RUNNING_AFTER_S above), not slow, so it is marked failed here
+        instead of staying "running" until the browser's own 25 minute poll
+        ceiling finally gives up on it.
+
+        Best-effort like update_job_progress: reaping must never block or fail
+        the run that triggered it.
+        """
+        try:
+            rows = self.tables.list_rows(
+                self.database_id,
+                self.jobs_table,
+                [
+                    Query.equal("owner_id", self.user_id),
+                    Query.equal("status", "running"),
+                    Query.limit(20),
+                ],
+                total=False,
+            ).rows
+        except Exception:  # noqa: BLE001 - reaping is advisory, never fatal
+            return
+        now = datetime.now(UTC)
+        for row in rows:
+            try:
+                row_id = str(_field(row, "$id"))
+                if row_id == skip_job_id:
+                    continue
+                updated_at = datetime.fromisoformat(str(_field(row, "source_updated_at")))
+                if now - updated_at < timedelta(seconds=STALE_RUNNING_AFTER_S):
+                    continue
+                self.update_job(
+                    row_id,
+                    status="failed",
+                    error=(
+                        "This run stopped responding and was marked failed "
+                        "after 15 minutes with no progress."
+                    ),
+                )
+            except Exception:  # noqa: BLE001 - one bad row must not stop the rest
+                continue
 
     def master_resume(self) -> Any | None:
         """The caller's master resume row, or None if they have not set one.
@@ -1320,6 +1378,10 @@ async def main(context: Any) -> Any:
             )
         job_id = str(job_id)
         workspace.resolve_user_id(job_id)
+        # Opportunistic cleanup ahead of the real work below: see
+        # reap_stale_running_jobs for why an orphaned row cannot just wait for
+        # a scheduled sweep, because this codebase has none.
+        workspace.reap_stale_running_jobs(skip_job_id=job_id)
         workspace.update_job(job_id, status="running")
         try:
             result = await _dispatch(
