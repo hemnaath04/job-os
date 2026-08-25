@@ -42,6 +42,14 @@ import {
   type AgentJob,
 } from "./appwrite/workspace";
 import { withTimeout } from "./async";
+// ApiError and the JSON-detail parsing it relies on live in api-error.ts, a
+// leaf module with no imports of its own: everything else in this file is
+// resolved by the bundler with extensionless specifiers, which Node's native
+// ESM loader (used by `pnpm test`'s `node --test`) cannot follow, so this
+// file cannot be loaded directly in a test. api-error.ts can, and that is
+// where its test lives.
+import { ApiError, detailFromErrorBody } from "./api-error";
+export { ApiError };
 
 /** Body accepted by the /api/discover route handler. */
 export type DiscoverNoKeyRequest = {
@@ -142,20 +150,6 @@ export type ProfileFactCreate = {
 
 const BASE = "/api/backend";
 
-/** What a non-JSON error response almost always means, in a sentence a
- * person can act on rather than the HTML page that said it. */
-function friendlyStatusText(status: number): string {
-  switch (status) {
-    case 502:
-    case 504:
-      return "The server is temporarily unreachable. Try again in a moment.";
-    case 503:
-      return "The service is temporarily unavailable, possibly restarting after a deploy. Try again shortly.";
-    default:
-      return "Something went wrong on the server. Try again in a moment.";
-  }
-}
-
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
     ...init,
@@ -174,19 +168,7 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     // non-JSON error page (an upstream's own platform error page, for example)
     // used to trigger here.
     const text = await res.text();
-    let detail: unknown = text;
-    try {
-      detail = JSON.parse(text);
-    } catch {
-      // Not JSON: a platform's own error page (Heroku's "Application Error"
-      // HTML for a crashed/asleep dyno, a CDN's 502/503/504 page), not
-      // anything the app returned. Every caller reads Error.message as the
-      // whole story, several by showing it verbatim, so this is the one
-      // place that has to turn "the server sent markup" into a sentence
-      // instead of dumping raw HTML into the UI.
-      throw new Error(`${res.status}: ${friendlyStatusText(res.status)}`);
-    }
-    throw new Error(`${res.status}: ${JSON.stringify(detail)}`);
+    throw new ApiError(res.status, detailFromErrorBody(res.status, text));
   }
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -904,7 +886,7 @@ const legacyApi = {
         `/interview-prep/latest?application_id=${encodeURIComponent(applicationId)}`,
       );
     } catch (error) {
-      if (error instanceof Error && error.message.startsWith("404:")) return null;
+      if (error instanceof ApiError && error.status === 404) return null;
       throw error;
     }
   },
