@@ -85,6 +85,20 @@ export interface Job {
   } | null;
 }
 
+/**
+ * The answer to pasting a description onto a job that already existed.
+ *
+ * `filled` and `parse_used` come back from the server rather than being
+ * inferred here, so the interface can report what the paste actually earned.
+ * A paste that parsed to nothing still saves the description, and that comes
+ * back as `filled: []` with `parse_used: false` rather than as a failure.
+ */
+export interface JobEnrichResult {
+  job: Job;
+  filled: string[];
+  parse_used: boolean;
+}
+
 export interface FactBullet {
   id: string;
   text: string;

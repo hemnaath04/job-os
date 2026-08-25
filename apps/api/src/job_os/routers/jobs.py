@@ -11,7 +11,14 @@ from sqlalchemy.orm import joinedload
 from job_os.auth import get_current_user
 from job_os.db.models import Job, User
 from job_os.db.session import get_session
-from job_os.schemas.jobs import JobCreateManual, JobFromText, JobFromUrl, JobRead
+from job_os.schemas.jobs import (
+    JobCreateManual,
+    JobDescriptionPaste,
+    JobEnrichResult,
+    JobFromText,
+    JobFromUrl,
+    JobRead,
+)
 from job_os.services.companies import upsert_company
 
 log = structlog.get_logger(__name__)
@@ -49,6 +56,13 @@ router = APIRouter(prefix="/jobs")
 # for tailoring and review, is a different system on a different database),
 # so that is real, separate follow-up work, not this fix.
 _FROM_URL_DEADLINE_SECONDS = 27.0
+
+# A parse is one model call with its own 30s client timeout and a retry, so its
+# own worst case can outlive Heroku's hard 30s router ceiling the same way the
+# fetch-and-parse path can. This budget keeps the request inside that ceiling.
+# It is spent on the parse alone, since a paste skips the fetch entirely, which
+# is most of why this route is the fast way to fix a thin job.
+_PARSE_BUDGET_SECONDS = 22.0
 
 
 async def _load_job(session: AsyncSession, job_id: UUID) -> Job | None:
@@ -273,3 +287,61 @@ async def create_from_text(
     await session.flush()
     await session.refresh(job, attribute_names=["company"])
     return job
+
+
+@router.post("/{job_id}/description", response_model=JobEnrichResult)
+async def add_description(
+    job_id: UUID,
+    payload: JobDescriptionPaste,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> JobEnrichResult:
+    """Fill in a thin job from its description, in place.
+
+    A URL import can land with no location, no work type, no salary and an
+    empty parse, which is also why its match score honestly reports itself as
+    unavailable. This gives the parser the text it never got and backfills
+    what it finds, on the SAME job: the person is already tracking it, so
+    creating a second row would split its application, its documents and its
+    history away from the row they belong to.
+    """
+    from job_os.services.jd_parse import parse_jd
+    from job_os.services.job_backfill import apply_enrichment, plan_enrichment
+
+    jd_text = payload.jd_text.strip()
+    if not jd_text:
+        raise HTTPException(422, "Paste the job description first.")
+
+    job = await _load_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+
+    # A parse that times out or fails is not a reason to lose the paste. The
+    # description is the durable part and is worth storing on its own: it is
+    # what the tailor reads, and what a later attempt would re-parse. So this
+    # degrades to "saved, learned nothing" and says so, rather than 500ing and
+    # throwing away text the person typed.
+    parsed: dict[str, Any] = {}
+    try:
+        parsed = await asyncio.wait_for(parse_jd(jd_text), timeout=_PARSE_BUDGET_SECONDS)
+    except TimeoutError:
+        log.warning("jobs.description.parse_timeout", job_id=str(job_id))
+    except Exception as e:
+        log.warning("jobs.description.parse_failed", job_id=str(job_id), error=str(e))
+
+    plan = plan_enrichment(job, parsed, jd_text)
+    apply_enrichment(job, plan)
+    await session.flush()
+    await session.refresh(job, attribute_names=["company"])
+
+    log.info(
+        "jobs.description.enriched",
+        job_id=str(job_id),
+        filled=plan.filled,
+        parse_used=plan.parse_replaced,
+    )
+    return JobEnrichResult(
+        job=JobRead.model_validate(job),
+        filled=plan.filled,
+        parse_used=plan.parse_replaced,
+    )

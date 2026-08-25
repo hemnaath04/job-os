@@ -65,6 +65,26 @@ class JobFromText(ORMModel):
     company_hint: str | None = None
 
 
+class JobDescriptionPaste(ORMModel):
+    """A job description pasted by hand onto a job that already exists."""
+
+    jd_text: str = Field(min_length=1)
+
+
+class JobEnrichResult(ORMModel):
+    """The enriched job, plus what the paste actually earned.
+
+    `filled` and `parse_used` are reported rather than left for the caller to
+    diff, so the interface can say what it did instead of implying more than
+    happened. A paste that parsed to nothing still saves the description, and
+    this is how that comes back as the honest answer it is.
+    """
+
+    job: JobRead
+    filled: list[str] = Field(default_factory=list)
+    parse_used: bool = False
+
+
 class JobMatch(ORMModel):
     job_id: UUID
     score: float = Field(ge=0, le=100)
