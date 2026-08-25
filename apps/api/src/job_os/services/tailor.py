@@ -228,6 +228,13 @@ HARD CONSTRAINTS — these are non-negotiable:
    experience, skills, publications and awards are always rendered, so listing
    their ids changes nothing and only costs you output length. Order doesn't
    matter (Python sorts by date / section).
+   For projects specifically, a PROJECT RELEVANCE ranking appears below,
+   computed from the same requirements the Job Match number is built from, not
+   from a guess. Select the highest-scoring projects the page has room for. A
+   more recent date, a longer bullet list, or a more finished feel is not a
+   reason to feature a lower-scoring project ahead of a higher-scoring one;
+   only a genuine weakness in the higher-scoring project's own verified
+   evidence is.
    On certifications, be selective. A certificate earns its line when it is
    evidence for THIS role; a generic or dated course certificate does not, and the
    space is worth more as another project bullet. Leaving all of them out is a
@@ -419,8 +426,12 @@ thin, say gap.
 
 Two more decisions the writer should not have to rediscover:
 - `shortlist_fact_ids`: the 3 or 4 project facts, plus any certification that is
-  real evidence for THIS job, strongest first. The page holds that many, a
-  half-empty page reads as a thin candidate, and a flagship project left off is a
+  real evidence for THIS job, strongest first. A PROJECT RELEVANCE ranking is
+  included below, computed by Python from the same requirements you are
+  classifying gaps against: start from that ranking rather than your own read
+  of the raw facts list, and only reorder it when a project's own bullets prove
+  a stronger fit than its score shows. The page holds that many, a half-empty
+  page reads as a thin candidate, and a flagship project left off is a
   worse mistake than a keyword left uncovered.
 - `positioning`: one sentence on how to frame this candidate for this role, in
   terms of what he has actually built. No employer adjectives.
@@ -755,6 +766,11 @@ async def run_tailor(
     coverage = _requirement_coverage(
         requirements, _evidence_items(facts, bullets_by_fact)
     )
+    # Same idea as the requirement coverage above, applied to the one decision
+    # that had no Python signal behind it at all: which of the optional project
+    # facts is actually worth the page. See `_ProjectScore` for the bug this closes.
+    project_scores = _project_relevance(facts, bullets_by_fact, requirements)
+    project_briefing = _project_relevance_briefing(project_scores)
     must_have = [req for req in requirements if not req.preferred]
     backed = [req for req in must_have if coverage[req.label].found]
     report(
@@ -815,6 +831,7 @@ async def run_tailor(
             facts_payload=facts_payload,
             unresolved=unresolved,
             valid_bullet_ids=set(bullets_by_id),
+            project_briefing=project_briefing,
         )
         report(
             "find_gaps",
@@ -835,16 +852,24 @@ async def run_tailor(
     # requirement is out of reach, and only proof is worth ending a run on.
     analysis_settled = not unresolved or bool(analysis.covered or analysis.gaps)
 
+    briefing = _requirement_briefing(
+        requirements,
+        coverage,
+        status=_status_briefing(facts, bullets_by_fact),
+    )
+    if project_briefing:
+        # Appended rather than folded into `_requirement_briefing` itself: that
+        # function is the ATS rubric specifically, and the project ranking is a
+        # different, JD-relevance question the writer needs answered before it
+        # ever gets to `selected_fact_ids`.
+        briefing = f"{briefing}\n\n{project_briefing}"
+
     user_prompt = _build_user_prompt(
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
-        briefing=_requirement_briefing(
-            requirements,
-            coverage,
-            status=_status_briefing(facts, bullets_by_fact),
-        ),
+        briefing=briefing,
         plan=_analysis_block(
             analysis, bullets_by_id=bullets_by_id, facts_by_id=facts_by_id
         ),
@@ -2707,6 +2732,102 @@ def _requirement_coverage(
     return coverage
 
 
+@dataclass(frozen=True)
+class _ProjectScore:
+    """One project fact's overlap with this JD, in the same units the ATS score uses.
+
+    Before this existed, `shortlist_fact_ids` (the analyst) and `selected_fact_ids`
+    (the writer) were the only two decisions in the whole pipeline with no Python
+    signal behind them at all: both prompts said "strongest first" and left the
+    model to read the raw facts list and judge it fresh every run. That is how a
+    hackathon 3D-map demo and a health-audio side project kept beating an agentic
+    LLM tailoring pipeline and an LLM claims-review tool onto an AI-engineer resume:
+    nothing ever measured which one actually named the technologies and domains this
+    JD asked for, so a run that read the weaker project's bullets first, or judged
+    "polish" over fit, had nothing to correct it. Reusing `_jd_requirements`'s output
+    rather than inventing a second keyword list means "relevant" here means the same
+    thing it means in the Job Match number the user already sees.
+    """
+
+    fact_id: str
+    title: str
+    score: int
+    matched: tuple[str, ...]
+
+
+def _project_relevance(
+    facts: list[TailorFact],
+    bullets_by_fact: dict[str, list[TailorBullet]],
+    requirements: list[_Requirement],
+) -> list[_ProjectScore]:
+    """Rank every project fact by how many JD requirements its own text names.
+
+    Scored from the project's title, its whole payload (description, keywords,
+    roles, entity, type -- whatever the fact carries) and every one of its
+    bullets, so a project whose relevance lives in its bullets rather than its
+    one-line title still scores. Ties keep the fact's title alphabetically, so
+    the ranking is stable across runs of the same profile against the same JD
+    rather than depending on incidental dict/list order.
+    """
+    scored: list[_ProjectScore] = []
+    for f in facts:
+        if f.kind != "project":
+            continue
+        payload = f.payload or {}
+        haystack = " ".join(
+            [
+                f.title or "",
+                json.dumps(payload, ensure_ascii=False),
+                *(b.text for b in bullets_by_fact.get(f.id, [])),
+            ]
+        ).casefold()
+        matched = tuple(
+            sorted(
+                {
+                    req.label
+                    for req in requirements
+                    if any(_mentions(haystack, alt) for alt in req.alternatives)
+                }
+            )
+        )
+        scored.append(
+            _ProjectScore(fact_id=f.id, title=f.title, score=len(matched), matched=matched)
+        )
+    scored.sort(key=lambda p: (-p.score, p.title.casefold()))
+    return scored
+
+
+def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
+    """The project ranking Python already computed, so "strongest first" in the
+    prompts means a measured ranking rather than whatever the model notices first.
+
+    Silent below two projects: ranking a field of one settles nothing and reads as
+    noise the model has to parse for free.
+    """
+    if len(scored) < 2:
+        return ""
+    lines = [
+        "PROJECT RELEVANCE TO THIS JD, SCORED BY OVERLAP WITH THE SAME "
+        "REQUIREMENTS THE JOB MATCH NUMBER ABOVE IS BUILT FROM. Python measured "
+        "this against every project fact's title, payload and bullets; it is not "
+        "the model's impression of which project is more polished or more recent:",
+    ]
+    for rank, item in enumerate(scored, start=1):
+        detail = f": {', '.join(item.matched)}" if item.matched else " (no overlap found)"
+        matches = _plural(item.score, "requirement match")
+        lines.append(f"  {rank}. {item.title} -- {matches}{detail}")
+    lines += [
+        "",
+        "Prefer the highest-scoring projects for shortlist_fact_ids and "
+        "selected_fact_ids. The page holds 3 to 4 projects: when this many score "
+        "above zero, use that many rather than settling for fewer. A more recent "
+        "date, a fuller bullet list, or a more finished feel is not a reason to "
+        "feature a lower-scoring project ahead of a higher-scoring one; only a "
+        "real weakness in the higher-scoring project's own verified evidence is.",
+    ]
+    return "\n".join(lines)
+
+
 def _requirement_briefing(
     requirements: list[_Requirement],
     coverage: dict[str, _Coverage],
@@ -2911,6 +3032,7 @@ async def _analyse_requirements(
     facts_payload: list[dict[str, Any]],
     unresolved: list[_Requirement],
     valid_bullet_ids: set[str],
+    project_briefing: str = "",
 ) -> TailorAnalysis:
     """Read the job against the evidence once, before anything is written.
 
@@ -2925,6 +3047,7 @@ async def _analyse_requirements(
         f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
         f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        f"{project_briefing}\n\n"
         "REQUIREMENTS WHOSE OWN WORDS APPEAR NOWHERE IN THAT PROFILE:\n"
         f"{json.dumps([req.label for req in unresolved], indent=2)}\n\n"
         "Respond with a single JSON object matching this schema (no prose, no "

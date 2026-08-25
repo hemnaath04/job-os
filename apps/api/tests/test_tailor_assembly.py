@@ -51,6 +51,32 @@ def test_an_ongoing_project_outranks_a_finished_one() -> None:
     ]
 
 
+def test_python_never_caps_how_many_selected_projects_render() -> None:
+    """Ruling out a page-length cap as the cause of the thin-projects bug.
+
+    The prompts ask the writer for 3 to 4 projects and Python caps BULLETS per
+    project (`MAX_PROJECT_BULLETS`), but there is no corresponding cap on how
+    many project ENTRIES render: `_facts_of("project", only_selected=True)`
+    renders every fact the writer selected. If a run's page was thin on
+    projects, the fix belongs in which facts get selected, not here.
+    """
+    facts = [
+        _project("a", "job.os", date(2026, 1, 1), None),
+        _project("b", "ClaimFarm", date(2025, 6, 1), date(2025, 7, 1)),
+        _project("c", "RoleReveal", date(2025, 3, 1), date(2025, 4, 1)),
+        _project("d", "BedRocked", date(2026, 6, 1), date(2026, 6, 14)),
+    ]
+    document, _ = _assemble_json_resume(
+        master_json_resume={"basics": {}},
+        all_facts=facts,
+        selected_facts=facts,
+        selected_bullets=[],
+        bullets_by_fact={},
+        summary_objective=None,
+    )
+    assert len(document["projects"]) == 4
+
+
 def test_skill_categories_spelled_two_ways_become_one_row() -> None:
     groups = _consolidate_skills(
         {

@@ -28,6 +28,8 @@ from job_os.services.tailor import (
     _analysis_block,
     _evidence_items,
     _jd_requirements,
+    _project_relevance,
+    _project_relevance_briefing,
     _reachable_missing,
     _requirement_briefing,
     _requirement_coverage,
@@ -60,6 +62,219 @@ def _coverage() -> dict[str, Any]:
     facts, bullets = _profile()
     requirements, _prose, _excluded = _jd_requirements(JD)
     return _requirement_coverage(requirements, _evidence_items(facts, bullets))
+
+
+# A stand-in for the bug reported against production: an AI-engineer JD kept
+# surfacing "BedRocked" (a hackathon 3D map) and "Infant Cry" (a health-audio
+# side project) while dropping "job.os" (this very tailoring pipeline),
+# "ClaimFarm" (an LLM claims-review agent) and "RoleReveal" (an LLM job-fit
+# agent), the three projects that actually name this JD's own stack. Before
+# `_project_relevance` existed, nothing in the pipeline measured that
+# difference: both prompts said "strongest first" and left it to the model's
+# own read of the raw facts list.
+_AI_ENGINEER_JD = {
+    "required_skills": ["Python", "FastAPI", "Anthropic", "Postgres"],
+    "preferred_skills": ["retrieval"],
+    "technologies": ["Claude"],
+    "keywords": ["agent"],
+}
+
+
+def _project_facts() -> tuple[list[TailorFact], dict[str, list[TailorBullet]]]:
+    facts = [
+        TailorFact(id="jobos", kind="project", title="job.os"),
+        TailorFact(id="rolereveal", kind="project", title="RoleReveal"),
+        TailorFact(id="claimfarm", kind="project", title="ClaimFarm"),
+        TailorFact(id="bedrocked", kind="project", title="BedRocked"),
+        TailorFact(id="infantcry", kind="project", title="Infant Cry"),
+    ]
+    bullets = {
+        "jobos": [
+            TailorBullet(
+                id="b-jobos",
+                fact_id="jobos",
+                text=(
+                    "Built a FastAPI service using Claude and Anthropic APIs with "
+                    "an agent pipeline over Postgres, adding retrieval to tailor "
+                    "resumes."
+                ),
+            )
+        ],
+        "rolereveal": [
+            TailorBullet(
+                id="b-rolereveal",
+                fact_id="rolereveal",
+                text=(
+                    "Built a Chrome extension scoring job postings with an agent "
+                    "that calls Anthropic Claude."
+                ),
+            )
+        ],
+        "claimfarm": [
+            TailorBullet(
+                id="b-claimfarm",
+                fact_id="claimfarm",
+                text=(
+                    "Built an LLM claims-review agent with retrieval over a "
+                    "vector store."
+                ),
+            )
+        ],
+        "bedrocked": [
+            TailorBullet(
+                id="b-bedrocked",
+                fact_id="bedrocked",
+                text=(
+                    "Built a 3D hackathon demo mapping sewer infrastructure with "
+                    "React and MapLibre."
+                ),
+            )
+        ],
+        "infantcry": [
+            TailorBullet(
+                id="b-infantcry",
+                fact_id="infantcry",
+                text=(
+                    "Built a health audio classifier for infant cry detection "
+                    "using PyTorch."
+                ),
+            )
+        ],
+    }
+    return facts, bullets
+
+
+def test_project_relevance_ranks_by_jd_overlap_not_by_title_or_bullet_order() -> None:
+    """The exact bug: nothing used to measure this, so nothing corrected it.
+
+    job.os, RoleReveal and ClaimFarm all name this JD's stack in their own
+    bullets; BedRocked and Infant Cry name none of it. A ranking that is not
+    computed from JD overlap has no reason to put the first three ahead of the
+    last two, and that is exactly what kept happening in production.
+    """
+    facts, bullets = _project_facts()
+    requirements, _prose, _excluded = _jd_requirements(_AI_ENGINEER_JD)
+    scored = _project_relevance(facts, bullets, requirements)
+
+    by_title = {item.title: item.score for item in scored}
+    assert by_title["job.os"] == 6
+    assert by_title["RoleReveal"] == 3
+    assert by_title["ClaimFarm"] == 2
+    assert by_title["BedRocked"] == 0
+    assert by_title["Infant Cry"] == 0
+
+    # Every JD-relevant project outranks every irrelevant one.
+    relevant = {"job.os", "RoleReveal", "ClaimFarm"}
+    irrelevant = {"BedRocked", "Infant Cry"}
+    assert min(by_title[t] for t in relevant) > max(by_title[t] for t in irrelevant)
+
+    # Strongest first, ties broken by title so the order is reproducible.
+    assert [item.title for item in scored] == [
+        "job.os",
+        "RoleReveal",
+        "ClaimFarm",
+        "BedRocked",
+        "Infant Cry",
+    ]
+
+
+def test_project_relevance_briefing_tells_the_model_to_prefer_the_top_scores() -> None:
+    facts, bullets = _project_facts()
+    requirements, _prose, _excluded = _jd_requirements(_AI_ENGINEER_JD)
+    scored = _project_relevance(facts, bullets, requirements)
+    briefing = _project_relevance_briefing(scored)
+
+    assert "PROJECT RELEVANCE" in briefing
+    # The ranking is spelled out in order, not left for the model to re-derive.
+    jobos_line = briefing.index("job.os")
+    rolereveal_line = briefing.index("RoleReveal")
+    claimfarm_line = briefing.index("ClaimFarm")
+    bedrocked_line = briefing.index("BedRocked")
+    infantcry_line = briefing.index("Infant Cry")
+    assert jobos_line < rolereveal_line < claimfarm_line < bedrocked_line
+    assert bedrocked_line < infantcry_line
+    assert "Prefer the highest-scoring projects" in briefing
+    assert "3 to 4 projects" in briefing
+    assert "settling for fewer" in briefing
+
+
+def test_project_relevance_briefing_is_silent_below_two_projects() -> None:
+    """Ranking a field of zero or one settles nothing, so say nothing."""
+    facts, bullets = _project_facts()
+    requirements, _prose, _excluded = _jd_requirements(_AI_ENGINEER_JD)
+    one_fact = [f for f in facts if f.title == "job.os"]
+    scored = _project_relevance(one_fact, bullets, requirements)
+    assert _project_relevance_briefing(scored) == ""
+
+
+@pytest.mark.asyncio
+async def test_the_compose_prompt_actually_carries_the_project_ranking(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End to end: the writer's own first message, not just the helper function.
+
+    Pinning this at `run_tailor` is what proves the ranking is wired into the
+    real pipeline and not just a helper nobody calls.
+    """
+    facts, bullets = _project_facts()
+    written = {
+        "selected_fact_ids": ["jobos", "rolereveal", "claimfarm"],
+        "selected_bullets": [
+            {
+                "fact_bullet_id": "b-jobos",
+                "rewritten_text": bullets["jobos"][0].text,
+                "target_section": "projects",
+            }
+        ],
+        "agent_note": "picked the three that match the JD",
+    }
+    calls: list[dict[str, Any]] = []
+
+    class FakeMessages(StreamingFakeMessages):
+        async def create(self, **kwargs: Any) -> Any:
+            calls.append(kwargs)
+            payload = {} if "analyst step" in kwargs["system"] else written
+            return SimpleNamespace(
+                content=[SimpleNamespace(type="text", text=json.dumps(payload))]
+            )
+
+    class FakeAnthropic:
+        def __init__(self, **_kwargs: Any) -> None:
+            self.messages = FakeMessages()
+
+    monkeypatch.setattr(
+        tailor,
+        "get_settings",
+        lambda: SimpleNamespace(
+            anthropic_api_key="test",
+            anthropic_base_url="https://example.invalid",
+            anthropic_model_tailor="manifest/auto",
+            manifest_tier_sonnet="job-os-sonnet",
+        ),
+    )
+    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc: {})
+
+    document, _prov, _gaps, _score, _report, _note = await tailor.run_tailor(
+        facts=facts,
+        bullets_by_fact=bullets,
+        master_json_resume={"basics": {"name": "A Candidate"}},
+        jd_parsed=_AI_ENGINEER_JD,
+        jd_clean="Python, FastAPI, Anthropic, Postgres, Claude, agents, retrieval",
+    )
+
+    compose_calls = [c for c in calls if "analyst step" not in c["system"]]
+    assert compose_calls, "the writer never ran"
+    first_message = compose_calls[0]["messages"][0]["content"]
+    assert "PROJECT RELEVANCE" in first_message
+    assert first_message.index("job.os") < first_message.index("BedRocked")
+    assert first_message.index("RoleReveal") < first_message.index("Infant Cry")
+
+    # And the page actually filled with the projects the model, guided by that
+    # ranking, chose: more than one, all of them JD-relevant.
+    project_names = [p["name"] for p in document["projects"]]
+    assert len(project_names) >= 2
+    assert set(project_names) == {"job.os", "RoleReveal", "ClaimFarm"}
 
 
 def test_a_skill_the_page_always_prints_is_already_met() -> None:
