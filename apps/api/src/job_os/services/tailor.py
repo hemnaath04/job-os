@@ -63,6 +63,7 @@ from job_os.services.llm_json import (
     response_text,
 )
 from job_os.services.resume_writing import (
+    MAX_PAGE_LINES,
     MAX_PROJECT_BULLETS,
     MAX_SKILL_GROUPS,
     MAX_WORK_BULLETS,
@@ -70,6 +71,7 @@ from job_os.services.resume_writing import (
     dedupe_bullets,
     document_quality_flags,
     drops_team_credit,
+    estimated_page_lines,
     normalize_dashes,
     records_provisional_status,
     upgrades_status,
@@ -1034,7 +1036,7 @@ async def run_tailor(
         # trivially gamed by claiming more matches, and the loop duly learned to
         # paste JD phrases onto unrelated bullets to raise a number nobody
         # outside the loop ever saw.
-        document, _provenance, summary_rejection, _subs = _build_document(
+        document, _provenance, summary_rejection, _subs, _cuts = _build_document(
             attempt,
             facts=facts,
             bullets_by_fact=bullets_by_fact,
@@ -1190,7 +1192,7 @@ async def run_tailor(
 
     report("assemble", "Assembling the page", None, 0.90)
 
-    json_resume, provenance, _summary_rejection, selection_corrections = _build_document(
+    json_resume, provenance, _summary_rejection, selection_corrections, page_cuts = _build_document(
         agent,
         facts=facts,
         bullets_by_fact=bullets_by_fact,
@@ -1239,7 +1241,11 @@ async def run_tailor(
     # `ats_report["iterations"]` above, sent structurally rather than as
     # prose. A note that restated them was the same number appearing a
     # third and fourth time on one screen.
-    note = agent.agent_note + _selection_correction_note(selection_corrections)
+    note = (
+        agent.agent_note
+        + _selection_correction_note(selection_corrections)
+        + _page_cut_note(page_cuts)
+    )
     passes = len(iteration_scores)
     ats_score, incomplete_reason = _finalize_ats_score(ats_score, ats_report, jd_parsed)
     if incomplete_reason == "unavailable_parse_incomplete":
@@ -1295,7 +1301,9 @@ def _build_document(
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
     project_scores: list[_ProjectScore] | None = None,
-) -> tuple[dict[str, Any], list[ProvenanceEntry], str | None, list[tuple[str, str]]]:
+) -> tuple[
+    dict[str, Any], list[ProvenanceEntry], str | None, list[tuple[str, str]], list[str]
+]:
     """Turn one agent pass into the resume it would actually ship.
 
     Returns the document, its provenance, and the reason the tailored summary was
@@ -1359,16 +1367,52 @@ def _build_document(
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
     )
-    json_resume, provenance = _assemble_json_resume(
-        master_json_resume=master_json_resume,
-        all_facts=facts,
-        selected_facts=selected_facts,
-        selected_bullets=safe_bullets,
-        bullets_by_fact=bullets_by_fact,
-        summary_objective=summary_objective,
-        skills_dedup_drop=agent.skills_dedup_drop,
-    )
-    return json_resume, provenance, summary_rejection, substitutions
+    def assemble(
+        chosen: list[TailorFact], bullets: list[SelectedBullet]
+    ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
+        return _assemble_json_resume(
+            master_json_resume=master_json_resume,
+            all_facts=facts,
+            selected_facts=chosen,
+            selected_bullets=bullets,
+            bullets_by_fact=bullets_by_fact,
+            summary_objective=summary_objective,
+            skills_dedup_drop=agent.skills_dedup_drop,
+        )
+
+    json_resume, provenance = assemble(selected_facts, safe_bullets)
+
+    # A page that spills has to lose something, and `over_page` was only ever a
+    # flag in the prompt, so the response to a two-page draft was to ask the
+    # writer to fix it. That leaves the editorial decision unmade: the cheapest
+    # way to satisfy "make it fit" is to shorten everything, which prints four
+    # projects in six words each rather than the best three at readable length.
+    #
+    # Cutting is the decision, and the ranking already knows which one to cut.
+    # Done by removing the fact and reassembling rather than by trimming the
+    # finished document, so the provenance keeps describing the page that ships.
+    page_cuts: list[str] = []
+    if project_scores:
+        for weakest in _weakest_project_first(selected_facts, project_scores):
+            if estimated_page_lines(json_resume) <= MAX_PAGE_LINES:
+                break
+            remaining = [f for f in selected_facts if f.kind == "project"]
+            if len(remaining) <= MIN_PROJECTS_ON_PAGE:
+                # Below this the resume stops making a case, so a document still
+                # over length here stays over length rather than being emptied.
+                log.info("tailor.page_still_over_at_floor", projects=len(remaining))
+                break
+            selected_facts = [f for f in selected_facts if f.id != weakest.id]
+            safe_bullets = [
+                sb
+                for sb in safe_bullets
+                if bullets_by_id[sb.fact_bullet_id].fact_id != weakest.id
+            ]
+            json_resume, provenance = assemble(selected_facts, safe_bullets)
+            page_cuts.append(weakest.title)
+            log.info("tailor.project_cut_for_space", project=weakest.title)
+
+    return json_resume, provenance, summary_rejection, substitutions, page_cuts
 
 
 # What one flagged writing problem costs against keyword coverage. Three points
@@ -2900,6 +2944,40 @@ def _effective_target(achievable: Decimal) -> Decimal:
     is the half that was missing.
     """
     return min(TARGET_ATS_SCORE, (achievable * ACHIEVABLE_TARGET_SHARE).quantize(Decimal("0.1")))
+
+
+# A page that spills has to lose something, and there has to be a floor on how
+# much. Below this the resume stops making a case at all, so a document still
+# over length here is left over length rather than emptied to fit.
+MIN_PROJECTS_ON_PAGE = 2
+
+
+def _weakest_project_first(
+    selected: list[TailorFact],
+    scored: list[_ProjectScore],
+) -> list[TailorFact]:
+    """Selected project facts, weakest match for this posting first.
+
+    Anything the ranker never scored sorts below anything it did: a project with
+    no measured overlap earned its slot least. Ties break on title so the same
+    profile against the same posting cuts the same thing every run.
+    """
+    rank = {p.fact_id: p.score for p in scored}
+    projects = [f for f in selected if f.kind == "project"]
+    return sorted(projects, key=lambda f: (rank.get(f.id, -1), f.title.casefold()))
+
+
+def _page_cut_note(cut: list[str]) -> str:
+    """Say what came off the page, for the same reason a corrected selection does.
+
+    A project that silently disappears reads as the tailor having ignored it. It
+    was measured, it was the weakest against this posting, and it did not fit.
+    """
+    if not cut:
+        return ""
+    return (
+        f"\n(Cut for space, weakest match for this posting first: {', '.join(cut)}.)"
+    )
 
 
 def _selection_correction_note(substitutions: list[tuple[str, str]]) -> str:
