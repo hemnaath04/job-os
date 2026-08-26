@@ -23,6 +23,13 @@ import { toast } from "sonner";
 import { AddFactDialog } from "@/components/add-fact-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import {
+  BULLET_MAX_WORDS,
+  countWords,
+  vaultQuality,
+  vaultQualitySummary,
+  type BulletIssue,
+} from "@/lib/bullet-quality";
 import { reportFailure } from "@/lib/errors";
 import type { FactBullet, ProfileFact } from "@/lib/types";
 
@@ -69,6 +76,13 @@ export default function ProfilePage() {
     queryFn: () => api.listArchivedFacts(),
     enabled: showArchived,
   });
+
+  // What a tailored resume will inherit from this vault. Measured here because
+  // the tailor already measures it, reports it, and until now was the only one
+  // who ever saw it: the same four bullets came back flagged on every posting
+  // and nothing ever told the one person who could shorten them.
+  const quality = vaultQuality(facts);
+  const qualityNote = vaultQualitySummary(quality);
 
   const grouped = facts.reduce<Record<string, ProfileFact[]>>((acc, f) => {
     (acc[f.kind] ??= []).push(f);
@@ -128,6 +142,15 @@ export default function ProfilePage() {
         <InfoChip tone="clay">{facts.reduce((sum, fact) => sum + fact.bullets.length, 0)} bullets</InfoChip>
       </PageIntro>
 
+      {/* Stated as a fact about the resume rather than as a scolding. A long
+          bullet is often the right one, and the part he could not have known is
+          that tailoring prints it exactly as it stands. */}
+      {qualityNote && (
+        <p className="mt-4 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-2 text-xs leading-relaxed text-[color:var(--color-text-muted)]">
+          {qualityNote}
+        </p>
+      )}
+
       {isLoading && (
         <div className="loading-surface mt-6" />
       )}
@@ -140,6 +163,7 @@ export default function ProfilePage() {
             key={kind}
             kind={kind}
             items={grouped[kind] ?? []}
+            issues={quality.byBullet}
             onToggleVerified={handleToggleVerified}
             onDeleted={() => refetch()}
           />
@@ -218,11 +242,13 @@ function ArchivedFactRow({
 function Section({
   kind,
   items,
+  issues,
   onToggleVerified,
   onDeleted,
 }: {
   kind: ProfileFact["kind"];
   items: ProfileFact[];
+  issues: Map<string, BulletIssue[]>;
   onToggleVerified: (fact: ProfileFact) => void;
   onDeleted: () => void;
 }) {
@@ -247,6 +273,7 @@ function Section({
           <FactCard
             key={f.id}
             fact={f}
+            issues={issues}
             onToggleVerified={onToggleVerified}
             onDeleted={onDeleted}
           />
@@ -303,10 +330,12 @@ function SkillsBlock({ items }: { items: ProfileFact[] }) {
 
 function FactCard({
   fact,
+  issues,
   onToggleVerified,
   onDeleted,
 }: {
   fact: ProfileFact;
+  issues: Map<string, BulletIssue[]>;
   onToggleVerified: (fact: ProfileFact) => void;
   onDeleted: () => void;
 }) {
@@ -521,21 +550,17 @@ function FactCard({
       {fact.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-sm text-[color:var(--color-text)]">
           {fact.bullets.map((b) => (
-            <BulletRow key={b.id} bullet={b} onSaved={onDeleted} />
+            <BulletRow
+              key={b.id}
+              bullet={b}
+              issues={issues.get(b.id) ?? []}
+              onSaved={onDeleted}
+            />
           ))}
         </ul>
       )}
     </div>
   );
-}
-
-// What a bullet is allowed to be before it wraps to a third rendered line and
-// starts crowding out a whole other bullet. Mirrors BULLET_MAX_WORDS in
-// apps/api resume_writing.py, which is where the resume is actually measured.
-const BULLET_MAX_WORDS = 30;
-
-function countWords(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length;
 }
 
 /**
@@ -553,7 +578,15 @@ function countWords(text: string): number {
  * one number that says why a bullet keeps coming back flagged, and it is not
  * useful anywhere the person cannot act on it.
  */
-function BulletRow({ bullet, onSaved }: { bullet: FactBullet; onSaved: () => void }) {
+function BulletRow({
+  bullet,
+  issues,
+  onSaved,
+}: {
+  bullet: FactBullet;
+  issues: BulletIssue[];
+  onSaved: () => void;
+}) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(bullet.text);
   const [saving, setSaving] = useState(false);
@@ -593,14 +626,19 @@ function BulletRow({ bullet, onSaved }: { bullet: FactBullet; onSaved: () => voi
           className="-mx-1 rounded px-1 text-left leading-relaxed transition-colors hover:bg-[color:var(--color-surface-2)]"
         >
           {bullet.text}
-          {countWords(bullet.text) > BULLET_MAX_WORDS && (
-            // Only on the ones that are over. A count beside every bullet is
-            // noise; a count beside the four that keep getting flagged is the
-            // whole message.
-            <span className="ml-1.5 whitespace-nowrap text-[10px] text-[color:var(--color-text-dim)]">
-              {countWords(bullet.text)}w
+          {/* Only on the bullets that have something wrong. A note beside every
+              bullet is noise; a note beside the four that keep coming back
+              flagged is the whole message. */}
+          {issues.map((issue) => (
+            <span
+              key={issue.kind}
+              className="ml-1.5 whitespace-nowrap text-[10px] text-[color:var(--color-text-dim)]"
+            >
+              {issue.kind === "too_long"
+                ? `${countWords(bullet.text)}w`
+                : "same opener"}
             </span>
-          )}
+          ))}
         </button>
       </li>
     );
