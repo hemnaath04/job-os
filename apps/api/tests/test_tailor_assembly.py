@@ -209,7 +209,7 @@ def test_a_role_renders_at_most_four_bullets_and_provenance_matches_the_page() -
             for n, text in enumerate(texts)
         ],
     )
-    document, provenance, _, _subs = _build_document(
+    document, provenance, _, _subs, _cuts = _build_document(
         agent,
         facts=[fact],
         bullets_by_fact=bullets,
