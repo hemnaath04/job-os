@@ -80,10 +80,24 @@ change and the browser write the card.
 correct for jobs discovery, the MCP tools, ingest and the scraper, none of which
 the board renders directly.
 
-The two have also drifted apart in both directions. As measured on 2026-08-25,
-there were 40 active cards against 32 active Postgres applications: 14 cards had
-no Postgres row, and 6 Postgres applications had no card. That is a live data
-problem, not a design feature, and it is not resolved.
+The two have drifted apart, but only in one direction, and the direction
+matters. Measured on 2026-08-26: 51 cards, 40 active and 11 archived, against 32
+active Postgres applications. Of those 32, twenty-six have an active card, six
+have an archived card, and **none has no card**. Nothing is missing from the
+board.
+
+The gap is the other way: **fourteen active cards have no Postgres row at all**,
+because they were added through the Appwrite path, which is the supported one.
+That is not lost data, but it does have a consequence worth knowing before
+writing a feature: **anything keyed on a Postgres job id will 404 for those
+cards**, for a job the person can see in front of them. That is what forced
+paste-to-enrich into its stateless-plan shape, where the server decides and the
+browser writes.
+
+An earlier version of this file said six Postgres applications had no card. That
+was wrong: it came from comparing against active cards alone and never checking
+the archived ones. If you are comparing the two stores, compare against active
+**and** archived, and match on application id rather than company name.
 
 ## Deploying
 
