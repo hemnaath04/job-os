@@ -14,6 +14,7 @@ import {
   Plus,
   ShieldCheck,
   Sparkles,
+  Pencil,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -311,6 +312,55 @@ function FactCard({
 }) {
   const subtitle = formatRange(fact.start_date, fact.end_date);
   const [deleting, setDeleting] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [title, setTitle] = useState(fact.title);
+  const [org, setOrg] = useState(fact.org ?? "");
+  const [location, setLocation] = useState(fact.location ?? "");
+  // The technologies a project was built with. Stored on the fact's payload,
+  // which the tailor's relevance scorer already reads, so a project with none
+  // declared scores zero against a job description written in technology
+  // nouns however relevant it actually is. This field is the only way to say
+  // so, and until now there was no way at all.
+  const [tech, setTech] = useState(
+    (((fact.payload?.keywords as string[] | undefined) ?? []).join(", ")),
+  );
+
+  function startEditing() {
+    setTitle(fact.title);
+    setOrg(fact.org ?? "");
+    setLocation(fact.location ?? "");
+    setTech((((fact.payload?.keywords as string[] | undefined) ?? []).join(", ")));
+    setEditing(true);
+  }
+
+  async function handleSave() {
+    if (!title.trim()) {
+      toast.error("A fact needs a title");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateFact(fact.id, {
+        title: title.trim(),
+        org: org.trim() || null,
+        location: location.trim() || null,
+        payload: {
+          keywords: tech
+            .split(",")
+            .map((t) => t.trim())
+            .filter(Boolean),
+        },
+      });
+      toast.success(`Updated "${title.trim()}"`);
+      setEditing(false);
+      onDeleted();
+    } catch (error) {
+      reportFailure("save this fact", error);
+    } finally {
+      setSaving(false);
+    }
+  }
 
   async function handleDelete() {
     if (
@@ -385,6 +435,16 @@ function FactCard({
         </div>
         <button
           type="button"
+          onClick={startEditing}
+          disabled={editing}
+          aria-label={`Edit "${fact.title}"`}
+          title="Edit this fact"
+          className="flex size-8 shrink-0 items-center justify-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] text-[color:var(--color-text-dim)] transition hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)] disabled:opacity-50"
+        >
+          <Pencil className="size-3.5" />
+        </button>
+        <button
+          type="button"
           onClick={handleDelete}
           disabled={deleting}
           aria-label={`Archive "${fact.title}"`}
@@ -394,6 +454,70 @@ function FactCard({
           <Trash2 className="size-3.5" />
         </button>
       </div>
+      {editing && (
+        <div className="mt-3 flex flex-col gap-2 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3">
+          <label className="text-[11px] font-medium text-[color:var(--color-text-dim)]">
+            Title
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              className="field-control mt-1 !min-h-8 !py-1.5 !text-xs"
+            />
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            <label className="text-[11px] font-medium text-[color:var(--color-text-dim)]">
+              Organisation
+              <input
+                value={org}
+                onChange={(e) => setOrg(e.target.value)}
+                className="field-control mt-1 !min-h-8 !py-1.5 !text-xs"
+              />
+            </label>
+            <label className="text-[11px] font-medium text-[color:var(--color-text-dim)]">
+              Location
+              <input
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                className="field-control mt-1 !min-h-8 !py-1.5 !text-xs"
+              />
+            </label>
+          </div>
+          <label className="text-[11px] font-medium text-[color:var(--color-text-dim)]">
+            Technologies, comma separated
+            <input
+              value={tech}
+              onChange={(e) => setTech(e.target.value)}
+              placeholder="Python, FastAPI, LLM Integration, Embeddings"
+              className="field-control mt-1 !min-h-8 !py-1.5 !text-xs"
+            />
+          </label>
+          {/* Said plainly, because it is not obvious that a field on a
+              profile page decides what a tailored resume leads with. */}
+          <p className="text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
+            Tailoring ranks a project by how much of the job description its own
+            text matches. A project with nothing listed here cannot match, however
+            relevant it is.
+          </p>
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={saving}
+              className="rounded-lg border border-[color:var(--color-accent-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-accent-ink)] transition-colors hover:bg-[color:var(--color-accent)]/20 disabled:opacity-50"
+            >
+              {saving ? "Saving..." : "Save"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="rounded-lg border border-[color:var(--color-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
       {fact.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-sm text-[color:var(--color-text)]">
           {fact.bullets.map((b) => (

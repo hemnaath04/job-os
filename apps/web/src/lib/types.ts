@@ -115,6 +115,22 @@ export interface JobEnrichPlan {
   parse_used: boolean;
 }
 
+/**
+ * The parts of a fact a person may correct.
+ *
+ * Not `verified`, which has its own path and its own meaning, and not the
+ * bullets, which are edited where they are written.
+ */
+export interface FactEdit {
+  title?: string;
+  org?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  location?: string | null;
+  source_url?: string | null;
+  payload?: Record<string, unknown>;
+}
+
 export interface FactBullet {
   id: string;
   text: string;
