@@ -57,7 +57,6 @@ async function resolveDownloadFilename(version: ResumeVersion): Promise<string> 
   if (version.source_filename) return version.source_filename;
   const person = version.json_resume?.basics?.name;
   let company: string | undefined;
-  let role: string | undefined;
   try {
     if (version.spawned_from_application_id) {
       const applications = await api.listApplications();
@@ -65,17 +64,15 @@ async function resolveDownloadFilename(version: ResumeVersion): Promise<string> 
         (a) => a.id === version.spawned_from_application_id,
       );
       company = application?.job.company?.name;
-      role = application?.job.title;
     } else if (version.spawned_from_job_id) {
       const job = await api.getJob(version.spawned_from_job_id);
       company = job.company?.name;
-      role = job.title;
     }
   } catch {
     // Best-effort naming only -- an unreachable job/application shouldn't
     // block the download itself.
   }
-  return buildResumeFilename([person, company, role]);
+  return buildResumeFilename({ person, company });
 }
 
 export default function ResumeEditorClient({

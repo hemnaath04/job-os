@@ -89,22 +89,4 @@ export async function pdfObjectUrl(url: string): Promise<string> {
   return URL.createObjectURL(blob);
 }
 
-/**
- * "Firstname Lastname Company Role" (or whatever subset is known), sanitized
- * into a filename. Every distinct resume used to save under the same
- * hardcoded name (or a UUID/date that told a person nothing), so a folder of
- * downloads was indistinguishable from itself -- the actual content of each
- * download was correct, but there was no way to tell which was which once
- * they landed on disk, which is exactly what looked like "downloads the
- * wrong resume."
- */
-export function buildResumeFilename(parts: (string | null | undefined)[]): string {
-  const slug = parts
-    .filter((part): part is string => !!part && part.trim().length > 0)
-    .join(" ")
-    .replace(/[\\/:*?"<>|]/g, "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 120);
-  return `${slug || "resume"}.pdf`;
-}
+export { buildResumeFilename } from "@/lib/resume-filename";
