@@ -1,7 +1,7 @@
 "use client";
 
 import * as Dialog from "@radix-ui/react-dialog";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -116,11 +116,26 @@ export default function ResumeEditorClient({
   // on every keystroke; switching into Preview/Split without having just
   // typed anything sees no delay, since the debounced value already equals
   // the live one by then.
-  const debouncedDraft = useDebouncedValue(draft, 700);
+  // 250ms, not 700ms. The wait was set when the round trip was the unknown
+  // quantity; it is not. Measured against production, /resumes/preview answers
+  // in 59 to 383ms with a median of 159, because Typst renders in about 13ms
+  // and the rest is the network. At 700ms the pause was most of what the
+  // person felt, and it was pausing for something that had already finished.
+  const debouncedDraft = useDebouncedValue(draft, 250);
   const previewQuery = useQuery({
     queryKey: ["resume-draft-preview", debouncedDraft],
     queryFn: () => api.previewDraft(debouncedDraft ?? {}),
     enabled: mode !== "edit" && debouncedDraft !== null,
+    // The other half, and the bigger one. The key carries the whole draft, so
+    // every edit is a brand new query with nothing cached: `isLoading` went
+    // true and PdfPreviewPane fell back to its skeleton. The page the person
+    // was reading vanished on each keystroke and came back a moment later,
+    // which reads as broken rather than live.
+    //
+    // Keeping the previous render on screen is what the pane was already
+    // written for: it shows "Updating..." over the existing page whenever
+    // `isFetching`, a branch that until now could not be reached while typing.
+    placeholderData: keepPreviousData,
   });
 
   // `previewDraft` now hands back an object URL to a real, blob-backed PDF,

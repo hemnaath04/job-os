@@ -169,6 +169,11 @@ denominator honest:
 
 ## Rendering
 
+
+The editor's Split mode renders the real PDF as you type. It is the same
+render the download produces, not an approximation of it, which is why the
+preview cannot promise a look the renderer will not deliver. The previous page
+stays on screen while the next one compiles, so editing does not blink.
 The PDF is real LaTeX, compiled by [Tectonic](https://tectonic-typesetting.github.io/)
 inside the API container. Six templates ship with the app:
 
