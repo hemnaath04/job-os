@@ -1248,7 +1248,11 @@ async def _tailor_resume(
     # provisional, and keeps the row populated while the real one is in flight.
     try:
         report("check_draft", "Checking the draft", None, 0.95)
-        review = provisional_review(json_resume)
+        # With the vault, so the draft's own issue list tells a bullet the
+        # writer padded from one printed exactly as he wrote it, and does not
+        # fail his verified skills for not fitting on one page. Without it this
+        # said "too_long" about his own sentence, on every posting.
+        review = provisional_review(json_resume, workspace.verified_facts())
         # The rules-only issues are worth keeping, the number is not. Writing a
         # provisional 95 that the render-backed review then corrects to 60 is the
         # score whiplash the deterministic scoring was introduced to end, only

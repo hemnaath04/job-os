@@ -118,7 +118,7 @@ def _stub_model(
     monkeypatch.setattr(
         resume_engine,
         "deterministic_review",
-        lambda doc, pdf: (list(rule_issues or []), 1, True),
+        lambda doc, pdf, facts=None: (list(rule_issues or []), 1, True),
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:
