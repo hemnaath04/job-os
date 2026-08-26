@@ -15,6 +15,8 @@ import type {
   MeRead,
   OutreachContact,
   OutreachContactCreate,
+  BulletEdit,
+  FactBullet,
   FactEdit,
   OutreachDraft,
   OutreachHistoryRow,
@@ -499,6 +501,12 @@ const legacyApi = {
   // ProfileFactPatch on the API has always accepted these; only this client
   // was narrowed to `verified`, so nothing could send an edit even though the
   // endpoint was ready for one.
+  patchBullet: (id: string, patch: BulletEdit) =>
+    request<FactBullet>(`/profile/bullets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+    }),
+
   patchFact: (id: string, patch: FactEdit & { verified?: boolean }) =>
     request<ProfileFact>(`/profile/facts/${id}`, {
       method: "PATCH",
@@ -987,6 +995,16 @@ export const api = {
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.updateFact(id, patch)
       : legacyApi.patchFact(id, patch),
+
+  /**
+   * Correct a bullet's wording. Routed to the same store as the fact it hangs
+   * off, for the same reason: the tailor prints what the vault holds, so an
+   * edit written to the other store would change nothing on the resume.
+   */
+  updateBullet: (id: string, patch: BulletEdit) =>
+    isAppwriteWorkspaceEnabled
+      ? appwriteWorkspace.updateBullet(id, patch)
+      : legacyApi.patchBullet(id, patch),
 
   createFact: (body: ProfileFactCreate) =>
     isAppwriteWorkspaceEnabled
