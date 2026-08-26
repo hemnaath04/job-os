@@ -821,6 +821,138 @@ export async function createProfileFact(
   return fact;
 }
 
+/**
+ * Correct a fact the person already owns. Mirrors appwriteWorkspace.updateFact.
+ *
+ * Merges into the stored snapshot rather than replacing it, so a caller sending
+ * one field cannot silently drop the rest, and merges `payload` a level deeper
+ * again: it carries a fact's whole shape, and a caller adding the technologies
+ * a project was built with has no reason to know what else an imported fact
+ * happened to bring with it.
+ *
+ * `verified` is deliberately not reachable here. It is the one field that
+ * decides whether a claim may appear on a resume at all, and it is the person's
+ * to set in the web app, not something an agent tidying up wording should be
+ * able to flip on its own.
+ */
+export async function updateProfileFact(
+  appwriteUserId: string,
+  factId: string,
+  patch: {
+    title?: string;
+    org?: string | null;
+    start_date?: string | null;
+    end_date?: string | null;
+    location?: string | null;
+    source_url?: string | null;
+    payload?: Record<string, unknown>;
+  },
+): Promise<ProfileFact> {
+  const { databaseId, profileFactsTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<SnapshotOnlyRow>({
+    databaseId,
+    tableId: profileFactsTableId,
+    rowId: factId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("profile fact not found");
+  const current = JSON.parse(row.snapshot) as ProfileFact;
+  const timestamp = new Date().toISOString();
+  const fact: ProfileFact = {
+    ...current,
+    ...patch,
+    payload: { ...(current.payload ?? {}), ...(patch.payload ?? {}) },
+    updated_at: timestamp,
+  };
+  await tables.updateRow({
+    databaseId,
+    tableId: profileFactsTableId,
+    rowId: factId,
+    data: {
+      // Facts are read orderDesc on this column, so an edited fact moves to the
+      // top of the list. That is what the web app already does and it is a
+      // reasonable thing for a list of facts to mean.
+      source_updated_at: timestamp,
+      snapshot: JSON.stringify(fact),
+    },
+  });
+  return fact;
+}
+
+/**
+ * Change the wording of one bullet. Mirrors appwriteWorkspace.updateBullet.
+ *
+ * `source_updated_at` is left where it is, and that is load bearing. Every
+ * bullet on a fact is written with one shared timestamp and read back
+ * orderAsc on that column, so it is the bullet order, not a change log:
+ * bumping it would send the bullet a typo was fixed in to the bottom of its own
+ * fact, and the next tailored resume would reorder because someone corrected a
+ * spelling.
+ */
+export async function updateFactBullet(
+  appwriteUserId: string,
+  bulletId: string,
+  patch: { text?: string; target_role?: string | null; metric_verified?: boolean },
+): Promise<FactBullet & { fact_id: string }> {
+  const { databaseId, factBulletsTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<FactBulletRow>({
+    databaseId,
+    tableId: factBulletsTableId,
+    rowId: bulletId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("fact bullet not found");
+  const bullet = {
+    ...(JSON.parse(row.snapshot) as FactBullet),
+    fact_id: row.fact_id,
+    ...patch,
+    updated_at: new Date().toISOString(),
+  };
+  await tables.updateRow({
+    databaseId,
+    tableId: factBulletsTableId,
+    rowId: bulletId,
+    data: { snapshot: JSON.stringify(bullet) },
+  });
+  return bullet;
+}
+
+/** One bullet with its parent fact, so an edit can be checked against evidence. */
+export async function getFactBulletWithFact(
+  appwriteUserId: string,
+  bulletId: string,
+): Promise<{ bullet: FactBullet & { fact_id: string }; fact: ProfileFact | null }> {
+  const { databaseId, factBulletsTableId, profileFactsTableId } = config();
+  const tables = tablesClient();
+  const row = await tables.getRow<FactBulletRow>({
+    databaseId,
+    tableId: factBulletsTableId,
+    rowId: bulletId,
+  });
+  if (row.owner_id !== appwriteUserId) throw new Error("fact bullet not found");
+  const bullet = {
+    ...(JSON.parse(row.snapshot) as FactBullet),
+    fact_id: row.fact_id,
+  };
+  let fact: ProfileFact | null = null;
+  try {
+    const factRow = await tables.getRow<SnapshotOnlyRow>({
+      databaseId,
+      tableId: profileFactsTableId,
+      rowId: row.fact_id,
+    });
+    if (factRow.owner_id === appwriteUserId) {
+      fact = JSON.parse(factRow.snapshot) as ProfileFact;
+    }
+  } catch {
+    // An orphaned bullet is still editable, just with less evidence to check
+    // the edit against, which the guard handles by having less context.
+    fact = null;
+  }
+  return { bullet, fact };
+}
+
+
 /** Mirrors appwriteWorkspace.archiveFact. Archives, never deletes. */
 export async function archiveProfileFact(appwriteUserId: string, factId: string): Promise<void> {
   const { databaseId, profileFactsTableId } = config();

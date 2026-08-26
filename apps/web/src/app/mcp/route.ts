@@ -22,6 +22,9 @@ import {
   attachReviewAndMaybeFinalize,
   createApplicationCard,
   createProfileFact,
+  getFactBulletWithFact,
+  updateFactBullet,
+  updateProfileFact,
   downloadResumeVersionFile,
   getResumeTailorJobStatus,
   getResumeVersionSnapshot,
@@ -37,6 +40,7 @@ import {
   retargetResumeVersionCard,
   startResumeTailorJob,
 } from "@/lib/mcp/appwrite";
+import { checkBulletEdit } from "@/lib/mcp/bullet-edit-guard";
 import type { Application, Resume, ResumeReviewResult, ResumeVersion } from "@/lib/types";
 
 // Resume tailoring calls Claude and can run long; give tool calls the same
@@ -1311,6 +1315,91 @@ const handler = createMcpHandler(
           }
           await archiveProfileFact(resolveAppwriteUserId(clerkUserId(ctx)), args.fact_id);
           return toolText({ archived: true, fact_id: args.fact_id });
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "update_profile_fact",
+      {
+        title: "Update Profile Fact",
+        description:
+          "Correct a fact already in the user's vault: its title, org, dates, location, source url, or payload. The payload is where a project's technologies live, under `keywords`, and that field decides how a project ranks against a posting: tailoring scores a project on the words its own text matches, so a project with nothing listed there cannot match a job description written in technology nouns however relevant it actually is. Fields are merged, so send only what changes. This cannot set `verified` -- that decides whether a claim may appear on a resume at all and it is the user's to set in the web app. To change a bullet's wording use patch_bullet.",
+        inputSchema: z.object({
+          fact_id: z.string().min(1).max(64),
+          title: z.string().min(1).optional(),
+          org: z.string().nullable().optional(),
+          start_date: z.string().nullable().optional(),
+          end_date: z.string().nullable().optional(),
+          location: z.string().nullable().optional(),
+          source_url: z.string().nullable().optional(),
+          payload: z.record(z.string(), z.unknown()).optional(),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const { fact_id, ...patch } = args;
+          const fact = await updateProfileFact(
+            resolveAppwriteUserId(clerkUserId(ctx)),
+            fact_id,
+            patch,
+          );
+          return toolText(fact);
+        } catch (e) {
+          return toolError(e);
+        }
+      },
+    );
+
+    server.registerTool(
+      "patch_bullet",
+      {
+        title: "Edit a Fact Bullet",
+        description:
+          "Change the wording of one bullet already in the vault. This is for tightening a bullet that runs past 30 words and for varying an opening verb that repeats, both of which a tailored resume otherwise inherits exactly as written. It is NOT for adding claims: an edit that introduces a number the fact does not already state is refused, and so is one that grows the bullet past its current length or the 30-word cap, whichever is larger. Those are the same rules the tailor is held to when it rewrites a bullet, and they matter more here, because an edit to the vault is permanent and every future resume inherits it. If a bullet needs a metric it does not have, ask the user for it rather than working around this.",
+        inputSchema: z.object({
+          bullet_id: z.string().min(1).max(64),
+          text: z.string().min(1),
+        }),
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (args, ctx) => {
+        try {
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolError(new Error("Appwrite workspace is not enabled"));
+          }
+          const userId = resolveAppwriteUserId(clerkUserId(ctx));
+          const { bullet, fact } = await getFactBulletWithFact(userId, args.bullet_id);
+          // Checked against everything the fact already says, so a number that
+          // is in evidence can move around freely and one that appears from
+          // nowhere cannot.
+          const context = fact
+            ? `${fact.title} ${JSON.stringify(fact.payload ?? {})}`
+            : "";
+          const verdict = checkBulletEdit(bullet.text, args.text, context);
+          if (!verdict.ok) {
+            return toolError(new Error(`Refused: ${verdict.reason}.`));
+          }
+          const updated = await updateFactBullet(userId, args.bullet_id, {
+            text: args.text,
+          });
+          return toolText(updated);
         } catch (e) {
           return toolError(e);
         }
