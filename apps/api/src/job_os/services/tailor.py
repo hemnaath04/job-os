@@ -825,6 +825,31 @@ async def run_tailor(
     # are over the cap, so the loop was paying the model to drift from the
     # verified text on almost every bullet it printed.
     verified_sources = [b.text for b in bullets_by_id.values()]
+    # Everything the profile holds, for the skills check. A one-page resume
+    # prints three projects out of a whole career, so asking "does this page
+    # demonstrate it" of a truthful skills list flagged thirty-four skills on a
+    # real run, each costing points: the more complete the vault, the worse the
+    # page scored. The question worth asking is whether anything is behind the
+    # claim at all, and the vault is where that answer lives.
+    vault_evidence = [
+        *verified_sources,
+        *(f.title for f in facts),
+        *(f.org for f in facts if f.org),
+        *(
+            str(value)
+            for f in facts
+            for value in (f.payload or {}).values()
+            if isinstance(value, str)
+        ),
+        *(
+            str(item)
+            for f in facts
+            for value in (f.payload or {}).values()
+            if isinstance(value, list)
+            for item in value
+            if isinstance(item, str)
+        ),
+    ]
     facts_by_id = {f.id: f for f in facts}
 
     # Read the job the way the scorer reads it, before spending a model call on
@@ -1105,7 +1130,9 @@ async def run_tailor(
             fallback_missing=frozen_terms["missing"],
         )
         quality = document_quality_flags(
-            document, verified_sources=verified_sources
+            document,
+            verified_sources=verified_sources,
+            vault_evidence=vault_evidence,
         )
         if summary_rejection:
             # A refused summary leaves the page without its lede, so it costs the
@@ -1295,7 +1322,9 @@ async def run_tailor(
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
     ats_report["writing_flags"] = document_quality_flags(
-        json_resume, verified_sources=verified_sources
+        json_resume,
+        verified_sources=verified_sources,
+        vault_evidence=vault_evidence,
     )
     # Which of the misses are the candidate's to close. A requirement absent from
     # every verified fact and bullet is not a keyword the writer skipped, and

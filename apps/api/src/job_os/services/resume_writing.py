@@ -759,16 +759,37 @@ def missing_link_kinds(document: dict) -> list[str]:
 # "technologies listed without showing how they were used": the reader cannot
 # tell a language you shipped in from one you read a tutorial about, so the
 # skill has to appear inside a bullet somewhere, doing something.
-def unevidenced_skills(document: dict) -> list[str]:
-    """Skills named in the skills block that no bullet ever demonstrates."""
-    bullets: list[str] = []
+def unevidenced_skills(
+    document: dict[str, Any], *, vault_evidence: Iterable[str] = ()
+) -> list[str]:
+    """Skills claimed on the page that nothing behind it can back.
+
+    The rule used to be "no bullet on this page demonstrates it", which is the
+    right question to ask of a resume nobody tailored: an uploaded page is all
+    the evidence there is. It is the wrong question to ask of a tailored one.
+
+    A one-page resume prints three projects and a dozen bullets out of a whole
+    career. A truthful, verified skills list will always name things those
+    twelve bullets had no room to show, and this flagged every one: thirty-four
+    on a real run, each costing points, so the more complete the vault the worse
+    the page scored. That is a rule pointing away from the goal.
+
+    Given `vault_evidence`, the question becomes the one worth asking: is there
+    anything at all behind this claim? A skill the candidate verified, or that
+    any of his bullets describe, is backed whether or not this particular page
+    had room for it. A keyword that appears nowhere in the vault is a claim with
+    nothing behind it, which is the interview-collapsing case the check was
+    written for, and it is still flagged.
+    """
+    page: list[str] = []
     for section in ("work", "projects", "volunteer"):
         for entry in document.get(section) or []:
-            bullets.extend(str(h) for h in (entry.get("highlights") or []) if h)
+            page.extend(str(h) for h in (entry.get("highlights") or []) if h)
             for key in ("name", "position", "description", "summary"):
                 if entry.get(key):
-                    bullets.append(str(entry[key]))
-    blob = " ".join(bullets)
+                    page.append(str(entry[key]))
+    evidence = [*page, *vault_evidence]
+    blob = " ".join(evidence)
     if not blob.strip():
         return []
     missing: list[str] = []
@@ -832,7 +853,10 @@ def _evidence_text(document: dict) -> str:
 
 
 def document_quality_flags(
-    document: dict, *, verified_sources: Iterable[str] = ()
+    document: dict[str, Any],
+    *,
+    verified_sources: Iterable[str] = (),
+    vault_evidence: Iterable[str] = (),
 ) -> dict[str, list[str]]:
     """Every writing problem in an assembled resume, keyed by where it lives.
 
@@ -843,8 +867,14 @@ def document_quality_flags(
     available and the defect it inherited is the user's to edit. Omitted, every
     bullet is treated as authored, which is right for the review of a resume
     nobody tailored.
+
+    `vault_evidence` is everything the profile holds, for the skills check. See
+    `unevidenced_skills`: without it the question is "does this page show it",
+    which is the only question an uploaded resume can answer and the wrong one
+    to ask of a tailored page that prints twelve bullets out of a career.
     """
     sources = list(verified_sources)
+    evidence = list(vault_evidence)
     found: dict[str, list[str]] = {}
     summary = str((document.get("basics") or {}).get("summary") or "").strip()
     if summary:
@@ -893,7 +923,7 @@ def document_quality_flags(
     skill_flags: list[str] = []
     if len(groups) > MAX_SKILL_GROUPS:
         skill_flags.append(f"too_many_groups({len(groups)})")
-    unevidenced = unevidenced_skills(document)
+    unevidenced = unevidenced_skills(document, vault_evidence=evidence)
     if unevidenced:
         # Capped: a page listing fifteen unevidenced skills has one problem, not
         # fifteen, and naming them all buries the rest of the report.

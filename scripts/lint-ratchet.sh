@@ -32,7 +32,7 @@ set -uo pipefail
 # dirty tree reads a different, wrong count depending on the instant it runs,
 # which is what produced the first, incorrect version of this reset.
 RUFF_CEILING=36
-MYPY_CEILING=71
+MYPY_CEILING=69
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 
