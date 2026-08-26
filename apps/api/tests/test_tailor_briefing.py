@@ -253,7 +253,7 @@ async def test_the_compose_prompt_actually_carries_the_project_ranking(
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
-    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc: {})
+    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
 
     document, _prov, _gaps, _score, _report, _note = await tailor.run_tailor(
         facts=facts,
@@ -424,7 +424,7 @@ async def test_one_writing_pass_when_nothing_is_left_to_repair(
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
     # The page is short by design here, and a thin-page flag would be a genuine
     # reason to run a second pass. Only the reachability rule is under test.
-    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc: {})
+    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
 
     stages: list[tailor.TailorStage] = []
     _doc, _prov, _gaps, score, report, note = await tailor.run_tailor(
@@ -508,7 +508,7 @@ async def test_an_unchecked_gap_is_not_proof_that_a_pass_would_be_wasted(
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
-    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc: {})
+    monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
 
     _doc, _prov, _gaps, _score, report, _note = await tailor.run_tailor(
         facts=facts,
