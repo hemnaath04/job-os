@@ -3290,8 +3290,20 @@ _EXCLUSION_RE = re.compile(
     r"\b(?:exclud|omit|left out|leaving out|drop|not includ|without|no |lack)",
     re.I,
 )
-# ...and blaming it on the evidence, which is the claim Python can check.
-_BULLET_CLAIM_RE = re.compile(r"\bbullets?\b|\bverified fact", re.I)
+# ...and blaming it on missing evidence, which is the claim Python can check.
+#
+# The negation has to attach to the bullets, not merely share a sentence with
+# them. A real run said "JD had no concrete requirements, so kept EPAM's
+# strongest bullets plus the two projects with verified evidence", which is
+# true, useful, and was deleted: it contains "no" and it contains "bullets",
+# and the first version of this check asked for nothing more than that. The
+# words in between are what distinguish "no bullets" from "no requirements, so
+# I used the bullets".
+_BULLET_CLAIM_RE = re.compile(
+    r"\b(?:no|without|lack(?:s|ing|ed)?|missing|absent|zero)\b"
+    r"(?:\W+\w+){0,3}\W+(?:bullets?|verified facts?)\b",
+    re.I,
+)
 
 
 def _false_bullet_excuses(

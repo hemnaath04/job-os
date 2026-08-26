@@ -130,3 +130,49 @@ def test_nothing_invented_means_nothing_added() -> None:
 
 def test_an_empty_note_is_not_a_crash() -> None:
     assert _false_bullet_excuses("", facts=FACTS, bullets_by_fact=BULLETS) == ("", [])
+
+
+# ---------------------------------------------------------------------------
+# The check ate a true sentence in production. Caught in a real Jane Street run
+# whose JD parsed to zero requirements:
+#
+#   "JD had no concrete requirements, so kept EPAM's strongest bullets plus the
+#    two projects with verified evidence in this profile."
+#
+# True, useful, and deleted. It contains "no" and it contains "bullets", and the
+# first version of this check asked for nothing more than that. Deleting a
+# candidate's honest explanation is the same class of harm as printing a
+# dishonest one, and this one was self-inflicted.
+# ---------------------------------------------------------------------------
+
+NO_REQUIREMENTS_NOTE = (
+    "JD had no concrete requirements, so kept EPAM's strongest bullets plus "
+    "the two projects with verified evidence in this profile."
+)
+
+
+def test_the_true_sentence_the_first_version_deleted() -> None:
+    kept, accused = _false_bullet_excuses(
+        NO_REQUIREMENTS_NOTE, facts=FACTS, bullets_by_fact=BULLETS
+    )
+    assert kept == NO_REQUIREMENTS_NOTE
+    assert accused == []
+
+
+def test_the_negation_has_to_attach_to_the_bullets() -> None:
+    """"no requirements ... used the bullets" is not "no bullets"."""
+    fine = "Found no matching role keywords, so I kept the strongest bullets."
+    kept, _accused = _false_bullet_excuses(fine, facts=FACTS, bullets_by_fact=BULLETS)
+    assert kept == fine
+
+
+def test_the_wording_variants_that_do_mean_it_still_fire() -> None:
+    for note in (
+        "job.os was dropped because it lacks bullets.",
+        "job.os excluded: missing verified bullets.",
+        "job.os left out, without any bullets to cite.",
+    ):
+        kept, _accused = _false_bullet_excuses(
+            note, facts=FACTS, bullets_by_fact=BULLETS
+        )
+        assert kept != note, f"should have been dropped: {note}"
