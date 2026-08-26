@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   BULLET_MAX_WORDS,
   countWords,
+  MIN_PAGE_OPENER_REPEATS,
   openingVerb,
+  PAGE_OPENER_SHARE,
   vaultQuality,
   vaultQualitySummary,
 } from "./bullet-quality.ts";
@@ -140,4 +145,55 @@ test("an empty vault reports nothing rather than dividing by zero", () => {
   assert.equal(quality.totalBullets, 0);
   assert.equal(quality.dominantOpener, null);
   assert.equal(vaultQualitySummary(quality), null);
+});
+
+// ---------------------------------------------------------------------------
+// Parity with the source of truth.
+//
+// These rules exist twice: here, and in resume_writing.py, which is what
+// actually scores the resume. The duplication is deliberate (the profile page
+// reads the Appwrite workspace while the API reads Postgres, so an endpoint
+// would score a different copy of the vault than the one on screen), but a
+// mirror that drifts is worse than no mirror: the badges would then promise one
+// thing and the resume be graded on another.
+//
+// So the mirror asserts against the original. Change the cap or the opener rule
+// in Python and this fails here, naming the constant, rather than showing him a
+// number the tailor stopped using.
+// ---------------------------------------------------------------------------
+
+const PYTHON_RULES = readFileSync(
+  join(
+    dirname(fileURLToPath(import.meta.url)),
+    "../../../api/src/job_os/services/resume_writing.py",
+  ),
+  "utf8",
+);
+
+function pythonConstant(name: string): string {
+  const match = new RegExp(`^${name} = (.+)$`, "m").exec(PYTHON_RULES);
+  assert.ok(match, `${name} is gone from resume_writing.py, so this mirror is stale`);
+  return match[1].trim();
+}
+
+test("the word cap matches the one the resume is scored against", () => {
+  assert.equal(pythonConstant("BULLET_MAX_WORDS"), String(BULLET_MAX_WORDS));
+});
+
+test("the page-wide opener rule matches", () => {
+  assert.equal(pythonConstant("PAGE_OPENER_SHARE"), "1 / 3");
+  assert.equal(PAGE_OPENER_SHARE, 1 / 3);
+  assert.equal(
+    pythonConstant("MIN_PAGE_OPENER_REPEATS"),
+    String(MIN_PAGE_OPENER_REPEATS),
+  );
+});
+
+test("the opening verb is found the same way", () => {
+  // `_opening_word` in resume_writing.py. Same pattern, so "(Re)built" and
+  // "123 things" resolve to the same word on both sides.
+  assert.ok(
+    PYTHON_RULES.includes(String.raw`re.search(r"[A-Za-z][A-Za-z'-]*", text)`),
+    "_opening_word changed its pattern, so openingVerb here no longer mirrors it",
+  );
 });
