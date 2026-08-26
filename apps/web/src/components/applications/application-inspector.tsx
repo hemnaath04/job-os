@@ -137,7 +137,7 @@ export function ApplicationInspector({
     // Hands off to the store and returns. The toast, the cache invalidation
     // and clearing the draft all happen there, so none of them depend on this
     // panel still being mounted when the request comes back.
-    startEnrich(job.id, text, queryClient);
+    startEnrich(application, text, queryClient);
     setOpenedPaste(false);
   }
 

@@ -13,7 +13,9 @@ from job_os.db.models import Job, User
 from job_os.db.session import get_session
 from job_os.schemas.jobs import (
     JobCreateManual,
+    JobDescriptionParse,
     JobDescriptionPaste,
+    JobEnrichPlan,
     JobEnrichResult,
     JobFromText,
     JobFromUrl,
@@ -373,6 +375,59 @@ async def add_description(
     )
     return JobEnrichResult(
         job=JobRead.model_validate(job),
+        filled=plan.filled,
+        parse_used=plan.parse_replaced,
+    )
+
+
+@router.post("/parse-description", response_model=JobEnrichPlan)
+async def parse_description(
+    payload: JobDescriptionParse,
+    _user: User = Depends(get_current_user),
+) -> JobEnrichPlan:
+    """Plan a backfill from a pasted description, without persisting anything.
+
+    The sibling `/{job_id}/description` writes the Postgres row and is right
+    only when the job lives there. The live pipeline keeps applications in
+    Appwrite, and a card created there has no Postgres `jobs` row at all, so
+    that endpoint answers 404 for a job the user can plainly see on their
+    board. This one takes the job as the caller holds it and hands back what
+    changed, leaving the caller to write it wherever the job actually lives.
+
+    Stateless on purpose: no session, no row, no id. That is what makes it
+    correct for both stores instead of one.
+    """
+    import asyncio
+
+    from job_os.services.jd_parse import parse_jd
+    from job_os.services.job_backfill import plan_enrichment
+
+    jd_text = payload.jd_text.strip()
+    if not jd_text:
+        raise HTTPException(422, "Paste the job description first.")
+
+    parsed: dict[str, Any] = {}
+    try:
+        parsed = await asyncio.wait_for(parse_jd(jd_text), timeout=_PARSE_BUDGET_SECONDS)
+    except TimeoutError:
+        log.warning("jobs.parse_description.timeout")
+    except Exception as e:
+        log.warning("jobs.parse_description.failed", error=str(e))
+
+    plan = plan_enrichment(payload.job, parsed, jd_text)
+
+    # The planner also stages the description onto the row, which is right for
+    # the Postgres path and meaningless here: nothing on an Appwrite card reads
+    # it, and a full JD in every card snapshot is weight for nothing.
+    updates = {k: v for k, v in plan.updates.items() if k not in ("jd_raw", "jd_clean")}
+
+    log.info(
+        "jobs.parse_description.planned",
+        filled=plan.filled,
+        parse_used=plan.parse_replaced,
+    )
+    return JobEnrichPlan(
+        updates=updates,
         filled=plan.filled,
         parse_used=plan.parse_replaced,
     )
