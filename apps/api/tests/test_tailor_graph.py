@@ -59,6 +59,7 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
         anthropic_base_url="https://example.invalid",
         anthropic_model_tailor="manifest/auto",
         manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
     )
     monkeypatch.setattr(tailor, "get_settings", lambda: settings)
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
@@ -176,6 +177,7 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
         anthropic_base_url="https://example.invalid",
         anthropic_model_tailor="manifest/auto",
         manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
     )
     monkeypatch.setattr(tailor, "get_settings", lambda: settings)
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)

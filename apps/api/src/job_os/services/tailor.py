@@ -3739,6 +3739,12 @@ async def _analyse_requirements(
         # No COMPOSE_EFFORT here, deliberately: left at the gateway's default.
         # See the comment on COMPOSE_EFFORT for why this specific step is the
         # one exception, not an oversight.
+        #
+        # `analyst_effort` is unset in production, so this stays the gateway
+        # default and behaves exactly as it did before the setting existed. It
+        # is here so the effort can be varied for a measured A/B without
+        # shipping the change the measurement exists to justify.
+        effort = get_settings().analyst_effort
         msg = await create_message(
             client,
             model=model,
@@ -3746,10 +3752,15 @@ async def _analyse_requirements(
             system=f"{CAREER_OPS_RULES}\n\n{ANALYST_SYSTEM_PROMPT}",
             messages=[{"role": "user", "content": prompt}],
             extra_headers={"x-manifest-tier": tier},
+            **({"output_config": {"effort": effort}} if effort else {}),
         )
         _log_prompt_cache("analyst", 1, msg)
         log.info(
             "tailor.call_timing",
+            # Recorded so a run identifies its own condition. Reading a
+            # timing out of the execution log is useless for an A/B if the
+            # log does not say which arm produced it.
+            effort=effort or "gateway_default",
             step="analyst",
             iteration=1,
             seconds=round(time.perf_counter() - started, 1),
