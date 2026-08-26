@@ -15,6 +15,7 @@ import type {
   MeRead,
   OutreachContact,
   OutreachContactCreate,
+  FactEdit,
   OutreachDraft,
   OutreachHistoryRow,
   OutreachStatus,
@@ -495,7 +496,10 @@ const legacyApi = {
   },
   deleteFact: (id: string) =>
     request<void>(`/profile/facts/${id}`, { method: "DELETE" }),
-  patchFact: (id: string, patch: { verified?: boolean }) =>
+  // ProfileFactPatch on the API has always accepted these; only this client
+  // was narrowed to `verified`, so nothing could send an edit even though the
+  // endpoint was ready for one.
+  patchFact: (id: string, patch: FactEdit & { verified?: boolean }) =>
     request<ProfileFact>(`/profile/facts/${id}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
@@ -972,6 +976,17 @@ export const api = {
     isAppwriteWorkspaceEnabled
       ? appwriteWorkspace.verifyFact(id, verified)
       : legacyApi.patchFact(id, { verified }),
+
+  /**
+   * Correct a fact. Routed like every other fact operation, because the store
+   * that holds them is the store the edit has to land in: the tailor reads
+   * Appwrite, so a correction written to Postgres would be invisible to the
+   * thing it was meant to fix.
+   */
+  updateFact: (id: string, patch: FactEdit) =>
+    isAppwriteWorkspaceEnabled
+      ? appwriteWorkspace.updateFact(id, patch)
+      : legacyApi.patchFact(id, patch),
 
   createFact: (body: ProfileFactCreate) =>
     isAppwriteWorkspaceEnabled

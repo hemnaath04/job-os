@@ -1128,6 +1128,63 @@ export const appwriteWorkspace = {
     return fact;
   },
 
+  /**
+   * Correct a fact the person already owns.
+   *
+   * The store had create, verify, archive and restore, and no update at all.
+   * A wrong date, a title that reads badly, or a project with no technologies
+   * declared was permanent: the only route to a correction was archiving the
+   * fact and typing it again, losing its id and every bullet hanging off it.
+   *
+   * That gap is not cosmetic. The profile is what every tailored resume is
+   * built from, and the ranker scores a project on the text it carries, so a
+   * project with no declared stack scores zero against a job description
+   * written in technology nouns. Being unable to add that stack made a
+   * ranking mistake unrecoverable by the one person who knew the answer.
+   *
+   * Merges into the stored snapshot rather than replacing it, so a caller that
+   * sends one field cannot silently drop the rest of the fact.
+   */
+  async updateFact(
+    factId: string,
+    patch: Partial<
+      Pick<
+        ProfileFact,
+        "title" | "org" | "start_date" | "end_date" | "location" | "source_url" | "payload"
+      >
+    >,
+  ): Promise<ProfileFact> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+    });
+    const current = parseSnapshot<ProfileFact>(row);
+    const fact: ProfileFact = {
+      ...current,
+      ...patch,
+      // The payload is merged a level deeper as well. It carries a fact's
+      // whole shape, so replacing it wholesale to set one key would drop the
+      // rest, and a caller editing the technologies has no reason to know what
+      // else an imported fact happened to bring with it.
+      payload: { ...(current.payload ?? {}), ...(patch.payload ?? {}) },
+      updated_at: now(),
+    };
+    await tables.updateRow<ProfileFactRow>({
+      databaseId: config.databaseId,
+      tableId: config.profileFactsTableId,
+      rowId: factId,
+      data: {
+        source_updated_at: fact.updated_at,
+        snapshot: JSON.stringify(fact),
+      },
+    });
+    return fact;
+  },
+
   async uploadResume(file: File, isMaster: boolean): Promise<AgentJob> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
