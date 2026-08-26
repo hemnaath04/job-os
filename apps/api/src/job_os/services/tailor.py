@@ -2223,6 +2223,49 @@ def _skill_aliases(keyword: str) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
+# Words that carry no claim of their own, so their absence should not stop a
+# drop that is otherwise plainly redundant. "OpenAI / Anthropic SDKs" is already
+# said by "LLM integration (OpenAI, Anthropic, Qwen)"; the bare "SDKs" is not the
+# part that matters.
+_SKILL_FILLER_TOKENS = frozenset(
+    {"sdk", "sdks", "api", "apis", "and", "or", "the", "with", "using", "integration"}
+)
+
+# Below this the skills block stops being a skills block. A floor rather than a
+# judgement: whatever the reasoning, a resume that lists three technologies for a
+# candidate who has verified forty is describing somebody else.
+MIN_PRINTED_SKILLS = 8
+
+
+def _skill_is_redundant(keyword: str, kept: list[str]) -> bool:
+    """Whether another kept skill genuinely already says this one.
+
+    `skills_dedup_drop` exists for the case the alias matching below cannot see:
+    a name nested inside a longer phrase, where "OpenAI / Anthropic SDKs" is
+    already carried by "LLM integration (OpenAI, Anthropic, Qwen)". That is a
+    real gap and the model is the right thing to spot it.
+
+    What was missing is that nothing checked the claim. The drop list was applied
+    on trust, so a pass that decided a dozen skills were surplus simply removed
+    them, and a real run printed "Backend & Data: REST APIs, Spatial Joins" for a
+    candidate whose vault holds FastAPI, Docker, PostgreSQL, Async Python and
+    Pytest. The remedy text on `unevidenced_skill` pushes in exactly this
+    direction, telling the writer to drop a skill no bullet demonstrates, and a
+    one-page resume cannot demonstrate forty.
+
+    So the claim is now verified instead of believed: a skill is dropped only
+    when its own distinctive words all appear inside a skill that is staying.
+    """
+    tokens = {t for t in _identity_text(keyword).split() if t not in _SKILL_FILLER_TOKENS}
+    if not tokens:
+        return False
+    for other in kept:
+        other_tokens = set(_identity_text(other).split())
+        if tokens <= other_tokens and _identity_text(other) != _identity_text(keyword):
+            return True
+    return False
+
+
 def _consolidate_skills(
     skills_by_category: dict[str, list[str]],
     *,
@@ -2244,13 +2287,52 @@ def _consolidate_skills(
     this function, so a string that does not land on a real keyword drops
     nothing rather than guessing.
     """
-    folded_drop = {_identity_text(item) for item in (drop or [])}
+    requested_drop = {_identity_text(item) for item in (drop or [])}
     merged: dict[str, dict[str, Any]] = {}
     for label, titles in skills_by_category.items():
         # Same words, different punctuation, is the same category.
         key = " ".join(sorted(_identity_text(label).split()))
         bucket = merged.setdefault(key, {"name": label.strip(), "keywords": []})
         bucket["keywords"].extend(titles)
+
+    # Which requested drops are honoured, decided before anything is removed so
+    # each is judged against the whole printable set rather than against whatever
+    # happens to survive earlier in the loop.
+    printable = [
+        keyword
+        for bucket in merged.values()
+        for keyword in bucket["keywords"]
+        if _identity_text(keyword) and _identity_text(keyword) not in UNPRINTABLE_SKILLS
+    ]
+    folded_drop: set[str] = set()
+    for keyword in printable:
+        folded = _identity_text(keyword)
+        if folded not in requested_drop or folded in folded_drop:
+            continue
+        others = [k for k in printable if _identity_text(k) != folded]
+        if _skill_is_redundant(keyword, others):
+            folded_drop.add(folded)
+        else:
+            # The writer asked, the page does not already say it, so it stays.
+            log.info("tailor.skill_drop_refused", skill=keyword)
+
+    distinct_printable = len({_identity_text(k) for k in printable})
+    # Only where there is something to protect. A candidate who has verified
+    # four skills prints four, and the floor has no business overriding a
+    # defensible drop to reach a number they never had.
+    if (
+        distinct_printable >= MIN_PRINTED_SKILLS
+        and distinct_printable - len(folded_drop) < MIN_PRINTED_SKILLS
+    ):
+        # Individually defensible drops can still add up to a skills block that
+        # describes a different candidate. The floor is the backstop.
+        log.warning(
+            "tailor.skill_drops_refused_by_floor",
+            requested=len(folded_drop),
+            printable=distinct_printable,
+            floor=MIN_PRINTED_SKILLS,
+        )
+        folded_drop = set()
 
     groups: list[dict[str, Any]] = []
     # Keyed by every spelling a kept skill answers to, mapped to where it is
