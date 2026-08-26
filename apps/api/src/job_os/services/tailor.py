@@ -559,14 +559,53 @@ def _refine_prompt(
         "Both numbers come from the assembled resume, not from your own "
         "matched/missing lists, so restating them cannot change the score.",
     ]
-    if quality:
+    # Split by who caused it. A flag the page inherited from the vault is not a
+    # thing this pass did wrong, and listing it under "fix these first, they
+    # cost you points" told the writer to earn back points by departing from
+    # verified wording. It is shown, because shortening one is allowed and
+    # sometimes possible, and it is shown as costing nothing, because the honest
+    # answer is often that his sentence needs all of its words.
+    charged = {
+        where: [
+            flag for flag in flags if INHERITED_FLAG_SUFFIX not in flag.split("(", 1)[0]
+        ]
+        for where, flags in quality.items()
+    }
+    inherited = {
+        where: [
+            flag for flag in flags if INHERITED_FLAG_SUFFIX in flag.split("(", 1)[0]
+        ]
+        for where, flags in quality.items()
+    }
+    charged = {where: flags for where, flags in charged.items() if flags}
+    inherited = {where: flags for where, flags in inherited.items() if flags}
+    if charged:
         lines += [
             "",
             "WRITING PROBLEMS, fix these first. They cost more than a keyword "
             "is worth:",
         ]
-        for where, flags in quality.items():
+        for where, flags in charged.items():
             lines.append(f"  - {where}: {', '.join(flags)}")
+    if inherited:
+        lines += [
+            "",
+            "INHERITED FROM THE VERIFIED FACTS. These cost you nothing and you "
+            "are not required to fix them:",
+        ]
+        for where, flags in inherited.items():
+            lines.append(f"  - {where}: {', '.join(flags)}")
+        lines += [
+            "",
+            "A _verbatim flag means you printed the verified bullet exactly as "
+            "the candidate wrote it, and it is his wording that is long or "
+            "repetitive. You may shorten one by DELETING a clause it already "
+            "contains. You may not reword it, compress it into new phrasing, or "
+            "drop the part that carries the evidence. If it cannot lose a clause "
+            "without changing what it claims, print it as it stands: an honest "
+            "long bullet beats a short one that says something he did not say.",
+        ]
+    if quality:
         lines += [
             "",
             "How to read those flags: too_long means cut the bullet under 30 "
@@ -577,6 +616,9 @@ def _refine_prompt(
             "same work, so keep only the better one. repeated_phrase means two "
             "bullets in one entry share a clause word for word, so cut it from "
             "the weaker bullet. repeated_opening_verb means vary the verb. "
+            "page_opener means one verb opens most of the bullets on the whole "
+            "page, across different roles and projects, which reads as one "
+            "sentence rewritten: vary the openers you write. "
             "weak_opener means start with a real past-tense verb. first_person "
             "means remove I/my/we. upgraded_status means you claimed something "
             "shipped that the evidence records as pending or a prototype, which "
@@ -773,6 +815,16 @@ async def run_tailor(
     facts, bullets_by_fact = _merge_duplicate_facts(facts, bullets_by_fact)
     facts_payload = _build_facts_payload(facts, bullets_by_fact)
     bullets_by_id = {b.id: b for bs in bullets_by_fact.values() for b in bs}
+    # The vault wording behind the page, so the review can tell a bullet the
+    # writer padded from one it printed exactly as the fact holds it. Without
+    # this the two report identically, and the second was being charged to the
+    # writer: `_sanitize_selected_bullets` reverts any rewrite that adds a
+    # number or a technology, which correctly teaches the writer that verbatim
+    # source is the safe answer, and the penalty then billed it for the length
+    # that answer guarantees. Eleven of the fifteen bullets in this user's vault
+    # are over the cap, so the loop was paying the model to drift from the
+    # verified text on almost every bullet it printed.
+    verified_sources = [b.text for b in bullets_by_id.values()]
     facts_by_id = {f.id: f for f in facts}
 
     # Read the job the way the scorer reads it, before spending a model call on
@@ -1052,7 +1104,9 @@ async def run_tailor(
             fallback_matched=frozen_terms["matched"],
             fallback_missing=frozen_terms["missing"],
         )
-        quality = document_quality_flags(document)
+        quality = document_quality_flags(
+            document, verified_sources=verified_sources
+        )
         if summary_rejection:
             # A refused summary leaves the page without its lede, so it costs the
             # pass points and the model is told why.
@@ -1060,7 +1114,18 @@ async def run_tailor(
         penalty = _quality_penalty(quality)
         score = matched_share - penalty
         scores = [*state["iteration_scores"], float(score)]
-        flag_count = sum(len(flags) for flags in quality.values())
+        # Counted the way the penalty counts, so the note the user reads and the
+        # score they see agree about how much is actually wrong.
+        chargeable = {
+            where: [
+                flag
+                for flag in flags
+                if INHERITED_FLAG_SUFFIX not in flag.split("(", 1)[0]
+            ]
+            for where, flags in quality.items()
+        }
+        chargeable = {where: flags for where, flags in chargeable.items() if flags}
+        flag_count = sum(len(flags) for flags in chargeable.values())
         missing = list(coverage_report.get("missing") or [])
         reachable = _reachable_missing(missing, coverage=coverage, analysis=analysis)
         unreachable = [label for label in missing if label not in reachable]
@@ -1122,7 +1187,12 @@ async def run_tailor(
         # a number a heavily penalised draft can score below, so measuring it
         # against one would end the run before the repair it plainly needs.
         improved = len(scores) == 1 or score > best_score_before + MIN_IMPROVEMENT
-        nothing_left = analysis_settled and not reachable and not quality
+        # Inherited flags do not keep the loop alive. A pass exists to fix
+        # something, and the only way to clear "your verified bullet is 46
+        # words" is to stop printing his verified bullet. Left in this test, a
+        # run with nothing else to do would spend its remaining passes, and its
+        # minutes, being told again about facts only he can edit.
+        nothing_left = analysis_settled and not reachable and not chargeable
         # The reachable target is only as trustworthy as the analysis behind it,
         # for the same reason `nothing_left` waits on `analysis_settled`. A
         # ceiling computed while the analyst is silent says the vault cannot
@@ -1224,7 +1294,9 @@ async def run_tailor(
     ats_report["reached_target"] = float(ats_score) >= float(target_score)
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
-    ats_report["writing_flags"] = document_quality_flags(json_resume)
+    ats_report["writing_flags"] = document_quality_flags(
+        json_resume, verified_sources=verified_sources
+    )
     # Which of the misses are the candidate's to close. A requirement absent from
     # every verified fact and bullet is not a keyword the writer skipped, and
     # saying so is more use than another percentage.
@@ -1424,8 +1496,22 @@ QUALITY_FLAG_PENALTY = Decimal("3")
 MAX_QUALITY_PENALTY = Decimal("30")
 
 
+# Flags naming a defect the page inherited from the vault rather than one the
+# writer introduced. They are still reported, to the user, whose facts they
+# describe and who is the only one who can decide which clause of his own claim
+# to drop. They are not charged to the pass, because the only move that clears
+# them is to depart from the verified wording, and a scoring rule that rewards
+# that is pointed against the thing this whole service exists to guarantee.
+INHERITED_FLAG_SUFFIX = "_verbatim"
+
+
 def _quality_penalty(quality: dict[str, list[str]]) -> Decimal:
-    flagged = sum(len(flags) for flags in quality.values())
+    flagged = sum(
+        1
+        for flags in quality.values()
+        for flag in flags
+        if INHERITED_FLAG_SUFFIX not in flag.split("(", 1)[0]
+    )
     return min(MAX_QUALITY_PENALTY, QUALITY_FLAG_PENALTY * Decimal(flagged))
 
 

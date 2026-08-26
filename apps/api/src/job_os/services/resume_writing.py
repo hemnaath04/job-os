@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable
+from typing import Any
 
 # One idea per bullet, one or two rendered lines. Past this, a bullet wraps to a
 # third line in the Letter template and starts crowding out a whole other bullet.
@@ -494,6 +495,32 @@ def _opening_word(text: str) -> str:
     return match.group(0).casefold() if match else ""
 
 
+# A bullet the writer printed exactly as the vault holds it is his wording, not
+# the model's. That distinction is the whole point of the two checks below: a
+# 46-word bullet is a defect either way, but "the writer padded this" and "your
+# saved fact is 46 words" have different owners and different fixes, and until
+# now they were reported in identical words.
+_WHITESPACE_RE = re.compile(r"\s+")
+
+
+def _comparable(text: str) -> str:
+    """Bullet text reduced to what survives assembly, for identity checks."""
+    return _WHITESPACE_RE.sub(" ", str(text or "")).strip().casefold()
+
+
+def is_verbatim_source(text: str, verified_sources: Iterable[str]) -> bool:
+    """Did this bullet reach the page as the verified fact, unedited?
+
+    Exact match after whitespace and case, never fuzzy. A near-match is a
+    rewrite, and a rewrite that came back over the cap is the writer's to answer
+    for. Only an untouched bullet gets to point at the vault.
+    """
+    target = _comparable(text)
+    if not target:
+        return False
+    return any(_comparable(source) == target for source in verified_sources)
+
+
 def bullet_flags(text: str, *, source_text: str | None = None) -> list[str]:
     """Writing problems in one bullet, named so a model can fix them.
 
@@ -540,6 +567,25 @@ def bullet_flags(text: str, *, source_text: str | None = None) -> list[str]:
     return flags
 
 
+def _attributed_bullet_flags(
+    text: str, *, verified_sources: Iterable[str] = ()
+) -> list[str]:
+    """`bullet_flags`, with length blamed on whoever actually chose it.
+
+    Only `too_long` is re-attributed. Everything else it can report is something
+    the writer did to the text, so a verbatim bullet cannot carry it: padding,
+    first person and invented metrics are all absent from a verified fact by the
+    time it is in the vault.
+    """
+    flags = bullet_flags(text)
+    if not is_verbatim_source(text, verified_sources):
+        return flags
+    return [
+        f"too_long_verbatim({flag[len('too_long('):]}" if flag.startswith("too_long(") else flag
+        for flag in flags
+    ]
+
+
 def _phrases(text: str, length: int) -> set[str]:
     words = _WORD_RE.findall(text.casefold())
     return {
@@ -552,9 +598,24 @@ def _phrases(text: str, length: int) -> set[str]:
 # shipped" appearing verbatim on two different bullets in the same role.
 REPEATED_PHRASE_WORDS = 5
 
+# `section_flags` runs per entry, so it can see two bullets inside one project
+# that both open "Built" and structurally cannot see five projects that each
+# open "Built". On a resume whose every entry is a thing the candidate made,
+# that second case is the one a reader actually notices, and it had never fired.
+#
+# Across a whole page one repeated verb is normal English, so this is a share
+# rather than a count: an opener has to carry more than a third of the page's
+# bullets, and at least this many, before the page reads as one sentence
+# rewritten.
+PAGE_OPENER_SHARE = 1 / 3
+MIN_PAGE_OPENER_REPEATS = 3
 
-def section_flags(bullets: list[str]) -> list[str]:
+
+def section_flags(
+    bullets: list[str], *, verified_sources: Iterable[str] = ()
+) -> list[str]:
     """Problems that only exist between bullets, not inside one."""
+    sources = list(verified_sources)
     flags: list[str] = []
     for index, bullet in enumerate(bullets):
         for other in bullets[index + 1 :]:
@@ -563,10 +624,27 @@ def section_flags(bullets: list[str]) -> list[str]:
                 break
         if flags:
             break
-    openers = [_opening_word(b) for b in bullets if b.strip()]
+    printed = [b for b in bullets if b.strip()]
+    openers = [_opening_word(b) for b in printed]
     repeated = {opener for opener in openers if opener and openers.count(opener) > 1}
-    if repeated:
-        flags.append(f"repeated_opening_verb({','.join(sorted(repeated))})")
+    # An opener only repeats because of the wordings that carry it. When every
+    # one of those reached the page untouched, the repetition is in the vault and
+    # no pass of the writer can honestly remove it: the alternative to his
+    # wording is not a better verb, it is a different claim.
+    inherited = {
+        opener
+        for opener in repeated
+        if all(
+            is_verbatim_source(bullet, sources)
+            for bullet in printed
+            if _opening_word(bullet) == opener
+        )
+    }
+    authored = repeated - inherited
+    if authored:
+        flags.append(f"repeated_opening_verb({','.join(sorted(authored))})")
+    if inherited:
+        flags.append(f"repeated_opening_verb_verbatim({','.join(sorted(inherited))})")
     # Two distinct bullets that end the same way read as machine-written even
     # when neither is a duplicate of the other. The review caught a role whose
     # second and third bullets both closed "adding regression coverage as pricing
@@ -579,6 +657,37 @@ def section_flags(bullets: list[str]) -> list[str]:
             )
     if shared:
         flags.append(f"repeated_phrase({sorted(shared)[0]})")
+    return flags
+
+
+def page_opener_flags(
+    document: dict[str, Any], *, verified_sources: Iterable[str] = ()
+) -> list[str]:
+    """One verb opening most of the page, which no single entry can see."""
+    sources = list(verified_sources)
+    printed = [
+        highlight
+        for section in ("work", "projects", "volunteer")
+        for entry in (document.get(section) or [])
+        for highlight in (entry.get("highlights") or [])
+        if str(highlight or "").strip()
+    ]
+    if len(printed) < MIN_PAGE_OPENER_REPEATS:
+        return []
+    openers = [_opening_word(bullet) for bullet in printed]
+    flags: list[str] = []
+    for opener in sorted(set(openers)):
+        if not opener:
+            continue
+        count = openers.count(opener)
+        if count < MIN_PAGE_OPENER_REPEATS:
+            continue
+        if count <= len(printed) * PAGE_OPENER_SHARE:
+            continue
+        carriers = [b for b in printed if _opening_word(b) == opener]
+        inherited = all(is_verbatim_source(b, sources) for b in carriers)
+        name = "page_opener_verbatim" if inherited else "page_opener"
+        flags.append(f"{name}({opener} opens {count} of {len(printed)})")
     return flags
 
 
@@ -722,8 +831,20 @@ def _evidence_text(document: dict) -> str:
     return " ".join(parts).casefold()
 
 
-def document_quality_flags(document: dict) -> dict[str, list[str]]:
-    """Every writing problem in an assembled resume, keyed by where it lives."""
+def document_quality_flags(
+    document: dict, *, verified_sources: Iterable[str] = ()
+) -> dict[str, list[str]]:
+    """Every writing problem in an assembled resume, keyed by where it lives.
+
+    `verified_sources` is the vault wording behind the page, when the caller has
+    it. Given, length and opening-verb problems are attributed: a bullet printed
+    exactly as the fact holds it reports as `_verbatim`, which the tailor does
+    not charge the writer for, because the writer chose the safest thing
+    available and the defect it inherited is the user's to edit. Omitted, every
+    bullet is treated as authored, which is right for the review of a resume
+    nobody tailored.
+    """
+    sources = list(verified_sources)
     found: dict[str, list[str]] = {}
     summary = str((document.get("basics") or {}).get("summary") or "").strip()
     if summary:
@@ -755,9 +876,13 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
                 section,
             )
             highlights = [h for h in (entry.get("highlights") or []) if h]
-            entry_flags: list[str] = list(section_flags(highlights))
+            entry_flags: list[str] = list(
+                section_flags(highlights, verified_sources=sources)
+            )
             for highlight in highlights:
-                entry_flags.extend(bullet_flags(highlight))
+                entry_flags.extend(
+                    _attributed_bullet_flags(highlight, verified_sources=sources)
+                )
             if len(highlights) > (
                 MAX_WORK_BULLETS if section == "work" else MAX_PROJECT_BULLETS
             ):
@@ -794,12 +919,16 @@ def document_quality_flags(document: dict) -> dict[str, list[str]]:
         for section in ("work", "projects", "volunteer")
         for entry in (document.get(section) or [])
     )
+    page: list[str] = []
     if rendered_bullets < MIN_PAGE_BULLETS:
-        found["page"] = [f"thin_page({rendered_bullets} bullets)"]
+        page.append(f"thin_page({rendered_bullets} bullets)")
     else:
         lines = estimated_page_lines(document)
         if lines > MAX_PAGE_LINES:
-            found["page"] = [f"over_page({lines} of {MAX_PAGE_LINES} lines)"]
+            page.append(f"over_page({lines} of {MAX_PAGE_LINES} lines)")
+    page.extend(page_opener_flags(document, verified_sources=sources))
+    if page:
+        found["page"] = page
     return found
 
 

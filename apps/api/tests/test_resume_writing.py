@@ -232,7 +232,13 @@ def test_a_full_page_is_not_flagged_as_thin() -> None:
         "work": [
             {
                 "position": "Engineer",
-                "highlights": [f"Did distinct thing number {n}." for n in range(4)],
+                # Distinct openers: the page-wide opener check is real, and a
+                # fixture that says "Did" four times would trip it while
+                # testing something else entirely.
+                "highlights": [
+                    f"{verb} distinct thing number {n}."
+                    for n, verb in enumerate(("Wrote", "Shipped", "Traced", "Cut"))
+                ],
             }
         ],
         "projects": [
@@ -251,15 +257,32 @@ def test_a_resume_that_spills_onto_a_second_page_is_flagged() -> None:
     rendered to two pages where 10 over 3 had fitted on one. The budget is
     measured in estimated rendered lines and calibrated against Tectonic.
     """
-    two_rows = " ".join(["word"] * 26)
-    three_rows = " ".join(["word"] * 27)
+    # A distinct opening verb per bullet, so this stays a test about length. The
+    # filler is padded to keep the word counts, and so the line arithmetic,
+    # exactly as they were.
+    verbs = iter(
+        [
+            "Wrote", "Shipped", "Traced", "Cut", "Tuned", "Built", "Drove",
+            "Ported", "Split", "Cached", "Logged", "Merged", "Pruned",
+        ]
+    )
+    def two_rows() -> str:
+        return " ".join([next(verbs), *["word"] * 25])
+
     # Four entry headings, twelve two-row bullets and one three-row bullet: 31.
     document = {
         "work": [
-            {"position": "Engineer", "highlights": [three_rows, *[two_rows] * 3]}
+            {
+                "position": "Engineer",
+                "highlights": [
+                    " ".join([next(verbs), *["word"] * 26]),
+                    *[two_rows() for _ in range(3)],
+                ],
+            }
         ],
         "projects": [
-            {"name": str(n), "highlights": [two_rows] * 3} for n in range(3)
+            {"name": str(n), "highlights": [two_rows() for _ in range(3)]}
+            for n in range(3)
         ],
     }
     assert document_quality_flags(document)["page"] == ["over_page(31 of 30 lines)"]
