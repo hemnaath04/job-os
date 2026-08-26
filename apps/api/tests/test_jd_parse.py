@@ -285,3 +285,152 @@ async def test_the_token_ceiling_is_the_one_that_was_measured(
     await jd_parse.parse_jd("some jd text")
     assert seen["max_tokens"] == jd_parse._JD_PARSE_MAX_TOKENS
     assert jd_parse._JD_PARSE_MAX_TOKENS > 2048
+
+
+class _Clock:
+    """A monotonic clock a test can advance without waiting on one."""
+
+    def __init__(self) -> None:
+        self.now = 1000.0
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+@pytest.mark.asyncio
+async def test_the_retry_has_to_fit_the_time_the_caller_is_waiting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression this exists to stop.
+
+    A first attempt that answers fast but unusably used to start a second one
+    with no regard for how long the caller would wait. In production that
+    turned a fast, honest empty parse into a 27 second wait for the same empty
+    parse: the gateway answered 200 in about three seconds, the reply was cut
+    off, the retry started, and the caller's deadline killed it 24 seconds
+    later. With almost none of the budget left there is no second attempt to
+    start, and the answer comes back now.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    clock = _Clock()
+    monkeypatch.setattr(jd_parse, "_monotonic", clock)
+    calls = 0
+
+    async def _slow_and_truncated(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        clock.advance(24.0)  # most of the budget gone on the first attempt
+        return _TruncatedMessage(TRUNCATED_JSON)
+
+    monkeypatch.setattr(jd_parse, "create_message", _slow_and_truncated)
+
+    result = await jd_parse.parse_jd("a jd", title_hint="Backend Engineer")
+
+    assert calls == 1, "a second attempt that cannot finish must not be started"
+    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
+
+
+@pytest.mark.asyncio
+async def test_the_retry_still_runs_when_there_is_time_for_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bound must not cost us the retry in the case it was added for: a
+    reply that comes back quickly and unusable leaves plenty of budget."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    clock = _Clock()
+    monkeypatch.setattr(jd_parse, "_monotonic", clock)
+    calls = 0
+
+    async def _fast_then_whole(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        clock.advance(3.0)  # what the gateway actually did in production
+        if calls == 1:
+            return _TruncatedMessage(TRUNCATED_JSON)
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    monkeypatch.setattr(jd_parse, "create_message", _fast_then_whole)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert calls == 2
+    assert result["title"] == "Backend Engineer"
+
+
+@pytest.mark.asyncio
+async def test_each_attempt_is_bounded_by_what_is_left(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The timeout handed to each attempt is the remaining budget, not a flat
+    number larger than the caller's own. That mismatch is what let one attempt
+    consume everything."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    clock = _Clock()
+    monkeypatch.setattr(jd_parse, "_monotonic", clock)
+    seen: list[float] = []
+
+    async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
+        seen.append(kwargs.get("timeout", -1.0))
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    # Mirrors asyncio.wait_for's own signature, which is the point of the
+    # double, so the timeout parameter is not ours to rename.
+    async def _wait_for(coro: Any, timeout: float) -> Any:  # noqa: ASYNC109
+        seen.append(timeout)
+        return await coro
+
+    monkeypatch.setattr(jd_parse, "create_message", _capture)
+    monkeypatch.setattr(jd_parse.asyncio, "wait_for", _wait_for)
+
+    await jd_parse.parse_jd("a jd", deadline_seconds=10.0)
+
+    assert seen[0] == pytest.approx(10.0, abs=0.5)
+
+
+@pytest.mark.asyncio
+async def test_a_caller_can_hand_down_its_own_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """So the endpoint's budget and this one are one number, not two that
+    drift apart. They drifted before: 30s here against 27s there."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    clock = _Clock()
+    monkeypatch.setattr(jd_parse, "_monotonic", clock)
+    calls = 0
+
+    async def _burns_the_budget(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        clock.advance(9.0)
+        return _TruncatedMessage(TRUNCATED_JSON)
+
+    monkeypatch.setattr(jd_parse, "create_message", _burns_the_budget)
+
+    await jd_parse.parse_jd("a jd", deadline_seconds=10.0)
+    assert calls == 1, "a 10s budget leaves no room for a second attempt"
+
+
+@pytest.mark.asyncio
+async def test_the_title_is_offered_to_the_parser(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A posting's heading routinely names the location and the company where
+    the body never does. Parsing BNY's body alone returned location=None on
+    five runs out of five against the real text."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    seen: dict[str, Any] = {}
+
+    async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
+        seen.update(kwargs)
+        return _FakeMessage('{"title": "X"}')
+
+    monkeypatch.setattr(jd_parse, "create_message", _capture)
+
+    await jd_parse.parse_jd(
+        "a body with no location in it",
+        title_hint="Engineering (Developer) - New York, NY - BNY Careers",
+    )
+
+    prompt = seen["messages"][0]["content"]
+    assert "New York, NY" in prompt

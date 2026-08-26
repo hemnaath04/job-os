@@ -95,6 +95,12 @@ class JobFieldsForEnrich(ORMModel):
     no Postgres `jobs` row to look up.
     """
 
+    # Not backfilled and never overwritten, but sent because the parser reads
+    # it. A posting's own heading routinely carries the location and the
+    # company when the body does not: BNY's says "Engineering (Developer) -
+    # New York, NY", and parsing the body alone returned location=None on
+    # every one of five runs against that exact text.
+    title: str | None = None
     location: str | None = None
     remote: str | None = None
     level: str | None = None

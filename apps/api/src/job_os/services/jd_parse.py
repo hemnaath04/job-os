@@ -7,6 +7,7 @@ Pydantic-validated dict; never invents the company name (callers fall back to UR
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Literal
 
 import anthropic
@@ -31,7 +32,32 @@ log = structlog.get_logger(__name__)
 # to this one call, not the shared retry ladder: raising a caller's own
 # tolerance for a timeout is that caller's call to make, not a change to what
 # every other agent in this codebase considers safe to retry.
-_JD_PARSE_TIMEOUT_ERRORS = (anthropic.APITimeoutError, httpx.TimeoutException)
+_JD_PARSE_TIMEOUT_ERRORS = (
+    anthropic.APITimeoutError,
+    httpx.TimeoutException,
+    # asyncio.wait_for raises the builtin TimeoutError on 3.11+, and the bound
+    # below is what usually fires rather than the client's own clock.
+    TimeoutError,
+)
+
+# Budget for the WHOLE call, retry included, not per attempt.
+#
+# The retry above had no relationship to the time its caller was willing to
+# wait. The client allowed each attempt 30s while `/jobs/parse-description`
+# allows the whole thing 27s, so one attempt could consume the caller's entire
+# budget and a second could never finish. In production that turned a fast,
+# honest empty parse into a 27 second wait for the same empty parse: the
+# gateway answered 200 in about three seconds, the reply was unusable, the
+# retry started, and the caller's deadline killed it 24 seconds later.
+#
+# Set below the tightest caller budget so this fires first and reports what
+# happened, leaving the caller's own timeout as a backstop rather than the
+# thing that ends the request.
+_JD_PARSE_DEADLINE_SECONDS = 25.0
+
+# Under this there is not enough time left for another attempt to land, so
+# starting one only delays an answer that is already decided.
+_JD_PARSE_MIN_ATTEMPT_SECONDS = 6.0
 
 # Measured against the live gateway: a healthy parse of a full-length internship
 # JD returns in about five seconds using 508 to 555 output tokens, so 2048 was
@@ -46,6 +72,8 @@ _JD_PARSE_RETRY_DELAY_SECONDS = 2.0
 # without patching asyncio.sleep globally, which would slow down every other
 # test that happens to await something in the same process.
 _sleep = asyncio.sleep
+# Same indirection, so a test can drive the deadline without waiting on it.
+_monotonic = time.monotonic
 
 
 class ParsedJD(BaseModel):
@@ -112,7 +140,12 @@ def _incomplete(title_hint: str | None) -> dict:
     return result
 
 
-async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
+async def parse_jd(
+    jd_text: str,
+    *,
+    title_hint: str | None = None,
+    deadline_seconds: float | None = None,
+) -> dict:
     settings = get_settings()
     if not settings.anthropic_api_key:
         log.warning("jd_parse.no_anthropic_key")
@@ -122,10 +155,14 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
     # background pass but not for a request a user is sitting in front of.
     # A structured-output call over one job description has no business
     # taking longer than this even on a slow day.
+    budget = deadline_seconds or _JD_PARSE_DEADLINE_SECONDS
+    deadline = _monotonic() + budget
     client = anthropic.AsyncAnthropic(
         auth_token=settings.anthropic_api_key,
         base_url=settings.anthropic_base_url or None,
-        timeout=30.0,
+        # Was a flat 30s, which is longer than any caller waits. Each attempt
+        # is bounded by what is actually left below; this is only the ceiling.
+        timeout=budget,
     )
 
     user_prompt = (
@@ -137,23 +174,38 @@ async def parse_jd(jd_text: str, *, title_hint: str | None = None) -> dict:
     )
 
     for attempt in (1, 2):
+        remaining = deadline - _monotonic()
+        if remaining < _JD_PARSE_MIN_ATTEMPT_SECONDS:
+            # Starting an attempt that cannot finish only delays an answer that
+            # is already decided.
+            log.warning(
+                "jd_parse.out_of_time", attempt=attempt, remaining=round(remaining, 1)
+            )
+            return _incomplete(title_hint)
         try:
-            msg = await create_message(
-                client,
-                model=settings.anthropic_model_extract,
-                max_tokens=_JD_PARSE_MAX_TOKENS,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_prompt}],
-                # temperature=0 was here for reproducibility (same JD -> same
-                # required_skills -> same ats_score) but is reverted for now:
-                # Anthropic's SDK v1.0.0 (2026-08-20) drops temperature/top_p/
-                # top_k from Messages methods entirely, the Appwrite function
-                # this runs in resolves anthropic unpinned above 1.0 on its
-                # next rebuild (requirements.txt: anthropic>=0.40.0, no
-                # ceiling), and a rebuild already broke the same kwarg on the
-                # compose call. Re-add once that pin is capped below 1.0 and
-                # redeployed.
-                extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+            # wait_for around the whole call, not just the HTTP timeout:
+            # create_message streams and runs its own retry schedule for a
+            # rate-limited gateway, so a per-request timeout alone does not
+            # bound how long this can take.
+            msg = await asyncio.wait_for(
+                create_message(
+                    client,
+                    model=settings.anthropic_model_extract,
+                    max_tokens=_JD_PARSE_MAX_TOKENS,
+                    system=SYSTEM_PROMPT,
+                    messages=[{"role": "user", "content": user_prompt}],
+                    # temperature=0 was here for reproducibility (same JD -> same
+                    # required_skills -> same ats_score) but is reverted for now:
+                    # Anthropic's SDK v1.0.0 (2026-08-20) drops temperature/top_p/
+                    # top_k from Messages methods entirely, the Appwrite function
+                    # this runs in resolves anthropic unpinned above 1.0 on its
+                    # next rebuild (requirements.txt: anthropic>=0.40.0, no
+                    # ceiling), and a rebuild already broke the same kwarg on the
+                    # compose call. Re-add once that pin is capped below 1.0 and
+                    # redeployed.
+                    extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+                ),
+                timeout=remaining,
             )
         except _JD_PARSE_TIMEOUT_ERRORS as exc:
             if attempt == 1:

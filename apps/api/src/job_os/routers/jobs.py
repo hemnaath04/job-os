@@ -336,7 +336,18 @@ async def add_description(
     # throwing away text the person typed.
     parsed: dict[str, Any] = {}
     try:
-        parsed = await asyncio.wait_for(parse_jd(jd_text), timeout=_PARSE_BUDGET_SECONDS)
+        parsed = await asyncio.wait_for(
+            # The job's own title goes in as a hint: a posting's heading often
+            # names the location and the company where the body never does.
+            # parse_jd gets the budget too, so it stops and says so rather than
+            # being cut off mid-attempt by the wait_for below.
+            parse_jd(
+                jd_text,
+                title_hint=job.title,
+                deadline_seconds=_PARSE_BUDGET_SECONDS - 2,
+            ),
+            timeout=_PARSE_BUDGET_SECONDS,
+        )
     except TimeoutError:
         log.warning("jobs.description.parse_timeout", job_id=str(job_id))
     except Exception as e:
@@ -408,7 +419,14 @@ async def parse_description(
 
     parsed: dict[str, Any] = {}
     try:
-        parsed = await asyncio.wait_for(parse_jd(jd_text), timeout=_PARSE_BUDGET_SECONDS)
+        parsed = await asyncio.wait_for(
+            parse_jd(
+                jd_text,
+                title_hint=payload.job.title,
+                deadline_seconds=_PARSE_BUDGET_SECONDS - 2,
+            ),
+            timeout=_PARSE_BUDGET_SECONDS,
+        )
     except TimeoutError:
         log.warning("jobs.parse_description.timeout")
     except Exception as e:

@@ -157,6 +157,15 @@ denominator honest:
   scoreable, Keyword Match reports as unavailable rather than a confident 0%.
   A parse failure and a real empty match used to look identical, which turned
   a gateway timeout into the harshest score the page could show.
+- The posting's own heading is read alongside its body. A description that
+  never states where the job is routinely sits under a title that does, and
+  parsing the body alone returned no location at all for a real posting whose
+  title said "New York, NY" outright.
+- Parsing is bounded by however long the caller is actually waiting, and it
+  retries within that rather than beyond it. An unusable first answer is worth
+  asking again for, but only while there is time for the second answer to
+  arrive: past that point the honest move is to say nothing was read, now,
+  instead of spending the whole budget to say it later.
 
 ## Rendering
 
