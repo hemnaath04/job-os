@@ -44,10 +44,29 @@
 % education, work and projects only ever need three of the four slots -- but
 % it stays a real argument so a section that needs a second right-hand line
 % later does not need a new macro.
+% A line break is only a line break when there is a line to break. `\\` with
+% nothing before it inside a minipage is "There's no line here to end", and it
+% takes the whole document down, not just the entry: no preview, no PDF, no
+% review, no download.
+%
+% Every project used to carry dates, so this never came up. It came up the
+% moment the ranking check started putting a genuinely undated project on the
+% page: a project with no dates and no subtitle rendered `\textbf{title}\\`
+% against an empty right-hand column and failed the compile.
+%
+% `\detokenize` rather than a string compare so any argument is safe to test,
+% including one that starts with a macro.
+\newcommand{\huskyifne}[2]{\if\relax\detokenize{#1}\relax\else#2\fi}
 \newcommand{\entry}[4]{%
-  \begin{minipage}[t]{0.72\textwidth}\raggedright\textbf{#1}\\\textit{#3}\end{minipage}%
+  \begin{minipage}[t]{0.72\textwidth}\raggedright%
+    \textbf{#1}\huskyifne{#3}{\\\textit{#3}}%
+  \end{minipage}%
   \hfill%
-  \begin{minipage}[t]{0.27\textwidth}\raggedleft #2\\#4\end{minipage}\par%
+  \begin{minipage}[t]{0.27\textwidth}\raggedleft%
+    % The right column can be empty, date-only, second-line-only, or both, and
+    % only the last of those may carry a break between them.
+    \huskyifne{#2}{#2}\huskyifne{#4}{\huskyifne{#2}{\\}#4}%
+  \end{minipage}\par%
 }
 \newcommand{\skillrow}[2]{\textbf{\textit{#1:}} #2\par\vspace{2pt}}
 
