@@ -161,6 +161,22 @@ MAX_COMPOSE_PASSES = 2
 MIN_IMPROVEMENT = Decimal("0.5")
 TARGET_ATS_SCORE = Decimal("80")
 
+# How much of what is actually achievable counts as done.
+#
+# 80 was a fixed number in a world where the ceiling moves with the posting.
+# Measured against a real enterprise AI-engineer JD and this candidate's whole
+# vault: 67 requirements, of which the vault can evidence 15, so the honest
+# ceiling is 22.4%. The run scored 23.3 -- at the ceiling, the best resume those
+# facts can produce -- and was told it had failed, then spent a second compose
+# pass trying to beat a maximum. Every pass costs a model call the user waits
+# for, and the repair loop spends them chasing requirements no fact can support
+# instead of improving the ones that can.
+#
+# Not 100% of achievable: coverage counts a requirement as reachable when some
+# fact touches it, and a page has room for a subset of that. Leaving headroom
+# keeps the target honest without making it trivial.
+ACHIEVABLE_TARGET_SHARE = Decimal("0.9")
+
 # Generous ceiling on purpose, and larger than the output alone needs, because the
 # gateway routes to a model with extended thinking and `max_tokens` covers the
 # thinking block too. A refine pass on a long conversation spent the entire 16000
@@ -773,6 +789,10 @@ async def run_tailor(
     project_briefing = _project_relevance_briefing(project_scores)
     must_have = [req for req in requirements if not req.preferred]
     backed = [req for req in must_have if coverage[req.label].found]
+    # What this posting is actually winnable at, given these facts. See
+    # `_achievable_ats_score`: the fixed 80 was a target for a different JD.
+    achievable = _achievable_ats_score(requirements, coverage)
+    target_score = _effective_target(achievable)
     report(
         "read_role",
         "Reading the role",
@@ -1053,7 +1073,7 @@ async def run_tailor(
             ),
             reachable_missing=reachable,
             unreachable_missing=unreachable,
-            target=float(TARGET_ATS_SCORE),
+            target=float(target_score),
         )
         report(
             # A repair gets its own check step so the browser's checklist only
@@ -1101,8 +1121,15 @@ async def run_tailor(
         # against one would end the run before the repair it plainly needs.
         improved = len(scores) == 1 or score > best_score_before + MIN_IMPROVEMENT
         nothing_left = analysis_settled and not reachable and not quality
+        # The reachable target is only as trustworthy as the analysis behind it,
+        # for the same reason `nothing_left` waits on `analysis_settled`. A
+        # ceiling computed while the analyst is silent says the vault cannot
+        # cover this posting, when it may only mean nobody checked, and stopping
+        # on it would lock in exactly the one-pass-early ending that rule exists
+        # to prevent. Unsettled, the fixed target applies and the run tries again.
+        pass_target = target_score if analysis_settled else TARGET_ATS_SCORE
         done = (
-            score >= TARGET_ATS_SCORE
+            score >= pass_target
             or len(scores) >= MAX_COMPOSE_PASSES
             or not improved
             or nothing_left
@@ -1122,7 +1149,7 @@ async def run_tailor(
                         reachable=reachable,
                         unreachable=unreachable,
                         quality=quality,
-                        target=TARGET_ATS_SCORE,
+                        target=target_score,
                     ),
                 },
             ]
@@ -1188,8 +1215,11 @@ async def run_tailor(
     # Embed pass-by-pass scores into the report so the FE can show the trail
     # without changing the response schema.
     ats_report["iterations"] = iteration_scores
-    ats_report["target_ats_score"] = float(TARGET_ATS_SCORE)
-    ats_report["reached_target"] = float(ats_score) >= float(TARGET_ATS_SCORE)
+    ats_report["target_ats_score"] = float(target_score)
+    # Reported so a low score reads as "this is what these facts can do here"
+    # rather than as the tailor underperforming.
+    ats_report["achievable_ats_score"] = float(achievable)
+    ats_report["reached_target"] = float(ats_score) >= float(target_score)
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
     ats_report["writing_flags"] = document_quality_flags(json_resume)
@@ -1222,14 +1252,28 @@ async def run_tailor(
             "\n(This job description named no requirements this score could "
             "check, so Keyword Match is not shown.)"
         )
-    elif ats_score >= TARGET_ATS_SCORE:
-        note += f"\n(Hit the Job Match target in {_plural(passes, 'pass')}.)"
     elif ats_report["missing_needs_new_facts"] and not still_reachable:
+        # Ordered ahead of hitting the target on purpose. Once the target moves
+        # with what the vault can reach, a stretch posting hits it at a low
+        # number, and "hit the target" next to a Job Match of 23 tells the
+        # reader nothing they can act on. What is missing, and that it is
+        # missing from the profile rather than from the writing, does.
         note += (
             "\n(Every requirement still missing is one your verified profile "
             "does not hold, so another pass cannot close it. Add the evidence "
             "on your Profile and run this again.)"
         )
+    elif ats_score >= target_score:
+        if target_score < TARGET_ATS_SCORE:
+            # Saying "hit the target" without saying which target would read as
+            # a good score on a posting this profile cannot cover.
+            note += (
+                f"\n(Covered what your profile can evidence for this posting, in "
+                f"{_plural(passes, 'pass')}. The rest of what it asks for is work "
+                "you have not done yet, not wording this could fix.)"
+            )
+        else:
+            note += f"\n(Hit the Job Match target in {_plural(passes, 'pass')}.)"
     else:
         note += f"\n(Did not reach the Job Match target after {_plural(passes, 'pass')}.)"
 
@@ -2826,6 +2870,36 @@ def _project_relevance(
         )
     scored.sort(key=lambda p: (-p.score, p.title.casefold()))
     return scored
+
+
+def _achievable_ats_score(
+    requirements: list[_Requirement],
+    coverage: dict[str, Any],
+) -> Decimal:
+    """The best score these facts could reach against this posting.
+
+    A JD asks for what it asks for; a candidate has what they have. When a
+    posting names threat modelling, BERT and enterprise governance and the vault
+    holds none of them, no amount of rewriting reaches 80, and a resume that
+    honestly covers everything it can is not a failure.
+
+    Same coverage the briefing is built from, so "reachable" here means exactly
+    what it means everywhere else in this file rather than a second opinion.
+    """
+    if not requirements:
+        return TARGET_ATS_SCORE
+    reachable = sum(1 for req in requirements if coverage[req.label].found)
+    return Decimal(100 * reachable) / Decimal(len(requirements))
+
+
+def _effective_target(achievable: Decimal) -> Decimal:
+    """What this run should be measured against.
+
+    Never above the fixed target, because a candidate who can cover everything
+    is not asked for more than 80. Never above what is reachable either, which
+    is the half that was missing.
+    """
+    return min(TARGET_ATS_SCORE, (achievable * ACHIEVABLE_TARGET_SHARE).quantize(Decimal("0.1")))
 
 
 def _selection_correction_note(substitutions: list[tuple[str, str]]) -> str:
