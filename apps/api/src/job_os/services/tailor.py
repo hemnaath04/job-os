@@ -1343,10 +1343,24 @@ async def run_tailor(
     # `ats_report["iterations"]` above, sent structurally rather than as
     # prose. A note that restated them was the same number appearing a
     # third and fourth time on one screen.
+    # The writer's own account of the run, with one class of claim checked
+    # before it is printed: a project left off "for lacking verified bullets"
+    # when it has them. That reason describes a rule this module does not have,
+    # and it was still being written about a fact with three bullets after #39
+    # and #40 landed, because both of those corrected the SELECTION and neither
+    # looked at the prose explaining it.
+    written_note, invented = _false_bullet_excuses(
+        agent.agent_note, facts=facts, bullets_by_fact=bullets_by_fact
+    )
+    on_page = {
+        _project_short_name(str(entry.get("name") or ""))
+        for entry in (json_resume.get("projects") or [])
+    }
     note = (
-        agent.agent_note
+        written_note
         + _selection_correction_note(selection_corrections)
         + _page_cut_note(page_cuts)
+        + _honest_exclusion_note(invented, on_page=on_page, scored=project_scores)
     )
     passes = len(iteration_scores)
     ats_score, incomplete_reason = _finalize_ats_score(ats_score, ats_report, jd_parsed)
@@ -3246,6 +3260,125 @@ def _page_cut_note(cut: list[str]) -> str:
         return ""
     return (
         f"\n(Cut for space, weakest match for this posting first: {', '.join(cut)}.)"
+    )
+
+
+# Sentence boundaries that survive a project literally named "job.os". Split on
+# a terminator FOLLOWED BY SPACE, so the dot inside a name never ends a sentence.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+# The writer explaining why something is not on the page.
+_EXCLUSION_RE = re.compile(
+    r"\b(?:exclud|omit|left out|leaving out|drop|not includ|without|no |lack)",
+    re.I,
+)
+# ...and blaming it on the evidence, which is the claim Python can check.
+_BULLET_CLAIM_RE = re.compile(r"\bbullets?\b|\bverified fact", re.I)
+
+
+def _false_bullet_excuses(
+    note: str,
+    *,
+    facts: list[TailorFact],
+    bullets_by_fact: dict[str, list[TailorBullet]],
+) -> tuple[str, list[str]]:
+    """Drop sentences blaming an exclusion on bullets the fact demonstrably has.
+
+    A real run left job.os off the page and said "ClaimFarm and job.os excluded,
+    no verified fact bullets provided for them". job.os is verified and has
+    three bullets. The rule it describes does not exist either: `metric_verified`
+    is never read in this module and no code path drops a fact for unverified
+    bullets. It is an invented justification for a real decision, which is the
+    pattern #39 and #40 were built to end, surviving in the one place they did
+    not look.
+
+    #40 appends a correction, and that is right for a note that has gone STALE:
+    the selection changed after the writer described it, so saying "this was
+    written before that check" is true and enough. This is a different failure.
+    The claim was never true, and a lie followed by a correction still reads as a
+    lie first, because prose is read top to bottom. So it does not get printed.
+
+    Whole sentences are dropped, never clauses. Excising a claim from the middle
+    of a sentence somebody else wrote is the unreliable surgery the #40 docstring
+    declines to attempt, and it still is; removing an entire assertion is not.
+    """
+    if not note.strip():
+        return note, []
+    bulleted = {
+        fact.id: fact
+        for fact in facts
+        if fact.kind == "project" and bullets_by_fact.get(fact.id)
+    }
+    if not bulleted:
+        return note, []
+    # Whether ANY project could honestly be described this way. When every
+    # project in the vault has bullets, a sentence blaming an exclusion on
+    # missing ones is false whoever it means, so it does not have to name a
+    # project to be caught: "It was excluded for having no verified bullets" is
+    # exactly as untrue and would otherwise walk straight past a check that
+    # requires a name.
+    every_project_has_bullets = not [
+        fact
+        for fact in facts
+        if fact.kind == "project" and not bullets_by_fact.get(fact.id)
+    ]
+    kept: list[str] = []
+    accused: list[str] = []
+    for sentence in _SENTENCE_SPLIT_RE.split(note):
+        named = [
+            fact
+            for fact in bulleted.values()
+            if mentions_word(sentence, _project_short_name(fact.title))
+        ]
+        if (
+            (named or every_project_has_bullets)
+            and _EXCLUSION_RE.search(sentence)
+            and _BULLET_CLAIM_RE.search(sentence)
+        ):
+            accused.extend(_project_short_name(fact.title) for fact in named)
+            log.warning(
+                "tailor.note_invented_a_bullet_reason",
+                projects=[f.title for f in named],
+                sentence=sentence[:160],
+            )
+            continue
+        kept.append(sentence)
+    return " ".join(kept).strip(), sorted(set(accused))
+
+
+def _honest_exclusion_note(
+    accused: list[str],
+    *,
+    on_page: set[str],
+    scored: list[_ProjectScore],
+) -> str:
+    """Say why the project is really absent, having removed the invented reason.
+
+    Removing a false sentence and leaving nothing would be its own small
+    dishonesty: the reader saw a project they expected, then saw it vanish with
+    no account at all. The ranking is the account, and Python has it.
+    """
+    if not accused:
+        return ""
+    absent = [name for name in accused if name not in on_page]
+    if not absent:
+        # Named as excluded and on the page anyway: #40's case, already covered
+        # by the correction note, so nothing more to say here.
+        return ""
+    ranked = {
+        _project_short_name(score.title): score.score for score in scored
+    }
+    parts = []
+    for name in absent:
+        place = ranked.get(name)
+        if place is None:
+            parts.append(name)
+        else:
+            parts.append(f"{name} (matched {place} of this posting's requirements)")
+    return (
+        f"\n(Not on the page: {', '.join(parts)}. It ranked below the projects "
+        "that are, which is the reason; it has verified bullets and any note "
+        "above saying otherwise was wrong.)"
     )
 
 
