@@ -72,6 +72,7 @@ from job_os.services.resume_writing import (
     document_quality_flags,
     drops_team_credit,
     estimated_page_lines,
+    mentions_word,
     normalize_dashes,
     records_provisional_status,
     upgrades_status,
@@ -1493,6 +1494,7 @@ def _build_document(
     # Done by removing the fact and reassembling rather than by trimming the
     # finished document, so the provenance keeps describing the page that ships.
     page_cuts: list[str] = []
+    cut_facts: list[TailorFact] = []
     if project_scores:
         for weakest in _weakest_project_first(selected_facts, project_scores):
             if estimated_page_lines(json_resume) <= MAX_PAGE_LINES:
@@ -1511,7 +1513,28 @@ def _build_document(
             ]
             json_resume, provenance = assemble(selected_facts, safe_bullets)
             page_cuts.append(weakest.title)
+            cut_facts.append(weakest)
             log.info("tailor.project_cut_for_space", project=weakest.title)
+
+    # The summary was written before the cut, so it can still point at a project
+    # the reader will not find. Dropping it costs the page its lede, which is a
+    # real loss, and it is the smaller one: a missing opening line is untidy, an
+    # opening line citing work the page does not show is untrue. The rejection
+    # is reported the same way every other refused summary is, so the pass is
+    # charged for it and the next one is told what to avoid, which is how this
+    # gets a correct lede rather than none.
+    if cut_facts:
+        orphaned = _summary_names_absent_project(
+            summary_objective, cut=cut_facts, json_resume=json_resume
+        )
+        if orphaned:
+            log.warning("tailor.summary_named_a_cut_project", project=orphaned)
+            summary_rejection = (
+                f"summary_rejected(names {orphaned}, which was cut to fit the "
+                "page; write the summary about the work that is on the page)"
+            )
+            summary_objective = None
+            json_resume, provenance = assemble(selected_facts, safe_bullets)
 
     return json_resume, provenance, summary_rejection, substitutions, page_cuts
 
@@ -3162,6 +3185,55 @@ def _weakest_project_first(
     rank = {p.fact_id: p.score for p in scored}
     projects = [f for f in selected if f.kind == "project"]
     return sorted(projects, key=lambda f: (rank.get(f.id, -1), f.title.casefold()))
+
+
+# Where a project title stops naming the project and starts describing it.
+# "BedRocked - Civic Sewer-Sequencing Platform" is called BedRocked; the rest is
+# the subtitle, and a summary that mentions the project will use the name.
+_PROJECT_NAME_SPLIT_RE = re.compile(r"\s+[\u2014\u2013-]\s+|:\s+|\s+\(")
+
+
+def _project_short_name(title: str) -> str:
+    return _PROJECT_NAME_SPLIT_RE.split(title.strip(), maxsplit=1)[0].strip()
+
+
+def _summary_names_absent_project(
+    summary: str | None,
+    *,
+    cut: list[TailorFact],
+    json_resume: dict[str, Any],
+) -> str | None:
+    """A cut project the summary still points the reader at, if there is one.
+
+    #45 made the page fit by removing the weakest project and reassembling, but
+    the summary was written against the selection as it stood BEFORE the cut. A
+    real run opened by positioning him "via BedRocked's LLM and classification
+    work" on a page BedRocked had just been cut from, so the one line every
+    reader reads first cited evidence the page does not show.
+
+    That is worse than the spilling page it came from. A resume that runs long
+    is untidy; a resume that names a project it does not contain reads as
+    describing someone else's work, and it is the lede that does it.
+
+    Checked against the assembled page rather than against the cut list alone,
+    so a name the page still carries for another reason is not a false positive:
+    the question is whether the reader can find what the summary points at, not
+    which fact it came from.
+    """
+    if not summary:
+        return None
+    page = _ats_source_text(json_resume)
+    for fact in cut:
+        name = _project_short_name(fact.title)
+        # A one-word name is not enough to be sure the summary means the project
+        # rather than the word. Longer names are also why this can miss: a
+        # summary saying only "Infant Cry" about "Infant Cry Sound Detection
+        # System" goes unnoticed, which is the safe direction to fail.
+        if not name or len(name) < 3:
+            continue
+        if mentions_word(summary, name) and not mentions_word(page, name):
+            return name
+    return None
 
 
 def _page_cut_note(cut: list[str]) -> str:
