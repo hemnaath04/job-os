@@ -12,6 +12,7 @@ import {
   FileSignature,
   FileText,
   LayoutDashboard,
+  MoreHorizontal,
   LogOut,
   MessageSquareText,
   Radar,
@@ -23,7 +24,7 @@ import {
 import Link from "next/link";
 import type { Route } from "next";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
 import { clearAppwriteSession } from "@/lib/appwrite/client";
 
@@ -46,12 +47,32 @@ const NAV: NavItem[] = [
   { href: "/calendar", label: "Calendar", icon: CalendarDays, section: "Other" },
 ];
 
+// The phone bar holds five targets at a comfortable tap size. It used to be
+// `NAV.slice(0, 5)`, which silently dropped whatever came sixth: Resumes, Cover
+// Letters, Profile and Calendar were all unreachable on a phone, with nothing
+// on screen to suggest they existed. Four of nine pages, including the profile
+// every tailored resume is built from.
+//
+// So four go in the bar and the rest go behind "More", which means adding a
+// tenth page hides it in the sheet rather than deleting it from the product.
+const PRIMARY = NAV.slice(0, 4);
+const OVERFLOW = NAV.slice(4);
+
 const SECTIONS = ["Overview", "Pipeline", "Documents", "Other"] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
   const reduceMotion = useReducedMotion();
   const [collapsed, setCollapsed] = useState(false);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const moreActive = OVERFLOW.some(
+    (item) => pathname === item.href || pathname.startsWith(item.href + "/"),
+  );
+  // A phone's back gesture changes the route without unmounting this, so the
+  // sheet has to close itself or it hangs over the page you just navigated to.
+  useEffect(() => {
+    setMoreOpen(false);
+  }, [pathname]);
   const width = collapsed ? 72 : 232;
   const { signOut } = useClerk();
 
@@ -189,7 +210,7 @@ export function Sidebar() {
           off-language and unreadable: the active icon uses --color-text, which
           measured 1.13:1 against it. */}
       <nav className="fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex h-14 items-center justify-around rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/85 px-1.5 shadow-[var(--shadow-glass-hover)] backdrop-blur-2xl lg:hidden" aria-label="Primary navigation">
-        {NAV.slice(0, 5).map((item) => {
+        {PRIMARY.map((item) => {
           const Icon = item.icon;
           const active = pathname === item.href || pathname.startsWith(item.href + "/");
           return (
@@ -205,7 +226,65 @@ export function Sidebar() {
             </Link>
           );
         })}
+        <button
+          type="button"
+          onClick={() => setMoreOpen((open) => !open)}
+          aria-expanded={moreOpen}
+          aria-controls="mobile-nav-more"
+          aria-label={moreOpen ? "Close more pages" : "More pages"}
+          className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${
+            moreActive || moreOpen
+              ? "text-[color:var(--color-text)]"
+              : "text-[color:var(--color-text-dim)] hover:text-[color:var(--color-text)]"
+          }`}
+        >
+          {moreActive && !moreOpen && (
+            <motion.span
+              layoutId="mobile-nav-active"
+              className="absolute inset-0 rounded-xl border border-[color:var(--color-kiwi)]/20 bg-[color:var(--color-kiwi)]/12"
+              transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 30 }}
+            />
+          )}
+          <MoreHorizontal className="relative size-[18px]" />
+        </button>
       </nav>
+      {moreOpen && (
+        <>
+          {/* Tapping anywhere else closes it, which is what a sheet on a phone
+              is expected to do. */}
+          <button
+            type="button"
+            aria-label="Close more pages"
+            onClick={() => setMoreOpen(false)}
+            className="fixed inset-0 z-40 bg-black/40 backdrop-blur-[2px] lg:hidden"
+          />
+          <div
+            id="mobile-nav-more"
+            className="fixed inset-x-3 bottom-[calc(max(0.75rem,env(safe-area-inset-bottom))+3.75rem)] z-50 overflow-hidden rounded-2xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/95 shadow-[var(--shadow-glass-hover)] backdrop-blur-2xl lg:hidden"
+          >
+            {OVERFLOW.map((item) => {
+              const Icon = item.icon;
+              const active = pathname === item.href || pathname.startsWith(item.href + "/");
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={() => setMoreOpen(false)}
+                  aria-current={active ? "page" : undefined}
+                  className={`flex items-center gap-3 border-b border-[color:var(--color-border)] px-4 py-3 text-sm last:border-b-0 ${
+                    active
+                      ? "bg-[color:var(--color-kiwi)]/12 text-[color:var(--color-text)]"
+                      : "text-[color:var(--color-text-muted)]"
+                  }`}
+                >
+                  <Icon className="size-4 shrink-0" />
+                  {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        </>
+      )}
     </>
   );
 }
