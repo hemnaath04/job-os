@@ -31,6 +31,11 @@ import {
   type ProfileVocab,
 } from "@/lib/discover/fit-score";
 import { indexHitToDiscoveryResult } from "@/lib/discover/index-results";
+import {
+  partitionErrors,
+  retryOnceIfTransient,
+  transientNotice,
+} from "@/lib/discover/transient";
 import { detectEligibilityFlags } from "@/lib/discover/work-auth";
 import { reportFailure } from "@/lib/errors";
 import {
@@ -232,13 +237,19 @@ async function runUnifiedSearch(
   ];
 
   const [indexPart, backendPart, routePart] = await Promise.allSettled([
-    api.indexSearch({
-      title_keywords: filters.title_keywords ?? [],
-      query: (filters.technology_slugs ?? []).join(" ") || undefined,
-      country_codes: filters.country_codes ?? [],
-      max_age_days: filters.max_age_days,
-      limit: filters.limit,
-    }),
+    // Retried once before it counts as a failure. The index rides the same
+    // dyno as the API, so releasing the backend takes it down for about a
+    // minute, and every search in that window opened with a red banner about a
+    // search that had in fact just succeeded from live sources.
+    retryOnceIfTransient(() =>
+      api.indexSearch({
+        title_keywords: filters.title_keywords ?? [],
+        query: (filters.technology_slugs ?? []).join(" ") || undefined,
+        country_codes: filters.country_codes ?? [],
+        max_age_days: filters.max_age_days,
+        limit: filters.limit,
+      }),
+    ),
     backend.length
       ? api.discoverySearch({ ...filters, sources: backend })
       : Promise.resolve(emptyDiscoveryResponse()),
@@ -290,6 +301,12 @@ export default function DiscoverPage() {
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
   const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
+  // Split by whether the user can do anything about it. A missing API key and a
+  // board that was slow for two seconds were rendered in the same red banner,
+  // which is how a routine deploy came to read as a broken search.
+  const { actionable: actionableErrors, transient: transientErrors } =
+    partitionErrors(sourceErrors);
+  const transientMessage = transientNotice(transientErrors);
   // Default to fit so the strongest matches lead. When the profile is empty the
   // fit branch falls back to recency, so this is safe for a fresh account too.
   const [sort, setSort] = useState<SortMode>(initial.sort ?? "fit");
@@ -723,9 +740,9 @@ export default function DiscoverPage() {
           Zero-hit sources are expected noise on a narrow filter, not worth a
           banner, so they go to the console instead; see the search mutation's
           onSuccess. */}
-      {sortedResults !== null && sourceErrors.length > 0 && (
+      {sortedResults !== null && actionableErrors.length > 0 && (
         <div className="notice notice-caution mt-4 p-3 text-xs">
-          {sourceErrors.map((e) => (
+          {actionableErrors.map((e) => (
             <div key={e.source} className="flex items-start gap-2">
               <span className="opacity-70">⚠</span>
               <div>
@@ -739,6 +756,17 @@ export default function DiscoverPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Something was briefly busy: a board that did not answer inside its
+          budget, or the index during the minute a release restarts its dyno.
+          One quiet line for all of them, because five slow boards on one run is
+          one fact about the internet and not five problems, and because the
+          search it is describing returned results. */}
+      {sortedResults !== null && transientMessage && (
+        <p className="mt-4 text-xs leading-relaxed text-[color:var(--color-text-dim)]">
+          {transientMessage}
+        </p>
       )}
 
       {/* Results */}
