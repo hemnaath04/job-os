@@ -43,7 +43,7 @@ const TOOL_GROUPS = [
   {
     title: "Other",
     tools:
-      "whoami, get_profile_facts, create_profile_fact, archive_profile_fact, list_cover_letters, get_upcoming_calendar",
+      "whoami, get_profile_facts, create_profile_fact, update_profile_fact, patch_bullet, archive_profile_fact, list_cover_letters, get_upcoming_calendar",
   },
 ];
 
@@ -60,6 +60,8 @@ Typical workflow:
 
 Rules:
 - Nothing here is destructive. archive_resume, move_resume_version, and archive_profile_fact never delete data, only hide or relocate it.
+- update_profile_fact corrects a fact's fields, most usefully payload.keywords, which is what decides how a project ranks against a posting: a project with no technologies listed cannot match a job description written in technology nouns, however relevant it is. It cannot set verified.
+- patch_bullet changes one bullet's wording, for tightening a bullet past 30 words or varying a repeated opening verb. It refuses an edit that introduces a number the fact does not already state, or that grows the bullet past its current length or the cap. Those are the rules the tailor is held to, and they bind harder here: a tailored resume is one document, an edit to the vault is inherited by every resume after it. If a bullet needs a metric it does not have, ask for it.
 - create_profile_fact defaults verified to false. Only pass verified: true when the person has explicitly confirmed the fact themselves in this conversation: an unverified fact is never cited in a tailored resume, and a wrongly-verified one corrupts every resume tailored after it.
 - If a tool call fails with "not found" for an id you were given, do not retry with a guessed id -- ask instead.
 - Report what you actually did (which tools, which ids) rather than a generic "I tailored your resume," so the person can verify it in the web app.`;
