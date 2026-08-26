@@ -1014,7 +1014,7 @@ async def run_tailor(
         # trivially gamed by claiming more matches, and the loop duly learned to
         # paste JD phrases onto unrelated bullets to raise a number nobody
         # outside the loop ever saw.
-        document, _provenance, summary_rejection = _build_document(
+        document, _provenance, summary_rejection, _subs = _build_document(
             attempt,
             facts=facts,
             bullets_by_fact=bullets_by_fact,
@@ -1163,7 +1163,7 @@ async def run_tailor(
 
     report("assemble", "Assembling the page", None, 0.90)
 
-    json_resume, provenance, _summary_rejection = _build_document(
+    json_resume, provenance, _summary_rejection, selection_corrections = _build_document(
         agent,
         facts=facts,
         bullets_by_fact=bullets_by_fact,
@@ -1209,7 +1209,7 @@ async def run_tailor(
     # `ats_report["iterations"]` above, sent structurally rather than as
     # prose. A note that restated them was the same number appearing a
     # third and fourth time on one screen.
-    note = agent.agent_note
+    note = agent.agent_note + _selection_correction_note(selection_corrections)
     passes = len(iteration_scores)
     ats_score, incomplete_reason = _finalize_ats_score(ats_score, ats_report, jd_parsed)
     if incomplete_reason == "unavailable_parse_incomplete":
@@ -1251,7 +1251,7 @@ def _build_document(
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
     project_scores: list[_ProjectScore] | None = None,
-) -> tuple[dict[str, Any], list[ProvenanceEntry], str | None]:
+) -> tuple[dict[str, Any], list[ProvenanceEntry], str | None, list[tuple[str, str]]]:
     """Turn one agent pass into the resume it would actually ship.
 
     Returns the document, its provenance, and the reason the tailored summary was
@@ -1282,6 +1282,7 @@ def _build_document(
     # The ranking stops being advice here. Until this, `selected_fact_ids` was
     # taken as given and the measured ordering was something the prompt merely
     # asked the writer to respect. See `_enforce_project_ranking`.
+    substitutions: list[tuple[str, str]] = []
     if project_scores:
         safe_fact_ids, substitutions = _enforce_project_ranking(
             safe_fact_ids, project_scores, bullets_by_fact
@@ -1323,7 +1324,7 @@ def _build_document(
         summary_objective=summary_objective,
         skills_dedup_drop=agent.skills_dedup_drop,
     )
-    return json_resume, provenance, summary_rejection
+    return json_resume, provenance, summary_rejection, substitutions
 
 
 # What one flagged writing problem costs against keyword coverage. Three points
@@ -2825,6 +2826,29 @@ def _project_relevance(
         )
     scored.sort(key=lambda p: (-p.score, p.title.casefold()))
     return scored
+
+
+def _selection_correction_note(substitutions: list[tuple[str, str]]) -> str:
+    """Set the record straight when the ranking overruled the writer.
+
+    `agent_note` is written before `_enforce_project_ranking` runs, so it
+    describes the selection the writer wanted rather than the one that shipped.
+    On the first real run after the check landed, the note said "Dropped
+    ClaimFarm and job.os this pass" while both were on the finished page: the
+    correction working, reported as the correction failing.
+
+    Appended rather than edited in. The note is the model's own prose and there
+    is no reliable way to excise a claim from a sentence somebody else wrote, so
+    this states what shipped and says plainly that the text above it is stale.
+    """
+    if not substitutions:
+        return ""
+    restored = ", ".join(sorted({restored for _passed_over, restored in substitutions}))
+    return (
+        f"\n(Kept on the page after review: {restored}. This note was written "
+        "before that check ran, so anything above about leaving them out is out "
+        "of date.)"
+    )
 
 
 def _enforce_project_ranking(

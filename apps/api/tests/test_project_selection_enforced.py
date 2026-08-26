@@ -18,6 +18,7 @@ from job_os.services.tailor import (
     TailorBullet,
     _enforce_project_ranking,
     _ProjectScore,
+    _selection_correction_note,
 )
 
 
@@ -106,3 +107,25 @@ def test_reports_every_substitution_so_the_disagreement_is_visible():
     passed_over, restored = subs[0]
     assert restored == "ClaimFarm: Agentic Crop-Insurance AI"
     assert passed_over in {"BedRocked", "Infant Cry Sound Detection System"}
+
+
+
+def test_the_note_says_what_shipped_when_the_ranking_overruled_the_writer():
+    # The first real run after the check landed reported "Dropped ClaimFarm and
+    # job.os this pass" while both were on the finished page. The correction
+    # working, described as the correction failing.
+    note = _selection_correction_note([("BedRocked", "ClaimFarm"), ("Infant Cry", "job.os")])
+
+    assert "ClaimFarm" in note and "job.os" in note
+    assert "out of date" in note, "the stale claim above has to be marked stale"
+
+
+def test_a_run_that_needed_no_correction_says_nothing():
+    # Nothing was overruled, so there is nothing to correct, and a note that
+    # explained itself anyway would be noise on every clean run.
+    assert _selection_correction_note([]) == ""
+
+
+def test_a_project_restored_twice_is_named_once():
+    note = _selection_correction_note([("A", "ClaimFarm"), ("B", "ClaimFarm")])
+    assert note.count("ClaimFarm") == 1

@@ -57,7 +57,7 @@ def _certificate(fact_id: str, title: str) -> TailorFact:
 
 def test_certificates_appear_only_when_the_agent_selects_them() -> None:
     facts = [_certificate("c1", "Machine Learning"), _certificate("c2", "Python Core")]
-    chosen, _prov, _reason = _build_document(
+    chosen, _prov, _reason, _subs = _build_document(
         TailorAgentOutput(selected_fact_ids=["c1"]),
         facts=facts,
         bullets_by_fact={},
@@ -74,7 +74,7 @@ def test_leaving_every_certificate_out_is_a_normal_outcome() -> None:
     role, and the review asked for that space to go to a project instead.
     """
     facts = [_certificate("c1", "Machine Learning"), _certificate("c2", "Python Core")]
-    document, _prov, _reason = _build_document(
+    document, _prov, _reason, _subs = _build_document(
         TailorAgentOutput(selected_fact_ids=[]),
         facts=facts,
         bullets_by_fact={},
