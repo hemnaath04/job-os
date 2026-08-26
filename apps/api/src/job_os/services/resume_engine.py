@@ -131,6 +131,29 @@ SUBSTANTIVE_WRITING_FLAGS = (
     "no_linkedin_link",
     "unevidenced_skill",
 )
+
+
+# A defect the page inherited from the vault rather than one the writer
+# committed. Mirrors the tailor's own suffix, since both sides have to agree on
+# which flags are the candidate's to fix.
+INHERITED_FLAG_SUFFIX = "_verbatim"
+
+
+def is_substantive(flag: str) -> bool:
+    """Does this flag cost the resume points, or is it a note?
+
+    Matched on the flag NAME, not as a string prefix. `too_long_verbatim(46w)`
+    starts with `too_long`, so prefix matching charged the candidate for
+    printing his own verified wording, which is the exact thing the verbatim
+    flag exists to stop charging for. It survived the tailor fix because the
+    tailor counts flags itself and never comes through here.
+    """
+    name = flag.split("(", 1)[0]
+    if name.endswith(INHERITED_FLAG_SUFFIX):
+        return False
+    return name in SUBSTANTIVE_WRITING_FLAGS
+
+
 class ModelReviewIssue(BaseModel):
     severity: str
     code: str
@@ -217,6 +240,44 @@ def validate_json_resume_document(doc: dict[str, Any]) -> dict[str, Any]:
             ):
                 raise ValueError(f"{section}.highlights must be a list of strings.")
     return doc
+
+
+def vault_text(facts: list[dict[str, Any]] | None) -> tuple[list[str], list[str]]:
+    """(verified bullet wordings, everything the vault says) for the checks.
+
+    The first tells a bullet the writer padded from one printed exactly as the
+    candidate wrote it. The second answers whether anything at all backs a
+    claimed skill. Both were already computed for the tailor's own scoring; this
+    review is the other half of the same question and had been asking it blind.
+
+    Defensive about shape for the same reason `_compact_facts` is: this vault
+    arrives from the browser over HTTP, so a bullet that is not an object is
+    ordinary untrusted input and skipping it beats 500ing the review.
+    """
+    sources: list[str] = []
+    evidence: list[str] = []
+    for fact in facts or []:
+        if not isinstance(fact, dict):
+            continue
+        for key in ("title", "org"):
+            value = fact.get(key)
+            if isinstance(value, str) and value.strip():
+                evidence.append(value)
+        payload = fact.get("payload")
+        if isinstance(payload, dict):
+            for value in payload.values():
+                if isinstance(value, str):
+                    evidence.append(value)
+                elif isinstance(value, list):
+                    evidence.extend(item for item in value if isinstance(item, str))
+        raw_bullets = fact.get("bullets")
+        for bullet in raw_bullets if isinstance(raw_bullets, list) else []:
+            if not isinstance(bullet, dict):
+                continue
+            text = bullet.get("text")
+            if isinstance(text, str) and text.strip():
+                sources.append(text)
+    return sources, [*sources, *evidence]
 
 
 def _compact_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -469,6 +530,7 @@ async def load_github_context(
 def deterministic_review(
     doc: dict[str, Any],
     pdf_bytes: bytes,
+    verified_facts: list[dict[str, Any]] | None = None,
 ) -> tuple[list[ResumeReviewIssue], int, bool]:
     issues: list[ResumeReviewIssue] = []
     # No PDF means the runtime has no LaTeX engine, not that the document is
@@ -485,7 +547,7 @@ def deterministic_review(
                 ),
             )
         )
-        return issues + _document_review(doc), 0, False
+        return issues + _document_review(doc, verified_facts), 0, False
 
     reader = PdfReader(io.BytesIO(pdf_bytes))
     page_count = len(reader.pages)
@@ -543,10 +605,16 @@ def deterministic_review(
                 )
             )
 
-    return issues + _document_review(doc), page_count, text_selectable
+    return (
+        issues + _document_review(doc, verified_facts),
+        page_count,
+        text_selectable,
+    )
 
 
-def _document_review(doc: dict[str, Any]) -> list[ResumeReviewIssue]:
+def _document_review(
+    doc: dict[str, Any], verified_facts: list[dict[str, Any]] | None = None
+) -> list[ResumeReviewIssue]:
     """Everything a rule can check without a rendered PDF."""
     issues: list[ResumeReviewIssue] = []
     basics = doc.get("basics") or {}
@@ -605,13 +673,14 @@ def _document_review(doc: dict[str, Any]) -> list[ResumeReviewIssue]:
     # same work, a repeated opening verb, first person, JD padding. These are the
     # things a reader notices first, and naming them here means the score
     # reflects them even when the model review is unavailable.
-    for where, flags in document_quality_flags(doc).items():
+    sources, evidence = vault_text(verified_facts)
+    for where, flags in document_quality_flags(
+        doc, verified_sources=sources, vault_evidence=evidence
+    ).items():
         section = where.split(":", 1)[0]
         # A repeated opening verb is worth mentioning; a role that says the same
         # thing twice or pads a bullet with JD wording is worth points.
-        substantive = any(
-            flag.startswith(SUBSTANTIVE_WRITING_FLAGS) for flag in flags
-        )
+        substantive = any(is_substantive(flag) for flag in flags)
         issues.append(
             ResumeReviewIssue(
                 severity="warning" if substantive else "suggestion",
@@ -698,7 +767,9 @@ def _document_quality_score(doc: dict[str, Any]) -> Decimal:
     return score
 
 
-def provisional_review(doc: dict[str, Any]) -> ResumeReviewResult:
+def provisional_review(
+    doc: dict[str, Any], verified_facts: list[dict[str, Any]] | None = None
+) -> ResumeReviewResult:
     """The rules-only half of `review_resume`: no render, no model, no network.
 
     A runtime that can neither render a PDF nor afford a ninety-second review
@@ -712,7 +783,9 @@ def provisional_review(doc: dict[str, Any]) -> ResumeReviewResult:
     the moment a render-backed review lands.
     """
     validate_json_resume_document(doc)
-    issues, page_count, text_selectable = deterministic_review(doc, b"")
+    issues, page_count, text_selectable = deterministic_review(
+        doc, b"", verified_facts
+    )
     score, breakdown = _score_from_issues(issues)
     return ResumeReviewResult(
         score=score.quantize(Decimal("0.1")),
@@ -779,7 +852,9 @@ async def review_resume(
     except TectonicUnavailableError as exc:
         log.warning("resume_render_unavailable", error=str(exc))
         pdf_bytes = b""
-    rule_issues, page_count, text_selectable = deterministic_review(doc, pdf_bytes)
+    rule_issues, page_count, text_selectable = deterministic_review(
+        doc, pdf_bytes, verified_facts
+    )
     if on_partial is not None:
         partial_score, partial_breakdown = _score_from_issues(rule_issues)
         on_partial(
@@ -849,7 +924,10 @@ async def review_resume(
         )
 
     settings = get_settings()
-    writing_flags = document_quality_flags(doc)
+    review_sources, review_evidence = vault_text(verified_facts)
+    writing_flags = document_quality_flags(
+        doc, verified_sources=review_sources, vault_evidence=review_evidence
+    )
     prompt = (
         "Review this JSON Resume after drafting. Return one JSON object with "
         "score (0-100), issues, strengths, and summary. Issue severity must be "
