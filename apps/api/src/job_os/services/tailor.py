@@ -1020,6 +1020,7 @@ async def run_tailor(
             bullets_by_fact=bullets_by_fact,
             master_json_resume=master_json_resume,
             facts_payload=facts_payload,
+            project_scores=project_scores,
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
@@ -1168,6 +1169,7 @@ async def run_tailor(
         bullets_by_fact=bullets_by_fact,
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
+        project_scores=project_scores,
     )
 
     # Same frozen keyword set the loop used, so the score the user sees is the
@@ -1248,6 +1250,7 @@ def _build_document(
     bullets_by_fact: dict[str, list[TailorBullet]],
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
+    project_scores: list[_ProjectScore] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], str | None]:
     """Turn one agent pass into the resume it would actually ship.
 
@@ -1276,6 +1279,20 @@ def _build_document(
         log.warning("tailor.dropped_unknown_bullets", count=dropped)
 
     safe_fact_ids = {fid for fid in agent.selected_fact_ids if fid in valid_fact_ids}
+    # The ranking stops being advice here. Until this, `selected_fact_ids` was
+    # taken as given and the measured ordering was something the prompt merely
+    # asked the writer to respect. See `_enforce_project_ranking`.
+    if project_scores:
+        safe_fact_ids, substitutions = _enforce_project_ranking(
+            safe_fact_ids, project_scores, bullets_by_fact
+        )
+        for passed_over, restored in substitutions:
+            log.warning(
+                "tailor.selection_corrected",
+                dropped_by_writer=restored,
+                in_favour_of=passed_over,
+                note=agent.agent_note or "",
+            )
     # Also include facts that own any selected bullet (so the parent
     # work/project entry renders).
     safe_fact_ids.update(valid_bullet_ids[sb.fact_bullet_id] for sb in safe_bullets)
@@ -2753,6 +2770,9 @@ class _ProjectScore:
     title: str
     score: int
     matched: tuple[str, ...]
+    # True when the fact carried no technologies of its own to match against, as
+    # opposed to carrying them and matching none of this JD's.
+    unscoreable: bool = False
 
 
 def _project_relevance(
@@ -2790,11 +2810,83 @@ def _project_relevance(
                 }
             )
         )
+        # Anything the fact declares about itself: keywords, description, type,
+        # whatever the payload carries. A project with none of that, and bullets
+        # naming none either, was never scoreable rather than scored zero.
+        declared = any(str(v).strip() for v in payload.values() if v not in (None, [], {}))
         scored.append(
-            _ProjectScore(fact_id=f.id, title=f.title, score=len(matched), matched=matched)
+            _ProjectScore(
+                fact_id=f.id,
+                title=f.title,
+                score=len(matched),
+                matched=matched,
+                unscoreable=not matched and not declared,
+            )
         )
     scored.sort(key=lambda p: (-p.score, p.title.casefold()))
     return scored
+
+
+def _enforce_project_ranking(
+    selected_fact_ids: set[str],
+    scored: list[_ProjectScore],
+    bullets_by_fact: dict[str, list[TailorBullet]],
+) -> tuple[set[str], list[tuple[str, str]]]:
+    """Hold the writer to the ranking unless it can show a reason.
+
+    `_project_relevance` measures which project answers this JD, and until now
+    that measurement was advice. `selected_fact_ids` was taken as given, filtered
+    only for facts that exist, so the model could drop the top-ranked project for
+    the bottom one and nothing noticed.
+
+    It did. On a real run against an AI-engineer posting, the writer dropped
+    ClaimFarm (the top project), job.os and RoleReveal, and explained itself:
+    "lack verified bullets so were left out despite JD relevance". No such rule
+    exists anywhere in this file. Nothing here reads `metric_verified`, and
+    `_sanitize_selected_bullets` falls back to the candidate's own source text
+    rather than dropping a bullet. The writer invented a constraint and applied
+    it to the three projects the JD actually asked for.
+
+    The prompts do allow one honest deviation, and it is worth keeping: a
+    higher-scoring project whose own evidence is genuinely too thin to write
+    from. The defect is that the claim was unfalsifiable. So the deviation
+    survives and the reason is checked: a higher-scoring project may be passed
+    over only if it truly has no bullets to write from. If it has them, the
+    swap is undone.
+
+    Returns the corrected selection and the substitutions made, so the caller
+    can log what the writer tried to do rather than silently disagreeing with it.
+    """
+    projects = [p for p in scored if p.score > 0]
+    if not projects:
+        return selected_fact_ids, []
+
+    def writable(fact_id: str) -> bool:
+        return bool(bullets_by_fact.get(fact_id))
+
+    kept = [p for p in projects if p.fact_id in selected_fact_ids]
+    dropped = [p for p in projects if p.fact_id not in selected_fact_ids]
+
+    corrected = set(selected_fact_ids)
+    substitutions: list[tuple[str, str]] = []
+
+    # Lowest-scoring kept first: that is the one a better project displaces.
+    for candidate in dropped:
+        if not writable(candidate.fact_id):
+            # The one legitimate reason, and now the only one.
+            continue
+        weakest = min(
+            (p for p in kept if p.fact_id in corrected and p.score < candidate.score),
+            key=lambda p: (p.score, p.title.casefold()),
+            default=None,
+        )
+        if weakest is None:
+            continue
+        corrected.discard(weakest.fact_id)
+        corrected.add(candidate.fact_id)
+        substitutions.append((weakest.title, candidate.title))
+
+    return corrected, substitutions
 
 
 def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
@@ -2813,7 +2905,18 @@ def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
         "the model's impression of which project is more polished or more recent:",
     ]
     for rank, item in enumerate(scored, start=1):
-        detail = f": {', '.join(item.matched)}" if item.matched else " (no overlap found)"
+        if item.matched:
+            detail = f": {', '.join(item.matched)}"
+        elif item.unscoreable:
+            # Not the same statement as "no overlap", and the difference decided
+            # a real resume. A project whose fact declares no technologies and
+            # whose bullets name none cannot match a JD written in technology
+            # nouns, however relevant it is. Reporting that as no overlap told
+            # the writer the project was irrelevant, which is a judgement
+            # nobody made, and it dropped the candidate's flagship work.
+            detail = " (nothing declared to score against, not judged irrelevant)"
+        else:
+            detail = " (no overlap found)"
         matches = _plural(item.score, "requirement match")
         lines.append(f"  {rank}. {item.title} -- {matches}{detail}")
     lines += [
