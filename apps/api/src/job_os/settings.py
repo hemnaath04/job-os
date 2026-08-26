@@ -75,6 +75,23 @@ class Settings(BaseSettings):
     # placeholder, and so it stays correct if this step's tier is ever dropped.
     anthropic_model_tailor: str = "anthropic/claude-sonnet-5-subscription"
     anthropic_model_verify: str = "manifest/auto"
+    # Thinking effort for the analyst call, unset by default so the gateway's
+    # own default (high) applies, which is exactly what shipped before this
+    # field existed. It is here to be MEASURED, not to be changed: a trace of
+    # four real runs put the analyst at 57% of tailoring wall clock (184s of
+    # 321s) while carrying half the input of the compose call, so effort rather
+    # than context size is the variable worth testing. Setting it to "medium"
+    # is the experiment; leaving it unset is production.
+    #
+    # It is config rather than a constant because the tailor runs in the
+    # Appwrite Function, which deploys from main, so a constant could not be
+    # varied without shipping the very change the measurement is meant to
+    # justify. See the comment on COMPOSE_EFFORT for why reducing power on this
+    # specific step needs evidence: swapping the analyst to Haiku was tried and
+    # lost real matches, Job Match 52.2 against 73.9 and 78.3. That was a MODEL
+    # change; this is an EFFORT change, and it is the one that paid off on
+    # compose.
+    analyst_effort: str | None = None
     # Manifest custom routing tiers. Fast handles short structured tasks;
     # quality is reserved for resume extraction; sonnet handles resume
     # tailoring and the independent review/verify pass.

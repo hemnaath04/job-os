@@ -250,6 +250,7 @@ async def test_the_compose_prompt_actually_carries_the_project_ranking(
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
@@ -419,6 +420,7 @@ async def test_one_writing_pass_when_nothing_is_left_to_repair(
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
@@ -505,6 +507,7 @@ async def test_an_unchecked_gap_is_not_proof_that_a_pass_would_be_wasted(
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)

@@ -51,6 +51,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str,
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
@@ -151,6 +152,7 @@ async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
@@ -195,6 +197,7 @@ async def test_a_rate_limit_on_the_very_first_pass_still_raises(
             anthropic_base_url="https://example.invalid",
             anthropic_model_tailor="manifest/auto",
             manifest_tier_sonnet="job-os-sonnet",
+            analyst_effort=None,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
