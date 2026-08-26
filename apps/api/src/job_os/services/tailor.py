@@ -1322,6 +1322,14 @@ async def run_tailor(
     ats_report["reached_target"] = float(ats_score) >= float(target_score)
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
+    # Which arm produced this run, recorded where it cannot be lost. The same
+    # value is logged next to the analyst timing, but Appwrite drops an
+    # execution's logs at random: of three consecutive runs, two kept their logs
+    # and one came back with zero bytes despite `logging: true` and a clean
+    # 200. A measurement that cannot say which condition produced a number is
+    # not a measurement, and `ats_report` is persisted on the version row, so
+    # the label outlives the log.
+    ats_report["analyst_effort"] = _analyst_effort_label(get_settings().analyst_effort)
     ats_report["writing_flags"] = document_quality_flags(
         json_resume,
         verified_sources=verified_sources,
@@ -3250,6 +3258,16 @@ def _summary_names_absent_project(
     return None
 
 
+def _analyst_effort_label(effort: str | None) -> str:
+    """Which arm produced a run, named so its absence is not a null.
+
+    Unset means the gateway's own default applies, which is a real condition
+    and has to be distinguishable from a run that recorded nothing. `None` in a
+    report column reads as "not measured", and the two are not the same claim.
+    """
+    return effort or "gateway_default"
+
+
 def _page_cut_note(cut: list[str]) -> str:
     """Say what came off the page, for the same reason a corrected selection does.
 
@@ -3760,7 +3778,7 @@ async def _analyse_requirements(
             # Recorded so a run identifies its own condition. Reading a
             # timing out of the execution log is useless for an A/B if the
             # log does not say which arm produced it.
-            effort=effort or "gateway_default",
+            effort=_analyst_effort_label(effort),
             step="analyst",
             iteration=1,
             seconds=round(time.perf_counter() - started, 1),
