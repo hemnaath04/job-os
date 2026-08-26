@@ -1256,7 +1256,7 @@ function ResultView({
             onClick={() =>
               downloadPdf(
                 downloadUrl,
-                buildResumeFilename([result.json_resume?.basics?.name, companyName, jobTitle]),
+                buildResumeFilename({ person: result.json_resume?.basics?.name, company: companyName }),
               )
             }
             // Not gated on `reviewing`: once a real PDF is attached (which

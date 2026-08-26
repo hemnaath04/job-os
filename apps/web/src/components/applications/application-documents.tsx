@@ -78,7 +78,7 @@ export function ApplicationDocuments({ application }: { application: Application
                   downloadPdf(
                     api.downloadVersionUrl(linkedResume.id, resumeVersion.id),
                     resumeVersion.source_filename ??
-                      buildResumeFilename([application.job.company?.name, application.job.title]),
+                      buildResumeFilename({ company: application.job.company?.name }),
                   )
               : undefined
           }

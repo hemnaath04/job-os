@@ -15,6 +15,7 @@ import {
   toolText,
 } from "@/lib/mcp/backend";
 import { isAppwritePipelineEnabled, isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
+import { buildResumeFilename } from "@/lib/resume-filename";
 import {
   archiveProfileFact,
   archiveResumeCard,
@@ -192,7 +193,6 @@ async function withAttachmentEcho(
 async function resumeVersionFilename(jwt: string, version: ResumeVersion): Promise<string> {
   const candidate = version.json_resume.basics?.name;
   let company: string | undefined;
-  let role: string | undefined;
   try {
     if (version.spawned_from_application_id) {
       const application = (await callBackend(
@@ -201,27 +201,18 @@ async function resumeVersionFilename(jwt: string, version: ResumeVersion): Promi
         `/applications/${version.spawned_from_application_id}`,
       )) as { job?: { title?: string; company?: { name?: string } } };
       company = application.job?.company?.name;
-      role = application.job?.title;
     } else if (version.spawned_from_job_id) {
       const job = (await callBackend(jwt, "GET", `/jobs/${version.spawned_from_job_id}`)) as {
         title?: string;
         company?: { name?: string };
       };
       company = job.company?.name;
-      role = job.title;
     }
   } catch {
     // Best-effort naming only -- an unreachable job/application shouldn't
     // block the download itself.
   }
-  const slug = [candidate, company, role]
-    .filter((part): part is string => Boolean(part))
-    .join(" ")
-    .replace(/[\\/:*?"<>|]/g, "")
-    .trim()
-    .replace(/\s+/g, "_")
-    .slice(0, 120);
-  return `${slug || "resume"}.pdf`;
+  return buildResumeFilename({ person: candidate, company });
 }
 
 async function createJobAndMaybeApply(
