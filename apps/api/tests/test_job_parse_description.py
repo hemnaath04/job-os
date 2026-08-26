@@ -35,7 +35,10 @@ USER = SimpleNamespace(id="user-1")
 @pytest.fixture
 def stub_parse(monkeypatch):
     def _install(result: dict):
-        async def _fake(text: str, *, title_hint: str | None = None) -> dict:
+        # **kwargs so a new caller-side argument (deadline_seconds, and
+        # whatever comes next) does not silently turn into an empty parse
+        # here: the routers swallow a bad call and carry on.
+        async def _fake(text: str, **_kwargs: object) -> dict:
             return result
 
         import job_os.services.jd_parse as jd_parse

@@ -473,6 +473,9 @@ const legacyApi = {
       body: JSON.stringify({
         jd_text,
         job: {
+          // Sent as a parser hint, not to be written back: a posting's heading
+          // often names the location and company the body leaves out.
+          title: job.title ?? null,
           location: job.location ?? null,
           remote: job.remote ?? null,
           level: job.level ?? null,

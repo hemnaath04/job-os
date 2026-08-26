@@ -58,7 +58,7 @@ def stub_parse(monkeypatch):
     """`parse_jd` is imported inside the handler, so patch the module attribute."""
 
     def _install(result: dict):
-        async def fake_parse_jd(text: str, *, title_hint: str | None = None) -> dict:
+        async def fake_parse_jd(text: str, **_kwargs: object) -> dict:
             return result
 
         import job_os.services.jd_parse as jd_parse
