@@ -1185,6 +1185,50 @@ export const appwriteWorkspace = {
     return fact;
   },
 
+  /**
+   * Change the wording of a bullet already in the vault.
+   *
+   * Adding and deleting a bullet both worked; changing one word did not, so
+   * fixing a typo meant deleting the bullet and typing it again, which threw
+   * away the original. It also left the tailor arguing with facts nobody could
+   * edit: eleven of this profile's fifteen bullets are over the resume word cap
+   * and seven of fifteen open with the same verb, and the only honest fix for
+   * either is the owner's, in his own words.
+   *
+   * `source_updated_at` is deliberately left where it is. Every bullet on a
+   * fact is written with one shared timestamp and the list is read back
+   * `orderAsc("source_updated_at")`, so that column is the bullet order, not a
+   * change log. Bumping it to record an edit would send the bullet a typo was
+   * fixed in to the bottom of its own fact, and the resume would quietly
+   * reorder because someone corrected a spelling.
+   */
+  async updateBullet(
+    bulletId: string,
+    patch: Partial<Pick<FactBullet, "text" | "target_role" | "metric_verified">>,
+  ): Promise<FactBullet> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const tables = getAppwriteServices().tables;
+    const row = await tables.getRow<FactBulletRow>({
+      databaseId: config.databaseId,
+      tableId: config.factBulletsTableId,
+      rowId: bulletId,
+    });
+    const bullet: StoredFactBullet = {
+      ...parseSnapshot<FactBullet>(row),
+      fact_id: row.fact_id,
+      ...patch,
+      updated_at: now(),
+    };
+    await tables.updateRow<FactBulletRow>({
+      databaseId: config.databaseId,
+      tableId: config.factBulletsTableId,
+      rowId: bulletId,
+      data: { snapshot: JSON.stringify(bullet) },
+    });
+    return bullet;
+  },
+
   async uploadResume(file: File, isMaster: boolean): Promise<AgentJob> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();

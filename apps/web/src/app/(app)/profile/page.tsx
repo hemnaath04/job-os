@@ -24,7 +24,7 @@ import { AddFactDialog } from "@/components/add-fact-dialog";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
-import type { ProfileFact } from "@/lib/types";
+import type { FactBullet, ProfileFact } from "@/lib/types";
 
 const KIND_ORDER: ProfileFact["kind"][] = [
   "experience",
@@ -521,14 +521,132 @@ function FactCard({
       {fact.bullets.length > 0 && (
         <ul className="mt-3 space-y-1.5 text-sm text-[color:var(--color-text)]">
           {fact.bullets.map((b) => (
-            <li key={b.id} className="flex gap-2">
-              <span className="mt-1.5 inline-block size-1 shrink-0 rounded-full bg-[color:var(--color-violet)]" />
-              <span className="leading-relaxed">{b.text}</span>
-            </li>
+            <BulletRow key={b.id} bullet={b} onSaved={onDeleted} />
           ))}
         </ul>
       )}
     </div>
+  );
+}
+
+// What a bullet is allowed to be before it wraps to a third rendered line and
+// starts crowding out a whole other bullet. Mirrors BULLET_MAX_WORDS in
+// apps/api resume_writing.py, which is where the resume is actually measured.
+const BULLET_MAX_WORDS = 30;
+
+function countWords(text: string): number {
+  return text.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * One bullet, editable in place.
+ *
+ * Adding and deleting a bullet both worked; changing one word did not, so
+ * fixing a typo meant deleting the bullet and typing it again. That gap was not
+ * cosmetic. A bullet is the only prose on a tailored resume its owner actually
+ * wrote, and the tailor prints it as it stands: eleven of this profile's fifteen
+ * bullets are over the word cap and seven of fifteen open with the same verb,
+ * and the resume inherits every one of those. No rule can fix them, because
+ * shortening a claim means deciding which part of it to drop.
+ *
+ * So the word count is shown while editing rather than after saving. It is the
+ * one number that says why a bullet keeps coming back flagged, and it is not
+ * useful anywhere the person cannot act on it.
+ */
+function BulletRow({ bullet, onSaved }: { bullet: FactBullet; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(bullet.text);
+  const [saving, setSaving] = useState(false);
+  const words = countWords(text);
+  const over = words > BULLET_MAX_WORDS;
+  const unchanged = text.trim() === bullet.text.trim();
+
+  async function handleSave() {
+    if (!text.trim()) {
+      toast.error("A bullet needs some text");
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.updateBullet(bullet.id, { text: text.trim() });
+      toast.success("Bullet updated");
+      setEditing(false);
+      onSaved();
+    } catch (error) {
+      reportFailure("save this bullet", error);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!editing) {
+    return (
+      <li className="group flex gap-2">
+        <span className="mt-1.5 inline-block size-1 shrink-0 rounded-full bg-[color:var(--color-violet)]" />
+        <button
+          type="button"
+          onClick={() => {
+            setText(bullet.text);
+            setEditing(true);
+          }}
+          title="Edit this bullet"
+          className="-mx-1 rounded px-1 text-left leading-relaxed transition-colors hover:bg-[color:var(--color-surface-2)]"
+        >
+          {bullet.text}
+          {countWords(bullet.text) > BULLET_MAX_WORDS && (
+            // Only on the ones that are over. A count beside every bullet is
+            // noise; a count beside the four that keep getting flagged is the
+            // whole message.
+            <span className="ml-1.5 whitespace-nowrap text-[10px] text-[color:var(--color-text-dim)]">
+              {countWords(bullet.text)}w
+            </span>
+          )}
+        </button>
+      </li>
+    );
+  }
+
+  return (
+    <li className="flex gap-2">
+      <span className="mt-1.5 inline-block size-1 shrink-0 rounded-full bg-[color:var(--color-violet)]" />
+      <div className="min-w-0 flex-1 space-y-1.5">
+        <textarea
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          rows={4}
+          autoFocus
+          className="field-control w-full !text-xs"
+        />
+        <div className="flex items-center gap-1.5">
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={saving || unchanged}
+            className="rounded-lg border border-[color:var(--color-accent-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-accent-ink)] transition-colors hover:bg-[color:var(--color-accent)]/20 disabled:opacity-50"
+          >
+            {saving ? "Saving..." : "Save"}
+          </button>
+          <button
+            type="button"
+            onClick={() => setEditing(false)}
+            disabled={saving}
+            className="rounded-lg border border-[color:var(--color-border)] px-2.5 py-1.5 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <span
+            className={
+              over
+                ? "text-[11px] text-[color:var(--color-clay)]"
+                : "text-[11px] text-[color:var(--color-text-dim)]"
+            }
+          >
+            {words} of {BULLET_MAX_WORDS} words
+            {over && ", the resume prints it as it stands"}
+          </span>
+        </div>
+      </div>
+    </li>
   );
 }
 

@@ -119,7 +119,7 @@ export interface JobEnrichPlan {
  * The parts of a fact a person may correct.
  *
  * Not `verified`, which has its own path and its own meaning, and not the
- * bullets, which are edited where they are written.
+ * bullets, which have `BulletEdit`.
  */
 export interface FactEdit {
   title?: string;
@@ -129,6 +129,19 @@ export interface FactEdit {
   location?: string | null;
   source_url?: string | null;
   payload?: Record<string, unknown>;
+}
+
+/**
+ * The parts of a bullet a person may correct.
+ *
+ * Its wording above all. A bullet is the only text on a tailored resume the
+ * candidate actually wrote, and until now it was the one thing he could not
+ * change without deleting it.
+ */
+export interface BulletEdit {
+  text?: string;
+  target_role?: string | null;
+  metric_verified?: boolean;
 }
 
 export interface FactBullet {

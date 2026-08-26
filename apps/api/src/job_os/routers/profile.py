@@ -12,6 +12,7 @@ from job_os.db.models import FactBullet, ProfileFact, User
 from job_os.db.session import get_session
 from job_os.schemas.profile import (
     FactBulletCreate,
+    FactBulletPatch,
     FactBulletRead,
     ImportReport,
     JsonResumeImport,
@@ -134,12 +135,10 @@ async def add_bullet(
     return bullet
 
 
-@router.delete("/bullets/{bullet_id}", status_code=204)
-async def delete_bullet(
-    bullet_id: UUID,
-    user: User = Depends(get_current_user),
-    session: AsyncSession = Depends(get_session),
-) -> None:
+async def _load_bullet(
+    session: AsyncSession, bullet_id: UUID, user: User
+) -> FactBullet:
+    """One of this user's bullets, or a 404 that does not say whose it was."""
     result = await session.execute(
         select(FactBullet)
         .join(ProfileFact, FactBullet.fact_id == ProfileFact.id)
@@ -148,7 +147,52 @@ async def delete_bullet(
     bullet = result.scalar_one_or_none()
     if bullet is None:
         raise HTTPException(404, "bullet not found")
-    await session.delete(bullet)
+    return bullet
+
+
+@router.patch("/bullets/{bullet_id}", response_model=FactBulletRead)
+async def patch_bullet(
+    bullet_id: UUID,
+    payload: FactBulletPatch,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> FactBullet:
+    """Edit the wording of a bullet already in the vault.
+
+    Adding and deleting a bullet were both possible; changing one word was not,
+    so fixing a typo meant deleting the bullet and retyping it, which threw away
+    the original. It also left the tailor arguing with facts nobody could edit:
+    eleven of this user's fifteen bullets are over the resume's word cap, and the
+    only honest fix for that is his, in his own words.
+    """
+    from job_os.services.embeddings import embed_one
+
+    bullet = await _load_bullet(session, bullet_id, user)
+    fields = payload.model_dump(exclude_unset=True)
+    # Only when the wording actually moved. The embedding is a network call, and
+    # re-running it to flip `metric_verified` would spend it on identical text.
+    text = fields.get("text")
+    if text is not None and text != bullet.text:
+        bullet.embedding = await embed_one(text)
+    for key, value in fields.items():
+        setattr(bullet, key, value)
+    await session.flush()
+    # `updated_at` carries onupdate=func.now(), so the UPDATE this flush emits
+    # leaves it expired and only the database knows its new value. Reading it
+    # during response_model serialisation is what raises MissingGreenlet, so it
+    # is refreshed here, where there is a session to do the IO. Same trap
+    # `patch_fact` documents above.
+    await session.refresh(bullet)
+    return bullet
+
+
+@router.delete("/bullets/{bullet_id}", status_code=204)
+async def delete_bullet(
+    bullet_id: UUID,
+    user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> None:
+    await session.delete(await _load_bullet(session, bullet_id, user))
 
 
 @router.post("/import/json-resume", response_model=ImportReport)

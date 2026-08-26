@@ -18,6 +18,19 @@ class FactBulletCreate(ORMModel):
     metric_verified: bool = True
 
 
+class FactBulletPatch(ORMModel):
+    """An edit to a bullet already in the vault.
+
+    Every field optional and `exclude_unset` on the way out, so a caller
+    changing the wording cannot silently reset `metric_verified` to its default
+    and quietly unverify a metric it never mentioned.
+    """
+
+    text: str | None = None
+    target_role: str | None = None
+    metric_verified: bool | None = None
+
+
 class ProfileFactRead(TimestampedRead):
     kind: str
     title: str
