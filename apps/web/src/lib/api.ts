@@ -10,6 +10,7 @@ import type {
   InterviewPrep,
   InterviewQuestion,
   Job,
+  JobEnrichPlan,
   JobEnrichResult,
   MeRead,
   OutreachContact,
@@ -461,6 +462,27 @@ const legacyApi = {
     request<JobEnrichResult>(`/jobs/${jobId}/description`, {
       method: "POST",
       body: JSON.stringify({ jd_text }),
+    }),
+  // Plans a backfill without writing anything, so the caller can apply it to
+  // whichever store holds the job. Sends the job's current values rather than
+  // an id, because on the Appwrite pipeline the id names a row this backend
+  // does not have.
+  parseJobDescription: (jd_text: string, job: Partial<Job>) =>
+    request<JobEnrichPlan>("/jobs/parse-description", {
+      method: "POST",
+      body: JSON.stringify({
+        jd_text,
+        job: {
+          location: job.location ?? null,
+          remote: job.remote ?? null,
+          level: job.level ?? null,
+          function: job.function ?? null,
+          salary_min: job.salary_min ?? null,
+          salary_max: job.salary_max ?? null,
+          salary_currency: job.salary_currency ?? null,
+          jd_parsed: job.jd_parsed ?? {},
+        },
+      }),
     }),
 
   listFacts: (kind?: string) => {

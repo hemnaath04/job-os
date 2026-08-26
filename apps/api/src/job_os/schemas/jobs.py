@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from pydantic import Field, HttpUrl
@@ -81,6 +82,46 @@ class JobEnrichResult(ORMModel):
     """
 
     job: JobRead
+    filled: list[str] = Field(default_factory=list)
+    parse_used: bool = False
+
+
+class JobFieldsForEnrich(ORMModel):
+    """The job as the caller currently holds it, for planning a backfill.
+
+    Only the fields the planner reads. The caller sends its own copy rather
+    than a row id because the row it means may not exist in this database: the
+    live pipeline keeps applications in Appwrite, and a card created there has
+    no Postgres `jobs` row to look up.
+    """
+
+    location: str | None = None
+    remote: str | None = None
+    level: str | None = None
+    function: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    salary_currency: str | None = None
+    jd_parsed: dict[str, Any] = Field(default_factory=dict)
+
+
+class JobDescriptionParse(ORMModel):
+    """A pasted description, plus the job it is meant to fill in."""
+
+    jd_text: str = Field(min_length=1)
+    job: JobFieldsForEnrich = Field(default_factory=JobFieldsForEnrich)
+
+
+class JobEnrichPlan(ORMModel):
+    """What the paste earned, for the caller to apply wherever the job lives.
+
+    `updates` carries only fields the caller can hold. The description text
+    itself is not returned: on the Appwrite path there is nowhere on the card
+    that reads it, and a full JD in every card snapshot is weight that buys
+    nothing.
+    """
+
+    updates: dict[str, Any] = Field(default_factory=dict)
     filled: list[str] = Field(default_factory=list)
     parse_used: bool = False
 

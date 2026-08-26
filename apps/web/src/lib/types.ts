@@ -99,6 +99,22 @@ export interface JobEnrichResult {
   parse_used: boolean;
 }
 
+/**
+ * A backfill worked out from a pasted description, for the caller to apply
+ * wherever the job actually lives.
+ *
+ * The live pipeline keeps applications in Appwrite, and a card created there
+ * has no Postgres `jobs` row, so an endpoint that writes by row id answers 404
+ * for a job the person can see on their board. This shape is the answer to
+ * that: the server does the parsing and the deciding, the caller does the
+ * writing.
+ */
+export interface JobEnrichPlan {
+  updates: Partial<Job>;
+  filled: string[];
+  parse_used: boolean;
+}
+
 export interface FactBullet {
   id: string;
   text: string;
