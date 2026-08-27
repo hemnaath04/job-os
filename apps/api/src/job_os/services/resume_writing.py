@@ -302,6 +302,10 @@ def drops_team_credit(text: str, source_text: str) -> bool:
     return not _TEAM_RETAINED_RE.search(text)
 
 
+# A dash with a digit on each side: a numeric range, which keeps its hyphen.
+_NUMERIC_RANGE_DASH_RE = re.compile(r"(\d)\s*[\u2013\u2014]\s*(\d)")
+
+
 def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
     """Replace em dashes, en dashes and double hyphens with real punctuation.
 
@@ -312,7 +316,13 @@ def normalize_dashes(text: str | None, *, separator: str = ", ") -> str | None:
     """
     if not text:
         return text
-    cleaned = _DASH_RE.sub(separator, text)
+    # A dash between two numbers is a range, not punctuation. "0-100" was named
+    # as safe in the docstring above, but the example there is a HYPHEN and his
+    # fact carries an EN DASH, so a real bullet reading "a 0-100 dig-readiness
+    # score" reached the page as "a 0, 100 dig-readiness score". A visible error
+    # in a number, produced by the rule that exists to tidy punctuation.
+    cleaned = _NUMERIC_RANGE_DASH_RE.sub(r"\1-\2", text)
+    cleaned = _DASH_RE.sub(separator, cleaned)
     # A dash immediately before punctuation leaves ", ." behind, which is worse
     # than the dash was.
     cleaned = re.sub(r",\s*([,.;:!?])", r"\1", cleaned)
