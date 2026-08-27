@@ -956,11 +956,7 @@ def document_quality_flags(
     numeric, total = quantified_bullets(document)
     if total and numeric == 0:
         found["impact"] = ["no_quantified_bullets"]
-    rendered_bullets = sum(
-        len([h for h in (entry.get("highlights") or []) if h])
-        for section in ("work", "projects", "volunteer")
-        for entry in (document.get(section) or [])
-    )
+    rendered_bullets = printed_bullets(document)
     page: list[str] = []
     if rendered_bullets < MIN_PAGE_BULLETS:
         page.append(f"thin_page({rendered_bullets} bullets)")
@@ -983,6 +979,21 @@ _SKILL_WORDS_PER_LINE = 10
 def _wrapped(text: str, words_per_line: int = WORDS_PER_RENDERED_LINE) -> int:
     words = len(str(text or "").split())
     return max(1, math.ceil(words / words_per_line)) if words else 0
+
+
+def printed_bullets(document: dict[str, Any]) -> int:
+    """Bullets the page actually shows, across roles, projects and volunteering.
+
+    Named and shared because the page-fit cut has to ask the same question the
+    `thin_page` flag asks. It did not: the cut guarded the project count and
+    never the bullet count, so a run cut a three-bullet project off a
+    nine-bullet page and shipped six, trading `over_page` for `thin_page`.
+    """
+    return sum(
+        len([h for h in (entry.get("highlights") or []) if h])
+        for section in ("work", "projects", "volunteer")
+        for entry in (document.get(section) or [])
+    )
 
 
 def estimated_page_lines(document: dict[str, Any]) -> int:
