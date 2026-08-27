@@ -3260,6 +3260,11 @@ class _ProjectScore:
     # True when the fact carried no technologies of its own to match against, as
     # opposed to carrying them and matching none of this JD's.
     unscoreable: bool = False
+    # Evidence a keyword count cannot see, used ONLY to order projects the
+    # lexical score cannot separate. See `_evidence_rank`.
+    live_url: bool = False
+    ongoing: bool = False
+    started_at: int = 0
 
 
 def _project_relevance(
@@ -3308,9 +3313,17 @@ def _project_relevance(
                 score=len(matched),
                 matched=matched,
                 unscoreable=not matched and not declared,
+                live_url=str(f.source_url or "").startswith("http"),
+                ongoing=f.end_date is None,
+                started_at=_as_sortable_date(f.start_date),
             )
         )
-    scored.sort(key=lambda p: (-p.score, p.title.casefold()))
+    # Strongest first, and within a tier the keyword count cannot separate,
+    # the evidence a keyword count cannot see. Reversed, because this list is
+    # best-first while `_evidence_rank` reads worst-first.
+    scored.sort(
+        key=lambda p: (-p.score, *(-x for x in _evidence_rank(p)), p.title.casefold())
+    )
     return scored
 
 
@@ -3440,6 +3453,38 @@ def _trim_skills_to_fit(
     return dropped
 
 
+def _as_sortable_date(value: object) -> int:
+    """A date as one comparable number, 0 when there is none.
+
+    Zero rather than a sentinel because "no date recorded" is genuinely the
+    weakest recency claim, and it must not accidentally beat a real one.
+    """
+    digits = re.sub(r"\D", "", str(value or ""))[:8]
+    return int(digits) if digits else 0
+
+
+def _evidence_rank(score: _ProjectScore) -> tuple[int, int, int]:
+    """How to order two projects the JD keyword count cannot separate.
+
+    Against the real Amex posting his three strongest projects all scored 3 out
+    of 66, so which one the page-fit cut removed was decided by the title
+    tie-break: alphabetically. BedRocked and job.os are a deployed 2026 platform
+    and a live job-search product; Infant Cry is a 2024 class project with no
+    URL and a closed end date. The scorer could not tell them apart because it
+    counts words, and none of that difference is a word.
+
+    A reachable URL first, then still being worked on, then how recently it
+    started. Deliberately in that order: job.os has NO start_date at all, so a
+    recency-first rule would have sunk the very project this exists to rescue.
+
+    This only ever breaks ties. The lexical score still decides the tiers, which
+    is what keeps an unrelated project from climbing: a cross-encoder tried on
+    this same data floated a 2019 internship model suite above ClaimFarm, and
+    the reason this rule does not is that it never gets to reorder across tiers.
+    """
+    return (int(score.live_url), int(score.ongoing), score.started_at)
+
+
 def _weakest_project_first(
     selected: list[TailorFact],
     scored: list[_ProjectScore],
@@ -3447,12 +3492,25 @@ def _weakest_project_first(
     """Selected project facts, weakest match for this posting first.
 
     Anything the ranker never scored sorts below anything it did: a project with
-    no measured overlap earned its slot least. Ties break on title so the same
-    profile against the same posting cuts the same thing every run.
+    no measured overlap earned its slot least.
+
+    Within a tier the keyword count cannot separate, `_evidence_rank` decides,
+    so the weakest is the one with no live URL and the oldest closed dates
+    rather than whichever name comes last in the alphabet. Title remains the
+    final tiebreak, so the same profile against the same posting still cuts the
+    same thing every run.
     """
     rank = {p.fact_id: p.score for p in scored}
+    evidence = {p.fact_id: _evidence_rank(p) for p in scored}
     projects = [f for f in selected if f.kind == "project"]
-    return sorted(projects, key=lambda f: (rank.get(f.id, -1), f.title.casefold()))
+    return sorted(
+        projects,
+        key=lambda f: (
+            rank.get(f.id, -1),
+            evidence.get(f.id, (0, 0, "")),
+            f.title.casefold(),
+        ),
+    )
 
 
 # Where a project title stops naming the project and starts describing it.
