@@ -3778,6 +3778,22 @@ def _selection_correction_note(substitutions: list[tuple[str, str]]) -> str:
     )
 
 
+def _ranking_key(score: _ProjectScore) -> tuple[int, int, int, int]:
+    """How two projects compare on MERIT, worst first.
+
+    Deliberately excludes the title. The title is in the sort orders as a final
+    tiebreak, so a run repeats itself, and that is all it is for: it says
+    nothing about which project is better.
+
+    Overriding the writer needs a reason, and "comes later in the alphabet" is
+    not one. An earlier draft of this included the title and turned alphabetical
+    order into an enforceable violation, which is the exact thing #66 exists to
+    stop. Two projects alike on score and evidence are genuinely tied, and a tie
+    is the writer's to call.
+    """
+    return (score.score, *_evidence_rank(score))
+
+
 def _enforce_project_ranking(
     selected_fact_ids: set[str],
     scored: list[_ProjectScore],
@@ -3826,9 +3842,21 @@ def _enforce_project_ranking(
         if not writable(candidate.fact_id):
             # The one legitimate reason, and now the only one.
             continue
+        # Compared on the FULL ranking key, not the score alone.
+        #
+        # #66 taught the ranking to break a tie on evidence, a reachable URL and
+        # still being worked on, and changed the order everywhere the order is
+        # read. It did not change this, the one place that ACTS on the order at
+        # selection time, and a strict `p.score < candidate.score` means a tie
+        # is never a violation. So on the first run after it deployed, job.os
+        # and Infant Cry both scored 3, the writer picked Infant Cry, and
+        # nothing corrected it: a live 2026 platform lost its slot to a 2024
+        # class project because the enforcement could not see the difference the
+        # ranking had just learned.
+        rank = _ranking_key(candidate)
         weakest = min(
-            (p for p in kept if p.fact_id in corrected and p.score < candidate.score),
-            key=lambda p: (p.score, p.title.casefold()),
+            (p for p in kept if p.fact_id in corrected and _ranking_key(p) < rank),
+            key=_ranking_key,
             default=None,
         )
         if weakest is None:
