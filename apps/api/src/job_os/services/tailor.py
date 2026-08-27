@@ -1152,13 +1152,21 @@ async def run_tailor(
         # trivially gamed by claiming more matches, and the loop duly learned to
         # paste JD phrases onto unrelated bullets to raise a number nobody
         # outside the loop ever saw.
-        document, _provenance, summary_rejection, _subs, _cuts = _build_document(
+        (
+            document,
+            _provenance,
+            summary_rejection,
+            _subs,
+            _cuts,
+            _trims,
+        ) = _build_document(
             attempt,
             facts=facts,
             bullets_by_fact=bullets_by_fact,
             master_json_resume=master_json_resume,
             facts_payload=facts_payload,
             project_scores=project_scores,
+            requirements=requirements,
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
@@ -1352,13 +1360,21 @@ async def run_tailor(
 
     report("assemble", "Assembling the page", None, 0.90)
 
-    json_resume, provenance, _summary_rejection, selection_corrections, page_cuts = _build_document(
+    (
+        json_resume,
+        provenance,
+        _summary_rejection,
+        selection_corrections,
+        page_cuts,
+        page_trims,
+    ) = _build_document(
         agent,
         facts=facts,
         bullets_by_fact=bullets_by_fact,
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
         project_scores=project_scores,
+        requirements=requirements,
     )
 
     # Same frozen keyword set the loop used, so the score the user sees is the
@@ -1429,6 +1445,7 @@ async def run_tailor(
     note = (
         written_note
         + _selection_correction_note(selection_corrections)
+        + _page_trim_note(page_trims)
         + _page_cut_note(page_cuts)
         + _honest_exclusion_note(invented, on_page=on_page, scored=project_scores)
     )
@@ -1487,8 +1504,14 @@ def _build_document(
     master_json_resume: dict[str, Any],
     facts_payload: list[dict[str, Any]],
     project_scores: list[_ProjectScore] | None = None,
+    requirements: list[_Requirement] | None = None,
 ) -> tuple[
-    dict[str, Any], list[ProvenanceEntry], str | None, list[tuple[str, str]], list[str]
+    dict[str, Any],
+    list[ProvenanceEntry],
+    str | None,
+    list[tuple[str, str]],
+    list[str],
+    list[str],
 ]:
     """Turn one agent pass into the resume it would actually ship.
 
@@ -1577,6 +1600,25 @@ def _build_document(
     # Cutting is the decision, and the ranking already knows which one to cut.
     # Done by removing the fact and reassembling rather than by trimming the
     # finished document, so the provenance keeps describing the page that ships.
+    # Shed the cheap lines before shedding evidence. A summary is a sentence
+    # about his work and an unmatched keyword is a word; a project is the work.
+    # His real page came in six lines over, and the loop below would have spent
+    # a whole project to save a summary and thirty keywords the posting never
+    # mentioned.
+    page_trims: list[str] = []
+    if estimated_page_lines(json_resume) > MAX_PAGE_LINES and _drop_summary(json_resume):
+        page_trims.append("the summary")
+        log.info("tailor.summary_dropped_for_space")
+    if estimated_page_lines(json_resume) > MAX_PAGE_LINES:
+        dropped = _trim_skills_to_fit(
+            json_resume, requirements or [], MAX_PAGE_LINES
+        )
+        if dropped:
+            page_trims.append(
+                f"{_plural(dropped, 'skill')} this posting did not ask about"
+            )
+            log.info("tailor.skills_trimmed_for_space", dropped=dropped)
+
     page_cuts: list[str] = []
     cut_facts: list[TailorFact] = []
     if project_scores:
@@ -1642,7 +1684,14 @@ def _build_document(
             summary_objective = None
             json_resume, provenance = assemble(selected_facts, safe_bullets)
 
-    return json_resume, provenance, summary_rejection, substitutions, page_cuts
+    return (
+        json_resume,
+        provenance,
+        summary_rejection,
+        substitutions,
+        page_cuts,
+        page_trims,
+    )
 
 
 # What one flagged writing problem costs against keyword coverage. Three points
@@ -3301,6 +3350,96 @@ def _effective_target(achievable: Decimal) -> Decimal:
 MIN_PROJECTS_ON_PAGE = 2
 
 
+# What the page sheds before it sheds evidence, in order.
+#
+# A project is the candidate's work. A summary is a sentence about that work,
+# and a skills keyword he did not match against this posting is a word. Cutting
+# a project to keep them is backwards, and it is what the page-fit loop did:
+# #45 went straight to removing a project, so a run six lines over its budget
+# spent a whole project to save a summary and thirty unmatched keywords.
+
+
+def _drop_summary(json_resume: dict[str, Any]) -> bool:
+    """Remove the lede. True if there was one to remove."""
+    basics = json_resume.get("basics")
+    if not isinstance(basics, dict) or not str(basics.get("summary") or "").strip():
+        return False
+    basics.pop("summary", None)
+    return True
+
+
+def _trim_skills_to_fit(
+    json_resume: dict[str, Any], requirements: list[_Requirement], budget: int
+) -> int:
+    """Shed the least relevant skill keywords until the page fits. Returns how many.
+
+    Sheds only as much as the page needs, least relevant first, rather than
+    deleting everything the posting did not literally name. The difference
+    matters: an exact-phrase filter against this Amex posting kept "Go" and
+    "Bash" and dropped "LLM Integration", "RAG" and "FastAPI", because the JD
+    says "LLM APIs" and "retrieval patterns" and a literal test cannot see that
+    those are the same subject. That is the lexical weakness this whole area
+    keeps running into, and an all-or-nothing filter walks straight back into
+    it.
+
+    Relevance here is word overlap, which is coarse but only decides ORDER. The
+    keywords that survive are the ones the page has room for, so a keyword the
+    matcher misjudges costs its position rather than its place on the resume.
+    """
+    groups = json_resume.get("skills")
+    if not isinstance(groups, list) or not groups:
+        return 0
+    wanted = {
+        word
+        for req in requirements
+        for word in re.findall(r"[a-z0-9+#.]+", req.label.casefold())
+        if len(word) > 2
+    }
+
+    def relevance(keyword: str) -> int:
+        words = set(re.findall(r"[a-z0-9+#.]+", keyword.casefold()))
+        return len(words & wanted)
+
+    # Every keyword, worst first, so shedding walks up from the least relevant.
+    ordered: list[tuple[int, int, int, str]] = []
+    for gi, group in enumerate(groups):
+        if not isinstance(group, dict):
+            continue
+        for ki, keyword in enumerate(group.get("keywords") or []):
+            text = str(keyword).strip()
+            if text:
+                ordered.append((relevance(text), -gi, -ki, text))
+    ordered.sort()
+    total = len(ordered)
+    doomed: set[tuple[int, str]] = set()
+    dropped = 0
+    for _score, neg_gi, _neg_ki, keyword in ordered:
+        if estimated_page_lines(json_resume) <= budget:
+            break
+        if total - dropped <= MIN_PRINTED_SKILLS:
+            # The floor #44 established: a skills block gutted below this stops
+            # being a skills block. A page still over here stays over.
+            break
+        doomed.add((-neg_gi, keyword))
+        dropped += 1
+        json_resume["skills"] = [
+            {
+                **g,
+                "keywords": [
+                    k
+                    for ki, k in enumerate(g.get("keywords") or [])
+                    if (gi, str(k).strip()) not in doomed
+                ],
+            }
+            for gi, g in enumerate(groups)
+            if isinstance(g, dict)
+        ]
+        json_resume["skills"] = [
+            g for g in json_resume["skills"] if g.get("keywords")
+        ]
+    return dropped
+
+
 def _weakest_project_first(
     selected: list[TailorFact],
     scored: list[_ProjectScore],
@@ -3400,6 +3539,18 @@ def _analyst_effort_label(effort: str | None) -> str:
     report column reads as "not measured", and the two are not the same claim.
     """
     return effort or "gateway_default"
+
+
+def _page_trim_note(trims: list[str]) -> str:
+    """Say what came off the page before any project did.
+
+    Named for the same reason a cut is: a summary that silently disappears
+    reads as the tailor forgetting it, when it was dropped on purpose to keep a
+    project the reader would rather see.
+    """
+    if not trims:
+        return ""
+    return f"\n(Trimmed to fit the page: {', '.join(trims)}.)"
 
 
 def _page_cut_note(cut: list[str]) -> str:
