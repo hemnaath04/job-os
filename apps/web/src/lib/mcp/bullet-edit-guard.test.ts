@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { BULLET_MAX_WORDS, checkBulletEdit } from "./bullet-edit-guard.ts";
+import {
+  BULLET_MAX_WORDS,
+  checkBulletEdit,
+  REWORD_SLACK_WORDS,
+} from "./bullet-edit-guard.ts";
 
 // His real 46-word ClaimFarm bullet, the one that keeps coming back flagged.
 const CLAIMFARM =
@@ -73,4 +77,58 @@ test("a thousands separator is not a different number", () => {
   const withComma = "Scored all 2,404 sewer segments.";
   const without = "Scored all 2404 sewer segments.";
   assert.equal(checkBulletEdit(withComma, without).ok, true);
+});
+
+
+// ---------------------------------------------------------------------------
+// The guard blocked an honesty fix.
+//
+// The first real use of this tool was correcting his EPAM bullet from "Owned
+// and extended the Go test suite" to "Worked on and extended", because he did
+// not own it. A claim getting SMALLER, the safest edit this tool can make, and
+// the length rule refused it: the bullet is 35 words against a 35-word ceiling,
+// and "Owned" is one word where "Worked on" is two.
+//
+// The edit had to go around the guard, which is precisely the workaround a
+// guard exists to prevent.
+// ---------------------------------------------------------------------------
+
+const EPAM_OWNED =
+  "Owned and extended the Go test suite for the Fares team's pricing engine " +
+  "across most of the platform's city footprint; triaged daily failures, fixed " +
+  "flaky cases, and added regression coverage as new pricing rules shipped.";
+const EPAM_HONEST = EPAM_OWNED.replace("Owned and", "Worked on and");
+
+test("the honesty fix the guard used to refuse", () => {
+  assert.equal(EPAM_OWNED.trim().split(/\s+/).length, 35);
+  assert.equal(EPAM_HONEST.trim().split(/\s+/).length, 36);
+  assert.equal(checkBulletEdit(EPAM_OWNED, EPAM_HONEST).ok, true);
+});
+
+test("de-escalating a claim is never blocked for being a word longer", () => {
+  const owned = "Led the migration of the billing service.";
+  assert.equal(checkBulletEdit(owned, "Worked on the migration of the billing service.").ok, true);
+  assert.equal(checkBulletEdit(owned, "Contributed to the migration of the billing service.").ok, true);
+});
+
+test("the slack is small enough that it cannot carry padding", () => {
+  const long = `Built a thing ${"word ".repeat(40)}`.trim();
+  const padded = `${long} demonstrating strong cross-functional collaboration and end-to-end ownership`;
+  const verdict = checkBulletEdit(long, padded);
+  assert.equal(verdict.ok, false);
+  assert.match(verdict.reason ?? "", /not for growing it/);
+});
+
+test("the slack is exactly what it says", () => {
+  const base = `Built ${"word ".repeat(BULLET_MAX_WORDS + 9)}`.trim();
+  const at = `${base}${" more".repeat(REWORD_SLACK_WORDS)}`;
+  const over = `${base}${" more".repeat(REWORD_SLACK_WORDS + 1)}`;
+  assert.equal(checkBulletEdit(base, at).ok, true);
+  assert.equal(checkBulletEdit(base, over).ok, false);
+});
+
+test("the checks that actually stop fabrication are untouched", () => {
+  const short = "Built a scheduler.";
+  assert.equal(checkBulletEdit(short, "Built a scheduler serving 40000 users.").ok, false);
+  assert.equal(checkBulletEdit(short, "   ").ok, false);
 });
