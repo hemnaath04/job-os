@@ -82,6 +82,10 @@ export interface Job {
     preferred_skills?: string[];
     technologies?: string[];
     keywords?: string[];
+    // Set when the extraction failed rather than when the posting named
+    // nothing. Both arrive here as empty lists, and only one of them is a
+    // fact about the job. See JobParsed in apps/api schemas/jobs.py.
+    parse_incomplete?: boolean;
   } | null;
 }
 

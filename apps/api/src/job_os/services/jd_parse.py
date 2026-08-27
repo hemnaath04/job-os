@@ -55,9 +55,12 @@ _JD_PARSE_TIMEOUT_ERRORS = (
 # thing that ends the request.
 _JD_PARSE_DEADLINE_SECONDS = 25.0
 
+_JD_PARSE_RETRY_DELAY_SECONDS = 2.0
+
 # Under this there is not enough time left for another attempt to land, so
 # starting one only delays an answer that is already decided.
 _JD_PARSE_MIN_ATTEMPT_SECONDS = 6.0
+
 
 # Measured against the live gateway: a healthy parse of a full-length internship
 # JD returns in about five seconds using 508 to 555 output tokens, so 2048 was
@@ -67,7 +70,6 @@ _JD_PARSE_MIN_ATTEMPT_SECONDS = 6.0
 # of. The extra headroom costs nothing on the normal path, since billing is on
 # tokens produced rather than the ceiling.
 _JD_PARSE_MAX_TOKENS = 4096
-_JD_PARSE_RETRY_DELAY_SECONDS = 2.0
 # Indirected for the same reason llm_json._sleep is: a test can shorten this
 # without patching asyncio.sleep globally, which would slow down every other
 # test that happens to await something in the same process.
@@ -140,6 +142,50 @@ def _incomplete(title_hint: str | None) -> dict:
     return result
 
 
+def _first_attempt_seconds(remaining: float) -> float:
+    """Half of what is left, less the backoff, rather than all of it.
+
+    The first attempt used to get `remaining`, which on the first pass is the
+    entire budget, so a timeout consumed every second there was and the retry
+    could never run: the second attempt opened past the deadline and returned
+    at the out_of_time guard. Seen in production on 2026-08-27 (request
+    5df6920c), where attempt 1 spent the full 25s, the 2s backoff followed, and
+    attempt 2 began at remaining=-2.0, leaving the job saved as "Untitled" with
+    nothing parsed. The retry was reachable only for a reply that came back
+    fast and unusable, never for the slow gateway it was added to survive.
+
+    Halving rather than taking a smaller slice: a healthy parse returns in
+    about five seconds, so half of the standard budget is already twice what
+    the answer needs, and an attempt cut short before the gateway would have
+    answered spends time without learning anything. The floor matters for the
+    same reason, and keeps a caller that hands down a short budget from
+    splitting it into two attempts that neither of them can land.
+    """
+    return max(
+        _JD_PARSE_MIN_ATTEMPT_SECONDS,
+        (remaining - _JD_PARSE_RETRY_DELAY_SECONDS) / 2,
+    )
+
+
+def _extracted_nothing(parsed: ParsedJD) -> bool:
+    """True when a valid reply named nothing at all.
+
+    Every field on ParsedJD is optional with a default, so a bare `{}` from the
+    gateway validates cleanly and dumps to all-empty with parse_incomplete
+    False: indistinguishable from a genuine parse of a JD that stated no
+    requirements. That is the same confusion _incomplete exists to prevent,
+    reached through the one door it does not cover.
+
+    A real posting always yields something, if only a title, so nothing at all
+    means the extraction failed rather than that the JD asked for nothing. And
+    in the case where a JD really does state nothing scoreable, "we could not
+    read it" is still the honest report: both leave the scorer with no
+    requirements, and only one of them is a true 0% match.
+    """
+    stated = parsed.model_dump(exclude={"parse_incomplete"})
+    return not any(stated.values())
+
+
 async def parse_jd(
     jd_text: str,
     *,
@@ -182,6 +228,9 @@ async def parse_jd(
                 "jd_parse.out_of_time", attempt=attempt, remaining=round(remaining, 1)
             )
             return _incomplete(title_hint)
+        attempt_seconds = (
+            _first_attempt_seconds(remaining) if attempt == 1 else remaining
+        )
         try:
             # wait_for around the whole call, not just the HTTP timeout:
             # create_message streams and runs its own retry schedule for a
@@ -205,7 +254,7 @@ async def parse_jd(
                     # redeployed.
                     extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
                 ),
-                timeout=remaining,
+                timeout=attempt_seconds,
             )
         except _JD_PARSE_TIMEOUT_ERRORS as exc:
             if attempt == 1:
@@ -234,7 +283,7 @@ async def parse_jd(
         text = response_text(msg)
         raw = _strip_json_fence(text)
         try:
-            return ParsedJD.model_validate_json(raw).model_dump(exclude_none=False)
+            parsed = ParsedJD.model_validate_json(raw)
         except ValidationError as e:
             if attempt == 1:
                 log.warning(
@@ -255,6 +304,18 @@ async def parse_jd(
                 continue
             log.warning("jd_parse.invalid_json", error=str(e), preview=raw[:300])
             return _incomplete(title_hint)
+
+        # Valid JSON is not the same as an answer. Retried on the first pass for
+        # the same reason a truncated reply is: it costs one call to find out
+        # whether the empty answer was the window or the input.
+        if _extracted_nothing(parsed):
+            if attempt == 1:
+                log.warning("jd_parse.empty_retrying", preview=raw[:300])
+                continue
+            log.warning("jd_parse.empty", preview=raw[:300])
+            return _incomplete(title_hint)
+
+        return parsed.model_dump(exclude_none=False)
 
     return _incomplete(title_hint)  # pragma: no cover - the loop returns on every path
 

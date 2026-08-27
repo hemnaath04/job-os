@@ -24,6 +24,14 @@ class JobParsed(ORMModel):
     keywords: list[str] = Field(default_factory=list)
     sponsorship: str | None = None
     years_experience: str | None = None
+    # Mirrors jd_parse.ParsedJD. Without it this schema dropped the flag on the
+    # way out, so a job whose parse had timed out was served to the web app and
+    # the MCP tools as six empty lists and two nulls: a confident "this posting
+    # asks for nothing" where the truth was "we could not read it". Both look
+    # identical to a reader, and only one of them is a fact. The scorer was
+    # never fooled, since tailor.py reads the column off the ORM, but everything
+    # downstream of the API was.
+    parse_incomplete: bool = False
 
 
 class JobRead(TimestampedRead):
