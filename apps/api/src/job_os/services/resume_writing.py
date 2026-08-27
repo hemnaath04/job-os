@@ -46,13 +46,25 @@ MIN_PAGE_BULLETS = 9
 
 # The other end of the same budget. Overflowing the page does not produce a
 # fuller resume, it produces a two-page one, which the career-ops rules forbid
-# outright. Counting bullets cannot see it coming: 11 bullets over 4 entries
-# rendered to two pages while 10 over 3 fitted on one, because an entry costs a
-# heading row and a long bullet wraps onto a second line. So the budget is
-# measured in estimated rendered lines and calibrated against Tectonic on real
-# tailored documents: 26 and 29 estimated lines each rendered to one page, 33 to
-# two. 30 sits above every measured single-pager with room to spare.
-MAX_PAGE_LINES = 30
+# outright.
+#
+# Recalibrated when `estimated_page_lines` was taught to count the whole page
+# rather than just the roles and projects. The old 30 was measured against an
+# estimate that ignored the summary, the education, the skills and the
+# certificates, so it was a true number about the wrong quantity.
+#
+# Measured again on a real tailored document, trimmed section by section and
+# rendered through Tectonic on three templates:
+#
+#   est 55  husky 2  jakes 2  sb2nov 2
+#   est 51  husky 1  jakes 2  sb2nov 1
+#   est 47  husky 1  jakes 1  sb2nov 1
+#   est 42  husky 1  jakes 1  sb2nov 1
+#
+# 47 is the largest estimate measured to fit on every template, including jakes,
+# which spills first. Going lower would cost page fill on documents that
+# demonstrably fit.
+MAX_PAGE_LINES = 47
 # Words a bullet fits on one line in the one-page template.
 WORDS_PER_RENDERED_LINE = 13
 
@@ -962,22 +974,73 @@ def document_quality_flags(
     return found
 
 
-def estimated_page_lines(document: dict) -> int:
-    """Rendered lines the roles and projects will take, close enough to budget by.
+# A section that renders at all costs its heading plus its rule.
+_SECTION_HEADING_LINES = 2
+# Skills print as "Category: a, b, c" and wrap like any other prose.
+_SKILL_WORDS_PER_LINE = 10
 
-    One row for each entry's heading, then one row per line of bullet text. Not
-    exact, and it does not need to be: it only has to tell a page that fits from
-    a page that spills, which counting bullets alone could not.
+
+def _wrapped(text: str, words_per_line: int = WORDS_PER_RENDERED_LINE) -> int:
+    words = len(str(text or "").split())
+    return max(1, math.ceil(words / words_per_line)) if words else 0
+
+
+def estimated_page_lines(document: dict[str, Any]) -> int:
+    """Rendered lines the whole page will take, close enough to budget by.
+
+    It used to count the roles and projects and nothing else, which is most of
+    the words but nowhere near all of the page. Measured against a real tailored
+    document: it estimated 28 lines against a budget of 30, and rendered to TWO
+    pages on husky, jakes, sb2nov and moderncv alike. Not a template being
+    dense, an estimate that was ignoring the summary, the education, the skills
+    and the certificates entirely, on a page where those came to roughly fifteen
+    more lines.
+
+    That mattered beyond the flag. The page-fit cut added in #45 decides which
+    project to drop by comparing this number to the budget, so an estimate that
+    undercounts by a third does not cut when it should, and the resume spills
+    with every project still on it.
+
+    Still not exact and still does not need to be. It has to tell a page that
+    fits from a page that spills.
     """
     lines = 0
+
+    # The lede. Prose at the top of the page, and on a real resume it is three
+    # lines, not zero.
+    summary = (document.get("basics") or {}).get("summary")
+    lines += _wrapped(summary)
+
     for section in ("work", "projects", "volunteer"):
-        for entry in document.get(section) or []:
+        entries = document.get(section) or []
+        rendered = False
+        for entry in entries:
             highlights = [h for h in (entry.get("highlights") or []) if h]
             if not highlights and section != "work":
                 continue
+            rendered = True
             lines += 1
             for highlight in highlights:
-                lines += max(
-                    1, math.ceil(len(highlight.split()) / WORDS_PER_RENDERED_LINE)
-                )
+                lines += _wrapped(highlight)
+        if rendered:
+            lines += _SECTION_HEADING_LINES
+
+    # One row per entry for the list sections, plus their heading. A degree, a
+    # certificate and an award each print as a line naming it and its issuer.
+    for section in ("education", "certificates", "awards", "publications"):
+        entries = [e for e in (document.get(section) or []) if e]
+        if entries:
+            lines += _SECTION_HEADING_LINES + len(entries)
+
+    # Skills wrap by keyword count, not by group count: six groups holding
+    # forty-three keywords is not six lines.
+    groups = [g for g in (document.get("skills") or []) if g]
+    if groups:
+        lines += _SECTION_HEADING_LINES
+        for group in groups:
+            keywords = [k for k in (group.get("keywords") or []) if k]
+            label = str(group.get("name") or "")
+            lines += _wrapped(
+                " ".join([label, *(str(k) for k in keywords)]), _SKILL_WORDS_PER_LINE
+            )
     return lines

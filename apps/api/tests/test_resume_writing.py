@@ -269,7 +269,8 @@ def test_a_resume_that_spills_onto_a_second_page_is_flagged() -> None:
     def two_rows() -> str:
         return " ".join([next(verbs), *["word"] * 25])
 
-    # Four entry headings, twelve two-row bullets and one three-row bullet: 31.
+    # Four entry headings, twelve two-row bullets and one three-row bullet, plus
+    # two section headings, plus a skills block: past the 47-line budget.
     document = {
         "work": [
             {
@@ -284,19 +285,30 @@ def test_a_resume_that_spills_onto_a_second_page_is_flagged() -> None:
             {"name": str(n), "highlights": [two_rows() for _ in range(3)]}
             for n in range(3)
         ],
+        # Counted now, and on a real page this is where a third of the
+        # undercount lived.
+        "skills": [
+            {"name": f"Group {g}", "keywords": [f"skill{g}{k}" for k in range(8)]}
+            for g in range(4)
+        ],
+        "education": [{"institution": "Northeastern University", "endDate": "2028-05"}],
+        # The lede, which also used to cost nothing.
+        "basics": {"summary": " ".join(["word"] * 40)},
     }
-    assert document_quality_flags(document)["page"] == ["over_page(31 of 30 lines)"]
+    assert document_quality_flags(document)["page"] == ["over_page(48 of 47 lines)"]
 
 
 def test_the_line_estimate_counts_the_entry_heading_and_the_wrap() -> None:
     single = {"work": [{"position": "Engineer", "highlights": ["Wrote the parser."]}]}
-    # One heading row plus one bullet row.
-    assert estimated_page_lines(single) == 2
+    # The section heading and its rule, the entry heading, then one bullet row.
+    # The section itself used to cost nothing, which is a large part of why a
+    # real page came in a third under its true length.
+    assert estimated_page_lines(single) == 4
     wrapped = {
         "work": [{"position": "Engineer", "highlights": [" ".join(["word"] * 27)]}]
     }
-    # 27 words wrap onto three rows at 13 words each, under the same heading.
-    assert estimated_page_lines(wrapped) == 4
+    # 27 words wrap onto three rows at 13 words each, under the same headings.
+    assert estimated_page_lines(wrapped) == 6
 
 
 # ---------------------------------------------------------------------------
