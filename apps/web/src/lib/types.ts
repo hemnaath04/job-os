@@ -86,6 +86,9 @@ export interface Job {
     // nothing. Both arrive here as empty lists, and only one of them is a
     // fact about the job. See JobParsed in apps/api schemas/jobs.py.
     parse_incomplete?: boolean;
+    // Still being read. Neither a failure nor a fact about the job yet.
+    parse_pending?: boolean;
+    parse_error?: string | null;
   } | null;
 }
 

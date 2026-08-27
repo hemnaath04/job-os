@@ -40,6 +40,13 @@ setup_observability("api")
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     settings = get_settings()
     log.info("api.startup", env=settings.app_env, version=__version__)
+    # A deferred JD parse runs in this process, so whatever was mid-parse when
+    # this dyno last went down is stranded at parse_pending with nothing
+    # coming for it. Heroku restarts dynos daily, so that is a routine event
+    # rather than an edge case. Never fatal: see requeue_stranded_parses.
+    from job_os.services.jd_ingest import requeue_stranded_parses
+
+    await requeue_stranded_parses()
     yield
     log.info("api.shutdown")
 

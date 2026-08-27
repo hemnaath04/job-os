@@ -102,6 +102,11 @@ export function ApplicationInspector({
   const descriptionRef = useRef<HTMLTextAreaElement>(null);
   const queryClient = useQueryClient();
   const thin = !hasParseSignal(job);
+  // A third state, and not a dead end like the other two: the import has
+  // answered but the posting has not been read yet. Without this it falls
+  // into `thin` and the interface says the description is missing and offers
+  // to paste one, while the parse it would duplicate is already running.
+  const parsePending = Boolean(job.jd_parsed?.parse_pending);
   // Both live outside this component, keyed by job, so selecting another
   // application or leaving the page does not take them with it.
   const { running: savingDescription, draft: descriptionDraft } = usePendingEnrich(job.id);
@@ -397,18 +402,22 @@ export function ApplicationInspector({
           ) : (
             <div className="rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-2.5">
               <p className="text-xs font-medium text-[color:var(--color-text-muted)]">
-                Match unavailable
+                {parsePending ? "Match pending" : "Match unavailable"}
               </p>
-              {/* Two different dead ends were wearing one sentence. A posting
-                  that imported without its description has a fix; one that
-                  parsed fine and simply names few skills does not, and
-                  offering to paste a description there would be busywork. */}
+              {/* Three states wearing one sentence at various points. A
+                  posting still being read is not a dead end and needs no
+                  action; one that imported without its description has a fix;
+                  one that parsed fine and simply names few skills does not,
+                  and offering to paste a description there would be
+                  busywork. */}
               <p className="mt-0.5 text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
-                {thin
-                  ? "This posting was imported without its description, so there is nothing to score against."
-                  : "This posting names too few recognizable skills to score reliably."}
+                {parsePending
+                  ? "Still reading this posting. The match appears on its own once it lands."
+                  : thin
+                    ? "This posting was imported without its description, so there is nothing to score against."
+                    : "This posting names too few recognizable skills to score reliably."}
               </p>
-              {thin && !pastingDescription && (
+              {thin && !parsePending && !pastingDescription && (
                 <button
                   type="button"
                   onClick={openDescriptionPaste}

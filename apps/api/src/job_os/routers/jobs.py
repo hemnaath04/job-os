@@ -27,38 +27,6 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/jobs")
 
-# Heroku's router hard-kills a request that has not responded within 30s
-# (H12 "Request timeout"), regardless of whether the dyno is doing anything
-# useful. Confirmed from Heroku's own router logs on this exact endpoint:
-# `service=30000ms` on every failing request, `connect=0ms` (the dyno was
-# healthy and reachable instantly, it simply never answered in time).
-# fetch_url_markdown's own retries (Firecrawl's tenacity ladder, then a
-# plain-fetch fallback) and parse_jd's own one-retry-on-timeout loop (added
-# for a real JD that hit this in practice, see jd_parse.py) can together run
-# well past 30s even when nothing unusual is happening, so this endpoint
-# needs its own deadline that fires before Heroku's kill does, and returns
-# something a caller can act on instead of Heroku's opaque error page.
-#
-# Set as close to Heroku's 30s ceiling as safe, not conservative: every
-# import that already finishes inside 30s today (the common case, these same
-# logs show plenty of real 201s) has to keep succeeding, so cutting this much
-# lower than necessary would newly fail requests that were never actually the
-# problem. The remaining ~2-3s below 30 is margin for the DB work still to
-# come after this deadline resolves (upsert_company, the insert, flush and
-# refresh) and for the response to actually reach Heroku's router before its
-# own clock runs out. It is not slack to spend on a slow fetch or parse.
-#
-# This does not make a genuinely slow JD import succeed: parse_jd's own worst
-# case (two 30s attempts plus a backoff, roughly 62s) is already past this
-# deadline on its own, so a JD that would hit that path still fails. It just
-# fails with this endpoint's own honest message instead of riding all the way
-# to Heroku's opaque 503. Making a slow-but-real import actually complete
-# needs a background job plus polling, which this Postgres/FastAPI side has
-# no existing infrastructure for (the Appwrite side's agent-job pattern, used
-# for tailoring and review, is a different system on a different database),
-# so that is real, separate follow-up work, not this fix.
-_FROM_URL_DEADLINE_SECONDS = 27.0
-
 # A parse is one model call with its own client timeout and a retry, so its own
 # worst case can outlive Heroku's hard 30s router ceiling the same way the
 # fetch-and-parse path can. This budget keeps the request inside that ceiling.
@@ -68,13 +36,16 @@ _FROM_URL_DEADLINE_SECONDS = 27.0
 # Was 22s, which turned out to be the tightest thing in the chain: two real
 # pastes were cut off at 22.1s and 22.2s while the gateway was in a slow window,
 # and the person was told no details could be read from a JD that plainly had
-# them. 27s matches _FROM_URL_DEADLINE_SECONDS above and leaves the same room
-# for the write and the response to land before the router gives up.
+# them. 27s leaves room for the write and the response to land before the
+# router gives up.
 #
 # Honest about what this does not do: it buys five seconds, and a slow attempt
 # plus jd_parse's retry can still exceed it. That is a ceiling a synchronous
 # request cannot get past, and getting past it means a background job the caller
-# polls, the same conclusion _FROM_URL_DEADLINE_SECONDS reached.
+# polls, which is what the two importers now do (see services/jd_ingest.py).
+# This route stays synchronous because it answers with what the paste
+# earned, and it has no fetch to make, so it is one call inside the
+# ceiling rather than two.
 _PARSE_BUDGET_SECONDS = 27.0
 
 
@@ -162,8 +133,20 @@ async def create_from_url(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
-    from job_os.integrations.firecrawl import FetchedPage, fetch_url_markdown
-    from job_os.services.jd_parse import parse_jd
+    """Save the link now, read the posting after.
+
+    This used to scrape and parse inside the request, which does not fit:
+    Heroku kills a request at 30s, the scrape takes about four and the parse
+    is budgeted at 25. In production on 2026-08-27 this 504'd after 28.3s and
+    sent the person to the paste tab, which then spent 27s reaching an empty
+    parse. Neither path could return a structured job, so the fallback was not
+    one. Both now answer immediately and fill in underneath.
+    """
+    from job_os.services.jd_ingest import (
+        PENDING,
+        company_hint_from_url,
+        schedule_job_parse,
+    )
 
     url = str(payload.url)
 
@@ -182,70 +165,35 @@ async def create_from_url(
     if existing:
         return existing
 
-    async def _fetch_and_parse() -> tuple[FetchedPage, dict[str, Any]]:
-        try:
-            fetched = await fetch_url_markdown(url)
-        except Exception as e:
-            log.warning("jobs.from_url.fetch_failed", url=url, error=str(e))
-            raise HTTPException(
-                502,
-                "Could not fetch that job posting right now, the fetch service is "
-                "temporarily unavailable. Try again in a moment, or use "
-                "'Paste the description' instead.",
-            ) from e
-        parsed = await parse_jd(fetched.markdown, title_hint=fetched.title)
-        return fetched, parsed
-
-    try:
-        fetched, parsed = await asyncio.wait_for(
-            _fetch_and_parse(), timeout=_FROM_URL_DEADLINE_SECONDS
-        )
-    except TimeoutError:
-        # Only the outer deadline lands here. A real fetch failure raises its
-        # own HTTPException(502) above, inside the wrapped coroutine, before
-        # this can fire, and parse_jd never raises a bare timeout: it always
-        # returns its own honest `parse_incomplete` dict once IT gives up on
-        # its own retry budget (see jd_parse.py). This branch means fetch and
-        # parse combined ran past the deadline with neither one having
-        # resolved at all, which is a different, less honest-looking outcome
-        # than either of those: the caller would get nothing back, not even a
-        # degraded parse, so it gets its own clear message instead of
-        # silently becoming Heroku's opaque error page.
-        log.warning(
-            "jobs.from_url.deadline_exceeded",
-            url=url,
-            deadline_seconds=_FROM_URL_DEADLINE_SECONDS,
-        )
-        raise HTTPException(
-            504,
-            "That job posting is taking too long to fetch and parse. Try "
-            "again in a moment, or use 'Paste the description' instead: it "
-            "skips the live fetch entirely and finishes right away.",
-        ) from None
-
-    company_name = parsed.get("company") or fetched.company_hint or "Unknown"
-    domain = parsed.get("company_domain")
-    company = await upsert_company(session, name=company_name, domain=domain)
-
+    # A guess, and labelled as one by the pending parse beside it. The slug in
+    # an ATS link is the company and costs nothing to read, which is the
+    # difference between a card that looks busy and one that looks broken.
+    company = await upsert_company(
+        session, name=company_hint_from_url(url) or "Unknown", domain=None
+    )
     job = Job(
         company_id=company.id,
-        title=parsed.get("title") or fetched.title or "Untitled",
-        level=parsed.get("level"),
-        function=parsed.get("function"),
-        location=parsed.get("location"),
-        remote=parsed.get("remote"),
-        salary_min=parsed.get("salary_min"),
-        salary_max=parsed.get("salary_max"),
-        salary_currency=parsed.get("salary_currency") or "USD",
-        jd_raw=fetched.raw,
-        jd_clean=fetched.markdown,
-        jd_parsed=parsed,
+        title="Untitled",
+        # NOT NULL, and the posting has not been fetched yet. Empty is the
+        # truthful placeholder: the scrape fills both in the background, and
+        # anything reading jd_clean for substance already has to handle a job
+        # whose description never arrived.
+        jd_raw="",
+        jd_clean="",
+        jd_parsed=dict(PENDING),
         source="url",
         source_url=url,
     )
     session.add(job)
     await session.flush()
     await session.refresh(job, attribute_names=["company"])
+    # Committed here rather than left to get_session's commit on the way out:
+    # the background task opens its own session and looks this row up by id,
+    # so the row has to be visible to another connection before the task can
+    # start. Scheduling first is a race that loses quietly, as a parse that
+    # reports the job missing.
+    await session.commit()
+    schedule_job_parse(job.id)
     return job
 
 
@@ -255,7 +203,14 @@ async def create_from_text(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
-    from job_os.services.jd_parse import parse_jd
+    """Save the description now, read it after.
+
+    The paste tab is what the URL importer recommends when it times out, and
+    it was parsing inside the request too, so a heavy posting failed both
+    ways. It has the text already, so the row it writes is complete apart from
+    what the model has to read out of it.
+    """
+    from job_os.services.jd_ingest import PENDING, schedule_job_parse
 
     source_url = str(payload.source_url) if payload.source_url else None
 
@@ -277,27 +232,52 @@ async def create_from_text(
     if existing:
         return existing
 
-    parsed = await parse_jd(payload.jd_text)
     company = await upsert_company(
-        session,
-        name=parsed.get("company") or payload.company_hint or "Unknown",
-        domain=parsed.get("company_domain"),
+        session, name=payload.company_hint or "Unknown", domain=None
     )
     job = Job(
         company_id=company.id,
-        title=parsed.get("title") or "Untitled",
-        level=parsed.get("level"),
-        function=parsed.get("function"),
-        location=parsed.get("location"),
-        remote=parsed.get("remote"),
+        title="Untitled",
         jd_raw=payload.jd_text,
         jd_clean=payload.jd_text,
-        jd_parsed=parsed,
+        jd_parsed=dict(PENDING),
         source="text",
-        source_url=str(payload.source_url) if payload.source_url else None,
+        source_url=source_url,
     )
     session.add(job)
     await session.flush()
+    await session.refresh(job, attribute_names=["company"])
+    await session.commit()
+    schedule_job_parse(job.id)
+    return job
+
+
+@router.post("/{job_id}/reparse", response_model=JobRead, status_code=202)
+async def reparse_job(
+    job_id: UUID,
+    _user: User = Depends(get_current_user),
+    session: AsyncSession = Depends(get_session),
+) -> Job:
+    """Read this posting again, in the background.
+
+    The deferred parse runs in this process, so a dyno restart mid-parse
+    leaves a row at `parse_pending` with nothing coming for it. Rather than
+    reach for durable queueing on a one-dyno app, this makes the stuck state
+    recoverable: anything pending, incomplete, or thin can be asked again
+    without re-importing it, which matters because re-importing would strand
+    the application, documents and history already attached to this row.
+    """
+    from job_os.services.jd_ingest import PENDING, schedule_job_parse
+
+    job = await _load_job(session, job_id)
+    if job is None:
+        raise HTTPException(404, "Job not found.")
+    if job.source == "text" and not (job.jd_clean or job.jd_raw or "").strip():
+        raise HTTPException(422, "Paste the job description first.")
+
+    job.jd_parsed = dict(PENDING)
+    await session.commit()
+    schedule_job_parse(job.id)
     await session.refresh(job, attribute_names=["company"])
     return job
 

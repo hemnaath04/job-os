@@ -1,12 +1,15 @@
 """Covers the incident this fixes: a Firecrawl 5xx used to bubble straight up
 as an unhandled 500 from /jobs/from-url (and, via the MCP connector, from
 add_job_from_url) instead of degrading to the plain fetcher or, failing
-that, a clean error the caller can act on.
+that, something the caller can act on.
+
+The last test changed shape when the fetch moved off the request path: there
+is no longer a caller waiting to be handed a 502, so the failure is asserted
+where it now has to land, on the job row itself.
 """
 from __future__ import annotations
 
 import pytest
-from fastapi import HTTPException
 
 from job_os.integrations import firecrawl
 
@@ -57,12 +60,22 @@ async def test_original_firecrawl_error_propagates_when_plain_fetch_also_fails(
 
 
 @pytest.mark.asyncio
-async def test_create_from_url_turns_a_fetch_failure_into_a_clean_502(
-    monkeypatch: pytest.MonkeyPatch, db_session
+async def test_a_fetch_failure_lands_on_the_row_instead_of_the_request(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session
 ) -> None:
+    """The fetch moved off the request path, so its failure had to move too.
+
+    This used to be a 502 the caller could act on, which was the best a
+    synchronous import could do. Now the import returns a real job before any
+    fetching happens, so a fetch that fails has to be recorded on the job
+    rather than raised at someone who has already been answered. Silence here
+    would leave the row at parse_pending forever, which is the one outcome
+    with no honest reading.
+    """
     from job_os.db.models import User
     from job_os.routers import jobs as jobs_router
     from job_os.schemas.jobs import JobFromUrl
+    from job_os.services import jd_ingest
 
     user = User(clerk_id="clerk_fetch_fail", email="fetch-fail@example.com")
     db_session.add(user)
@@ -71,15 +84,27 @@ async def test_create_from_url_turns_a_fetch_failure_into_a_clean_502(
     async def boom(url: str) -> firecrawl.FetchedPage:
         raise RuntimeError("502 Bad Gateway")
 
-    monkeypatch.setattr(
-        "job_os.integrations.firecrawl.fetch_url_markdown", boom
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", boom)
+    scheduled: list[object] = []
+    monkeypatch.setattr(jd_ingest, "schedule_job_parse", scheduled.append)
+    monkeypatch.setattr(jobs_router, "_load_job", jobs_router._load_job)
+
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://job-boards.greenhouse.io/glossgenius/jobs/1"),
+        _user=user,
+        session=db_session,
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        await jobs_router.create_from_url(
-            JobFromUrl(url="https://example.com/never-fetched"),
-            _user=user,
-            session=db_session,
-        )
-    assert exc_info.value.status_code == 502
-    assert "paste the description" in exc_info.value.detail.lower()
+    # Answered, not raised at: the row exists and is trackable immediately.
+    assert job.title == "Untitled"
+    assert job.jd_parsed == {"parse_pending": True}
+    assert job.company.name == "Glossgenius"
+
+    await jd_ingest.complete_job_parse(job.id)
+    await db_session.refresh(job)
+
+    assert job.jd_parsed["parse_incomplete"] is True
+    assert job.jd_parsed["parse_error"] == "fetch_failed"
+    # The guess from the URL survives a failed fetch: replacing it with
+    # "Unknown" would make a legible card worse for no new information.
+    assert job.company.name == "Glossgenius"
