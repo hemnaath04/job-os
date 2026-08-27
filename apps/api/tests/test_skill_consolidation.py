@@ -107,19 +107,25 @@ def test_a_drop_the_page_does_not_already_say_is_refused() -> None:
         assert skill in kept, f"{skill} is not said anywhere else on the page"
 
 
-def test_a_broader_skill_goes_when_a_narrower_one_already_names_it() -> None:
-    # "Python" against a block that also lists "Async Python" is the one case
-    # here where a drop of a bare technology name is honoured, and it should be:
-    # the page still says the word, so nothing a reader or a keyword scan looks
-    # for has gone. Recorded as a test because it looks wrong at a glance and is
-    # not, and the next person to see "Python" disappear deserves the reason.
+def test_a_bare_skill_survives_a_longer_phrase_that_contains_it() -> None:
+    # This reverses the rule this test used to assert, and the reversal is
+    # Hemnaath's, made on a render.
+    #
+    # The old argument was that dropping "Python" is safe when "Async Python"
+    # stays, because the page still says the word and a keyword scan still
+    # matches. That is true of a scan and false of a reader: drops apply by
+    # identity across every group, so a real AI-engineering resume came back
+    # reading "Languages: Go, Bash, Java, HTML, CSS" for a candidate whose
+    # first required skill on the posting was Python.
+    #
+    # Async Python is a narrower claim than Python and does not stand in for it.
     groups = _consolidate_skills(
         {"Backend & Data": ["Async Python", "Python", "FastAPI"]},
         drop=["Python"],
     )
     kept = [k for g in groups for k in g["keywords"]]
 
-    assert "Python" not in kept
+    assert "Python" in kept, "the language he actually writes in has to be listed"
     assert "Async Python" in kept
 
 

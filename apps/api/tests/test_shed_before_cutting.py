@@ -13,7 +13,12 @@ that, and now it does.
 from __future__ import annotations
 
 from job_os.services.resume_writing import MAX_PAGE_LINES, estimated_page_lines
-from job_os.services.tailor import _drop_summary, _jd_requirements, _trim_skills_to_fit
+from job_os.services.tailor import (
+    MIN_KEPT_SKILLS_ON_PAGE,
+    _drop_summary,
+    _jd_requirements,
+    _trim_skills_to_fit,
+)
 
 AMEX = {
     "required_skills": ["Python", "LLM APIs", "prompt-based interactions", "model training"],
@@ -68,7 +73,11 @@ def test_skills_are_shed_only_until_the_page_fits() -> None:
     kept = sum(len(g.get("keywords") or []) for g in document.get("skills") or [])
     assert dropped > 0
     assert kept == total - dropped
-    assert estimated_page_lines(document) <= MAX_PAGE_LINES
+    # Sheds toward the budget, and stops at the floor rather than reaching it by
+    # gutting the block. A render that came back "Languages: Go, Bash" and an
+    # Infrastructure row holding one item read as a stripped resume, and the
+    # instruction after seeing it was that a slightly full page beats that.
+    assert kept >= MIN_KEPT_SKILLS_ON_PAGE
 
 
 def test_a_page_that_already_fits_loses_no_skills() -> None:
