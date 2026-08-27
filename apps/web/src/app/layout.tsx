@@ -2,6 +2,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import { clerkLocalization } from "@/components/auth-shell";
+import { themeInit } from "@/lib/theme-init";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -15,14 +16,11 @@ export const metadata: Metadata = {
   description: "Track applications, tailor resumes, never lie on your CV.",
 };
 
-// Light is the default; dark is opt-in via the toggle and persisted. Runs
-// before paint so there is no flash for someone who chose dark previously.
-const themeInit = `try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark')}}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={manrope.variable}>
-      <body className="min-h-screen antialiased">
+      <body className="min-h-[100dvh] antialiased">
         <ClerkProvider
           localization={clerkLocalization}
           // Tokens, not literals. These were hardcoded light hex values, so every

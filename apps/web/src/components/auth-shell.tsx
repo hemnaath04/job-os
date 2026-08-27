@@ -26,8 +26,18 @@ export function AuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <main className="min-h-screen p-3">
-      <div className="grid min-h-[calc(100vh-1.5rem)] gap-3 lg:grid-cols-[1.02fr_0.98fr]">
+    <main className="min-h-[100dvh] p-3">
+      {/* Full height only where there are two columns to fill. Stacked on a
+          phone this forced a viewport-tall grid into two rows, so the brand
+          panel took half the screen and the sign-up form was left with less
+          room than it needs: the password field sat under the browser chrome
+          with nothing to scroll, because the page was exactly one viewport
+          tall. Content height on mobile lets it scroll like a page.
+
+          100dvh, not 100vh: on mobile Safari and Brave, 100vh is the viewport
+          with the address bar hidden, which is taller than what you can
+          actually see. */}
+      <div className="grid gap-3 lg:min-h-[calc(100dvh-1.5rem)] lg:grid-cols-[1.02fr_0.98fr]">
         {/* Form column */}
         <section className="flex items-center justify-center rounded-[1.25rem] border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] px-6 py-12 sm:px-10 lg:px-14">
           <div className="w-full max-w-[31rem]">
@@ -38,7 +48,7 @@ export function AuthShell({
 
         {/* Brand panel. Ordered first on small screens so the product says what
             it is before asking for an email. */}
-        <GrainPanel className="order-first flex min-h-[15rem] rounded-[1.25rem] p-8 sm:p-10 lg:order-last lg:min-h-0 lg:p-12">
+        <GrainPanel className="order-first flex min-h-[11rem] rounded-[1.25rem] p-8 sm:min-h-[15rem] sm:p-10 lg:order-last lg:min-h-0 lg:p-12">
           <div className="relative z-10 flex h-full w-full flex-col justify-between gap-10">
             <h1 className="max-w-[18ch] text-balance text-3xl font-medium leading-[1.05] tracking-[-0.04em] text-white sm:text-4xl lg:text-[3.25rem]">
               {headline}

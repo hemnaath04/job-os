@@ -1,6 +1,17 @@
 @import "tailwindcss";
 
 /* Class-based dark mode: toggled by `.dark` on <html>. */
+
+/* Both halves matter. `color-scheme` is what tells a browser in dark mode that
+   this page has already handled its own colours and must not be
+   force-darkened. Without it Brave and Safari repaint the page themselves, and
+   their transform cannot reach a `background-clip: text` gradient, so the
+   landing headline stayed light-theme ink on a darkened background. It also
+   gives form controls, scrollbars and the address bar the native colours of
+   the theme actually showing. */
+:root { color-scheme: light; }
+.dark { color-scheme: dark; }
+
 @custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
@@ -219,6 +230,12 @@
    looked at rather than read for information. Everywhere else, including
    metrics and product headings, uses a solid colour. */
 @utility text-gradient-night {
+  /* Painted first, and only then clipped away. `color: transparent` with a
+     background that fails to paint for any reason leaves the headline
+     invisible, and a headline is the one element on the page with no margin
+     for that. Naming the colour here means the worst case is a flat heading
+     rather than a blank one. */
+  color: var(--color-text);
   background-image: linear-gradient(
     to bottom,
     var(--color-text) 0%,
@@ -227,7 +244,7 @@
   );
   -webkit-background-clip: text;
   background-clip: text;
-  color: transparent;
+  -webkit-text-fill-color: transparent;
 }
 
 /* Film grain. An SVG turbulence tile rather than a bitmap: a few hundred bytes,
