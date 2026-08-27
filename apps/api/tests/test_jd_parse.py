@@ -361,19 +361,21 @@ async def test_the_retry_still_runs_when_there_is_time_for_it(
 
 
 @pytest.mark.asyncio
-async def test_each_attempt_is_bounded_by_what_is_left(
+async def test_the_first_attempt_leaves_room_for_the_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The timeout handed to each attempt is the remaining budget, not a flat
-    number larger than the caller's own. That mismatch is what let one attempt
-    consume everything."""
+    """The first attempt gets half of what is left, not all of it.
+
+    It used to get the whole budget, which meant a timeout spent every second
+    there was and the retry could never run. Asserting the old behaviour is
+    what let that ship: this test passed while the retry was unreachable.
+    """
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
     clock = _Clock()
     monkeypatch.setattr(jd_parse, "_monotonic", clock)
     seen: list[float] = []
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
-        seen.append(kwargs.get("timeout", -1.0))
         return _FakeMessage('{"title": "Backend Engineer"}')
 
     # Mirrors asyncio.wait_for's own signature, which is the point of the
@@ -385,9 +387,87 @@ async def test_each_attempt_is_bounded_by_what_is_left(
     monkeypatch.setattr(jd_parse, "create_message", _capture)
     monkeypatch.setattr(jd_parse.asyncio, "wait_for", _wait_for)
 
+    await jd_parse.parse_jd("a jd", deadline_seconds=30.0)
+
+    # (30 - 2 of backoff) / 2, so a second attempt has the same again.
+    assert seen[0] == pytest.approx(14.0, abs=0.5)
+    assert seen[0] < 30.0
+
+
+@pytest.mark.asyncio
+async def test_a_timed_out_first_attempt_still_gets_its_retry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bug this file is about, stated as the behaviour that was missing.
+
+    In production (2026-08-27, request 5df6920c) attempt 1 spent the full 25s
+    budget, the 2s backoff followed, and attempt 2 opened at remaining=-2.0 and
+    returned at the out_of_time guard. The job saved as "Untitled" with nothing
+    parsed. So: a first attempt that burns its whole slice must still leave a
+    real second attempt behind it.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    clock = _Clock()
+    monkeypatch.setattr(jd_parse, "_monotonic", clock)
+    # The backoff spends budget too, so the clock has to feel it: that is the
+    # 2 seconds that pushed the old attempt 2 to remaining=-2.0.
+    async def _fake_sleep(seconds: float) -> None:
+        clock.advance(seconds)
+
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+    attempts: list[float] = []
+
+    async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    async def _wait_for(coro: Any, timeout: float) -> Any:  # noqa: ASYNC109
+        attempts.append(timeout)
+        coro.close()
+        if len(attempts) == 1:
+            # Spend exactly what this attempt was given, the way a real
+            # timeout does, then advance the clock past it.
+            clock.advance(timeout)
+            raise TimeoutError
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    monkeypatch.setattr(jd_parse, "create_message", _capture)
+    monkeypatch.setattr(jd_parse.asyncio, "wait_for", _wait_for)
+
+    result = await jd_parse.parse_jd("a jd", deadline_seconds=25.0)
+
+    assert len(attempts) == 2, "the retry never ran"
+    assert attempts[1] >= jd_parse._JD_PARSE_MIN_ATTEMPT_SECONDS
+    assert result["title"] == "Backend Engineer"
+    assert result["parse_incomplete"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_short_budget_still_gives_one_usable_attempt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Halving must not starve the first attempt when the caller is in a hurry.
+
+    Below roughly 14s the half is under the minimum an attempt needs to land,
+    and an attempt cut short before the gateway would have answered spends the
+    budget without learning anything.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    seen: list[float] = []
+
+    async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    async def _wait_for(coro: Any, timeout: float) -> Any:  # noqa: ASYNC109
+        seen.append(timeout)
+        return await coro
+
+    monkeypatch.setattr(jd_parse, "create_message", _capture)
+    monkeypatch.setattr(jd_parse.asyncio, "wait_for", _wait_for)
+
     await jd_parse.parse_jd("a jd", deadline_seconds=10.0)
 
-    assert seen[0] == pytest.approx(10.0, abs=0.5)
+    assert seen[0] == pytest.approx(jd_parse._JD_PARSE_MIN_ATTEMPT_SECONDS, abs=0.1)
 
 
 @pytest.mark.asyncio
@@ -434,3 +514,81 @@ async def test_the_title_is_offered_to_the_parser(monkeypatch: pytest.MonkeyPatc
 
     prompt = seen["messages"][0]["content"]
     assert "New York, NY" in prompt
+
+
+@pytest.mark.asyncio
+async def test_a_reply_that_names_nothing_is_retried_then_reported_incomplete(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`{}` validates. Every field on ParsedJD is optional with a default, so a
+    bare object passes model_validate_json and dumps to six empty lists, two
+    nulls and parse_incomplete False. That is the exact shape of a real parse
+    of a JD asking for nothing, reported with the same confidence, through the
+    one door _incomplete did not cover."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    calls = 0
+
+    async def _empty(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        return _FakeMessage("{}")
+
+    async def _fake_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(jd_parse, "create_message", _empty)
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+
+    result = await jd_parse.parse_jd("a jd", title_hint="Backend Engineer")
+
+    assert calls == 2, "an empty answer deserves the same second chance a truncated one gets"
+    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
+
+
+@pytest.mark.asyncio
+async def test_an_empty_first_reply_does_not_discard_a_good_second_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    replies = iter(["{}", '{"title": "Backend Engineer", "keywords": ["python"]}'])
+
+    async def _then_good(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        return _FakeMessage(next(replies))
+
+    async def _fake_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(jd_parse, "create_message", _then_good)
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert result["title"] == "Backend Engineer"
+    assert result["parse_incomplete"] is False
+
+
+@pytest.mark.asyncio
+async def test_one_named_field_is_enough_to_count_as_an_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The emptiness check must not swallow a thin but real parse. A posting
+    that yielded only a title is still something the scorer can say it read."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    calls = 0
+
+    async def _thin(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        return _FakeMessage('{"title": "Backend Engineer"}')
+
+    monkeypatch.setattr(jd_parse, "create_message", _thin)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert calls == 1, "a thin answer is still an answer and must not be retried"
+    assert result["parse_incomplete"] is False
+    assert result["required_skills"] == []
+
