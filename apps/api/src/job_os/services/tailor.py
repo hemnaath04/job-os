@@ -124,6 +124,16 @@ class TailorFact:
     updated_at: str | None = None
 
 
+class TailorInputError(RuntimeError):
+    """This posting cannot be tailored against, and no pass would change that.
+
+    Distinct from the agent failing: retrying an agent error can work, retrying
+    this one cannot, because the problem is that there is nothing to tailor
+    against. The caller writes the message onto the agent job, and the tailor
+    page already renders that, so the reason reaches the person who can fix it.
+    """
+
+
 @dataclass(frozen=True)
 class TailorStage:
     """One honest, user-visible step of a tailor run.
@@ -859,6 +869,32 @@ async def run_tailor(
     # `_requirement_coverage` then says which requirements the vault already
     # answers. Both are pure Python and take under a millisecond.
     requirements, _prose, _excluded = _jd_requirements(jd_parsed)
+    # Refused here, before a single model call. A posting with no requirements
+    # cannot be tailored against: there is nothing to match, nothing to score,
+    # and nothing a repair pass could improve.
+    #
+    # It used to run anyway. A real Jane Street posting, whose parse came back
+    # with every list empty and one keyword, produced four runs of an 8-bullet
+    # page with `coverage=0.0`, a suppressed score and no analyst step at all,
+    # and reported them as successes. The only hint was a parenthetical inside
+    # the agent's own note. That is a resume the candidate could send believing
+    # it had been aimed at the job.
+    #
+    # Refusing costs him nothing and saves the run: `_jd_requirements` is pure
+    # Python and returns in under a millisecond, so this fires before roughly
+    # ninety seconds of gateway time is spent proving what is already known.
+    if not requirements:
+        if jd_parsed.get("parse_incomplete"):
+            raise TailorInputError(
+                "This job description could not be read, so there is nothing to "
+                "tailor against yet. Try again in a moment, and if it keeps "
+                "failing, paste the description in by hand."
+            )
+        raise TailorInputError(
+            "This posting records no requirements, so there is nothing to tailor "
+            "against. Open the job and add its description, then tailor again: a "
+            "resume built against an empty posting is not aimed at anything."
+        )
     coverage = _requirement_coverage(
         requirements, _evidence_items(facts, bullets_by_fact)
     )

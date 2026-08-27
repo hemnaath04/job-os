@@ -55,6 +55,15 @@ def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str,
         ),
     )
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+
+    # These tests are about the COMPOSE call and its retry, so `calls[0]` has to
+    # stay the compose call. The JD now carries a real requirement, because a
+    # posting with none is refused before any model call, and that would
+    # otherwise send the analyst through this same stub and take slot zero.
+    async def no_analysis(*_args: Any, **_kwargs: Any) -> Any:
+        return tailor.TailorAnalysis()
+
+    monkeypatch.setattr(tailor, "_analyse_requirements", no_analysis)
     return calls
 
 
@@ -69,7 +78,7 @@ async def test_an_empty_reply_is_retried_with_more_room_and_a_brevity_note(
         facts=[],
         bullets_by_fact={},
         master_json_resume={"basics": {}},
-        jd_parsed={},
+        jd_parsed={"technologies": ["Python"]},
         jd_clean="Python role",
     )
 
@@ -95,7 +104,7 @@ async def test_a_chatty_reply_is_still_shown_its_own_words(
         facts=[],
         bullets_by_fact={},
         master_json_resume={"basics": {}},
-        jd_parsed={},
+        jd_parsed={"technologies": ["Python"]},
         jd_clean="Python role",
     )
     retry_messages = calls[1]["messages"]
@@ -207,6 +216,6 @@ async def test_a_rate_limit_on_the_very_first_pass_still_raises(
             facts=[],
             bullets_by_fact={},
             master_json_resume={"basics": {}},
-            jd_parsed={},
+            jd_parsed={"technologies": ["Python"]},
             jd_clean="Python role",
         )
