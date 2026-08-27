@@ -63,6 +63,14 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     )
     monkeypatch.setattr(tailor, "get_settings", lambda: settings)
     monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+
+    # The JD now carries a real requirement, because a posting with none is
+    # refused before any model call. This test is about the compose/repair loop,
+    # so the analyst is stubbed rather than fed a reply out of the same queue.
+    async def no_analysis(*_args: Any, **_kwargs: Any) -> Any:
+        return tailor.TailorAnalysis()
+
+    monkeypatch.setattr(tailor, "_analyse_requirements", no_analysis)
     monkeypatch.setattr(tailor, "_load_verified_facts", no_facts)
     monkeypatch.setattr(tailor, "_load_bullets", no_bullets)
 
@@ -70,7 +78,7 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     user: Any = SimpleNamespace(id=uuid4())
     resume: Any = SimpleNamespace(id=uuid4())
     master_version: Any = SimpleNamespace(json_resume={"basics": {}})
-    job: Any = SimpleNamespace(jd_parsed={}, jd_clean="Python agent role")
+    job: Any = SimpleNamespace(jd_parsed={"technologies": ["Python"]}, jd_clean="Python agent role")
     result = await tailor.tailor_resume(
         session,
         user=user,
@@ -95,12 +103,15 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # The loop scores the document it would actually ship, not the model's own
     # account of how it did. Pass two claims every keyword matched, but the
     # assembled document is empty, so both passes score 0 internally and the
-    # second pass ends the run by failing to improve on the first. The
-    # CUSTOMER-FACING score is None, not 0: this JD parses to zero
-    # requirements, and _finalize_ats_score reports that honestly rather than
-    # as a confident 0% match (see test_ats_scoring.py's own coverage of that
-    # function).
-    assert score is None
+    # second pass ends the run by failing to improve on the first.
+    #
+    # The score is a real measured 0.0 rather than None. This JD used to parse
+    # to zero requirements, which `_finalize_ats_score` reported as None rather
+    # than as a confident 0% match; a posting with nothing to tailor against is
+    # now refused before any of this runs, so reaching here at all means there
+    # WAS a requirement, and an empty document genuinely covers none of it.
+    # That guard keeps its own direct coverage in test_ats_scoring.py.
+    assert score == 0
     # An empty document has no keywords to cover and cannot fill a page, so both
     # passes come in at zero coverage minus the thin-page penalty.
     # -12: four flags at 3 points each against an intentionally empty document
@@ -109,7 +120,11 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # subject here: the score comes from the rendered document, not from what
     # the pass claims about itself.
     assert report["iterations"] == [-12.0, -12.0]
-    assert report["scoring"] == "no_scoreable_requirements"
+    # Scored for real, rather than reported as unscoreable. The unscoreable
+    # branch is now unreachable from run_tailor, because a posting that would
+    # trigger it is refused before the first model call; test_ats_scoring.py
+    # still covers the guard itself.
+    assert report.get("scoring") == "deterministic_required_requirements"
     # The empty fixture also has no education entry and no links, which the
     # reader-side checks report alongside the thin page.
     assert report["writing_flags"] == {
@@ -122,12 +137,16 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # the later pass regardless is how a padded rewrite used to win a tie.
     # The score and pass trail are not in the note text: both are already on
     # the page as `report["iterations"]` (asserted above) and the Job Match
-    # ring, so the note only says what those two do not. This JD has no real
-    # requirements at all, so the note explains the missing score instead of
-    # a pass count that would not mean anything here.
+    # ring, so the note only says what those two do not. This JD now carries a
+    # real requirement, because a posting with none is refused before any model
+    # call, so there is no missing-score explanation to add. What the note says
+    # instead is the honest thing about an empty vault: the requirement is
+    # missing from the profile, not from the writing, so another pass cannot
+    # close it.
     assert note == (
-        "first pass\n(This job description named no requirements this score "
-        "could check, so Keyword Match is not shown.)"
+        "first pass\n(Every requirement still missing is one your verified "
+        "profile does not hold, so another pass cannot close it. Add the "
+        "evidence on your Profile and run this again.)"
     )
     # The repair turn must hand back measurements, not the model's own numbers.
     refine_turn = calls[1]["messages"][-1]["content"]
