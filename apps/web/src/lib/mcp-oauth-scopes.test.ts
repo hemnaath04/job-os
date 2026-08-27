@@ -15,7 +15,9 @@ import assert from "node:assert/strict";
 import { before, describe, it } from "node:test";
 
 // The handler reads this when called; Clerk derives the authorization server
-// from it. Any well-formed publishable key works: nothing here is sent.
+// from it. Only a fallback for a local run: CI sets its own, pointing at a
+// different Clerk instance, which is why no assertion below depends on which
+// instance it is. Nothing here is sent anywhere.
 process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??=
   "pk_live_Y2xlcmsuam9icy5oZW1uYWF0aC50ZWNoJA";
 
@@ -63,7 +65,13 @@ describe("the MCP protected-resource metadata", () => {
     assert.ok((metadata.scopes_supported as string[]).includes("openid"));
   });
 
-  it("still points at the Clerk authorization server", () => {
-    assert.deepEqual(metadata.authorization_servers, ["https://clerk.jobs.hemnaath.tech"]);
+  it("still names exactly one authorization server", () => {
+    // Derived from the publishable key, so the host differs per environment
+    // and is not this test's business. That it resolves to a single https
+    // issuer is: a client with none, or with a choice to make, cannot start
+    // the flow at all.
+    const servers = metadata.authorization_servers as string[];
+    assert.equal(servers.length, 1);
+    assert.ok(servers[0].startsWith("https://"), servers[0]);
   });
 });
