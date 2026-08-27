@@ -23,6 +23,7 @@ import { useSearchParams } from "next/navigation";
 import { Suspense, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "@/lib/api";
+import { isAtCoverageCeiling, partitionMissing } from "@/lib/ats-coverage";
 import { PdfPreviewPane } from "@/components/pdf-preview-pane";
 import { reportFailure } from "@/lib/errors";
 import { cancelOperation } from "@/lib/operations-store";
@@ -521,13 +522,35 @@ function TailorInner() {
           "This job has no parsed description yet, so there is nothing to tailor against. Re-import the job from its URL first.",
         );
       }
+      // A pending parse is not an empty one, and the check above cannot tell
+      // them apart: `{parse_pending: true}` has a key, so it passed, and the run
+      // then spent a round trip proving what this knows for free. The agent does
+      // refuse it (run_tailor's TailorInputError), so this only saves the trip
+      // -- and says the useful half, which is that it will work in a moment.
+      if (jdParsed.parse_pending) {
+        throw new Error(
+          "This job's description is still being read. Give it a moment and tailor again.",
+        );
+      }
+      // The posting's own words, not just the parsed JSON. Sent as "" until now,
+      // which left the writer and the analyst with an empty <jd> block: no
+      // requirement in the employer's phrasing to match wording against, and no
+      // location-in-title. `jd_clean` only arrives on the single-job fetch above
+      // (JobDetailRead), which is exactly the call this path already makes.
+      const jdClean = jobPosting.jd_clean ?? "";
       // Resolved after the JD check so a job with nothing to tailor against does
       // not leave an empty resume behind, and before dispatch because the agent
       // writes its version under this id.
       const target = await resolveTargetResume(jobPosting);
       setResumeId(target.id);
       const agentJob = await withTimeout(
-        appwriteWorkspace.tailorResume(target.id, jobId, jdParsed, "", applicationId),
+        appwriteWorkspace.tailorResume(
+          target.id,
+          jobId,
+          jdParsed,
+          jdClean,
+          applicationId,
+        ),
         TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not queue the tailoring agent. Check your connection and try again.",
       );
@@ -1231,7 +1254,7 @@ function ResultView({
                 <Building2 className="size-3.5" /> {companyName}
               </span>
             )}
-            <AtsBadge score={result.ats_score} />
+            <AtsBadge score={result.ats_score} report={result.ats_report} />
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -1412,6 +1435,7 @@ function ResultView({
           <AtsPanel
             matched={result.ats_report?.matched ?? []}
             missing={result.ats_report?.missing ?? []}
+            needsNewFacts={result.ats_report?.missing_needs_new_facts ?? []}
           />
           {result.gap_questions.length > 0 && (
             <GapPanel gaps={result.gap_questions} facts={facts} />
@@ -1492,7 +1516,13 @@ function QualityStatus({
   );
 }
 
-function AtsBadge({ score }: { score: string | null }) {
+function AtsBadge({
+  score,
+  report,
+}: {
+  score: string | null;
+  report: TailorResponse["ats_report"];
+}) {
   // Null here means the backend explicitly withheld a number (the JD failed
   // to parse, or named nothing this scorer could check) rather than "not
   // computed yet" -- ResultView only renders once a run has finished. Saying
@@ -1506,10 +1536,31 @@ function AtsBadge({ score }: { score: string | null }) {
     );
   }
   const numeric = Number(score);
-  const ringFrom =
-    numeric >= 75 ? "#10B981" : numeric >= 50 ? "#F5B544" : "#FF6B8A";
-  const ringTo =
-    numeric >= 75 ? "#5EEAD4" : numeric >= 50 ? "#F59E0B" : "#F43F5E";
+  // What this profile could reach against THIS posting, which the backend has
+  // always computed (`_achievable_ats_score`) and this ring has always ignored.
+  // A number graded on the absolute 75/50 thresholds alone painted a run red at
+  // 27 while the honesty review scored the same page 98 -- two grades on one
+  // line, contradicting each other, and the red one implying the tailor had
+  // failed when the run had in fact covered everything the profile can evidence.
+  // A rounded compare, because the ring shows a rounded number and "27 out of a
+  // ceiling of 26.7" must not read as a shortfall.
+  const atCeiling = isAtCoverageCeiling(numeric, report?.achievable_ats_score);
+  const met = report?.required_met;
+  const total = report?.required_total;
+  const ringFrom = atCeiling
+    ? "#10B981"
+    : numeric >= 75
+      ? "#10B981"
+      : numeric >= 50
+        ? "#F5B544"
+        : "#FF6B8A";
+  const ringTo = atCeiling
+    ? "#5EEAD4"
+    : numeric >= 75
+      ? "#5EEAD4"
+      : numeric >= 50
+        ? "#F59E0B"
+        : "#F43F5E";
   const pct = Math.max(0, Math.min(100, numeric));
   const circ = 2 * Math.PI * 14;
   const dash = (pct / 100) * circ;
@@ -1546,15 +1597,42 @@ function AtsBadge({ score }: { score: string | null }) {
           {Math.round(pct)}
         </div>
       </div>
-      <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
-        Keyword Match
-      </span>
+      {/* The number alone is the thing that read as a verdict. The denominator
+          and the ceiling are what make it a measurement: "4 of 13 must-haves"
+          is a fact about the posting, and "all this profile can reach" says the
+          remaining asks are work not done yet rather than wording the tailor
+          got wrong. Both come off `ats_report`, already on the response. */}
+      <div className="leading-tight">
+        <div className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
+          Keyword Match
+        </div>
+        {typeof met === "number" && typeof total === "number" && total > 0 && (
+          <div className="text-[10px] text-[color:var(--color-text-muted)]">
+            {met} of {total} must-have{total === 1 ? "" : "s"}
+            {atCeiling && " · all this profile can reach"}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
 
-function AtsPanel({ matched, missing }: { matched: string[]; missing: string[] }) {
+function AtsPanel({
+  matched,
+  missing,
+  needsNewFacts,
+}: {
+  matched: string[];
+  missing: string[];
+  needsNewFacts: string[];
+}) {
   if (matched.length === 0 && missing.length === 0) return null;
+  // One flat "Missing" list charged every unmatched requirement to the writing,
+  // which is what made a run look like it had underperformed. The backend
+  // already separates them (`missing_needs_new_facts`): one group is work the
+  // profile does not hold, and no further pass can close it; the other is
+  // wording or bullet selection, which "Tailor again" genuinely can.
+  const { notInProfile, reachable } = partitionMissing(missing, needsNewFacts);
   return (
     <div className="workspace-panel p-5">
       <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
@@ -1562,7 +1640,26 @@ function AtsPanel({ matched, missing }: { matched: string[]; missing: string[] }
       </div>
       <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
         <KeywordGroup label="Matched" tone="mint" items={matched} />
-        <KeywordGroup label="Missing" tone="rose" items={missing} />
+        {needsNewFacts.length === 0 ? (
+          <KeywordGroup label="Missing" tone="rose" items={missing} />
+        ) : (
+          <div className="space-y-4">
+            <KeywordGroup
+              label="Not in your profile yet"
+              tone="rose"
+              items={notInProfile}
+              hint="Work you have not done, or evidence you have not added. Add a fact on your Profile and tailor again."
+            />
+            {reachable.length > 0 && (
+              <KeywordGroup
+                label="Could still be surfaced"
+                tone="rose"
+                items={reachable}
+                hint="Your profile has something behind these. Another pass may reach them."
+              />
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1572,10 +1669,12 @@ function KeywordGroup({
   label,
   tone,
   items,
+  hint,
 }: {
   label: string;
   tone: "mint" | "rose";
   items: string[];
+  hint?: string;
 }) {
   const colorClass =
     tone === "mint"
@@ -1586,6 +1685,11 @@ function KeywordGroup({
       <div className="text-xs text-[color:var(--color-text-muted)]">
         {label} · {items.length}
       </div>
+      {hint && (
+        <p className="mt-0.5 text-[11px] leading-snug text-[color:var(--color-text-dim)]">
+          {hint}
+        </p>
+      )}
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {items.length === 0 && (
           <span className="text-xs text-[color:var(--color-text-dim)]">Not available</span>

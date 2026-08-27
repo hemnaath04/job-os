@@ -317,15 +317,20 @@ const handler = createMcpHandler(
           if (!isAppwriteWorkspaceEnabled) {
             return toolError(new Error("Appwrite workspace is not enabled"));
           }
+          // `jd_clean` is on this single-job route only (JobDetailRead), which
+          // is why it can be read here. It used to be sent as "", leaving the
+          // agent's writer and analyst with an empty <jd> block and nothing but
+          // the parsed JSON to match the candidate's wording against.
           const job = (await callBackend(token(ctx), "GET", `/jobs/${args.job_id}`)) as {
             jd_parsed?: Record<string, unknown>;
+            jd_clean?: string;
           };
           const { id } = await startResumeTailorJob(
             resolveAppwriteUserId(clerkUserId(ctx)),
             args.resume_id,
             args.job_id,
             job.jd_parsed ?? {},
-            "",
+            job.jd_clean ?? "",
             args.application_id,
           );
           return toolText({ agent_job_id: id });
