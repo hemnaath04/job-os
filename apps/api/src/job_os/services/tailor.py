@@ -2135,6 +2135,66 @@ def _build_facts_payload(
     return out
 
 
+# What the facts feed is allowed to cost, in characters of JSON.
+#
+# The old limit was 12,000 applied as `json.dumps(payload, indent=2)[:12000]`,
+# and that is three separate mistakes in one line. His vault serialises to
+# 39,848 characters that way, so the model saw 30% of it; the projects are
+# written last, so EVERY project was cut off, which is why a run kept reporting
+# that fact data "was truncated in the profile feed" and leaving his flagship
+# off the page. And a mid-string cut of a JSON blob is not shortened JSON, it is
+# broken JSON.
+#
+# 60,000 characters is roughly 15k tokens against a call that already writes
+# 24k, so the whole vault fits with room to grow.
+FACTS_PAYLOAD_BUDGET = 60_000
+
+
+def _lean(value: Any) -> Any:
+    """The same facts without the empty fields, which are most of the bytes."""
+    if isinstance(value, dict):
+        return {k: _lean(v) for k, v in value.items() if v not in (None, "", [], {})}
+    if isinstance(value, list):
+        return [_lean(v) for v in value]
+    return value
+
+
+def _facts_feed(facts_payload: list[dict[str, Any]]) -> str:
+    """The vault as JSON the model can actually parse, inside the budget.
+
+    Compact and without empty fields, which takes his 39,848 down to 28,768 on
+    its own. If that is still over budget, whole facts are dropped rather than
+    the string being cut mid-token, skills first because they are a name and a
+    category where a project is evidence, and what went is stated in the feed
+    so the model knows it is looking at part of a vault rather than all of one.
+    """
+    lean = [_lean(f) for f in facts_payload]
+    blob = json.dumps(lean, separators=(",", ":"))
+    if len(blob) <= FACTS_PAYLOAD_BUDGET:
+        return blob
+    # Least evidential first, and within a kind the order it arrived in.
+    order = {"skill": 0, "certification": 1, "award": 2, "publication": 3}
+    droppable = sorted(
+        range(len(lean)), key=lambda i: order.get(str(lean[i].get("kind")), 9)
+    )
+    # Sized once each, then dropped by index. Rebuilding and re-serialising the
+    # whole list per drop is quadratic, and on a vault big enough to need
+    # dropping that is the one time it must not be.
+    sizes = [len(json.dumps(f, separators=(",", ":"))) + 1 for f in lean]
+    total = sum(sizes) + 2
+    doomed: set[int] = set()
+    for index in droppable:
+        if total <= FACTS_PAYLOAD_BUDGET:
+            break
+        doomed.add(index)
+        total -= sizes[index]
+    keep = [f for i, f in enumerate(lean) if i not in doomed]
+    dropped = len(doomed)
+    log.warning("tailor.facts_feed_truncated", dropped=dropped, kept=len(keep))
+    note = {"_note": f"{dropped} lower-value facts omitted to fit; projects and roles are complete"}
+    return json.dumps([*keep, note], separators=(",", ":"))
+
+
 def _build_user_prompt(
     *,
     jd_parsed: dict[str, Any],
@@ -2152,7 +2212,7 @@ def _build_user_prompt(
         "CANDIDATE MASTER RESUME (JSON Resume):\n"
         f"{json.dumps(master_json_resume, indent=2)[:6000]}\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
-        f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        f"{_facts_feed(facts_payload)}\n\n"
         f"{briefing}\n\n"
         f"{plan}\n\n"
         "Respond with a single JSON object matching this schema (no prose, no fences):\n"
@@ -2618,6 +2678,28 @@ def _skill_is_redundant(keyword: str, kept: list[str]) -> bool:
     """
     tokens = {t for t in _identity_text(keyword).split() if t not in _SKILL_FILLER_TOKENS}
     if not tokens:
+        return False
+    # A one-word skill is never covered by a longer phrase containing it.
+    #
+    # This reverses the decision recorded in
+    # `test_a_broader_skill_goes_when_a_narrower_one_already_names_it`, whose
+    # argument was that "the page still says the word". For a keyword scan that
+    # is true. For the human reading the row it is not: subset containment
+    # folded "Python" into "Async Python", drops apply by identity across every
+    # group, and a real render of an AI-engineering resume read
+    # "Languages: Go, Bash, Java, HTML, CSS" for a candidate whose first
+    # required skill on the posting was Python.
+    #
+    # Hemnaath's call, made on that render: Python stays in Languages.
+    #
+    # The case the drop list exists for is untouched, because it is a whole name
+    # nested inside a longer one rather than a word wearing a qualifier:
+    # "OpenAI / Anthropic SDKs" really is carried by
+    # "LLM integration (OpenAI, Anthropic, Qwen)".
+    # Counted BEFORE filler removal. "Anthropic SDKs" is two words wearing one
+    # filler, and it is genuinely carried by "Anthropic Claude models"; "Python"
+    # is one word and is not carried by anything.
+    if len(_identity_text(keyword).split()) == 1:
         return False
     for other in kept:
         other_tokens = set(_identity_text(other).split())
@@ -3360,7 +3442,12 @@ def _effective_target(achievable: Decimal) -> Decimal:
 # A page that spills has to lose something, and there has to be a floor on how
 # much. Below this the resume stops making a case at all, so a document still
 # over length here is left over length rather than emptied to fit.
-MIN_PROJECTS_ON_PAGE = 2
+#
+# Raised from 2 to 3 on Hemnaath's instruction, after a render came back with
+# two projects and his flagship missing: "at least 3 projects with job.os among
+# them", and explicitly, do not cut a project to force one page. He is buying
+# substance with a slightly full page and he was told that is the trade.
+MIN_PROJECTS_ON_PAGE = 3
 
 
 # What the page sheds before it sheds evidence, in order.
@@ -3379,6 +3466,19 @@ def _drop_summary(json_resume: dict[str, Any]) -> bool:
         return False
     basics.pop("summary", None)
     return True
+
+
+# How many skills a trimmed block still prints.
+#
+# MIN_PRINTED_SKILLS (8) is #44's floor against a block being GUTTED by drops.
+# Shedding for space is a different question and 8 is too few for it: a real
+# render came back "Languages: Go, Bash" and "Infrastructure: Autodesk Platform
+# Services", one item, which reads as a stripped resume rather than a focused
+# one. His instruction after seeing it was that the skills sections should not
+# visibly change.
+#
+# So the page sheds the tail and keeps the block looking like a skills block.
+MIN_KEPT_SKILLS_ON_PAGE = 20
 
 
 def _trim_skills_to_fit(
@@ -3429,7 +3529,7 @@ def _trim_skills_to_fit(
     for _score, neg_gi, _neg_ki, keyword in ordered:
         if estimated_page_lines(json_resume) <= budget:
             break
-        if total - dropped <= MIN_PRINTED_SKILLS:
+        if total - dropped <= MIN_KEPT_SKILLS_ON_PAGE:
             # The floor #44 established: a skills block gutted below this stops
             # being a skills block. A page still over here stays over.
             break
@@ -4128,7 +4228,7 @@ async def _analyse_requirements(
         "JOB DESCRIPTION (clean text, truncated):\n"
         f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
-        f"{json.dumps(facts_payload, indent=2)[:12000]}\n\n"
+        f"{_facts_feed(facts_payload)}\n\n"
         f"{project_briefing}\n\n"
         "REQUIREMENTS WHOSE OWN WORDS APPEAR NOWHERE IN THAT PROFILE:\n"
         f"{json.dumps([req.label for req in unresolved], indent=2)}\n\n"
