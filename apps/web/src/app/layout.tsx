@@ -2,6 +2,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import type { Metadata } from "next";
 import { Manrope } from "next/font/google";
 import { clerkLocalization } from "@/components/auth-shell";
+import { themeInit } from "@/lib/theme-init";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -15,17 +16,6 @@ export const metadata: Metadata = {
   description: "Track applications, tailor resumes, never lie on your CV.",
 };
 
-// A stored choice wins; with no stored choice, follow the device. Runs before
-// paint, so neither case flashes.
-//
-// This used to default to light and consult nothing else, so a phone set to
-// dark loaded the site light and the browser force-darkened it. That is not a
-// neutral transform: it repaints plain colours but cannot touch a
-// `background-clip: text` gradient, so the landing headline kept its
-// light-theme ink and rendered near-black on the darkened background, which is
-// how this was found. The `color-scheme` declarations in globals.css are the
-// other half, and the part that tells a browser to stop doing it at all.
-const themeInit = `try{var s=localStorage.getItem('theme');if(s==='dark'||(!s&&matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
