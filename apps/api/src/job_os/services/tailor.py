@@ -1264,11 +1264,35 @@ async def run_tailor(
         # on it would lock in exactly the one-pass-early ending that rule exists
         # to prevent. Unsettled, the fixed target applies and the run tries again.
         pass_target = target_score if analysis_settled else TARGET_ATS_SCORE
-        done = (
-            score >= pass_target
-            or len(scores) >= MAX_COMPOSE_PASSES
-            or not improved
-            or nothing_left
+        # Clearing a LOWERED floor is not the same as being done.
+        #
+        # `target_score` moves with what this vault can reach, so on a stretch
+        # posting it lands well under TARGET_ATS_SCORE. A pass that scrapes over
+        # it stops the run, and a measured A/B caught what that costs: two runs
+        # whose first pass came in at 24.2 against a target of 22.8 stopped
+        # there and shipped 30.2, while two whose first pass came in at 21.9,
+        # one point short, took a repair and shipped 34.9. A two-point
+        # difference on the first pass decided a five-point difference in the
+        # resume, and the run that did WORSE first got the better document.
+        #
+        # So a lowered floor only ends the run when there is also nothing left
+        # to do. `reachable` and `chargeable` are the two things a repair pass
+        # can actually act on, and they are already computed above: a
+        # requirement the vault can still cover, or a writing flag the writer
+        # introduced. With either in hand, the pass is worth taking.
+        #
+        # This does not spend passes on a posting that cannot improve. When
+        # nothing is reachable and nothing is charged, `nothing_left` already
+        # ends the run, and `not improved` ends it the moment a pass stops
+        # paying for itself. MAX_COMPOSE_PASSES still caps the whole thing.
+        done = _run_is_done(
+            score=score,
+            pass_target=pass_target,
+            reachable=reachable,
+            chargeable=chargeable,
+            passes=len(scores),
+            improved=improved,
+            nothing_left=nothing_left,
         )
         messages = state["messages"]
         repair_note = None
@@ -3292,6 +3316,33 @@ def _summary_names_absent_project(
         if mentions_word(summary, name) and not mentions_word(page, name):
             return name
     return None
+
+
+def _run_is_done(
+    *,
+    score: Decimal,
+    pass_target: Decimal,
+    reachable: list[str],
+    chargeable: dict[str, list[str]],
+    passes: int,
+    improved: bool,
+    nothing_left: bool,
+) -> bool:
+    """Whether the compose/repair loop should stop after this pass.
+
+    See the comment at the call site for the measurement behind the first
+    clause. In short: `pass_target` moves with what the vault can reach, so
+    scraping over a lowered floor is a weak reason to stop, and a run that did
+    WORSE on its first pass was ending up with the better resume because it fell
+    short and earned a repair.
+    """
+    # Something a repair could actually act on: a requirement the vault can
+    # still cover, or a writing flag the writer introduced.
+    worth_another_pass = bool(reachable) or bool(chargeable)
+    cleared = score >= pass_target and not (
+        worth_another_pass and score < TARGET_ATS_SCORE
+    )
+    return cleared or passes >= MAX_COMPOSE_PASSES or not improved or nothing_left
 
 
 def _analyst_effort_label(effort: str | None) -> str:
