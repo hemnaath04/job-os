@@ -1773,10 +1773,33 @@ def _merge_duplicate_facts(
         )
         canonical = ranked[0]
         title = _merged_title(ranked)
+        # Lists are UNIONED across variants, not overwritten.
+        #
+        # Last-writer-wins per key silently discarded edits. Measured on the
+        # real vault: three BedRocked duplicates carried 6, 6 and 12 keywords,
+        # the twelve being the AI terms the candidate had just added to fix its
+        # ranking. The six-keyword variant won the key and the edit vanished.
+        # BedRocked then scored 2 against the Amex JD, tied with three unrelated
+        # MSD projects, and the page-fit cut removed it on a title tie-break.
+        # Unioned it scores 4 and leaves the bottom tie.
+        #
+        # Duplicates are the same fact by construction here, so a keyword on any
+        # of them is a keyword on all of them. Scalars still take the highest
+        # ranked variant's value, because two different dates or summaries are a
+        # genuine conflict and picking the canonical one is the existing answer.
         payload: dict[str, Any] = {}
         for variant in reversed(ranked):
             for key, value in (variant.payload or {}).items():
-                if value not in (None, "", [], {}):
+                if value in (None, "", [], {}):
+                    continue
+                if isinstance(value, list):
+                    existing = payload.get(key)
+                    combined = list(existing) if isinstance(existing, list) else []
+                    for item in value:
+                        if item not in combined:
+                            combined.append(item)
+                    payload[key] = combined
+                else:
                     payload[key] = value
         winner = TailorFact(
             id=canonical.id,
