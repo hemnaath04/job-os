@@ -318,7 +318,12 @@ export function ApplicationInspector({
           fraction of the master-detail split, so it can be narrow on a wide
           screen (and the mobile full-screen case is the opposite). Asking the
           viewport how wide this panel is would be asking the wrong element. */}
-      <div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-3.5">
+      {/* The mobile nav floats over the page, and this panel scrolls inside
+          itself rather than with the page, so its last rows had nothing to
+          scroll clear into and sat under the bar permanently. The shell
+          reserves this same room for the page; a nested scroller has to
+          reserve it again for itself. */}
+      <div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-3.5 pb-[calc(4.75rem+env(safe-area-inset-bottom))] lg:pb-3.5">
         <div className="grid grid-cols-1 gap-x-8 gap-y-5 @2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           {/* Left: the things you read, then the thing you do next. */}
           <div className="flex min-w-0 flex-col gap-5">

@@ -15,14 +15,22 @@ export const metadata: Metadata = {
   description: "Track applications, tailor resumes, never lie on your CV.",
 };
 
-// Light is the default; dark is opt-in via the toggle and persisted. Runs
-// before paint so there is no flash for someone who chose dark previously.
-const themeInit = `try{if(localStorage.getItem('theme')==='dark'){document.documentElement.classList.add('dark')}}catch(e){}`;
+// A stored choice wins; with no stored choice, follow the device. Runs before
+// paint, so neither case flashes.
+//
+// This used to default to light and consult nothing else, so a phone set to
+// dark loaded the site light and the browser force-darkened it. That is not a
+// neutral transform: it repaints plain colours but cannot touch a
+// `background-clip: text` gradient, so the landing headline kept its
+// light-theme ink and rendered near-black on the darkened background, which is
+// how this was found. The `color-scheme` declarations in globals.css are the
+// other half, and the part that tells a browser to stop doing it at all.
+const themeInit = `try{var s=localStorage.getItem('theme');if(s==='dark'||(!s&&matchMedia('(prefers-color-scheme: dark)').matches)){document.documentElement.classList.add('dark')}}catch(e){}`;
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning className={manrope.variable}>
-      <body className="min-h-screen antialiased">
+      <body className="min-h-[100dvh] antialiased">
         <ClerkProvider
           localization={clerkLocalization}
           // Tokens, not literals. These were hardcoded light hex values, so every
