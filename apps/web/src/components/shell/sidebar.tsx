@@ -4,61 +4,17 @@ import { UserButton, useClerk } from "@clerk/nextjs";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import {
   Bookmark,
-  BookOpenText,
-  Briefcase,
-  CalendarDays,
   ChevronsLeft,
   ChevronsRight,
-  FileSignature,
-  FileText,
-  LayoutDashboard,
   MoreHorizontal,
   LogOut,
-  MessageSquareText,
-  Radar,
-  Settings as SettingsIcon,
-  Sparkles,
-  UserSquare2,
-  type LucideIcon,
 } from "lucide-react";
 import Link from "next/link";
-import type { Route } from "next";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { BrandMark } from "@/components/brand-mark";
+import { FOOTER_NAV, NAV, OVERFLOW, PRIMARY, SECTIONS, type NavLinkItem } from "@/lib/nav";
 import { clearAppwriteSession } from "@/lib/appwrite/client";
-
-type NavItem = {
-  href: Route;
-  label: string;
-  icon: LucideIcon;
-  section?: string;
-};
-
-const NAV: NavItem[] = [
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, section: "Overview" },
-  { href: "/applications", label: "Applications", icon: Briefcase, section: "Pipeline" },
-  { href: "/tailor", label: "AI Resume Tailor", icon: Sparkles, section: "Pipeline" },
-  { href: "/interview", label: "Interview Prep", icon: MessageSquareText, section: "Pipeline" },
-  { href: "/jobs", label: "Job Finder", icon: Radar, section: "Pipeline" },
-  { href: "/resumes", label: "Resumes", icon: FileText, section: "Documents" },
-  { href: "/cover-letters", label: "Cover Letters", icon: FileSignature, section: "Documents" },
-  { href: "/profile", label: "Profile", icon: UserSquare2, section: "Documents" },
-  { href: "/calendar", label: "Calendar", icon: CalendarDays, section: "Other" },
-];
-
-// The phone bar holds five targets at a comfortable tap size. It used to be
-// `NAV.slice(0, 5)`, which silently dropped whatever came sixth: Resumes, Cover
-// Letters, Profile and Calendar were all unreachable on a phone, with nothing
-// on screen to suggest they existed. Four of nine pages, including the profile
-// every tailored resume is built from.
-//
-// So four go in the bar and the rest go behind "More", which means adding a
-// tenth page hides it in the sheet rather than deleting it from the product.
-const PRIMARY = NAV.slice(0, 4);
-const OVERFLOW = NAV.slice(4);
-
-const SECTIONS = ["Overview", "Pipeline", "Documents", "Other"] as const;
 
 export function Sidebar() {
   const pathname = usePathname();
@@ -153,18 +109,15 @@ export function Sidebar() {
 
         {/* Footer */}
         <div className="flex flex-col gap-1 border-t border-[color:var(--color-border)] px-3 py-3 text-sm">
-          <NavLink
-            item={{ href: "/docs" as Route, label: "Docs", icon: BookOpenText }}
-            active={pathname === "/docs" || pathname.startsWith("/docs/")}
-            collapsed={collapsed}
-            reduceMotion={Boolean(reduceMotion)}
-          />
-          <NavLink
-            item={{ href: "/settings" as Route, label: "Settings", icon: SettingsIcon }}
-            active={pathname === "/settings"}
-            collapsed={collapsed}
-            reduceMotion={Boolean(reduceMotion)}
-          />
+          {FOOTER_NAV.map((item) => (
+            <NavLink
+              key={item.href}
+              item={item}
+              active={pathname === item.href || pathname.startsWith(item.href + "/")}
+              collapsed={collapsed}
+              reduceMotion={Boolean(reduceMotion)}
+            />
+          ))}
           <button
             type="button"
             onClick={signOutEverywhere}
@@ -231,7 +184,7 @@ export function Sidebar() {
           onClick={() => setMoreOpen((open) => !open)}
           aria-expanded={moreOpen}
           aria-controls="mobile-nav-more"
-          aria-label={moreOpen ? "Close more pages" : "More pages"}
+          aria-label={moreOpen ? "Close more pages and account" : "More pages and account"}
           className={`relative flex size-10 items-center justify-center rounded-xl transition active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-kiwi)] ${
             moreActive || moreOpen
               ? "text-[color:var(--color-text)]"
@@ -282,6 +235,52 @@ export function Sidebar() {
                 </Link>
               );
             })}
+            {/* The account block. Until this existed there was no way to reach
+                Settings, Docs or Sign out on a phone at all: they live in the
+                sidebar footer, and the sidebar is `lg:flex`, so below 1024px
+                the only signed-in exit was clearing site data. */}
+            <div className="flex flex-col border-t-2 border-[color:var(--color-border)]">
+              {FOOTER_NAV.map((item) => {
+                const Icon = item.icon;
+                const active =
+                  pathname === item.href || pathname.startsWith(item.href + "/");
+                return (
+                  <Link
+                    key={item.href}
+                    href={item.href}
+                    onClick={() => setMoreOpen(false)}
+                    aria-current={active ? "page" : undefined}
+                    className={`flex items-center gap-3 border-b border-[color:var(--color-border)] px-4 py-3 text-sm ${
+                      active
+                        ? "bg-[color:var(--color-kiwi)]/12 text-[color:var(--color-text)]"
+                        : "text-[color:var(--color-text-muted)]"
+                    }`}
+                  >
+                    <Icon className="size-4 shrink-0" />
+                    {item.label}
+                  </Link>
+                );
+              })}
+              {/* Not wired to setMoreOpen: signOutEverywhere navigates to "/"
+                  and this whole tree unmounts, so closing the sheet first would
+                  only race the redirect. */}
+              <button
+                type="button"
+                onClick={signOutEverywhere}
+                className="flex items-center gap-3 border-b border-[color:var(--color-border)] px-4 py-3 text-left text-sm text-[color:var(--color-text-muted)] transition active:scale-[.98] active:bg-[color:var(--color-surface-2)]"
+              >
+                <LogOut className="size-4 shrink-0" aria-hidden="true" />
+                Sign out
+              </button>
+              {/* Clerk portals its popover to the body, so the sheet's
+                  `overflow-hidden` does not clip it. */}
+              <div className="flex items-center gap-3 px-4 py-3">
+                <UserButton />
+                <span className="text-xs text-[color:var(--color-text-dim)]">
+                  account
+                </span>
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -295,7 +294,7 @@ function NavLink({
   collapsed,
   reduceMotion,
 }: {
-  item: { href: Route; label: string; icon: LucideIcon };
+  item: NavLinkItem;
   active: boolean;
   collapsed: boolean;
   reduceMotion: boolean;
