@@ -701,7 +701,17 @@ class Workspace:
                 self.tables.list_rows(
                     self.database_id,
                     self.fact_bullets_table,
-                    [Query.equal("fact_id", ids), Query.limit(500)],
+                    [
+                        # Redundant with the owner-scoped fact ids above, and
+                        # kept anyway. This function runs on a server API key,
+                        # which bypasses row permissions, so a facts read is
+                        # only ever one filter away from another user's rows.
+                        # Naming the owner here means isolation does not rest
+                        # on a future caller remembering where `ids` came from.
+                        Query.equal("owner_id", self.user_id),
+                        Query.equal("fact_id", ids),
+                        Query.limit(500),
+                    ],
                     total=False,
                 ).rows
             )
