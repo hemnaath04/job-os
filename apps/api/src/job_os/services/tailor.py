@@ -67,6 +67,7 @@ from job_os.services.resume_writing import (
     MAX_PROJECT_BULLETS,
     MAX_SKILL_GROUPS,
     MAX_WORK_BULLETS,
+    MIN_PAGE_BULLETS,
     bullet_flags,
     dedupe_bullets,
     document_quality_flags,
@@ -74,6 +75,7 @@ from job_os.services.resume_writing import (
     estimated_page_lines,
     mentions_word,
     normalize_dashes,
+    printed_bullets,
     records_provisional_status,
     upgrades_status,
 )
@@ -1587,13 +1589,35 @@ def _build_document(
                 # over length here stays over length rather than being emptied.
                 log.info("tailor.page_still_over_at_floor", projects=len(remaining))
                 break
-            selected_facts = [f for f in selected_facts if f.id != weakest.id]
-            safe_bullets = [
+            # Assembled first and kept only if it is an improvement. The cut
+            # used to be committed unconditionally, and a real run cut a
+            # three-bullet project off a nine-bullet page and shipped six:
+            # over_page traded for thin_page, one defect swapped for another,
+            # and the strongest project gone to buy it.
+            #
+            # A page too short is not the lesser problem. Spilling is untidy,
+            # and a sparse page reads as a candidate with little to show, which
+            # is the impression the whole selection exists to prevent.
+            trimmed_facts = [f for f in selected_facts if f.id != weakest.id]
+            trimmed_bullets = [
                 sb
                 for sb in safe_bullets
                 if bullets_by_id[sb.fact_bullet_id].fact_id != weakest.id
             ]
-            json_resume, provenance = assemble(selected_facts, safe_bullets)
+            trimmed_resume, trimmed_provenance = assemble(
+                trimmed_facts, trimmed_bullets
+            )
+            if printed_bullets(trimmed_resume) < MIN_PAGE_BULLETS:
+                log.info(
+                    "tailor.cut_would_empty_the_page",
+                    project=weakest.title,
+                    bullets_after=printed_bullets(trimmed_resume),
+                    floor=MIN_PAGE_BULLETS,
+                )
+                break
+            selected_facts = trimmed_facts
+            safe_bullets = trimmed_bullets
+            json_resume, provenance = trimmed_resume, trimmed_provenance
             page_cuts.append(weakest.title)
             cut_facts.append(weakest)
             log.info("tailor.project_cut_for_space", project=weakest.title)
