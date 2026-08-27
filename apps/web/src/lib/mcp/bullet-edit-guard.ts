@@ -21,6 +21,14 @@
 /** Mirrors BULLET_MAX_WORDS in apps/api resume_writing.py. */
 export const BULLET_MAX_WORDS = 30;
 
+/**
+ * Room for a reword to land a word or two longer than what it replaced.
+ *
+ * Small on purpose. It exists so that shrinking a claim cannot be blocked by
+ * the length rule, not to give an edit room to grow.
+ */
+export const REWORD_SLACK_WORDS = 2;
+
 const NUMBER_RE = /\d+(?:[.,]\d+)*/g;
 
 function numbersIn(text: string): Set<string> {
@@ -61,11 +69,21 @@ export function checkBulletEdit(
         "already say. A metric has to be added by the person who can vouch for it",
     };
   }
-  // Room to improve a short bullet, no room to pad a long one. A bullet may end
-  // up no longer than it already was, or no longer than the cap, whichever is
-  // the more generous, so trimming and rewording are unrestricted and growth
-  // stops where the resume stops being able to print it.
-  const ceiling = Math.max(wordCount(current), BULLET_MAX_WORDS);
+  // Room to improve a short bullet, no room to pad a long one, and a couple of
+  // words of slack so that rewording is never the thing that trips it.
+  //
+  // The slack is not a softening for its own sake. The first real use of this
+  // tool was correcting "Owned and extended the Go test suite" to "Worked on
+  // and extended", because he did not own it. That is a claim getting SMALLER,
+  // it is the single safest edit this tool can make, and at 35 words against a
+  // 35-word ceiling the length rule refused it: "Owned" is one word and
+  // "Worked on" is two. The guard blocked an honesty fix and the edit had to go
+  // around it, which is exactly the workaround a guard exists to prevent.
+  //
+  // Two words cannot carry a job description's worth of padding, and the checks
+  // that stop fabrication are the number and technology rules above, not this
+  // one. This rule is only here to stop a bullet growing into a paragraph.
+  const ceiling = Math.max(wordCount(current), BULLET_MAX_WORDS) + REWORD_SLACK_WORDS;
   const words = wordCount(next);
   if (words > ceiling) {
     return {
