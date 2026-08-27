@@ -58,6 +58,23 @@ describe("the MCP protected-resource metadata", () => {
     }
   });
 
+  it("asks for a refresh token, so an unattended client survives a day", () => {
+    // A Clerk access token expires after 24 hours and a refresh token never
+    // does. A client that reads this list and requests exactly what it says,
+    // without offline_access, stops working daily and needs a person back at
+    // a browser. Fine for an interactive session, useless for the unattended
+    // agents that are most of what connects to an MCP server.
+    assert.ok((metadata.scopes_supported as string[]).includes("offline_access"));
+  });
+
+  it("does not ask for metadata scopes no tool reads", () => {
+    // Clerk supports both, and widening a consent screen for access nothing
+    // uses is how a connector starts looking like it wants more than it does.
+    const scopes = metadata.scopes_supported as string[];
+    assert.ok(!scopes.includes("public_metadata"));
+    assert.ok(!scopes.includes("private_metadata"));
+  });
+
   it("asks for enough to identify the caller", () => {
     // Every tool scopes its reads and writes to the calling user, which the
     // connector resolves from the token's subject. Without openid there is no
