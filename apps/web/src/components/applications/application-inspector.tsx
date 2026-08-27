@@ -107,6 +107,15 @@ export function ApplicationInspector({
   // into `thin` and the interface says the description is missing and offers
   // to paste one, while the parse it would duplicate is already running.
   const parsePending = Boolean(job.jd_parsed?.parse_pending);
+  // A fourth state, and the one a URL import actually lands in when the fetch
+  // times out or the posting is behind a login: the read was attempted and
+  // failed. It has always fallen into `thin` and been described as "imported
+  // without its description", which is not what happened and does not tell the
+  // person that retrying the URL is pointless while pasting the text works.
+  // `fetch_failed` is set by services/jd_ingest.py's background parse.
+  const fetchFailed =
+    Boolean(job.jd_parsed?.parse_incomplete) &&
+    job.jd_parsed?.parse_error === "fetch_failed";
   // Both live outside this component, keyed by job, so selecting another
   // application or leaving the page does not take them with it.
   const { running: savingDescription, draft: descriptionDraft } = usePendingEnrich(job.id);
@@ -418,9 +427,11 @@ export function ApplicationInspector({
               <p className="mt-0.5 text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
                 {parsePending
                   ? "Still reading this posting. The match appears on its own once it lands."
-                  : thin
-                    ? "This posting was imported without its description, so there is nothing to score against."
-                    : "This posting names too few recognizable skills to score reliably."}
+                  : fetchFailed
+                    ? "This posting could not be fetched from its link, so there is nothing to score against. Paste the description in instead: retrying the URL will hit the same wall."
+                    : thin
+                      ? "This posting was imported without its description, so there is nothing to score against."
+                      : "This posting names too few recognizable skills to score reliably."}
               </p>
               {thin && !parsePending && !pastingDescription && (
                 <button

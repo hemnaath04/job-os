@@ -1464,12 +1464,15 @@ export const api = {
     // Job postings still live in Postgres, so fetch the JD here and hand it to
     // the Appwrite tailor agent, which has the resume + verified facts but not
     // the job posting.
+    // `jd_clean` comes back from this single-job fetch (JobDetailRead) and not
+    // from the jobs list. It used to be sent as "", so the agent's writer and
+    // analyst saw the parsed JSON and an empty <jd> block on every run.
     const job = await legacyApi.getJob(jobId);
     const agentJob = await appwriteWorkspace.tailorResume(
       resumeId,
       jobId,
       (job.jd_parsed ?? {}) as Record<string, unknown>,
-      "",
+      job.jd_clean ?? "",
       applicationId,
     );
     const version = await waitForAgentJob<TailorResponse>(agentJob);

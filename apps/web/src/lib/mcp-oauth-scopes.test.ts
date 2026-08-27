@@ -23,14 +23,10 @@ process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ??=
 
 // Clerk's authorization server accepts exactly these. Anything advertised
 // that is not in this set sends clients to invalid_scope.
-const CLERK_SUPPORTED = new Set([
-  "openid",
-  "profile",
-  "email",
-  "public_metadata",
-  "private_metadata",
-  "offline_access",
-]);
+// Not the instance's `scopes_supported`, which is wider and misleading: this
+// is the `scope` Clerk actually returns from /oauth/register, and therefore
+// what a client is permitted to ask for.
+const CLERK_GRANTS_CLIENTS = new Set(["email", "offline_access", "profile"]);
 
 let metadata: Record<string, unknown>;
 
@@ -52,9 +48,12 @@ describe("the MCP protected-resource metadata", () => {
     );
   });
 
-  it("advertises only scopes Clerk will actually issue", () => {
+  it("advertises only scopes Clerk will actually grant a client", () => {
     for (const scope of metadata.scopes_supported as string[]) {
-      assert.ok(CLERK_SUPPORTED.has(scope), `Clerk does not support the scope ${scope}`);
+      assert.ok(
+        CLERK_GRANTS_CLIENTS.has(scope),
+        `Clerk grants no client the scope ${scope}, so requesting it fails after sign-in`,
+      );
     }
   });
 
@@ -76,10 +75,21 @@ describe("the MCP protected-resource metadata", () => {
   });
 
   it("asks for enough to identify the caller", () => {
-    // Every tool scopes its reads and writes to the calling user, which the
-    // connector resolves from the token's subject. Without openid there is no
-    // subject and the whole server has no one to be.
-    assert.ok((metadata.scopes_supported as string[]).includes("openid"));
+    // Every tool scopes its reads and writes to the calling user. The token
+    // carries its own subject, so identity needs no separate scope; profile
+    // and email are what fill in who that subject is.
+    const scopes = metadata.scopes_supported as string[];
+    assert.ok(scopes.includes("profile"));
+    assert.ok(scopes.includes("email"));
+  });
+
+  it("does not ask for openid, which Clerk grants no client", () => {
+    // The load-bearing one. The instance lists openid under scopes_supported,
+    // so it reads as available, but Clerk grants each registered client only
+    // "email offline_access profile". Requesting it fails per client and only
+    // after sign-in: "The OAuth 2.0 Client is not allowed to request scope
+    // 'openid'". Advertising it sent every client into that wall.
+    assert.ok(!(metadata.scopes_supported as string[]).includes("openid"));
   });
 
   it("still names exactly one authorization server", () => {

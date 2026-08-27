@@ -90,6 +90,15 @@ export interface Job {
     parse_pending?: boolean;
     parse_error?: string | null;
   } | null;
+  /**
+   * The posting's own text. Only `GET /jobs/{id}` returns it (JobDetailRead on
+   * the backend); the list route omits it so a 50-job picker is not 50 job
+   * descriptions. Optional here because the same `Job` shape is used for both.
+   *
+   * The tailor needs it: jobs live in Postgres and the tailor agent runs in
+   * Appwrite, so this browser is the only thing that can carry a JD across.
+   */
+  jd_clean?: string;
 }
 
 /**
@@ -365,11 +374,30 @@ export interface JsonResume {
 export interface ResumeVersion extends ResumeVersionSummary {
   json_resume: JsonResume;
   provenance: ProvenanceEntry[];
+  /**
+   * Fields beyond matched/missing were always sent (see tailor.py's
+   * `_compute_ats_from_document` and the block after it in `run_tailor`) and
+   * were simply never read here, which is how a Keyword Match of 27 came to sit
+   * next to a review of 98 with nothing to reconcile them. `required_met` /
+   * `required_total` say what the percentage is a percentage OF;
+   * `achievable_ats_score` is the most these facts could reach against this
+   * posting, so a score at its ceiling can be shown as finished rather than
+   * failed; `missing_needs_new_facts` separates the asks that are work the
+   * candidate has not done from the ones a further pass could still surface.
+   */
   ats_report: {
     matched: string[];
     missing: string[];
     matched_count: number;
     missing_count: number;
+    required_met?: number;
+    required_total?: number;
+    achievable_ats_score?: number;
+    target_ats_score?: number;
+    reached_target?: boolean;
+    missing_needs_new_facts?: string[];
+    preferred_matched?: string[];
+    preferred_missing?: string[];
   } | null;
   latex_source: string | null;
 }
