@@ -472,7 +472,7 @@ const handler = createMcpHandler(
       {
         title: "Add Job from URL",
         description:
-          "Fetch a job posting URL, parse it, and add it to job.os as a Job. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call, matching the web app's 'Add to wishlist' button; omit it to get back just the job and call create_application yourself later.",
+          "Add a job posting to job.os from its URL. Returns immediately with the job created; the posting is fetched and parsed in the background, so the job comes back with `title: \"Untitled\"` and `jd_parsed.parse_pending: true` and fills in within a minute or so. Read it again with get_job to see the parsed fields. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call, matching the web app's 'Add to wishlist' button; omit it to get back just the job and call create_application yourself later.",
         inputSchema: z.object({ url: z.string().url(), status: STATUS.optional() }),
         annotations: {
           readOnlyHint: false,
@@ -503,7 +503,7 @@ const handler = createMcpHandler(
       {
         title: "Add Job from Text",
         description:
-          "Add a job posting job.os can't fetch by URL — behind a login, emailed to you, a screenshot you transcribed — by pasting the description text directly. Mirrors the web app's 'Paste the description' tab. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call; omit it to get back just the job and call create_application yourself later.",
+          "Add a job posting job.os can't fetch by URL — behind a login, emailed to you, a screenshot you transcribed — by pasting the description text directly. Mirrors the web app's 'Paste the description' tab. Returns immediately; the description is parsed in the background, so the job comes back with `jd_parsed.parse_pending: true` and fills in shortly. Read it again with get_job to see the parsed fields. Pass `status` (e.g. \"wishlist\") to also create the pipeline entry in the same call; omit it to get back just the job and call create_application yourself later.",
         inputSchema: z.object({
           description: z.string(),
           company: z.string().optional(),

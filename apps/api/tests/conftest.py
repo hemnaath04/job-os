@@ -108,3 +108,25 @@ async def db_session() -> AsyncIterator[object]:
     finally:
         await connection.close()
         await engine.dispose()
+
+
+@pytest.fixture
+def background_session(monkeypatch: pytest.MonkeyPatch, db_session):
+    """Point jd_ingest's deferred parse at the test's own session.
+
+    complete_job_parse opens its own session because the request that
+    scheduled it has long since closed one. In a test the row lives inside the
+    fixture's outer transaction and no other connection can see it, so the
+    background task has to be handed the one session that can.
+    """
+    from contextlib import asynccontextmanager
+
+    from job_os.services import jd_ingest
+
+    @asynccontextmanager
+    async def _factory():
+        yield db_session
+
+    monkeypatch.setattr(jd_ingest, "async_session", _factory)
+    return db_session
+

@@ -32,6 +32,15 @@ class JobParsed(ORMModel):
     # never fooled, since tailor.py reads the column off the ORM, but everything
     # downstream of the API was.
     parse_incomplete: bool = False
+    # Set between the insert and the deferred parse landing. Distinct from
+    # parse_incomplete, which means the reading was attempted and failed:
+    # this one means it has not happened yet, so an empty set of fields is
+    # neither a failure nor a fact about the job. See services/jd_ingest.py.
+    parse_pending: bool = False
+    # Why the reading failed, when it did. "fetch_failed" is a posting that
+    # could not be retrieved at all, which is a different thing to tell
+    # someone than a description the model could not read.
+    parse_error: str | None = None
 
 
 class JobRead(TimestampedRead):
