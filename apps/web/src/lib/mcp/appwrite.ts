@@ -556,6 +556,7 @@ export async function startResumeTailorJob(
   jdParsed: Record<string, unknown>,
   jdClean: string,
   applicationId?: string,
+  templateKey?: string | null,
 ): Promise<{ id: string }> {
   const { databaseId, resumesTableId, agentJobsTableId, agentFunctionId } = config();
   const tables = tablesClient();
@@ -590,6 +591,10 @@ export async function startResumeTailorJob(
     spawned_from_job_id: jobPostingId,
     jd_parsed: jdParsed,
     jd_clean: jdClean,
+    // The page budget depends on it: husky holds fewer lines than the Typst
+    // templates and has no summary section, so a run that does not name its
+    // template gets measured against a page it is not going to render.
+    template_key: templateKey ?? null,
   };
   const snapshot: AgentJobSnapshot = {
     id,
