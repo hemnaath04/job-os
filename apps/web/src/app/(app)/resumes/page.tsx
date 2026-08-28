@@ -23,7 +23,7 @@ import { Suspense, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddSourceDialog } from "@/components/add-source-dialog";
 import { EmptyState } from "@/components/empty-state";
-import { InfoChip, PageIntro } from "@/components/page-intro";
+import { ChipSkeleton, InfoChip, PageIntro } from "@/components/page-intro";
 import { ProjectFolder } from "@/components/project-folder";
 import { ResumeVersionPreview } from "@/components/resume-version-preview";
 import { TemplateDetailDialog } from "@/components/template-picker";
@@ -31,6 +31,7 @@ import { TemplatePreview } from "@/components/template-preview";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
+import { findMasterFilename, pickResumeFiles } from "@/lib/resume-folder-import";
 import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { downloadPdf } from "@/lib/download";
 import { versionStatusLabel } from "@/lib/types";
@@ -304,17 +305,19 @@ function ResumesInner() {
                 directory: "",
               } as React.InputHTMLAttributes<HTMLInputElement>)}
               onChange={(event) => {
-                const files = Array.from(event.target.files ?? []).filter(
-                  (file) =>
-                    /^Hemnaath_Balasubramani_/i.test(file.name) &&
-                    /\.(pdf|docx|json)$/i.test(file.name),
-                );
+                const picked = Array.from(event.target.files ?? []);
+                const files = pickResumeFiles(picked);
                 if (files.length) {
                   importFiles.mutate({
                     files,
-                    masterFilename: files.find((file) =>
-                      /master/i.test(file.name),
-                    )?.name,
+                    masterFilename: findMasterFilename(files),
+                  });
+                } else if (picked.length) {
+                  // Silence here was the old bug in a smaller form: a folder
+                  // with nothing readable in it looked exactly like a folder
+                  // the page had refused for reasons it would not name.
+                  toast.error("No resumes in that folder", {
+                    description: "Looked for PDF, DOCX, or JSON Resume files.",
                   });
                 }
                 event.target.value = "";
@@ -345,9 +348,15 @@ function ResumesInner() {
           </div>
         }
       >
-        <InfoChip tone="sage">{resumes.length} resumes</InfoChip>
-        <InfoChip>Evidence-backed bullets</InfoChip>
-        <InfoChip tone="clay">AI quality gate</InfoChip>
+        {/* Waits for the query, same as /tailor's chips: "0 resumes" on a full
+            library reads as a lost account, not as a page still loading. */}
+        {isLoading ? (
+          <ChipSkeleton label="Counting your resumes" />
+        ) : (
+          <InfoChip tone="sage">{resumes.length} resumes</InfoChip>
+        )}
+        <InfoChip>Bullets you have verified</InfoChip>
+        <InfoChip tone="clay">Checked before you send it</InfoChip>
       </PageIntro>
 
       <p className="mt-3 max-w-prose text-xs leading-5 text-[color:var(--color-text-dim)]">
@@ -390,10 +399,13 @@ function ResumesInner() {
       )}
 
       {!isLoading && resumes.length === 0 && (
+        // Both the dashboard checklist and /tailor's "no master resume yet"
+        // notice now land people here, so this is the instruction a first run
+        // account reads. "Canonical" and "JSON Resume" were not it.
         <EmptyState
           icon={FileText}
           title="No resumes yet"
-          description="Choose Set master to upload the canonical PDF, DOCX, or JSON Resume."
+          description="Choose Set master above and pick your main resume. Every version this app tailors starts from that one file."
         />
       )}
 

@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import re
+import time
 from typing import Any
 
 import httpx
@@ -60,6 +61,28 @@ BATCH_SIZE = 100
 _TIMEOUT_STATUS = 408
 _TIMEOUT_RETRIES = 2
 _TIMEOUT_RETRY_DELAY_SECONDS = 1.0
+
+#: Per-attempt transport ceiling. Unchanged, and still what a write gets.
+_REQUEST_TIMEOUT_SECONDS = 30.0
+
+#: Total wall clock a READ may spend here, retries and waits included.
+#:
+#: The retry ladder above is right about the shape of the failure and was wrong
+#: about the budget: three attempts of up to 30s each, plus two 1s waits, is 92
+#: seconds, and every read on this path is inside a request Heroku's router
+#: kills at 30. So a search against a slow query could not ever return its own
+#: 408 -- the router returned an H12 503 first, the retries carried on against a
+#: client that had already gone, and the web app reported "the saved index was
+#: restarting" for something that was neither a restart nor over. Bounding the
+#: whole ladder under the router's limit is what makes the retry a retry instead
+#: of a way to guarantee a 503.
+#:
+#: Reads only. Writes run in the scheduled crawler, where nothing is waiting on
+#: a router timeout and a bulk PATCH is allowed to take as long as it takes.
+READ_BUDGET_SECONDS = 24.0
+#: Below this there is no room for a meaningful attempt, so the last error is
+#: raised rather than spending the remainder on a request that cannot finish.
+_MIN_ATTEMPT_SECONDS = 3.0
 
 #: `(regex, method)`, checked in this order so `!=`/`>=`/`<=` match before
 #: the single-character `=`/`>`/`<` operators they contain. Mirrors
@@ -136,11 +159,33 @@ def _base_url() -> tuple[str, dict[str, str]]:
     return url, headers
 
 
-async def _request(method: str, *, params: list[tuple[str, str]] | None = None, json_body: dict[str, Any] | None = None) -> dict[str, Any]:
+async def _request(
+    method: str,
+    *,
+    params: list[tuple[str, str]] | None = None,
+    json_body: dict[str, Any] | None = None,
+    budget_seconds: float | None = None,
+) -> dict[str, Any]:
+    """One TablesDB call, retried on Appwrite's own 408.
+
+    `budget_seconds` bounds the whole ladder -- every attempt and every wait
+    between them -- rather than each attempt separately. Passed by the read
+    path (`READ_BUDGET_SECONDS`) because those calls sit inside a request
+    Heroku's router will abandon at 30 seconds; left unset by writes, which do
+    not. When it is set, each attempt gets whatever is left rather than a flat
+    30, and the last error is raised as soon as there is no room to try again.
+    """
     url, headers = _base_url()
     total_attempts = _TIMEOUT_RETRIES + 1
+    started = time.monotonic()
+
+    def remaining() -> float:
+        if budget_seconds is None:
+            return _REQUEST_TIMEOUT_SECONDS
+        return min(_REQUEST_TIMEOUT_SECONDS, budget_seconds - (time.monotonic() - started))
+
     for attempt in range(1, total_attempts + 1):
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=max(remaining(), _MIN_ATTEMPT_SECONDS)) as client:
             response = await client.request(
                 method, url, headers=headers, params=params, json=json_body
             )
@@ -148,7 +193,12 @@ async def _request(method: str, *, params: list[tuple[str, str]] | None = None, 
             detail = response.text
             with contextlib.suppress(ValueError):
                 detail = response.json().get("message", detail)
-            if response.status_code == _TIMEOUT_STATUS and attempt < total_attempts:
+            room_to_retry = remaining() - _TIMEOUT_RETRY_DELAY_SECONDS >= _MIN_ATTEMPT_SECONDS
+            if (
+                response.status_code == _TIMEOUT_STATUS
+                and attempt < total_attempts
+                and room_to_retry
+            ):
                 await _sleep(_TIMEOUT_RETRY_DELAY_SECONDS)
                 continue
             raise AppwriteTablesError(response.status_code, detail)
@@ -192,7 +242,7 @@ async def list_rows(
     lookups are scoped to one batch (<= `BATCH_SIZE` postings) at a time.
     """
     params = _query_params(filters, queries, select, sort_desc, limit)
-    payload = await _request("GET", params=params)
+    payload = await _request("GET", params=params, budget_seconds=READ_BUDGET_SECONDS)
     return payload.get("rows", [])
 
 
@@ -203,7 +253,7 @@ async def count_rows(*, filters: list[str] | None = None) -> int:
     page size) on every call, so `limit(1)` is enough to read it -- no need
     to walk pages the way a real scan would."""
     params = _query_params(filters, None, None, None, 1)
-    payload = await _request("GET", params=params)
+    payload = await _request("GET", params=params, budget_seconds=READ_BUDGET_SECONDS)
     return int(payload.get("total", 0) or 0)
 
 

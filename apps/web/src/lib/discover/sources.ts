@@ -18,7 +18,13 @@
 // server-side fetch layer and pulling it in here would drag its country
 // tables into the client bundle.
 
-import type { DiscoverySearchResponse, DiscoverySource } from "../types";
+import type {
+  DiscoveryMergeStats,
+  DiscoveryResult,
+  DiscoverySearchResponse,
+  DiscoverySource,
+} from "../types";
+import { jobIdentity } from "./job-identity.ts";
 
 export const BACKEND_SOURCES: DiscoverySource[] = ["theirstack", "github"];
 
@@ -62,9 +68,14 @@ export const FREE_SOURCES: DiscoverySource[] = [
  * a straight concatenation followed by a cap would let whichever half is
  * listed first swallow the whole page.
  *
- * Dedupe uses the same identity rule as the orchestrator, and it earns its
- * keep here: TheirStack scrapes the very ATS boards the key-free half queries
- * directly, so the overlap is real rather than theoretical.
+ * Dedupe uses the same identity rule as the orchestrator (./job-identity), and
+ * it earns its keep here: the SimplifyJobs tables are a curated list of links
+ * into Greenhouse and Lever, which is exactly where the key-free half is
+ * already looking, so the same requisition arrives twice on most searches.
+ *
+ * Deduping BEFORE the cap rather than after is the part that changes what the
+ * user sees: Verkada's intern requisition 5211595007 came back from both
+ * halves and spent two of the sixty slots on one job.
  */
 export function mergeDiscoveryResponses(
   parts: DiscoverySearchResponse[],
@@ -75,23 +86,31 @@ export function mergeDiscoveryResponses(
   limit?: number,
 ): DiscoverySearchResponse {
   const seen = new Set<string>();
-  const results = [];
+  const results: DiscoveryResult[] = [];
   const cap = limit && limit > 0 ? limit : Infinity;
   const longest = Math.max(0, ...parts.map((p) => p.results.length));
+  // Everything the sources handed over, counted before anything is dropped.
+  // This is the number that has to be reported alongside the page: the per-
+  // source counts summed to 109 while the header said 60 results, and nothing
+  // on the screen accounted for the other 49.
+  const received = parts.reduce((sum, p) => sum + p.results.length, 0);
+  let duplicates = 0;
 
   outer: for (let i = 0; i < longest; i += 1) {
     for (const part of parts) {
       const r = part.results[i];
       if (!r) continue;
-      const url = r.source_url.toLowerCase();
-      const identity = [
-        (r.company_domain ?? r.company_name ?? "").toLowerCase(),
-        r.title.toLowerCase(),
-        (r.location ?? "").toLowerCase(),
-      ].join("|");
-      if ((url && seen.has(url)) || seen.has(identity)) continue;
-      if (url) seen.add(url);
-      seen.add(identity);
+      const identity = jobIdentity(r);
+      const keys = [
+        identity.ats && `ats:${identity.ats}`,
+        identity.url && `url:${identity.url}`,
+        identity.loose.split("|").every(Boolean) ? `loose:${identity.loose}` : null,
+      ].filter((k): k is string => Boolean(k));
+      if (keys.some((k) => seen.has(k))) {
+        duplicates += 1;
+        continue;
+      }
+      for (const key of keys) seen.add(key);
       results.push(r);
       if (results.length >= cap) break outer;
     }
@@ -114,7 +133,42 @@ export function mergeDiscoveryResponses(
     results,
     source_counts,
     errors: parts.flatMap((p) => p.errors ?? []),
+    merge: {
+      received,
+      duplicates,
+      // A floor, not a total: the loop stops as soon as the page is full, so
+      // rows behind the cap were never examined for duplication. Said here
+      // rather than left for the reader of the header to assume either way.
+      capped: results.length >= cap && received > results.length,
+    },
   };
+}
+
+/**
+ * Where the rows that did not make the page went.
+ *
+ * Renders next to the result count, and only names the things that actually
+ * happened, so a clean search says nothing rather than reciting three zeroes.
+ * It exists because the header used to read "60 results" beside per-source
+ * counts summing to 109, and the difference -- the same job arriving from two
+ * sources, plus the limit -- was invisible.
+ */
+export function describeNarrowing(
+  merge: DiscoveryMergeStats,
+  droppedByIntent: number,
+  limit: number,
+): string {
+  const parts: string[] = [];
+  if (merge.duplicates > 0) {
+    parts.push(`${merge.duplicates} duplicate${merge.duplicates === 1 ? "" : "s"} merged`);
+  }
+  if (droppedByIntent > 0) {
+    parts.push(
+      `${droppedByIntent} placeholder${droppedByIntent === 1 ? "" : "s"} hidden`,
+    );
+  }
+  if (merge.capped) parts.push(`capped at ${limit}`);
+  return parts.length ? ` · ${parts.join(" · ")}` : "";
 }
 
 /** An empty response, used when one half of the search is not selected. */

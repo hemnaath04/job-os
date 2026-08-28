@@ -1318,8 +1318,9 @@ async def generate_cover_letter(
     facts, bullets_by_fact = await load_verified_vault(session, user.id)
     if not facts:
         raise ValueError(
-            "No verified profile facts yet. A cover letter is assembled from "
-            "verified evidence, so there is nothing to write from."
+            "Nothing on your profile is verified yet. A cover letter only says "
+            "things you have confirmed you did, so open Profile, tick off the "
+            "facts that are true, then write the letter."
         )
     parsed = job.jd_parsed or {}
     company = str(parsed.get("company") or "").strip()

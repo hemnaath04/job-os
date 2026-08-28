@@ -17,10 +17,16 @@ this morning, which is the wrong answer for a job search: the old one is probabl
 filled. Multiplying means a stale posting has to be substantially more relevant to
 beat a fresh one, rather than slightly.
 
-  * `retrieve_score`  always `1.0` now -- Appwrite's fulltext match is pass/fail,
-                      not graded, so a row that reaches this function already
-                      passed the filter and has nothing left to score. Formerly
-                      `ts_rank_cd` over a weighted tsvector; see `search_index`.
+  * `retrieve_score`  whether the searched words are in the TITLE or only in the
+                      JD body (`_title_weight`). Appwrite's fulltext match is
+                      pass/fail over `search_text`, which concatenates the title
+                      with 8000 characters of `jd_clean`, so retrieval alone
+                      cannot tell a Software Engineering Intern posting from a
+                      Director of Litigation posting whose JD happens to mention
+                      the internship programme -- and a live search for
+                      "software engineer intern" duly opened with the Director.
+                      This restores, in Python and coarsely, the one distinction
+                      the weighted tsvector used to make for free.
   * `freshness_weight` exponential decay on the effective date with a 14-day half
                       life, floored so an old-but-perfect match is demoted rather
                       than deleted.
@@ -39,6 +45,12 @@ Snippets are a second pass, over just the ~60 rows that survived ranking, so
 that Appwrite's own row size cap and the cost of moving `jd_clean` around only
 has to be paid for a page, not the whole candidate pool -- the same shape the
 Postgres version used, back when it was TOAST doing the cost, not Appwrite.
+That second pass is a second REQUEST now, not just a second read of a payload
+already in hand: the pool query selects metadata only (`POOL_COLUMNS`). A pool
+of 480 rows each carrying up to 8000 characters of `jd_clean` is around four
+megabytes for MariaDB to sort, serialize and ship on every search, and that is
+the shape of the failure the UI was reporting as "the saved index was
+restarting" -- Appwrite answering its own slow query with a 408.
 
 The result count is capped at `TOTAL_COUNT_CAP` for the same reason as before:
 a searcher does not act on the difference between 1,000 and 7,019 matches, and
@@ -53,6 +65,7 @@ ago, still listed 1 hour ago" rather than presenting a re-dated repost as new.
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -110,6 +123,20 @@ MIN_FRESHNESS_WEIGHT = 0.05
 #: deleted: the Postgres-backed `ts_rank_cd` path this tuned is still real
 #: code history, not a hypothetical one.
 RANK_SATURATION_K = 1.0
+#: `retrieve_score` for a row whose title carries the searched words, and for
+#: one where they appear only in the JD body. The gap is deliberately wide:
+#: `freshness_weight` spans a factor of 20 on its own, so a narrower one would
+#: let a body-only mention from this morning outrank a real title match from
+#: last week -- which is the ordering being fixed, not a variation of it. A
+#: body-only hit is demoted rather than dropped because it is still a genuine
+#: match: a posting that describes the internship in its body and titles itself
+#: something else is a real thing, just not the first thing to show.
+TITLE_MATCH_WEIGHT = 1.0
+BODY_ONLY_MATCH_WEIGHT = 0.05
+#: What every row scores when the search named no keywords at all. Browsing has
+#: no title to match against, so this keeps `rank` exactly what it was: purely
+#: freshness times diversity.
+NO_KEYWORDS_WEIGHT = 1.0
 #: Discount applied to the nth posting from the same company on one page.
 COMPANY_DIVERSITY_DECAY = 0.65
 #: The floor of that discount, so a company with genuinely more relevant postings
@@ -264,7 +291,101 @@ def _quote_phrase(text: str) -> str:
     return f'"{text.strip().replace(chr(34), "")}"'
 
 
-def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
+#: Columns the candidate pool query reads. Everything `_row_to_tuple` touches
+#: and nothing else -- specifically not `jd_clean` or `enrichment`, the two
+#: fat ones, which `_hydrate_page` fetches for the page that survived ranking.
+#: `test_job_index_title_weight` asserts this list still covers `_row_to_tuple`,
+#: because a field added there and forgotten here would not fail loudly; it
+#: would quietly read as None and put every posting's date at the crawl time.
+POOL_COLUMNS = [
+    "source_posting_id",
+    "source",
+    "source_id",
+    "source_url",
+    "title",
+    "company_name",
+    "company_domain",
+    "location",
+    "country_code",
+    "remote",
+    "department",
+    "employment_type",
+    "salary_min",
+    "salary_max",
+    "salary_currency",
+    "jd_hydrated",
+    "posted_at",
+    "posted_at_basis",
+    "posted_at_estimated",
+    "first_seen_at",
+    "last_seen_at",
+    "active",
+    "inactive_since",
+    "repost_count",
+]
+
+#: Columns only the page needs: the JD body for the snippet and the fit score,
+#: and the cached enrichment so an already-scored posting costs no LLM call.
+PAGE_COLUMNS = ["source_posting_id", "jd_clean", "enrichment", "title", "company_name"]
+
+#: Words too common in a job title to carry intent on their own.
+_TITLE_STOPWORDS = frozenset(
+    {"a", "an", "and", "at", "for", "from", "in", "of", "on", "or", "the", "to", "with"}
+)
+
+
+#: Suffixes stripped before two title words are compared, longest first, never
+#: below a four-character root. Deliberately crude, and deliberately looser than
+#: the exact-word rule the live sources FILTER with (`matchesTitle` in
+#: `no-key-sources.ts`, which the smart-search prompt is written against):
+#: loosening that rule would widen what every search fetches, while this only
+#: decides the order of what came back, and "engineer" scoring "Software
+#: Engineering Intern" no higher than "Director of Litigation" is the failure
+#: being fixed. The same three cases in the same order live in the web app's
+#: `relevance.ts`; that is duplicated knowledge in two languages, and it is
+#: called out here rather than left to be discovered.
+_STEM_SUFFIXES = ("ships", "ship", "ings", "ing", "es", "s")
+
+
+def _stem(word: str) -> str:
+    for suffix in _STEM_SUFFIXES:
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            return word[: -len(suffix)]
+    return word
+
+
+def _title_words(text: str | None) -> set[str]:
+    """A title as a bag of comparable words. Punctuation, case and the handful
+    of suffixes above do not count, so "AI/ML Engineer Intern" and "ai ml
+    engineering, internship" are the same title."""
+    if not text:
+        return set()
+    return {_stem(w) for w in re.split(r"[^a-z0-9+#]+", text.lower()) if w}
+
+
+def _title_weight(title: str | None, phrases: list[str]) -> float:
+    """Did the searched words land in the title, or only somewhere in the JD?
+
+    `phrases` are alternatives: every word of a phrase must appear in the title,
+    in any order, and matching any one phrase is enough.
+
+    Returns `NO_KEYWORDS_WEIGHT` when there was nothing to match, which is what
+    keeps browsing with no filters ranked purely on freshness and diversity.
+    """
+    usable = [p for p in phrases if p and p.strip()]
+    if not usable:
+        return NO_KEYWORDS_WEIGHT
+    words = _title_words(title)
+    for phrase in usable:
+        needed = {w for w in _title_words(phrase) if w not in _TITLE_STOPWORDS}
+        if needed and needed <= words:
+            return TITLE_MATCH_WEIGHT
+    return BODY_ONLY_MATCH_WEIGHT
+
+
+def _row_to_tuple(
+    row: dict[str, Any], now: datetime, title_phrases: list[str] | None = None
+) -> tuple[Any, ...]:
     """One Appwrite `job_postings` row, reshaped into the tuple
     `_apply_mix_and_rank` has always consumed -- the same fields, in the same
     order, that the SQL `select(...)` in the Postgres version of this
@@ -272,9 +393,10 @@ def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
     Python-side ranking (`_freshness_weight`/`_mix_weight`/
     `_apply_mix_and_rank`) stay completely unchanged by this migration.
 
-    `retrieve`/`text_rank` are always `1.0`/`0.0`: see `search_index`'s
-    docstring for why Appwrite's fulltext match has nothing gradable to
-    report, unlike `ts_rank_cd`.
+    `text_rank` is always `0.0`: Appwrite's fulltext match has nothing gradable
+    to report, unlike `ts_rank_cd`. `retrieve` was flat `1.0` for the same
+    reason until `_title_weight` gave it the one distinction that mattered --
+    title hit or body-only hit.
     """
     posted_at = _parse_dt(row.get("posted_at"))
     first_seen_at = _parse_dt(row.get("first_seen_at")) or now
@@ -307,7 +429,7 @@ def _row_to_tuple(row: dict[str, Any], now: datetime) -> tuple[Any, ...]:
         _parse_dt(row.get("inactive_since")),
         int(row.get("repost_count") or 0),
         0.0,
-        1.0,
+        _title_weight(row.get("title"), title_phrases or []),
         freshness,
         age_days,
         effective_date,
@@ -450,6 +572,7 @@ async def search_index(
     rows = await appwrite_tables.list_rows(
         filters=filters,
         queries=raw_queries,
+        select=POOL_COLUMNS,
         sort_desc="last_seen_at",
         limit=pool_size,
     )
@@ -466,14 +589,14 @@ async def search_index(
         total_matched = TOTAL_COUNT_CAP
         total_capped = True
 
-    by_id = {r.get("source_posting_id"): r for r in rows}
     hits = _apply_mix_and_rank(
-        [_row_to_tuple(r, now) for r in rows],
+        [_row_to_tuple(r, now, [*query.title_keywords]) for r in rows],
         limit=limit,
         offset=query.offset,
         explain=query.explain,
         matched_keywords=matched_keywords,
     )
+    by_id = await _hydrate_page(hits)
     _attach_snippets(by_id, hits)
     if candidate is not None:
         await _attach_match_scores(by_id, hits, candidate)
@@ -489,19 +612,53 @@ async def search_index(
     )
 
 
-def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> None:
-    """Fill in the snippet for the page Appwrite already returned.
+async def _hydrate_page(hits: list[IndexHit]) -> dict[Any, dict[str, Any]]:
+    """The fat columns, for the page and only the page.
 
-    No second round trip: unlike Postgres, where `jd_clean` sat TOASTed
-    out-of-line and fetching it for the whole candidate pool cost 87.4ms
-    against 8.5ms without it (see the module docstring), Appwrite returned
-    every column, including `jd_clean`, in the one `list_rows` call
-    `search_index` already made. This just reads it back out for the ~60
-    rows that survived ranking, instead of the whole pool.
+    One extra request, in exchange for not moving `jd_clean` for every one of
+    the ~480 candidates the pool query considers. That trade used to run the
+    other way: the pool selected every column, on the reasoning that Appwrite
+    had already returned them so the snippet pass needed no second round trip.
+    It was true and it was expensive -- the pool is eight times the page by
+    construction (`CANDIDATE_MULTIPLIER`), `jd_clean` runs to 8000 characters,
+    and MariaDB has to sort and serialize all of it before Appwrite can answer.
+    Appwrite's reply to that was a 408 ("Database timed out"), which the whole
+    retry ladder in `appwrite_tables` exists to paper over and which the web app
+    reported to the user as the index "restarting".
+
+    Failing here costs the page its snippets and its cached enrichments, not
+    its results: the ranking is already decided, and a search that returns
+    correctly ranked jobs without preview text beats one that returns nothing.
+    """
+    if not hits:
+        return {}
+    ids = [str(hit.id) for hit in hits]
+    try:
+        rows = await appwrite_tables.list_rows(
+            queries=[{"method": "equal", "attribute": "source_posting_id", "values": ids}],
+            select=PAGE_COLUMNS,
+            limit=len(ids),
+        )
+    except appwrite_tables.AppwriteTablesError as exc:
+        log.warning("job_index.page_hydrate_failed", error=str(exc)[:300], hits=len(hits))
+        return {}
+    return {r.get("source_posting_id"): r for r in rows}
+
+
+def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> None:
+    """Fill in the snippet for the page that survived ranking.
+
+    `by_id` comes from `_hydrate_page`, which fetched `jd_clean` for these rows
+    alone. A hit missing from it (the hydrate call failed, or the row went away
+    between the two queries) keeps the `description_available` flag the pool
+    row's own `jd_hydrated` column already gave it, rather than being restated
+    as having no description.
     """
     for hit in hits:
         row = by_id.get(str(hit.id))
-        jd_clean = (row or {}).get("jd_clean") or ""
+        if row is None:
+            continue
+        jd_clean = row.get("jd_clean") or ""
         hit.snippet = jd_clean[:SNIPPET_CHARS]
         hit.description_available = bool(hit.snippet.strip())
 
@@ -675,6 +832,9 @@ def _apply_mix_and_rank(
         seen_per_company[company_key] = company_rank + 1
 
         mix = _mix_weight(company_rank)
+        # `retrieve` carries `_title_weight` now, so this product is once again
+        # relevance times freshness times diversity rather than freshness times
+        # diversity with a constant stapled to the front.
         retrieve_score = float(retrieve)
         freshness_weight = float(freshness)
         rank = retrieve_score * freshness_weight * mix
@@ -796,4 +956,6 @@ def ranking_constants() -> dict[str, float]:
         "min_freshness_weight": MIN_FRESHNESS_WEIGHT,
         "company_diversity_decay": COMPANY_DIVERSITY_DECAY,
         "min_mix_weight": MIN_MIX_WEIGHT,
+        "title_match_weight": TITLE_MATCH_WEIGHT,
+        "body_only_match_weight": BODY_ONLY_MATCH_WEIGHT,
     }

@@ -17,6 +17,7 @@ import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
 import { api } from "@/lib/api";
+import { reportFailure } from "@/lib/errors";
 import type {
   InterviewPrep,
   InterviewQuestion,
@@ -107,6 +108,10 @@ export default function InterviewPrepPage() {
         fresh,
       );
     },
+    // This is a minute-long model call behind one button. Without this, a
+    // failure ended the spinner and changed nothing else on the page: same
+    // empty state, same enabled button, no indication anything had been tried.
+    onError: (err: Error) => reportFailure("build that prep pack", err),
   });
 
   const practise = useMutation({
@@ -131,6 +136,10 @@ export default function InterviewPrepPage() {
             : current,
       );
     },
+    // A flag or confidence rating that does not save is worth saying so: the
+    // control simply stayed where it was, which reads as a control that does
+    // nothing rather than as a request that failed.
+    onError: (err: Error) => reportFailure("save that answer", err),
   });
 
   const selected = applications.find((application) => application.id === applicationId);

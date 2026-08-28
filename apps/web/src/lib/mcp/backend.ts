@@ -10,11 +10,46 @@
 const API = process.env.API_BASE_URL ?? "http://localhost:8000";
 
 export class BackendError extends Error {
-  constructor(
-    public status: number,
-    message: string,
-  ) {
+  // Assigned in the body rather than declared as a constructor parameter
+  // property: this module has no imports, which is what lets Node's own test
+  // runner load it directly, and its strip-only TypeScript mode rejects
+  // parameter properties. Same reasoning, and the same shape, as ApiError in
+  // lib/api-error.ts.
+  readonly status: number;
+
+  constructor(status: number, message: string) {
     super(message);
+    this.status = status;
+  }
+}
+
+/**
+ * Read a backend response body that is supposed to be JSON but might not be.
+ *
+ * `JSON.parse(text)` used to run before the `resp.ok` check, so any non-JSON
+ * body took the whole call down with `SyntaxError: Unexpected token '<'`
+ * before the status code was ever looked at. Every tool here is a JSON API
+ * over another JSON API, but the things BETWEEN them are not: a platform's
+ * "Application Error" page for a crashed or sleeping dyno, a CDN's 502/503/504
+ * page and a proxy's own timeout page are all HTML, and any of them can appear
+ * in front of a perfectly healthy handler. `search_jobs` is the one an agent
+ * hits hardest, and a stack trace about a "<" is neither a JSON error nor
+ * anything the caller can act on.
+ *
+ * So the body is parsed defensively and a non-JSON body is reported as what it
+ * actually is: the transport failed, with the status that says how.
+ */
+function readJsonBody(status: number, statusText: string, text: string): unknown {
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new BackendError(
+      status >= 400 ? status : 502,
+      status >= 400
+        ? `The server returned an error page instead of a result (HTTP ${status} ${statusText}). Try again in a moment.`
+        : "The server returned a page instead of a result, which usually means it is restarting. Try again in a moment.",
+    );
   }
 }
 
@@ -36,7 +71,7 @@ export async function callBackend(
   if (resp.status === 204) return null;
 
   const text = await resp.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = readJsonBody(resp.status, resp.statusText, text);
 
   if (!resp.ok) {
     const detail = (data as { detail?: string } | null)?.detail ?? resp.statusText;
@@ -80,7 +115,7 @@ export async function callBackendMultipart(
   });
 
   const text = await resp.text();
-  const data = text ? JSON.parse(text) : null;
+  const data = readJsonBody(resp.status, resp.statusText, text);
 
   if (!resp.ok) {
     const detail = (data as { detail?: string } | null)?.detail ?? resp.statusText;

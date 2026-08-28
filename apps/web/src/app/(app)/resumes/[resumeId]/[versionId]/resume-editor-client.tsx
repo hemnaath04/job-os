@@ -498,8 +498,12 @@ export default function ResumeEditorClient({
               {!messagesQuery.data?.length && (
                 <div className="py-6 text-center">
                   <Sparkles className="mx-auto size-5 text-[color:var(--color-text-dim)]" />
+                  {/* Named one specific person's side project and assumed the
+                      reader was a backend engineer, so for everyone else the
+                      one example of how to use this box was an example of
+                      something they could not type. */}
                   <p className="mt-2 text-xs text-[color:var(--color-text-dim)]">
-                    Try “Make the BedRocked bullets more backend-focused.”
+                    Try “Shorten the bullets in my most recent role.”
                   </p>
                 </div>
               )}

@@ -225,15 +225,18 @@ function AgentBanner() {
   return (
     <div className="mb-3.5 flex items-center gap-3 rounded-xl border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)]/60 px-4 py-2.5">
       <Bot className="size-4 shrink-0 text-[color:var(--color-text-muted)]" aria-hidden="true" />
+      {/* Was "Your own agent can drive this over MCP now", on the first screen
+          a new account sees. MCP is the protocol this is built on, not a thing
+          the reader has any reason to have heard of. */}
       <p className="min-w-0 flex-1 truncate text-xs text-[color:var(--color-text-muted)]">
-        Your own agent can drive this over MCP now: search jobs, tailor resumes, track
-        applications.
+        You can connect an AI assistant to do this for you: search jobs, tailor
+        resumes, track applications.
       </p>
       <Link
         href="/docs/mcp"
         className="shrink-0 text-xs font-medium text-[color:var(--color-text)] underline decoration-dotted"
       >
-        Connect one
+        How to connect one
       </Link>
       <button
         type="button"
@@ -636,14 +639,30 @@ function RecentApplications({ applications }: { applications: Application[] }) {
   );
 }
 
+/**
+ * What a brand new account sees.
+ *
+ * The setup checklist belongs here more than anywhere else, and until now it
+ * was the one screen that could not show it: it was rendered further down the
+ * signed-in dashboard, below the `!applications.length` return above, so the
+ * only people who ever saw "add your facts, build your master resume" were
+ * people who had already tracked an application. A first visit got a single
+ * "Find roles" button, followed the whole Job Finder to Tailor path, and hit a
+ * disabled Tailor button at the end of it with no master resume to run from.
+ *
+ * The checklist reads real data and removes itself once all three are done, so
+ * on an account that is set up but has not applied to anything yet this is the
+ * same single invitation it always was.
+ */
 function FirstLaunch() {
   return (
     <div className="workspace-page">
+      <OnboardingChecklist />
       <motion.div
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.35 }}
-        className="product-empty-state min-h-[420px]"
+        className="product-empty-state min-h-[360px]"
       >
         <span className="product-icon size-11">
           <FileText className="size-5" />

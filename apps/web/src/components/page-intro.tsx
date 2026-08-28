@@ -41,3 +41,23 @@ export function PageIntro({
 export function InfoChip({ children, tone = "default" }: { children: React.ReactNode; tone?: "default" | "sage" | "clay" }) {
   return <span className={`info-chip info-chip-${tone}`}>{children}</span>;
 }
+
+/**
+ * A chip-shaped placeholder for a count that has not arrived yet.
+ *
+ * "0 saved roles" is not a smaller version of "50 saved roles", it is a
+ * different claim, and it was the first thing a signed-in user read on /tailor
+ * before hydration replaced it. `label` is what a screen reader hears in its
+ * place, since a bar that is only a shape has nothing to announce.
+ */
+export function ChipSkeleton({ label, width = "6.5rem" }: { label: string; width?: string }) {
+  return (
+    <span className="info-chip" style={{ width }}>
+      <span className="sr-only">{label}</span>
+      <span
+        aria-hidden="true"
+        className="h-2 w-full animate-pulse rounded-full bg-[color:var(--color-surface-3)]"
+      />
+    </span>
+  );
+}

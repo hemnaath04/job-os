@@ -45,18 +45,34 @@ describe("detailFromErrorBody", () => {
     assert.equal(detailFromErrorBody(502, body), FROM_URL_502_DETAIL);
   });
 
-  it("falls back to stringifying the whole body when detail is a list (FastAPI validation errors)", () => {
+  it("reads a validation-error list as a sentence, not as JSON", () => {
     const validationBody = {
-      detail: [{ loc: ["body", "url"], msg: "field required", type: "missing" }],
+      detail: [{ loc: ["body", "url"], msg: "Field required", type: "missing" }],
     };
     const detail = detailFromErrorBody(422, JSON.stringify(validationBody));
-    // Degrades sensibly rather than "[object Object]" or throwing.
-    assert.ok(detail.length > 0);
-    assert.doesNotThrow(() => JSON.parse(detail));
-    assert.deepEqual(JSON.parse(detail), validationBody);
+    // The regression this guards: the toast used to print the whole
+    // `{"detail":[{"type":"missing","loc":[...]}]}` blob at the user.
+    assert.ok(!detail.includes("{"), "must not be raw JSON");
+    assert.ok(!detail.includes('"loc"'), "must not carry the JSON keys");
+    assert.ok(detail.includes("url"), "names the field that was rejected");
+    assert.ok(detail.includes("Field required"), "keeps the message a person can read");
   });
 
-  it("falls back to stringifying the whole body when detail is a dict (resumes.py finalize 409)", () => {
+  it("caps a long validation list rather than listing every field", () => {
+    const detail = detailFromErrorBody(
+      422,
+      JSON.stringify({
+        detail: ["a", "b", "c", "d", "e"].map((field) => ({
+          loc: ["body", field],
+          msg: "Field required",
+          type: "missing",
+        })),
+      }),
+    );
+    assert.ok(detail.includes("and 2 more"));
+  });
+
+  it("uses the sentence inside a dict detail (resumes.py finalize 409)", () => {
     const finalizeBody = {
       detail: {
         message: "Resume did not pass the final quality gate.",
@@ -64,8 +80,9 @@ describe("detailFromErrorBody", () => {
       },
     };
     const detail = detailFromErrorBody(409, JSON.stringify(finalizeBody));
-    assert.doesNotThrow(() => JSON.parse(detail));
-    assert.deepEqual(JSON.parse(detail), finalizeBody);
+    assert.equal(detail, "Resume did not pass the final quality gate.");
+    // The review object rode along into the toast before this.
+    assert.ok(!detail.includes("score"));
   });
 
   it("falls back to a friendly sentence for a non-JSON body (platform error page)", () => {
@@ -74,9 +91,17 @@ describe("detailFromErrorBody", () => {
     assert.ok(!detail.includes("<html>"));
   });
 
-  it("stringifies a JSON body with no detail key at all", () => {
-    const detail = detailFromErrorBody(500, JSON.stringify({ error: "boom" }));
-    assert.deepEqual(JSON.parse(detail), { error: "boom" });
+  it("reads a body that answers with `error` rather than `detail`", () => {
+    assert.equal(detailFromErrorBody(500, JSON.stringify({ error: "boom" })), "boom");
+  });
+
+  it("falls back to a friendly sentence for a shape nobody wrote for a reader", () => {
+    assert.equal(
+      detailFromErrorBody(500, JSON.stringify({ detail: { review: { score: 41 } } })),
+      friendlyStatusText(500),
+    );
+    assert.equal(detailFromErrorBody(500, JSON.stringify([1, 2, 3])), friendlyStatusText(500));
+    assert.equal(detailFromErrorBody(500, JSON.stringify(null)), friendlyStatusText(500));
   });
 });
 

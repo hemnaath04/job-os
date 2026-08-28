@@ -36,6 +36,27 @@ test("a status code inside a longer number is not a 503", () => {
   assert.equal(isTransient("matched 1503 postings"), false);
 });
 
+test("the banner blames the restart only when it was a restart", () => {
+  // The wording was hardcoded to "restarting", which was true for the deploy
+  // window it was written for and stopped being true: the index now fails
+  // mostly because its own Appwrite query runs out of time, and blaming a
+  // deploy for that sends the reader to look at a log with nothing in it.
+  assert.match(
+    transientNotice([{ source: "index", message: INDEX_503 }]) ?? "",
+    /^The saved index was restarting, so these results came from live sources only\./,
+  );
+  assert.match(
+    transientNotice([
+      { source: "index", message: "Appwrite TablesDB call failed (408): Database timed out." },
+    ]) ?? "",
+    /^The saved index did not answer in time, so these results came from live sources only\./,
+  );
+  assert.match(
+    transientNotice([{ source: "index", message: "the saved index timed out after 75s" }]) ?? "",
+    /did not answer in time/,
+  );
+});
+
 test("a transient failure is retried once, and the retry is believed", async () => {
   let calls = 0;
   const result = await retryOnceIfTransient(async () => {

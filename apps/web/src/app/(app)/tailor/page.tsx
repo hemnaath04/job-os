@@ -26,7 +26,6 @@ import { api } from "@/lib/api";
 import { isAtCoverageCeiling, partitionMissing } from "@/lib/ats-coverage";
 import { PdfPreviewPane } from "@/components/pdf-preview-pane";
 import { reportFailure } from "@/lib/errors";
-import { cancelOperation } from "@/lib/operations-store";
 import {
   appwriteWorkspace,
   type AgentJobProgress,
@@ -35,7 +34,21 @@ import { isAppwriteWorkspaceEnabled } from "@/lib/appwrite/config";
 import { shouldRestoreTailor } from "@/lib/tailor-restore";
 import { withTimeout } from "@/lib/async";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
-import { InfoChip, PageIntro } from "@/components/page-intro";
+import { buildJobPicker } from "@/lib/tailor-job-options";
+import {
+  FINALIZE_HELP,
+  GAP_ACTION_HELP,
+  KEYWORD_SCORE_LABEL,
+  NO_KEYWORDS_EXPLAINER,
+  REVIEW_SCORE_LABEL,
+  TAILOR_AGAIN_HELP,
+  WALKTHROUGH_STEPS,
+  gapHeading,
+  scoreExplainer,
+  shouldShowWalkthrough,
+  walkthroughTitle,
+} from "@/lib/tailor-walkthrough";
+import { ChipSkeleton, InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { TemplatePicker } from "@/components/template-picker";
 import { Select } from "@/components/ui/select";
@@ -243,7 +256,10 @@ function TailorInner() {
   // The look to render with, separate from the source resume that receives the
   // output. Empty means the bundled default.
   const [templateId, setTemplateId] = useState<string>("");
-  const { data: availableTemplates = [] } = useQuery({
+  // Failed and half-finished imports are held out of the job picker below.
+  // This is the way back to them, for the run where that reading is wrong.
+  const [showUnreadableJobs, setShowUnreadableJobs] = useState(false);
+  const { data: availableTemplates = [], isLoading: templatesLoading } = useQuery({
     queryKey: ["templates"],
     queryFn: () => api.listTemplates(),
   });
@@ -371,6 +387,45 @@ function TailorInner() {
     [resumes],
   );
 
+  // The saved jobs worth offering as a choice: imports that never finished
+  // reading are held back, and the same posting saved twice is one row. See
+  // lib/tailor-job-options.ts for what each rule is reading. The selected job
+  // is passed in so a visit from "Tailor a resume for this role" can never
+  // land on a picker that dropped the very job it was pointed at.
+  const jobPickerDefault = useMemo(
+    () => buildJobPicker(jobs, { selectedId: jobId }),
+    [jobs, jobId],
+  );
+  const jobPicker = useMemo(
+    () =>
+      showUnreadableJobs
+        ? buildJobPicker(jobs, { selectedId: jobId, includeUnreadable: true })
+        : jobPickerDefault,
+    [jobs, jobId, showUnreadableJobs, jobPickerDefault],
+  );
+  // Counts always come off the collapsed reading, never off whatever is on
+  // screen: read from the revealed one, "4 hidden" would drop to zero the
+  // instant it was acted on and take the control back out with it.
+  const offeredJobCount = jobPickerDefault.options.filter((o) => !o.unreadable).length;
+  const heldBackJobCount =
+    jobPickerDefault.unreadableCount + jobPickerDefault.duplicateCount;
+  // "Hiding 3 imports that never finished reading and 4 duplicates. Nothing was
+  // deleted." Built here rather than inline so the sentence reads as a sentence
+  // and does not depend on how JSX collapses whitespace between its parts.
+  const heldBackNote = useMemo(() => {
+    const { unreadableCount: unreadable, duplicateCount: duplicates } = jobPickerDefault;
+    const clauses = [
+      unreadable > 0 &&
+        `${unreadable} import${unreadable === 1 ? "" : "s"} that never finished reading`,
+      duplicates > 0 && `${duplicates} duplicate${duplicates === 1 ? "" : "s"}`,
+    ]
+      .filter(Boolean)
+      .join(" and ");
+    if (!clauses) return null;
+    const lead = showUnreadableJobs ? "Normally hidden:" : "Hiding";
+    return `${lead} ${clauses}. Nothing was deleted.`;
+  }, [jobPickerDefault, showUnreadableJobs]);
+
   // Poll the attached agent job until it finishes, surfacing live progress. The
   // agent keeps running server-side regardless, so this only reads state.
   useEffect(() => {
@@ -427,15 +482,17 @@ function TailorInner() {
           return;
         }
         if (current.status === "failed") {
-          abandon(current.error || "The tailoring agent failed.");
+          abandon(current.error || "This tailoring run failed. Try again.");
           return;
         }
         // Still "queued" well past a cold start means the agent never picked
         // the job up, so stop waiting and let the user start a fresh run
         // instead of leaving them on a spinner that can never resolve.
         if (current.status === "queued" && age > TAILOR_QUEUED_GRACE_MS) {
+          // "Check the agent function" was an instruction to whoever deploys
+          // this, printed at whoever is trying to get a resume out of it.
           abandon(
-            "The tailoring agent never started this run. Try again, and check the agent function if it keeps happening.",
+            "This tailoring run never started. Try again, and if it keeps happening the service may be down.",
           );
           return;
         }
@@ -514,7 +571,7 @@ function TailorInner() {
       const jobPosting = await withTimeout(
         api.getJob(jobId),
         TAILOR_DISPATCH_TIMEOUT_MS,
-        "Could not load the job description. The jobs backend may be waking up, try again in a moment.",
+        "Could not load that job posting. The service may still be waking up, so try again in a moment.",
       );
       const jdParsed = (jobPosting.jd_parsed ?? {}) as Record<string, unknown>;
       if (Object.keys(jdParsed).length === 0) {
@@ -552,7 +609,7 @@ function TailorInner() {
           applicationId,
         ),
         TAILOR_DISPATCH_TIMEOUT_MS,
-        "Could not queue the tailoring agent. Check your connection and try again.",
+        "Could not start the tailoring run. Check your connection and try again.",
       );
       const record: ActiveTailor = {
         jobId: agentJob.id,
@@ -611,6 +668,7 @@ function TailorInner() {
         resumeName={runResumeName ?? "Tailored resume"}
         jobTitle={job?.title ?? "Not selected"}
         companyName={job?.company?.name ?? null}
+        jobUrl={job?.source_url ?? null}
         reviewing={reviewing}
         templateId={templateId || null}
         onRunReview={() => void runReview(result, templateId || undefined)}
@@ -652,35 +710,68 @@ function TailorInner() {
         jobTitle={job?.title ?? "the selected role"}
         resumeName={runResumeName}
         startedAt={active.startedAt}
-        onCancel={() => {
-          // Stop watching and return to the form. The server run cannot be
-          // aborted mid-execution, so it may still finish and save a version;
-          // this just detaches the UI so the user is not stuck on the spinner.
-          // The global operations pill is a separate store fed by the same
-          // job id (see operations-store.ts), and it does not detach on its
-          // own, so it has to be told about this cancellation directly or it
-          // is left showing "running" forever with no way to dismiss it.
-          cancelOperation(active.jobId);
+        onStopWatching={() => {
+          // Detach THIS page and nothing else. The server run cannot be
+          // aborted mid-execution, so it keeps going and will still save a
+          // version, and the global activity card (operations-store.ts) is
+          // fed by the same job id and keeps polling it. That is the whole
+          // point of the card existing.
+          //
+          // This used to call cancelOperation, which flipped the card to
+          // failed with "You canceled this run." Neither half was true: the
+          // run was not canceled, and killing the poll meant the resume it
+          // went on to produce was never surfaced. A slow model call is not a
+          // user cancel. See lib/operation-outcome.ts.
           clearActiveTailor();
           setActive(null);
           setProgress(null);
           setError(null);
+          toast.info("Still running in the background", {
+            description:
+              "You can keep working. The activity card at the bottom will show the resume when it is ready.",
+          });
         }}
       />
     );
   }
 
+  // What the page knows about this account when it decides whether to explain
+  // itself. Counted off the collapsed picker rather than the raw list, so a
+  // vault holding nothing but failed imports still reads as having no job to
+  // tailor against, which is what the user is looking at.
+  const vault = {
+    loading: jobsLoading || resumesLoading,
+    hasMasterResume: hasMaster,
+    savedJobCount: offeredJobCount,
+  };
+  const showWalkthrough = shouldShowWalkthrough(vault);
+
   return (
     <div className="workspace-page max-w-6xl">
+      {/* "Evidence-guided writing studio", and a description naming "the
+          agent" and "evidence", were written for whoever built this. Both say
+          the same thing in words a first time reader already owns. */}
       <PageIntro
-        eyebrow="Evidence-guided writing studio"
+        eyebrow="Resume tailoring"
         title="Tailor a resume"
-        description="Match a verified career story to a specific role. The agent can reshape and prioritize evidence, but it cannot invent what is not in your profile."
+        description="Rewrite your resume for one specific job. It reorders and rewords what you have already added, and it cannot add anything you have not."
         icon={Sparkles}
       >
-        <InfoChip tone="sage">No hallucinated claims</InfoChip>
-        <InfoChip>{jobs.length} saved roles</InfoChip>
-        <InfoChip tone="clay">{candidateResumes.length} source resumes</InfoChip>
+        <InfoChip tone="sage">Nothing made up</InfoChip>
+        {/* A count is only worth showing once it is one. These render before
+            the queries resolve, and "0 saved roles / 0 source resumes" is not a
+            smaller truth than 50 and 17, it is a wrong one that a signed-in
+            user reads as an empty account for as long as the fetch takes. */}
+        {jobsLoading ? (
+          <ChipSkeleton label="Counting your saved roles" />
+        ) : (
+          <InfoChip>{offeredJobCount} saved roles</InfoChip>
+        )}
+        {resumesLoading ? (
+          <ChipSkeleton label="Counting your source resumes" width="7.5rem" />
+        ) : (
+          <InfoChip tone="clay">{candidateResumes.length} source resumes</InfoChip>
+        )}
       </PageIntro>
 
       {!hasMaster && !resumesLoading && (
@@ -688,12 +779,18 @@ function TailorInner() {
           <AlertCircle className="mt-0.5 size-4 shrink-0" />
           <div className="text-sm">
             <div className="font-medium">No master resume yet</div>
+            {/* Used to send people to Profile, where nothing creates one:
+                Profile's upload reads a file into facts and never makes a
+                resume, let alone the master this page checks for. So the one
+                instruction shown to a user who cannot tailor yet sent them
+                somewhere they could follow it exactly and come back to the
+                same blocked page. Resumes is where "Set master" lives. */}
             <p className="text-[color:var(--color-text-muted)]">
-              Upload your master PDF on the{" "}
-              <Link href="/profile" className="text-[color:var(--color-violet)] underline">
-                Profile
+              Every tailored resume starts from your master. Go to{" "}
+              <Link href="/resumes" className="text-[color:var(--color-violet)] underline">
+                Resumes
               </Link>{" "}
-              page first. Tailoring always starts from a clean master baseline.
+              and choose <strong>Set master</strong> to upload it.
             </p>
           </div>
         </div>
@@ -701,9 +798,12 @@ function TailorInner() {
 
       <div className="mt-6 grid gap-5 lg:grid-cols-[minmax(0,1fr)_19rem]">
         <section className="workspace-panel space-y-6 p-6 sm:p-7">
+        {/* "The JD" is the posting, in a two letter form only this codebase
+            uses, and "Add jobs from Applications" named one of the two places
+            a job can come from. */}
         <Field
           label="Job"
-          help="The JD to tailor against, and the name the tailored resume takes. Add jobs from Applications."
+          help="The role to write for, and the name this resume takes. Save roles on Job Finder, or add one on Applications."
         >
           {(control) => (
             <>
@@ -712,20 +812,31 @@ function TailorInner() {
                 // The preview below is the only signal about where the run
                 // lands, so describe the picker with it as well as the help.
                 aria-describedby={
-                  plannedName
-                    ? [control["aria-describedby"], "tailor-output-name"]
-                        .filter(Boolean)
-                        .join(" ")
-                    : control["aria-describedby"]
+                  [
+                    control["aria-describedby"],
+                    plannedName ? "tailor-output-name" : null,
+                    heldBackJobCount > 0 ? "tailor-jobs-held-back" : null,
+                  ]
+                    .filter(Boolean)
+                    .join(" ") || undefined
                 }
                 value={jobId}
                 onChange={setJobId}
                 disabled={jobsLoading}
                 options={[
-                  { value: "", label: "Pick a job" },
-                  ...jobs.map((j) => ({
-                    value: j.id,
-                    label: `${j.title}${j.company?.name ? ` · ${j.company.name}` : ""}`,
+                  // Stays mounted while the query runs, rather than being
+                  // swapped for a skeleton, because the field's <label> is
+                  // bound to this control by id and a placeholder div would
+                  // leave it naming nothing. Only the wording changes: "Pick a
+                  // job" over a list that has not arrived invites a choice from
+                  // an empty menu.
+                  {
+                    value: "",
+                    label: jobsLoading ? "Loading your saved jobs…" : "Pick a job",
+                  },
+                  ...jobPicker.options.map((o) => ({
+                    value: o.value,
+                    label: o.label,
                   })),
                 ]}
               />
@@ -739,6 +850,35 @@ function TailorInner() {
                     : `Saves as a new source resume, "${plannedName}".`}
                 </p>
               )}
+              {/* Nothing was deleted, so say what is missing and offer it back.
+                  A title this page reads as a failed import can be a real role
+                  with an awkward name, and that has to stay reachable. */}
+              {!jobsLoading && heldBackNote && (
+                <p
+                  id="tailor-jobs-held-back"
+                  className="mt-2 text-xs text-[color:var(--color-text-dim)]"
+                >
+                  {heldBackNote}{" "}
+                  {jobPickerDefault.unreadableCount > 0 && !showUnreadableJobs && (
+                    <button
+                      type="button"
+                      onClick={() => setShowUnreadableJobs(true)}
+                      className="underline decoration-dotted hover:text-[color:var(--color-text)]"
+                    >
+                      Show them anyway
+                    </button>
+                  )}
+                  {showUnreadableJobs && (
+                    <button
+                      type="button"
+                      onClick={() => setShowUnreadableJobs(false)}
+                      className="underline decoration-dotted hover:text-[color:var(--color-text)]"
+                    >
+                      Hide them again
+                    </button>
+                  )}
+                </p>
+              )}
             </>
           )}
         </Field>
@@ -750,6 +890,7 @@ function TailorInner() {
           {() => (
             <TemplatePicker
               templates={availableTemplates}
+              loading={templatesLoading}
               value={templateId}
               onChange={setTemplateId}
             />
@@ -774,7 +915,7 @@ function TailorInner() {
 
         {running && (
           <p className="text-xs text-[color:var(--color-text-dim)]">
-            Drafting, then running a separate quality-model and PDF verification pass.
+            Writing the page, then reading it back and building the PDF.
           </p>
         )}
 
@@ -785,14 +926,43 @@ function TailorInner() {
           </div>
         )}
         </section>
+        {/* Two asides, and which one shows is a claim about the reader.
+            Someone who cannot run a tailor yet has no use for the internal
+            stages: they need to know what this page is for and that it will
+            not make things up. Someone with a stocked profile has done that
+            already, and the stage list is the more useful thing to look at. */}
+        {showWalkthrough ? (
+          <aside className="workspace-panel h-fit overflow-hidden p-6">
+            <div className="section-kicker">{walkthroughTitle(vault)}</div>
+            <ol className="mt-5 space-y-5">
+              {WALKTHROUGH_STEPS.map((step, i) => (
+                <li key={step.title} className="flex gap-3">
+                  <span className="product-icon size-8 font-mono text-[10px]">
+                    {i + 1}
+                  </span>
+                  <div>
+                    <div className="text-sm font-semibold">{step.title}</div>
+                    <p className="mt-0.5 text-xs leading-5 text-[color:var(--color-text-dim)]">
+                      {step.body}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </aside>
+        ) : (
         <aside className="workspace-panel h-fit overflow-hidden p-6">
-          <div className="section-kicker">How the pass works</div>
+          {/* Same four stages, said without the words this codebase invented
+              for them. "Ground", "Compose" and "a traceable draft" are how the
+              run is described in its own source; they are not how anyone
+              signing in would describe getting a resume written. */}
+          <div className="section-kicker">What happens next</div>
           <ol className="mt-5 space-y-5">
             {[
-              ["01", "Read", "Job requirements and role language"],
-              ["02", "Ground", "Your master resume and verified facts"],
-              ["03", "Compose", "A traceable draft plus gap questions"],
-              ["04", "Verify", "Independent AI review and one-page PDF checks"],
+              ["01", "Read the job", "What this posting actually asks for"],
+              ["02", "Match your history", "Your master resume and everything on your profile"],
+              ["03", "Write the page", "A draft, plus what it could not cover"],
+              ["04", "Check it", "A second read for quality, and a one page PDF check"],
             ].map(([number, title, copy]) => (
               <li key={number} className="flex gap-3">
                 <span className="product-icon size-8 font-mono text-[10px]">{number}</span>
@@ -801,6 +971,7 @@ function TailorInner() {
             ))}
           </ol>
         </aside>
+        )}
       </div>
     </div>
   );
@@ -935,7 +1106,7 @@ function TailorProgress({
   jobTitle,
   resumeName,
   startedAt,
-  onCancel,
+  onStopWatching,
 }: {
   stage: string;
   step: string | null;
@@ -944,7 +1115,7 @@ function TailorProgress({
   jobTitle: string;
   resumeName: string | null;
   startedAt: string;
-  onCancel: () => void;
+  onStopWatching: () => void;
 }) {
   // The agent's own progress writes are best-effort (see update_job_progress)
   // and can go missing for a whole run. `step` is null the entire time when
@@ -974,7 +1145,7 @@ function TailorProgress({
       <PageIntro
         eyebrow="Tailoring in progress"
         title="Tailoring your resume"
-        description="The agent reads the role against your verified evidence, writes from what genuinely matches, then checks every claim on the page is backed."
+        description="We read the role against what you have added, write from what genuinely matches, then check every claim on the page is backed by it."
         icon={Sparkles}
       >
         <InfoChip tone="sage">Safe to leave this page</InfoChip>
@@ -1081,13 +1252,18 @@ function TailorProgress({
           server, so you can navigate away and come back. The run keeps going and
           this page will show the result when it finishes.
         </p>
+        {/* "Cancel" was a promise this cannot keep: nothing here can abort a
+            server run. It said so anyway, and the activity card then read
+            "You canceled this run" about a run that was still going. The
+            label now says what the button does. */}
         <div className="flex justify-end">
           <button
             type="button"
-            onClick={onCancel}
+            onClick={onStopWatching}
+            title="The run keeps going on the server. This only closes the progress view."
             className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs text-[color:var(--color-text-muted)] transition hover:bg-[color:var(--color-surface-hover)] hover:text-[color:var(--color-text)]"
           >
-            <X className="size-3" /> Cancel
+            <X className="size-3" /> Stop watching
           </button>
         </div>
       </section>
@@ -1106,6 +1282,17 @@ function reviewNeedsRetry(result: TailorResponse): boolean {
   );
 }
 
+/**
+ * Why "Tailor again" and "Finalize" are greyed while the review runs.
+ *
+ * Both act on the version `runReview` is still writing the score and the PDF
+ * onto, so neither can run until it lands. One line, shown next to the buttons
+ * and repeated on their tooltips, because a disabled control with no reason
+ * given reads as broken.
+ */
+const WHY_DISABLED_WHILE_REVIEWING =
+  "Tailor again and Finalize are waiting on the quality review, which is still scoring this draft and rendering its PDF.";
+
 function ResultView({
   result,
   // Not shown in the header, which derives its own label from the company and
@@ -1114,6 +1301,7 @@ function ResultView({
   resumeName,
   jobTitle,
   companyName,
+  jobUrl,
   reviewing,
   templateId,
   onRunReview,
@@ -1126,6 +1314,8 @@ function ResultView({
   resumeName: string;
   jobTitle: string;
   companyName: string | null;
+  /** The posting this was written for, when the saved job carries one. */
+  jobUrl: string | null;
   reviewing: boolean;
   templateId: string | null;
   onRunReview: () => void;
@@ -1271,6 +1461,7 @@ function ResultView({
           <button
             onClick={onTailorAgain}
             disabled={reviewing}
+            title={reviewing ? WHY_DISABLED_WHILE_REVIEWING : TAILOR_AGAIN_HELP}
             className="inline-flex items-center gap-1.5 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-xs hover:bg-[color:var(--color-surface-hover)] disabled:cursor-not-allowed disabled:opacity-40"
           >
             <RefreshCw className="size-3" /> Tailor again
@@ -1313,6 +1504,7 @@ function ResultView({
             // Only a finished version or an in-flight request disables this.
             // A failing review does not: it is advice, and the user decides.
             disabled={result.approved_by_user || approve.isPending || reviewing}
+            title={reviewing ? WHY_DISABLED_WHILE_REVIEWING : FINALIZE_HELP}
             className="inline-flex items-center gap-1.5 rounded-full bg-gradient-brand px-4 py-1.5 text-xs font-semibold text-[color:var(--color-on-accent)] shadow-[var(--shadow-brand-glow)] transition enabled:hover:scale-[1.02] disabled:opacity-50"
           >
             {approve.isPending ? (
@@ -1328,6 +1520,88 @@ function ResultView({
           </button>
         </div>
       </header>
+
+      {/* Two buttons in that row grey out while the review runs, and the row
+          said nothing about why. It is a real wait -- the quality model and the
+          PDF render -- and the version they act on is the one it is still
+          writing to, so the honest thing is to name it rather than leave them
+          looking dead. */}
+      {reviewing && (
+        <p className="mt-2 text-xs text-[color:var(--color-text-dim)] sm:text-right">
+          {WHY_DISABLED_WHILE_REVIEWING}
+        </p>
+      )}
+
+      {/* One line each for the two buttons whose names assume you already know
+          the difference. On the tooltips too, but a tooltip is not reachable
+          on a touch screen and this is the row where a first time user has to
+          choose between them, so it is also on the page. Hidden once the
+          version is final, when neither choice is still open. */}
+      {!reviewing && !result.approved_by_user && (
+        <p className="mt-2 text-xs leading-relaxed text-[color:var(--color-text-dim)] sm:text-right">
+          {TAILOR_AGAIN_HELP} {FINALIZE_HELP}
+        </p>
+      )}
+
+      {/* Where the path used to stop.
+          Finalize turned the button into the word "Final" and said nothing
+          else, on a page whose whole purpose is a document you then send
+          somewhere. The two things still left are not obvious from anything on
+          screen: the PDF has to be downloaded, and the application has to be
+          marked applied by hand or the pipeline keeps showing this role as
+          something still to do. */}
+      {result.approved_by_user && (
+        <div className="notice notice-positive mt-5 p-4 text-sm">
+          <div className="flex items-center gap-2 font-medium">
+            <CheckCircle2 className="size-4 shrink-0" />
+            Finalized. Here is what is left.
+          </div>
+          <ol className="notice-detail mt-2 list-decimal space-y-1 pl-5 text-xs leading-relaxed">
+            <li>
+              Download the PDF above and send it with your application
+              {jobUrl && (
+                <>
+                  {" "}
+                  on{" "}
+                  <a
+                    href={jobUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="underline decoration-dotted"
+                  >
+                    the original posting
+                  </a>
+                </>
+              )}
+              .
+            </li>
+            {/* Plenty of postings ask for a letter, and this was the moment the
+                product had nothing to say about that: Cover Letters existed in
+                the nav and nowhere on the path a person actually walks. The
+                job rides along so the letter page opens on this posting rather
+                than on an empty picker. */}
+            {result.spawned_from_job_id && (
+              <li>
+                If this role asks for a cover letter,{" "}
+                <Link
+                  href={`/cover-letters?job_id=${result.spawned_from_job_id}`}
+                  className="underline decoration-dotted"
+                >
+                  write one from the same profile
+                </Link>
+                .
+              </li>
+            )}
+            <li>
+              Mark this role as applied on{" "}
+              <Link href="/applications" className="underline decoration-dotted">
+                Applications
+              </Link>
+              , so your pipeline stops showing it as still to do.
+            </li>
+          </ol>
+        </div>
+      )}
 
       {blockedReview && !result.approved_by_user && (
         <div className="notice notice-caution mt-5 p-4 text-xs">
@@ -1436,6 +1710,18 @@ function ResultView({
             matched={result.ats_report?.matched ?? []}
             missing={result.ats_report?.missing ?? []}
             needsNewFacts={result.ats_report?.missing_needs_new_facts ?? []}
+            // A withheld score is not a zero. Coercing null here would compare
+            // 0 against an achievable of 0 and announce the page had reached
+            // its ceiling, which is the one claim this sentence must not make
+            // without a number behind it. Same reading as the ring above.
+            atCeiling={
+              result.ats_score === null || result.ats_score === undefined
+                ? false
+                : isAtCoverageCeiling(
+                    Number(result.ats_score),
+                    result.ats_report?.achievable_ats_score,
+                  )
+            }
           />
           {result.gap_questions.length > 0 && (
             <GapPanel gaps={result.gap_questions} facts={facts} />
@@ -1479,10 +1765,14 @@ function QualityStatus({
     );
   }
   const passed = result.review_report?.passed;
+  // "Review 87/100" did not say what was reviewed, which is the whole reason
+  // this number and the keyword one read as two grades contradicting each
+  // other. Both labels now come from the same place as the sentence that
+  // tells them apart. See lib/tailor-walkthrough.ts.
   const label =
     result.review_score !== null
-      ? `Review ${Math.round(Number(result.review_score))}/100`
-      : "Review pending";
+      ? `${REVIEW_SCORE_LABEL} ${Math.round(Number(result.review_score))}/100`
+      : `${REVIEW_SCORE_LABEL} pending`;
   return (
     <span
       className={`inline-flex items-center gap-1.5 text-xs ${
@@ -1531,7 +1821,7 @@ function AtsBadge({
   if (score === null || score === undefined) {
     return (
       <span className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
-        Keyword Match unavailable
+        {KEYWORD_SCORE_LABEL} unavailable
       </span>
     );
   }
@@ -1547,20 +1837,9 @@ function AtsBadge({
   const atCeiling = isAtCoverageCeiling(numeric, report?.achievable_ats_score);
   const met = report?.required_met;
   const total = report?.required_total;
-  const ringFrom = atCeiling
-    ? "#10B981"
-    : numeric >= 75
-      ? "#10B981"
-      : numeric >= 50
-        ? "#F5B544"
-        : "#FF6B8A";
-  const ringTo = atCeiling
-    ? "#5EEAD4"
-    : numeric >= 75
-      ? "#5EEAD4"
-      : numeric >= 50
-        ? "#F59E0B"
-        : "#F43F5E";
+  const good = atCeiling || numeric >= 75;
+  const ringFrom = good ? "#10B981" : numeric >= 50 ? "#F5B544" : "#FF6B8A";
+  const ringTo = good ? "#5EEAD4" : numeric >= 50 ? "#F59E0B" : "#F43F5E";
   const pct = Math.max(0, Math.min(100, numeric));
   const circ = 2 * Math.PI * 14;
   const dash = (pct / 100) * circ;
@@ -1569,7 +1848,17 @@ function AtsBadge({
       <div className="relative size-9">
         <svg viewBox="0 0 36 36" className="size-9 -rotate-90">
           <defs>
-            <linearGradient id={`ats-${pct}`} x1="0" y1="0" x2="1" y2="1">
+            {/* Keyed on the score AND the ceiling verdict, because those are
+                now the two things the colours depend on. `ats-${pct}` alone
+                meant two rings showing the same number shared one gradient
+                even when one of them was at its ceiling and the other was not. */}
+            <linearGradient
+              id={`ats-${pct}-${atCeiling ? "ceil" : "open"}`}
+              x1="0"
+              y1="0"
+              x2="1"
+              y2="1"
+            >
               <stop offset="0%" stopColor={ringFrom} />
               <stop offset="100%" stopColor={ringTo} />
             </linearGradient>
@@ -1587,7 +1876,7 @@ function AtsBadge({
             cy="18"
             r="14"
             fill="none"
-            stroke={`url(#ats-${pct})`}
+            stroke={`url(#ats-${pct}-${atCeiling ? "ceil" : "open"})`}
             strokeWidth="3"
             strokeLinecap="round"
             strokeDasharray={`${dash} ${circ}`}
@@ -1604,7 +1893,7 @@ function AtsBadge({
           got wrong. Both come off `ats_report`, already on the response. */}
       <div className="leading-tight">
         <div className="text-[10px] uppercase tracking-wider text-[color:var(--color-text-dim)]">
-          Keyword Match
+          {KEYWORD_SCORE_LABEL}
         </div>
         {typeof met === "number" && typeof total === "number" && total > 0 && (
           <div className="text-[10px] text-[color:var(--color-text-muted)]">
@@ -1621,12 +1910,29 @@ function AtsPanel({
   matched,
   missing,
   needsNewFacts,
+  atCeiling,
 }: {
   matched: string[];
   missing: string[];
   needsNewFacts: string[];
+  atCeiling: boolean;
 }) {
-  if (matched.length === 0 && missing.length === 0) return null;
+  // Used to return null here, which meant a run against a posting with nothing
+  // scoreable showed two numbers and no sentence saying what either was. The
+  // explanation is the point of this panel; the keyword lists are only one part
+  // of it, so it renders either way.
+  if (matched.length === 0 && missing.length === 0) {
+    return (
+      <div className="workspace-panel p-5">
+        <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
+          {KEYWORD_SCORE_LABEL}
+        </div>
+        <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-muted)]">
+          {NO_KEYWORDS_EXPLAINER}
+        </p>
+      </div>
+    );
+  }
   // One flat "Missing" list charged every unmatched requirement to the writing,
   // which is what made a run look like it had underperformed. The backend
   // already separates them (`missing_needs_new_facts`): one group is work the
@@ -1636,8 +1942,15 @@ function AtsPanel({
   return (
     <div className="workspace-panel p-5">
       <div className="text-xs font-medium uppercase tracking-wide text-[color:var(--color-text-dim)]">
-        Keyword coverage
+        {KEYWORD_SCORE_LABEL}
       </div>
+      {/* Two numbers sat next to each other on this page with nothing saying
+          what either measured. Read cold they look like one grade contradicting
+          another, and the run that prompted this scored 27 and 98. Which one is
+          worth acting on depends on the ceiling, so the sentence does too. */}
+      <p className="mt-1.5 text-[11px] leading-snug text-[color:var(--color-text-muted)]">
+        {scoreExplainer(atCeiling)}
+      </p>
       <div className="mt-3 grid grid-cols-1 gap-4 md:grid-cols-2">
         <KeywordGroup label="Matched" tone="mint" items={matched} />
         {needsNewFacts.length === 0 ? (
@@ -1724,21 +2037,25 @@ function GapPanel({ gaps, facts }: { gaps: GapQuestion[]; facts: ProfileFact[] }
     <div className="notice notice-caution p-5">
       <div className="flex items-center gap-2">
         <AlertCircle className="size-4 shrink-0" />
-        <div className="text-sm font-medium">
-          Gaps the agent surfaced: {gaps.length} requirement
-          {gaps.length === 1 ? "" : "s"} the JD asks for that your profile
-          doesn&apos;t cover
-        </div>
+        {/* Was "Gaps the agent surfaced: N requirements the JD asks for",
+            which names two things that exist only inside this codebase. */}
+        <div className="text-sm font-medium">{gapHeading(gaps.length)}</div>
       </div>
+      {/* The instruction the panel never gave. A gap list with no guidance
+          reads as a list of things to claim, and the honest answer to most
+          rows is to leave them alone. */}
+      <p className="mt-2 text-xs text-[color:var(--color-text-muted)]">
+        {GAP_ACTION_HELP}
+      </p>
       <ul className="mt-3 space-y-3">
         {gaps.map((g, i) => (
           <GapRow key={i} gap={g} factById={factById} />
         ))}
       </ul>
       <p className="mt-3 text-xs text-[color:var(--color-text-dim)]">
-        Adding a fact here marks it verified immediately and re-tailoring will
-        include it. Larger entries (a project or experience) are better edited
-        on the{" "}
+        Anything you add here counts as verified straight away, and the next
+        run will use it. Bigger entries (a project or a job) are easier to fill
+        in on the{" "}
         <Link href="/profile" className="text-[color:var(--color-violet)] underline">
           Profile
         </Link>{" "}

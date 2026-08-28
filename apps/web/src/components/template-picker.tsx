@@ -22,6 +22,7 @@ export function TemplatePicker({
   onRemove,
   removingId,
   selectable = true,
+  loading = false,
 }: {
   templates: ResumeTemplate[];
   /** Empty string means the app's default, which is Jake's Resume. */
@@ -36,14 +37,41 @@ export function TemplatePicker({
    * of looking clickable and doing nothing.
    */
   selectable?: boolean;
+  /**
+   * The list is still being fetched. Distinct from an empty one: an empty grid
+   * drawn over a pending query is a claim there are no templates, made before
+   * anything is known.
+   */
+  loading?: boolean;
 }) {
   const [previewing, setPreviewing] = useState<ResumeTemplate | null>(null);
 
+  if (loading) {
+    return (
+      <ul
+        aria-busy="true"
+        aria-label="Loading templates"
+        className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4"
+      >
+        {[0, 1, 2, 3].map((slot) => (
+          <li
+            key={slot}
+            className="loading-surface aspect-[8.5/11] rounded-[var(--radius-card)]"
+          />
+        ))}
+      </ul>
+    );
+  }
+
   if (templates.length === 0) {
+    // Never the seeding script: that is an instruction for whoever deploys
+    // this, and the person reading it is signed in and trying to tailor a
+    // resume. What matters to them is that the run still works, because an
+    // unset template already means the bundled default.
     return (
       <div className="workspace-panel px-5 py-4 text-xs text-[color:var(--color-text-dim)]">
-        No templates are available yet. Run the seeding script to add the seven
-        that ship with the app.
+        No templates loaded, so this run will use the default look, Jake&apos;s
+        Resume. Reload the page if you expected to choose one.
       </div>
     );
   }

@@ -17,7 +17,7 @@ import { StageTabs, type StageFilter } from "@/components/applications/stage-tab
 import { ApplicationsTable } from "@/components/applications-table";
 import { EmptyState } from "@/components/empty-state";
 import { KanbanBoard } from "@/components/kanban-board";
-import { InfoChip, PageIntro } from "@/components/page-intro";
+import { ChipSkeleton, InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import { compareByGroupDate } from "@/lib/application-groups";
 import { buildProfileVocab } from "@/lib/discover/fit-score";
@@ -264,10 +264,19 @@ export default function ApplicationsPage() {
 
   return (
     <div className="workspace-page flex h-full max-w-[1680px] flex-col">
+      {/* Counts wait for the query. "0 applications · 0 active · 0 interviews
+          · 0 offers" is not a smaller version of the real line, it is a
+          different claim, and it was the first thing a signed-in user with a
+          full pipeline read on every visit here. Same reading as the chips on
+          /tailor, which already wait. */}
       <PageIntro
         eyebrow="Application pipeline"
         title="Applications"
-        description={`${applications.length} applications · ${activeCount} active · ${interviewCount} interviews · ${offerCount} offers`}
+        description={
+          isLoading
+            ? "Every role you are tracking, and where each one stands."
+            : `${applications.length} applications · ${activeCount} active · ${interviewCount} interviews · ${offerCount} offers`
+        }
         icon={BriefcaseBusiness}
         action={
           <button onClick={() => setAddOpen(true)} className="kinetic-button kinetic-button-primary">
@@ -275,7 +284,11 @@ export default function ApplicationsPage() {
           </button>
         }
       >
-        <InfoChip tone="sage">{applications.length} roles tracked</InfoChip>
+        {isLoading ? (
+          <ChipSkeleton label="Counting the roles you are tracking" />
+        ) : (
+          <InfoChip tone="sage">{applications.length} roles tracked</InfoChip>
+        )}
         <InfoChip>Instant status updates</InfoChip>
       </PageIntro>
 
@@ -285,8 +298,10 @@ export default function ApplicationsPage() {
         <EmptyState
           icon={Inbox}
           title="No applications yet"
-          description="Add a job from a URL and it'll show up here. Track status, set follow-ups, and tailor resumes per role."
-          cta={{ href: "/jobs", label: "Find internships" }}
+          description="Search for a role, or add one from its URL with the button above. Everything you save shows up here to track, follow up on, and tailor a resume for."
+          // Was "Find internships", which is one kind of role this product
+          // tracks and not the kind most accounts are looking for.
+          cta={{ href: "/jobs", label: "Find roles" }}
         />
       ) : (
         <div className="mt-5 flex min-h-0 flex-1 flex-col gap-4">

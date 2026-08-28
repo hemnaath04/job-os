@@ -115,7 +115,9 @@ SHAPES:
 - email, email_url (a mailto: target), phone
 - website, website_label (the URL without its scheme)
 - contact: an ordered list of the whole contact line. Each item has .text,
-  .url (may be empty) and .kind (phone, email, website, location, or a network)
+  .url (may be empty) and .kind (phone, email, website, location, availability,
+  or a network). Iterate the whole list: a template that filters by known kinds
+  drops the availability line a posting asked the candidate to state.
 - profiles: list of .network, .username, .url, .label
 - linkedin, github: the matching profile or nothing
 - work: list of .company, .position, .location, .dates, .summary, .url,

@@ -18,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
@@ -31,21 +31,25 @@ import {
   type ProfileVocab,
 } from "@/lib/discover/fit-score";
 import { indexHitToDiscoveryResult } from "@/lib/discover/index-results";
+import { rankByIntent, searchIntent } from "@/lib/discover/relevance";
 import {
   partitionErrors,
   retryOnceIfTransient,
   transientNotice,
 } from "@/lib/discover/transient";
 import { detectEligibilityFlags } from "@/lib/discover/work-auth";
+import { canSaveToPipeline } from "@/lib/job-display";
 import { reportFailure } from "@/lib/errors";
 import {
   BACKEND_SOURCES,
+  describeNarrowing,
   emptyDiscoveryResponse,
   FREE_SOURCES,
   mergeDiscoveryResponses,
   NO_KEY_SOURCES,
 } from "@/lib/discover/sources";
 import type {
+  DiscoveryMergeStats,
   DiscoveryResult,
   DiscoverySearchRequest,
   DiscoverySearchResponse,
@@ -216,6 +220,29 @@ function combineSearchParts(
 }
 
 /**
+ * Ceiling on one half of a search.
+ *
+ * The route's own `maxDuration` is 60s and the boards inside it each have their
+ * own 2.5s abort, but nothing bounded the wait on THIS side of the fetch. A
+ * connection that opened and then stalled left the promise pending forever, and
+ * because the panel's Search button read the mutation's `isPending`, it sat on
+ * a disabled "Searching…" that nothing could ever clear. A half that has not
+ * answered by now is not going to; failing it turns a permanently wedged page
+ * into one error row and a page of results from the halves that did answer.
+ */
+const SEARCH_DEADLINE_MS = 75_000;
+
+function withDeadline<T>(work: Promise<T>, label: string, ms = SEARCH_DEADLINE_MS): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`)),
+      ms,
+    );
+    work.then(resolve, reject).finally(() => clearTimeout(timer));
+  });
+}
+
+/**
  * Every search -- the sentence box, the advanced-filters button, and a saved
  * search re-run alike -- answers from both the pre-built index and the fixed
  * live source set at once and returns one merged, deduped list. There used
@@ -241,31 +268,37 @@ async function runUnifiedSearch(
     // dyno as the API, so releasing the backend takes it down for about a
     // minute, and every search in that window opened with a red banner about a
     // search that had in fact just succeeded from live sources.
-    retryOnceIfTransient(() =>
-      api.indexSearch({
-        title_keywords: filters.title_keywords ?? [],
-        query: (filters.technology_slugs ?? []).join(" ") || undefined,
-        country_codes: filters.country_codes ?? [],
-        max_age_days: filters.max_age_days,
-        limit: filters.limit,
-      }),
-    ),
-    backend.length
-      ? api.discoverySearch({ ...filters, sources: backend })
-      : Promise.resolve(emptyDiscoveryResponse()),
-    routeGroup.length
-      ? api.discoverNoKey({
-          sources: route,
+    withDeadline(
+      retryOnceIfTransient(() =>
+        api.indexSearch({
           title_keywords: filters.title_keywords ?? [],
+          query: (filters.technology_slugs ?? []).join(" ") || undefined,
           country_codes: filters.country_codes ?? [],
           max_age_days: filters.max_age_days,
           limit: filters.limit,
-          custom_sources: DEV_CUSTOM_SOURCES,
-          // The feed renders a description clamp and fit-score reads the same
-          // text, so browsing needs it. Ingest and alerts do not, which is why
-          // this is opt-in per caller rather than on by default.
-          hydrate_descriptions: true,
-        })
+        }),
+      ),
+      "the saved index",
+    ),
+    backend.length
+      ? withDeadline(api.discoverySearch({ ...filters, sources: backend }), "the job feeds")
+      : Promise.resolve(emptyDiscoveryResponse()),
+    routeGroup.length
+      ? withDeadline(
+          api.discoverNoKey({
+            sources: route,
+            title_keywords: filters.title_keywords ?? [],
+            country_codes: filters.country_codes ?? [],
+            max_age_days: filters.max_age_days,
+            limit: filters.limit,
+            custom_sources: DEV_CUSTOM_SOURCES,
+            // The feed renders a description clamp and fit-score reads the same
+            // text, so browsing needs it. Ingest and alerts do not, which is why
+            // this is opt-in per caller rather than on by default.
+            hydrate_descriptions: true,
+          }),
+          "the live boards",
+        )
       : Promise.resolve(emptyDiscoveryResponse()),
   ]);
 
@@ -300,7 +333,42 @@ export default function DiscoverPage() {
   const [limit, setLimit] = useState<number>(initial.limit ?? DEFAULT_RESULT_LIMIT);
   const [results, setResults] = useState<DiscoveryResult[] | null>(initial.results ?? null);
   const [sourceCounts, setSourceCounts] = useState<Record<string, number>>({});
+  const [mergeStats, setMergeStats] = useState<DiscoveryMergeStats | null>(null);
   const [sourceErrors, setSourceErrors] = useState<DiscoverySourceError[]>([]);
+  /**
+   * Which searches are in flight, and which of them the user actually asked
+   * for.
+   *
+   * Both halves of this matter and they were both wrong:
+   *
+   *   - Ordering. The page fires an unfiltered search on load so it lands on
+   *     something to look at. That search is the slowest one there is (no
+   *     title filter means every board's whole payload is mapped and 60
+   *     Greenhouse descriptions are hydrated), so it was routinely still
+   *     running when the user typed their sentence and hit Search. Whichever
+   *     finished LAST won `setResults`, and that was the page-load one: a
+   *     search for "software engineer intern" answered with Localization
+   *     Manager, EA to CRO and Director of Litigation, because those are
+   *     exactly what a search with no filters at all returns. `seq` makes the
+   *     newest request the only one allowed to write.
+   *   - Attribution. The panel's Search button read the mutation's own
+   *     `isPending`, which does not know who started it, so the page-load
+   *     search rendered as a disabled "Searching…" on a button nobody had
+   *     pressed, on a panel opened before any search was run.
+   */
+  const seqRef = useRef(0);
+  const [running, setRunning] = useState<{ seq: number; byUser: boolean } | null>(null);
+  const userSearchPending = running?.byUser === true;
+  /**
+   * Why the last search came back with nothing on screen.
+   *
+   * A search that fails outright (every half rejected: offline, or the whole
+   * fan-out down) leaves `results` null, and every block below is gated on
+   * that being non-null. So the page went back to blank and the only thing
+   * that had said otherwise was a toast, which is gone in seconds. This keeps
+   * the reason on the page, next to a button that retries it.
+   */
+  const [searchFailure, setSearchFailure] = useState<string | null>(null);
   // Split by whether the user can do anything about it. A missing API key and a
   // board that was slow for two seconds were rendered in the same red banner,
   // which is how a routine deploy came to read as a broken search.
@@ -321,25 +389,63 @@ export default function DiscoverPage() {
     saveState({ titles, techs, country, maxAgeDays, limit, results, sort });
   }, [titles, techs, country, maxAgeDays, limit, results, sort]);
 
+  /**
+   * Apply a finished search, if it is still the current one.
+   *
+   * `seq` is the request's own number and `seqRef.current` is the newest one
+   * issued. A slower earlier search resolving after a newer one has to be
+   * dropped on the floor, results and errors alike -- rendering its error rows
+   * would be the same lie in a different place.
+   */
+  function applyIfCurrent(seq: number, data: DiscoverySearchResponse, emptyNote: string) {
+    if (seq !== seqRef.current) return;
+    setSearchFailure(null);
+    setResults(data.results);
+    setSourceCounts(data.source_counts ?? {});
+    setMergeStats(data.merge ?? null);
+    setSourceErrors(dropLeverNoise(data.errors ?? []));
+    if (data.results.length === 0) toast("No results", { description: emptyNote });
+  }
+
+  function finish(seq: number) {
+    setRunning((current) => (current?.seq === seq ? null : current));
+  }
+
   // The one search: every call answers from the pre-built index and the fixed
   // live source set at once, merged into one deduped list. Used by the
   // sentence box, the advanced-filters button, and the initial blank-page load.
   const search = useMutation({
-    mutationFn: (body: DiscoverySearchRequest) => runUnifiedSearch(body),
-    onSuccess: (data) => {
-      setResults(data.results);
-      setSourceCounts(data.source_counts ?? {});
-      setSourceErrors(dropLeverNoise(data.errors ?? []));
-      if (data.results.length === 0)
-        toast("No results", { description: "Try widening the filters." });
+    // `seq` rides along as a mutation variable so onSuccess can tell whose
+    // result it is holding, and is stripped here rather than forwarded: the
+    // FastAPI half validates its request body against a Pydantic model, and an
+    // unexpected field there is a 422, not a no-op.
+    mutationFn: ({ seq: _seq, ...filters }: DiscoverySearchRequest & { seq: number }) =>
+      runUnifiedSearch(filters),
+    onSuccess: (data, variables) =>
+      applyIfCurrent(variables.seq, data, "Try widening the filters."),
+    onError: (err: Error, variables) => {
+      if (variables.seq !== seqRef.current) return;
+      setSearchFailure(err.message);
+      reportFailure("run that search", err);
     },
-    onError: (err: Error) => reportFailure("run that search", err),
+    onSettled: (_data, _err, variables) => finish(variables.seq),
   });
 
+  /** Claim the next request number, and say whether a person asked for it. */
+  function beginSearch(byUser: boolean): number {
+    const seq = seqRef.current + 1;
+    seqRef.current = seq;
+    setRunning({ seq, byUser });
+    setSearchFailure(null);
+    return seq;
+  }
+
   // Land on a page with something to look at rather than an empty form: only
-  // when there is no persisted state from a previous visit.
+  // when there is no persisted state from a previous visit. Flagged as not
+  // user-initiated, so it neither disables the panel's Search button nor gets
+  // to overwrite a search the user starts while it is still running.
   useEffect(() => {
-    if (results === null) search.mutate(currentQuery());
+    if (results === null) search.mutate({ ...currentQuery(), seq: beginSearch(false) });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -370,6 +476,7 @@ export default function DiscoverPage() {
         country_codes: filters.country_codes ?? [],
         max_age_days: filters.max_age_days ?? 30,
         limit: filters.limit ?? DEFAULT_RESULT_LIMIT,
+        seq: beginSearch(true),
       });
     },
     onError: (err: Error) => reportFailure("read that sentence", err),
@@ -392,7 +499,7 @@ export default function DiscoverPage() {
   });
 
   const runSaved = useMutation({
-    mutationFn: async (s: SavedSearch) => {
+    mutationFn: async ({ search: s }: { search: SavedSearch; seq: number }) => {
       const backend = s.query.sources ?? [];
       const route = LIVE_SOURCES.filter((src) => NO_KEY_SOURCES.includes(src));
       const routeGroup: string[] = [
@@ -400,39 +507,49 @@ export default function DiscoverPage() {
         ...DEV_CUSTOM_SOURCES.map((c) => `custom:${c.id}`),
       ];
       const [indexPart, backendPart, routePart] = await Promise.allSettled([
-        api.indexSearch({
-          title_keywords: s.query.title_keywords ?? [],
-          query: (s.query.technology_slugs ?? []).join(" ") || undefined,
-          country_codes: s.query.country_codes ?? [],
-          max_age_days: s.query.max_age_days,
-          limit: s.query.limit,
-        }),
+        withDeadline(
+          api.indexSearch({
+            title_keywords: s.query.title_keywords ?? [],
+            query: (s.query.technology_slugs ?? []).join(" ") || undefined,
+            country_codes: s.query.country_codes ?? [],
+            max_age_days: s.query.max_age_days,
+            limit: s.query.limit,
+          }),
+          "the saved index",
+        ),
         // runSavedSearch is what updates last_run_at / last_run_count upstream,
         // so keep using it for the backend half rather than replaying the query.
-        backend.length ? api.runSavedSearch(s.id) : Promise.resolve(emptyDiscoveryResponse()),
+        backend.length
+          ? withDeadline(api.runSavedSearch(s.id), "the job feeds")
+          : Promise.resolve(emptyDiscoveryResponse()),
         routeGroup.length
-          ? api.discoverNoKey({
-              sources: route,
-              title_keywords: s.query.title_keywords ?? [],
-              country_codes: s.query.country_codes ?? [],
-              max_age_days: s.query.max_age_days,
-              limit: s.query.limit,
-              custom_sources: DEV_CUSTOM_SOURCES,
-              hydrate_descriptions: true,
-            })
+          ? withDeadline(
+              api.discoverNoKey({
+                sources: route,
+                title_keywords: s.query.title_keywords ?? [],
+                country_codes: s.query.country_codes ?? [],
+                max_age_days: s.query.max_age_days,
+                limit: s.query.limit,
+                custom_sources: DEV_CUSTOM_SOURCES,
+                hydrate_descriptions: true,
+              }),
+              "the live boards",
+            )
           : Promise.resolve(emptyDiscoveryResponse()),
       ]);
       return combineSearchParts(indexPart, backendPart, backend, routePart, routeGroup, s.query.limit);
     },
-    onSuccess: (data) => {
-      setResults(data.results);
-      setSourceCounts(data.source_counts ?? {});
-      setSourceErrors(dropLeverNoise(data.errors ?? []));
-      qc.invalidateQueries({ queryKey: ["saved-searches"] });
-      if (data.results.length === 0)
-        toast("No results", { description: "Saved query returned nothing today." });
+    onSuccess: (data, variables) =>
+      applyIfCurrent(variables.seq, data, "Saved query returned nothing today."),
+    onError: (err: Error, variables) => {
+      if (variables.seq !== seqRef.current) return;
+      setSearchFailure(err.message);
+      reportFailure("run that saved search", err);
     },
-    onError: (err: Error) => reportFailure("run that saved search", err),
+    onSettled: (_data, _err, variables) => {
+      finish(variables.seq);
+      qc.invalidateQueries({ queryKey: ["saved-searches"] });
+    },
   });
 
   const deleteSaved = useMutation({
@@ -447,23 +564,30 @@ export default function DiscoverPage() {
     setCountry((s.query.country_codes ?? [])[0] ?? "");
     setMaxAgeDays(s.query.max_age_days ?? 30);
     setLimit(s.query.limit ?? DEFAULT_RESULT_LIMIT);
-    runSaved.mutate(s);
+    runSaved.mutate({ search: s, seq: beginSearch(true) });
   }
 
   function onSaveClick() {
-    const name = window.prompt("Name this search (e.g. 'SWE intern · Boston')");
+    const name = window.prompt("Name this search (e.g. 'Remote roles, Boston')");
     if (!name) return;
     saveSearch.mutate(name.trim());
   }
 
   function runSearch() {
-    search.mutate(currentQuery());
+    search.mutate({ ...currentQuery(), seq: beginSearch(true) });
   }
 
   function clearResults() {
+    // Also supersede anything in flight. Clearing the page while the load-time
+    // search is still running used to leave that search free to land a moment
+    // later and repopulate the list the user had just emptied.
+    beginSearch(false);
+    setRunning(null);
     setResults(null);
     setSourceCounts({});
+    setMergeStats(null);
     setSourceErrors([]);
+    setSearchFailure(null);
   }
 
   function onSmartSubmit(e: React.FormEvent) {
@@ -494,41 +618,52 @@ export default function DiscoverPage() {
     }
     return m;
   }, [results, vocab]);
+  // What the user asked for, read off the same title keywords the search ran
+  // with. Drives the first-pass tier below and the "not what you searched for"
+  // note on a card.
+  const intent = useMemo(() => searchIntent(splitCsv(titles)), [titles]);
   const sortedResults = useMemo(() => {
     if (!results) return null;
-    const copy = [...results];
-    if (sort === "fit") {
-      copy.sort((a, b) => {
+    const within = (a: DiscoveryResult, b: DiscoveryResult): number => {
+      if (sort === "fit") {
         const fb = fitByKey.get(resultKey(b))?.score ?? -1;
         const fa = fitByKey.get(resultKey(a))?.score ?? -1;
         return fb - fa || tsOrZero(b.posted_at) - tsOrZero(a.posted_at);
-      });
-    } else if (sort === "recency") {
-      copy.sort((a, b) => tsOrZero(b.posted_at) - tsOrZero(a.posted_at));
-    } else if (sort === "location") {
-      copy.sort((a, b) => {
+      }
+      if (sort === "location") {
         const aHit = userLocation && (a.location ?? "").toLowerCase().includes(userLocation);
         const bHit = userLocation && (b.location ?? "").toLowerCase().includes(userLocation);
         if (aHit && !bHit) return -1;
         if (!aHit && bHit) return 1;
-        return tsOrZero(b.posted_at) - tsOrZero(a.posted_at);
-      });
-    }
-    return copy;
+      }
+      return tsOrZero(b.posted_at) - tsOrZero(a.posted_at);
+    };
+    // Intent first, then the sort the user picked. The two answer different
+    // questions -- "is this the search I ran" and "which of these is best" --
+    // and running them the other way round is what put a Principal Enterprise
+    // Technology Architect above every actual internship, on the strength of a
+    // fit score computed from a JD that happened to name Python. A blank query
+    // gives every row the same tier, so browsing is unchanged.
+    return rankByIntent([...results], intent, within);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [results, sort, userLocation, fitByKey]);
+  }, [results, sort, userLocation, fitByKey, intent]);
+  /** Rows the intent pass removed outright, for the header to account for. */
+  const droppedByIntent = (results?.length ?? 0) - (sortedResults?.length ?? 0);
 
   return (
     <div className="workspace-page max-w-7xl">
       <PageIntro
-        eyebrow="Opportunity radar"
+        eyebrow="Find roles"
         title="Job finder"
-        description="Translate plain-English intent into focused job-board searches, then bring the strongest roles into your private pipeline."
+        description="Describe the job you want in a sentence. We search the boards for it and you save the ones worth applying to."
         icon={Radar}
       >
-        <InfoChip tone="sage">Indexed, updated overnight</InfoChip>
+        <InfoChip tone="sage">Updated overnight</InfoChip>
         <InfoChip>{saved.length} saved searches</InfoChip>
-        <InfoChip tone="clay">50-result guardrail</InfoChip>
+        {/* Read off the field rather than written down: the chip said 50 while
+            the Limit field defaulted to 60, so the one number on the page that
+            claimed to describe the cap was the one number that was wrong. */}
+        <InfoChip tone="clay">Up to {limit} results</InfoChip>
       </PageIntro>
 
       {/* The one search box: a sentence goes to the fast agent, which
@@ -543,10 +678,13 @@ export default function DiscoverPage() {
         <label htmlFor="smart-search" className="flex items-center gap-1.5 text-sm font-medium">
           <Wand2 className="size-3.5 text-[color:var(--color-violet)]" aria-hidden="true" /> Search
         </label>
+        {/* The example used to be one specific person's search, down to the
+            two languages they write in, and it credited "the fast agent" for
+            reading it. Same instruction, in a sentence anyone can copy the
+            shape of. */}
         <p id="smart-search-help" className="mt-0.5 text-xs text-[color:var(--color-text-dim)]">
-          Type a sentence, e.g. &ldquo;fullstack intern in Boston with Python and React
-          from the last 2 weeks&rdquo;. The fast agent extracts the filters and runs the
-          search.
+          Type a sentence, e.g. &ldquo;marketing manager in Boston, posted in the
+          last 2 weeks&rdquo;. We read the filters out of it and run the search.
         </p>
         <div className="mt-2 flex flex-wrap gap-2">
           <input
@@ -555,7 +693,7 @@ export default function DiscoverPage() {
             type="text"
             value={smartQuery}
             onChange={(e) => setSmartQuery(e.target.value)}
-            placeholder="software engineer intern, python, remote"
+            placeholder="what you are looking for, and where"
             className="field-control min-w-0 flex-1 rounded-full"
           />
           <button
@@ -633,21 +771,25 @@ export default function DiscoverPage() {
 
       {/* Manual filters form */}
       <div className="workspace-panel mt-5 grid grid-cols-1 gap-5 p-5 sm:p-6 md:grid-cols-2">
-        <Field label="Title keywords" help="Comma-separated. e.g. 'software engineer, ml engineer'">
+        {/* These three used to be written for whoever wrote the search code:
+            "comma-separated slugs" folded into "the index's free-text query",
+            and a country code named by its ISO standard. Same three fields,
+            described by what they do to your results. */}
+        <Field label="Job titles" help="Separate several with commas.">
           {(control) => (
             <input
               {...control}
               type="text"
               value={titles}
               onChange={(e) => setTitles(e.target.value)}
-              placeholder="software engineer intern"
+              placeholder="project manager, operations manager"
               className="field-control"
             />
           )}
         </Field>
         <Field
-          label="Technologies"
-          help="Comma-separated slugs. Folded into the index's free-text query; not every live source exposes a tech filter."
+          label="Skills and tools"
+          help="Searched as extra keywords, separated by commas. Not every job board can filter on these."
         >
           {(control) => (
             <input
@@ -655,12 +797,12 @@ export default function DiscoverPage() {
               type="text"
               value={techs}
               onChange={(e) => setTechs(e.target.value)}
-              placeholder="python, fastapi"
+              placeholder="whatever the role should mention"
               className="field-control"
             />
           )}
         </Field>
-        <Field label="Country code" help="ISO-3166 alpha-2. e.g. US, CA, GB. Blank = global.">
+        <Field label="Country" help="Two-letter code, e.g. US, CA, GB. Leave blank to search everywhere.">
           {(control) => (
             <input
               {...control}
@@ -701,12 +843,17 @@ export default function DiscoverPage() {
           </Field>
         </div>
         <div className="md:col-span-2 flex flex-wrap items-center gap-2">
+          {/* `userSearchPending`, not the mutation's own `isPending`: the
+              page-load search is a search too, and binding the button to it
+              meant opening this panel on a fresh page showed a disabled
+              "Searching…" for a search nobody had asked for. Pressing Search
+              during that background run is fine and supersedes it. */}
           <button
             onClick={runSearch}
-            disabled={search.isPending}
+            disabled={userSearchPending}
             className="kinetic-button kinetic-button-primary disabled:opacity-50"
           >
-            {search.isPending ? (
+            {userSearchPending ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" /> Searching…
               </>
@@ -746,9 +893,7 @@ export default function DiscoverPage() {
             <div key={e.source} className="flex items-start gap-2">
               <span className="opacity-70">⚠</span>
               <div>
-                <span className="font-semibold uppercase tracking-wider">
-                  {e.source}
-                </span>{" "}
+                <span className="font-semibold">{sourceLabel(e.source)}</span>{" "}
                 <span className="notice-detail">
                   {prettyError(e.source, e.message)}
                 </span>
@@ -769,17 +914,75 @@ export default function DiscoverPage() {
         </p>
       )}
 
+      {/* Nothing to show yet, and a search running to change that.
+          Without this the page rendered the search box over blank space for
+          however long the fan-out took, which on a first visit is the slowest
+          search there is: the page fires an unfiltered one on mount, and every
+          block below is gated on `sortedResults !== null`. A new user landed on
+          Job Finder, saw an empty page, and had nothing telling them whether it
+          was working, broken, or simply had no roles for them. */}
+      {sortedResults === null && running !== null && (
+        <div className="mt-6" role="status" aria-live="polite">
+          <div className="flex items-center gap-2 text-sm text-[color:var(--color-text-muted)]">
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+            Searching the job boards. The first search of a visit can take a moment.
+          </div>
+          <div
+            aria-hidden="true"
+            className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3"
+          >
+            {[0, 1, 2, 3, 4, 5].map((slot) => (
+              <div key={slot} className="loading-surface min-h-[13rem]" />
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* The search failed outright and left the page blank. The toast that
+          said so is long gone by the time anyone reads this. */}
+      {sortedResults === null && running === null && searchFailure && (
+        <div className="notice notice-caution mt-6 p-4 text-sm">
+          <div className="font-medium">That search could not run</div>
+          <p className="notice-detail mt-1">
+            {searchFailure.length > 200
+              ? searchFailure.slice(0, 200) + "…"
+              : searchFailure}
+          </p>
+          <p className="notice-detail mt-1">
+            Your saved jobs and applications are unaffected.
+          </p>
+          <button
+            onClick={runSearch}
+            className="kinetic-button kinetic-button-secondary mt-3"
+          >
+            <Search className="size-3.5" /> Try again
+          </button>
+        </div>
+      )}
+
       {/* Results */}
       {sortedResults !== null && (
         <div className="mt-6">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            {/* A search replaces the list in place, so say how much came back. */}
+            {/* A search replaces the list in place, so say how much came back
+                -- and, when the sources handed over more than the page shows,
+                where the difference went. The per-source counts used to sum to
+                109 next to a header reading "60 results", with nothing on the
+                screen to reconcile them: those counts are each source's own
+                total, before the same job arriving twice is merged and before
+                the limit truncates. Both of those are now named. */}
             <div role="status" className="text-sm text-[color:var(--color-text-muted)]">
               {sortedResults.length} result{sortedResults.length === 1 ? "" : "s"}
+              {mergeStats && mergeStats.received > sortedResults.length && (
+                <span className="ml-1 text-xs text-[color:var(--color-text-dim)]">
+                  of {mergeStats.received} from the sources
+                  {describeNarrowing(mergeStats, droppedByIntent, limit)}
+                </span>
+              )}
               {Object.keys(sourceCounts).length > 0 && (
                 <span className="ml-2 text-xs text-[color:var(--color-text-dim)]">
                   ({Object.entries(sourceCounts)
-                    .map(([k, v]) => `${k}: ${v}`)
+                    .map(([k, v]) => `${sourceLabel(k)}: ${v}`)
                     .join(" · ")})
                 </span>
               )}
@@ -847,7 +1050,13 @@ export default function DiscoverPage() {
                     qc.invalidateQueries({ queryKey: ["jobs"] });
                     qc.invalidateQueries({ queryKey: ["applications"] });
                   }}
-                  onTailored={(jobId) => router.push(`/tailor?job_id=${jobId}`)}
+                  onTailored={(jobId, applicationId) =>
+                    router.push(
+                      applicationId
+                        ? `/tailor?job_id=${jobId}&application_id=${applicationId}`
+                        : `/tailor?job_id=${jobId}`,
+                    )
+                  }
                   onGoToApplications={() => router.push("/applications")}
                 />
               ))}
@@ -894,13 +1103,22 @@ function ResultCard({
   result: DiscoveryResult;
   fit?: FitResult;
   onImported: () => void;
-  onTailored: (jobId: string) => void;
+  onTailored: (jobId: string, applicationId: string | null) => void;
   onGoToApplications: () => void;
 }) {
   // Read off the posting's own words, so it costs nothing and cannot be wrong
   // about what the employer said. Computed per render because it is a few
   // regexes over text already in memory.
   const eligibility = detectEligibilityFlags(result);
+  // Whether this row is a real posting or an artefact of a fetch that landed on
+  // an error page, a login wall or a bot check. Saving one of those is what put
+  // "Untitled" and "Custom Job Error" into the pipeline as if they were roles
+  // the user had chosen to track, so the save is blocked here rather than
+  // cleaned up afterwards. See lib/job-display.ts.
+  const saveable = canSaveToPipeline(result);
+  const unsaveableReason = !result.source_url
+    ? "This result has no link to fetch, so there is nothing to save yet."
+    : "We could not read a job title from this result, so saving it would add a blank row. Open the original posting instead.";
 
   const importPayload = () => ({
     source: result.source,
@@ -928,8 +1146,8 @@ function ResultCard({
       return job;
     },
     onSuccess: () => {
-      toast.success("Added to Applications", {
-        description: "Wishlist column · /applications",
+      toast.success("Saved to Applications", {
+        description: "It is in your wishlist, ready to tailor or apply to.",
         action: {
           label: "View",
           onClick: () => onGoToApplications(),
@@ -943,17 +1161,37 @@ function ResultCard({
   const tailorJob = useMutation({
     mutationFn: async () => {
       const job = await api.discoveryImport(importPayload());
+      // The application this run is for, carried through to /tailor. Without
+      // it the tailored resume never gets linked back to the application (see
+      // shouldLinkResumeToApplication and application-documents.tsx, which
+      // reads `spawned_from_application_id`), so this exact path -- find a
+      // role, press Tailor, get a real resume -- ended with the Applications
+      // inspector still saying nothing had been tailored for it.
+      let applicationId: string | null = null;
       try {
-        await api.createApplication({ job_id: job.id, status: "ready_to_apply" });
+        const created = await api.createApplication({
+          job_id: job.id,
+          status: "ready_to_apply",
+        });
+        applicationId = created.id;
       } catch (e) {
         const msg = (e as Error).message;
         if (!msg.includes("409")) throw e;
+        // Already tracked. Look the row up rather than dropping the link, and
+        // do not fail the whole action if that lookup does not answer: the
+        // resume is still worth tailoring without it.
+        try {
+          const existing = await api.listApplications();
+          applicationId = existing.find((a) => a.job.id === job.id)?.id ?? null;
+        } catch {
+          applicationId = null;
+        }
       }
-      return job;
+      return { job, applicationId };
     },
-    onSuccess: (job) => {
+    onSuccess: ({ job, applicationId }) => {
       onImported();
-      onTailored(job.id);
+      onTailored(job.id, applicationId);
     },
     onError: (err: Error) => reportFailure("start tailoring for that job", err),
   });
@@ -1090,7 +1328,10 @@ function ResultCard({
             <CompanyAvatar name={result.company_name ?? "?"} domain={result.company_domain} size={36} />
             <div className="min-w-0">
               <p className="truncate text-sm font-medium text-[color:var(--color-text)]">
-                {result.company_name || "Unknown company"}
+                {/* "Unknown company" reads as a fact about the employer. This
+                    source did not say who is hiring, which is a fact about the
+                    result. */}
+                {result.company_name || "Company not listed"}
               </p>
               {result.already_imported && (
                 <p className="flex items-center gap-1 text-[11px] text-[color:var(--color-mint-ink)]">
@@ -1103,8 +1344,12 @@ function ResultCard({
             {!result.already_imported && (
               <button
                 onClick={() => importJob.mutate()}
-                disabled={importJob.isPending || tailorJob.isPending}
-                title="Fetches and parses the posting, usually 5-10s"
+                disabled={importJob.isPending || tailorJob.isPending || !saveable}
+                title={
+                  saveable
+                    ? "Fetches and parses the posting, usually 5-10s"
+                    : unsaveableReason
+                }
                 className="inline-flex items-center gap-1 rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] px-3 py-1.5 text-[11px] hover:bg-[color:var(--color-surface-hover)] disabled:opacity-50"
               >
                 {importJob.isPending ? <Loader2 className="size-3 animate-spin" /> : null}
@@ -1113,9 +1358,13 @@ function ResultCard({
             )}
             <button
               onClick={() => tailorJob.mutate()}
-              disabled={tailorJob.isPending || importJob.isPending}
+              disabled={tailorJob.isPending || importJob.isPending || !saveable}
               className="inline-flex items-center gap-1 rounded-full bg-[color:var(--color-text)] px-3.5 py-1.5 text-[11px] font-medium text-[color:var(--color-bg)] transition enabled:hover:opacity-85 disabled:opacity-50"
-              title="Import + create application + open the tailoring agent"
+              title={
+                saveable
+                  ? "Saves this role, then opens it in the resume tailor"
+                  : unsaveableReason
+              }
             >
               {tailorJob.isPending ? (
                 <Loader2 className="size-3 animate-spin" />
@@ -1165,6 +1414,23 @@ function tsOrZero(s: string | null | undefined): number {
 // cards line up. source_id is only unique within a source.
 function resultKey(r: DiscoveryResult): string {
   return `${r.source}:${r.source_id || r.source_url}`;
+}
+
+/**
+ * A source's name as a person would say it.
+ *
+ * The per-source counts and the error banner both printed the internal key,
+ * so the line under a search read "(index: 40 · greenhouse: 12 · custom:freehire:
+ * 8)" and a failure was headed "CUSTOM:FREEHIRE". Those are identifiers this
+ * code routes on, not names of anything the reader has heard of.
+ */
+function sourceLabel(source: string): string {
+  if (source === "index") return "Saved index";
+  if (source.startsWith("custom:")) {
+    const id = source.slice("custom:".length);
+    return DEV_CUSTOM_SOURCES.find((s) => s.id === id)?.name ?? id;
+  }
+  return source.charAt(0).toUpperCase() + source.slice(1);
 }
 
 function prettyError(source: DiscoverySource | string, msg: string): string {

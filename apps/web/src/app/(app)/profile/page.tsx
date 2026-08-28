@@ -18,10 +18,11 @@ import {
   Trash2,
   Upload,
 } from "lucide-react";
+import Link from "next/link";
 import { useRef, useState } from "react";
 import { toast } from "sonner";
 import { AddFactDialog } from "@/components/add-fact-dialog";
-import { InfoChip, PageIntro } from "@/components/page-intro";
+import { ChipSkeleton, InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
 import {
   BULLET_MAX_WORDS,
@@ -120,9 +121,9 @@ export default function ProfilePage() {
         onCreated={() => refetch()}
       />
       <PageIntro
-        eyebrow="Verified evidence vault"
+        eyebrow="Your career history"
         title="Career profile"
-        description="The source of truth behind every generated resume. Experience, projects, education, and skills remain traceable to evidence you control."
+        description="Everything a tailored resume is allowed to say about you. Your jobs, projects, education and skills, in your own words and yours to edit."
         icon={ShieldCheck}
         action={
           <div className="flex items-center gap-2">
@@ -137,9 +138,23 @@ export default function ProfilePage() {
           </div>
         }
       >
-        <InfoChip tone="sage">{verifiedCount} verified facts</InfoChip>
-        <InfoChip>{Object.keys(grouped).length} evidence groups</InfoChip>
-        <InfoChip tone="clay">{facts.reduce((sum, fact) => sum + fact.bullets.length, 0)} bullets</InfoChip>
+        {/* Waits for the query rather than rendering "0 verified facts" at
+            someone whose profile is full. */}
+        {isLoading ? (
+          <>
+            <ChipSkeleton label="Counting what is on your profile" />
+            <ChipSkeleton label="Counting your sections" width="7.5rem" />
+            <ChipSkeleton label="Counting your bullets" />
+          </>
+        ) : (
+          <>
+            <InfoChip tone="sage">{verifiedCount} verified facts</InfoChip>
+            <InfoChip>{Object.keys(grouped).length} sections</InfoChip>
+            <InfoChip tone="clay">
+              {facts.reduce((sum, fact) => sum + fact.bullets.length, 0)} bullets
+            </InfoChip>
+          </>
+        )}
       </PageIntro>
 
       {/* Stated as a fact about the resume rather than as a scolding. A long
@@ -751,15 +766,36 @@ function UploadResumeButton({ onDone }: { onDone: () => void }) {
   );
 }
 
+/**
+ * What an empty profile says.
+ *
+ * The old wording sent people here to "drop in your master PDF", which is the
+ * exact phrase /tailor uses for setting the master resume -- a different
+ * thing, done on a different page. Uploading here reads a file INTO this
+ * profile; it does not create the master resume /tailor checks for, so
+ * someone who followed the old sentence did the upload, watched facts appear,
+ * went back to Tailor and found it still blocked. It also credited "Claude"
+ * and a "verified knowledge base", neither of which is something the reader
+ * has met yet.
+ */
 function EmptyState() {
   return (
     <div className="workspace-panel mt-6 p-10 text-center">
       <Upload className="mx-auto size-6 text-[color:var(--color-violet)]" />
-      <h3 className="mt-3 text-base font-medium">No profile data yet</h3>
+      <h3 className="mt-3 text-base font-medium">Nothing here yet</h3>
       <p className="mx-auto mt-1 max-w-md text-sm text-[color:var(--color-text-muted)]">
-        Click <strong>Upload resume</strong> above and drop in your master PDF
-        (or DOCX). Claude will extract experience, projects, skills, and
-        certifications into the verified knowledge base.
+        Choose <strong>Upload resume</strong> above and pick a PDF or DOCX. We
+        read your jobs, projects, education and skills out of it, and you can
+        edit anything that comes back. Tailored resumes only ever write from
+        what ends up on this page.
+      </p>
+      <p className="mx-auto mt-3 max-w-md text-xs text-[color:var(--color-text-dim)]">
+        This fills in your profile. To set the master resume every tailored
+        version starts from, use Set master on{" "}
+        <Link href="/resumes" className="underline decoration-dotted">
+          Resumes
+        </Link>
+        .
       </p>
     </div>
   );
