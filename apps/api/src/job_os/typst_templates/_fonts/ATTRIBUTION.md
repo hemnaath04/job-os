@@ -15,6 +15,7 @@ look similar. All three permit commercial use and redistribution.
 | `roboto/` | Roboto, Roboto Slab | Apache-2.0 | CTAN [`roboto`](https://ctan.org/pkg/roboto) |
 | `fontawesome5/` | Font Awesome 5 Free Solid, Font Awesome 5 Brands | SIL OFL 1.1 (fonts) | CTAN [`fontawesome5`](https://ctan.org/pkg/fontawesome5) |
 | `latinmodern/` | Latin Modern Sans | GUST Font License | CTAN [`lm`](https://ctan.org/pkg/lm) |
+| `texgyre/` | TeX Gyre Termes | GUST Font License | CTAN [`tex-gyre`](https://ctan.org/pkg/tex-gyre) |
 
 Notes on each:
 

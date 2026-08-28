@@ -677,6 +677,11 @@ FONT_REQUIREMENTS: dict[str, tuple[str, ...]] = {
     ),
     "altacv": ("Lato", "Font Awesome 5 Free Solid", "Font Awesome 5 Brands"),
     "moderncv": ("Latin Modern Sans",),
+    # The Times face the LaTeX husky set with mathptmx. Declared so a missing
+    # font fails the check rather than silently substituting: an unlisted
+    # template passes `missing_fonts` vacuously, which is not the same as
+    # passing it.
+    "husky": ("TeX Gyre Termes",),
 }
 
 

@@ -96,8 +96,12 @@ DEFAULT_PAGE_SHAPE = PageShape(max_lines=MAX_PAGE_LINES)
 #: Measured by rendering the same document at a range of estimator values and
 #: reading the page count back, per template. Anything absent takes the default.
 PAGE_SHAPES: dict[str, PageShape] = {
-    # Tectonic, Times at 11pt, and denser than the Typst set.
-    "husky": PageShape(max_lines=41, renders_summary=False),
+    # Measured against real husky renders: one page at 35 estimator lines, two
+    # at 38. Tighter than the 41 measured before it moved to Typst, because the
+    # port sets the same design a little more loosely than mathptmx did. Its
+    # sections are Education, Technical Skills, Professional Experience and
+    # Projects, with no resume-level summary in either engine.
+    "husky": PageShape(max_lines=35, renders_summary=False),
 }
 
 
