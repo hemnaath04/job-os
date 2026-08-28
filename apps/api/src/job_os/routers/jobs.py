@@ -195,7 +195,7 @@ async def create_from_url(
     # start. Scheduling first is a race that loses quietly, as a parse that
     # reports the job missing.
     await session.commit()
-    schedule_job_parse(job.id)
+    schedule_job_parse(job.id, getattr(_user, "clerk_id", None))
     return job
 
 
@@ -250,7 +250,7 @@ async def create_from_text(
     await session.flush()
     await session.refresh(job, attribute_names=["company"])
     await session.commit()
-    schedule_job_parse(job.id)
+    schedule_job_parse(job.id, getattr(_user, "clerk_id", None))
     return job
 
 
@@ -279,7 +279,7 @@ async def reparse_job(
 
     job.jd_parsed = dict(PENDING)
     await session.commit()
-    schedule_job_parse(job.id)
+    schedule_job_parse(job.id, getattr(_user, "clerk_id", None))
     # Re-SELECT, for the reason `add_description` sets out at length below: this
     # is an UPDATE, `updated_at` carries onupdate=func.now(), and SQLAlchemy
     # fetches server-generated columns back on an INSERT but not on an UPDATE.

@@ -57,7 +57,13 @@ def no_scheduling(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     about to roll back.
     """
     started: list[Any] = []
-    monkeypatch.setattr(jd_ingest, "schedule_job_parse", started.append)
+
+    # Takes the owner too now: the deferred parse writes the board card, and
+    # the card table is multi-tenant, so it has to know whose board.
+    def _record(job_id: Any, owner_id: Any = None) -> None:
+        started.append(job_id)
+
+    monkeypatch.setattr(jd_ingest, "schedule_job_parse", _record)
     return started
 
 

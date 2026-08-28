@@ -138,7 +138,7 @@ def _parse_filter(expression: str) -> dict[str, Any]:
     raise ValueError(f"Unsupported filter expression: {expression!r}")
 
 
-def _base_url() -> tuple[str, dict[str, str]]:
+def _base_url(table_id: str | None = None) -> tuple[str, dict[str, str]]:
     settings = get_settings()
     if not settings.appwrite_api_key:
         raise AppwriteTablesError(
@@ -146,7 +146,7 @@ def _base_url() -> tuple[str, dict[str, str]]:
             "APPWRITE_API_KEY is not configured -- job_postings reads/writes cannot "
             "reach Appwrite without it. See settings.py's appwrite_api_key field.",
         )
-    table_id = settings.appwrite_job_postings_table_id
+    table_id = table_id or settings.appwrite_job_postings_table_id
     url = (
         f"{settings.appwrite_endpoint}/tablesdb/{settings.appwrite_database_id}"
         f"/tables/{table_id}/rows"
@@ -165,6 +165,8 @@ async def _request(
     params: list[tuple[str, str]] | None = None,
     json_body: dict[str, Any] | None = None,
     budget_seconds: float | None = None,
+    table_id: str | None = None,
+    row_id: str | None = None,
 ) -> dict[str, Any]:
     """One TablesDB call, retried on Appwrite's own 408.
 
@@ -175,7 +177,9 @@ async def _request(
     not. When it is set, each attempt gets whatever is left rather than a flat
     30, and the last error is raised as soon as there is no room to try again.
     """
-    url, headers = _base_url()
+    url, headers = _base_url(table_id)
+    if row_id is not None:
+        url = f"{url}/{row_id}"
     total_attempts = _TIMEOUT_RETRIES + 1
     started = time.monotonic()
 
@@ -235,6 +239,7 @@ async def list_rows(
     select: list[str] | None = None,
     sort_desc: str | None = None,
     limit: int | None = None,
+    table_id: str | None = None,
 ) -> list[dict[str, Any]]:
     """All matching rows, one page. Callers here never need more than one:
 
@@ -242,7 +247,9 @@ async def list_rows(
     lookups are scoped to one batch (<= `BATCH_SIZE` postings) at a time.
     """
     params = _query_params(filters, queries, select, sort_desc, limit)
-    payload = await _request("GET", params=params, budget_seconds=READ_BUDGET_SECONDS)
+    payload = await _request(
+        "GET", params=params, budget_seconds=READ_BUDGET_SECONDS, table_id=table_id
+    )
     return payload.get("rows", [])
 
 
@@ -281,7 +288,12 @@ async def upsert_rows(rows: list[dict[str, Any]]) -> None:
 
 
 async def update_rows(
-    *, filters: list[str] | None = None, queries: list[dict[str, Any]] | None = None, data: dict[str, Any]
+    *,
+    filters: list[str] | None = None,
+    queries: list[dict[str, Any]] | None = None,
+    data: dict[str, Any],
+    row_id: str | None = None,
+    table_id: str | None = None,
 ) -> int:
     """Apply one `data` patch to every row matching `filters`/`queries`, in a single call.
 
@@ -292,10 +304,18 @@ async def update_rows(
     cannot express an isNull check, which `mark_duplicates` needs to preserve
     its "only mark an unmerged row" guard.
     """
+    if row_id is not None:
+        # One known row, addressed directly. The bulk form below needs a WHERE
+        # that Appwrite can index, and the card sync's key lives inside the
+        # snapshot JSON where it cannot.
+        await _request("PATCH", json_body={"data": data}, table_id=table_id, row_id=row_id)
+        return 1
     queries_payload = [*(queries or [])]
     for f in filters or []:
         queries_payload.append(_parse_filter(f))
-    payload = await _request("PATCH", json_body={"data": data, "queries": queries_payload})
+    payload = await _request(
+        "PATCH", json_body={"data": data, "queries": queries_payload}, table_id=table_id
+    )
     rows = payload.get("rows")
     if isinstance(rows, list):
         return len(rows)
