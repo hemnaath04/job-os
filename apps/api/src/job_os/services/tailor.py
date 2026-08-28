@@ -1784,10 +1784,22 @@ def _build_document(
         master_json_resume=master_json_resume,
         facts_payload=facts_payload,
     )
+    shape = page_shape(template_key)
+    budget = shape.max_lines
+
     def assemble(
         chosen: list[TailorFact], bullets: list[SelectedBullet]
     ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
-        return _assemble_json_resume(
+        """Build the page, then shed the keywords it cannot afford.
+
+        The shed belongs here rather than beside the other page trims because
+        assembly rebuilds the skills block from the facts every time, and the
+        project-cut loop below assembles more than once. Trimming outside meant
+        the next assembly handed the keywords straight back: a real run shed 23
+        of them and shipped all 43, then cut a project to recover space the
+        keywords were still occupying.
+        """
+        document, entries = _assemble_json_resume(
             master_json_resume=master_json_resume,
             all_facts=facts,
             selected_facts=chosen,
@@ -1798,6 +1810,9 @@ def _build_document(
             jd_skill_order=skill_order,
             availability=availability,
         )
+        if estimated_page_lines(document, template_key) > budget:
+            _trim_skills_to_fit(document, requirements or [], budget, template_key)
+        return document, entries
 
     json_resume, provenance = assemble(selected_facts, safe_bullets)
 
@@ -1824,15 +1839,10 @@ def _build_document(
     # Skills first, then. The summary only goes if shedding every keyword the
     # posting did not ask about still leaves the page over.
     page_trims: list[str] = []
-    shape = page_shape(template_key)
-    budget = shape.max_lines
-    if estimated_page_lines(json_resume, template_key) > budget:
-        dropped = _trim_skills_to_fit(json_resume, requirements or [], budget, template_key)
-        if dropped:
-            page_trims.append(
-                f"{_plural(dropped, 'skill')} this posting did not ask about"
-            )
-            log.info("tailor.skills_trimmed_for_space", dropped=dropped)
+    shed = _skills_shed_count(master_json_resume, json_resume)
+    if shed:
+        page_trims.append(f"{_plural(shed, 'skill')} this posting did not ask about")
+        log.info("tailor.skills_trimmed_for_space", dropped=shed)
     # Only where the template has a summary to drop. On husky it has none, so
     # dropping it removes the candidate's opening paragraph and frees no lines
     # at all; two real runs did exactly that and still came out two pages.
@@ -4236,6 +4246,21 @@ def _drop_summary(json_resume: dict[str, Any]) -> bool:
 #
 # So the page sheds the tail and keeps the block looking like a skills block.
 MIN_KEPT_SKILLS_ON_PAGE = 20
+
+
+def _skills_shed_count(before: dict[str, Any], after: dict[str, Any]) -> int:
+    """How many skill keywords the page gave up, for the note the user reads.
+
+    Counted from the two documents rather than returned by the trim, because
+    the trim runs inside assembly now and assembly happens more than once. The
+    number the person is told has to describe the page that shipped, not the
+    last call that happened to shed something.
+    """
+
+    def total(document: dict[str, Any]) -> int:
+        return sum(len(g.get("keywords") or []) for g in (document.get("skills") or []))
+
+    return max(0, total(before) - total(after))
 
 
 def _trim_skills_to_fit(

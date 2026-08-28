@@ -79,3 +79,33 @@ def test_the_summary_still_goes_when_keywords_alone_cannot_save_it() -> None:
     if estimated_page_lines(document) > MAX_PAGE_LINES:
         assert _drop_summary(document) is True
         assert not document["basics"].get("summary")
+
+
+def test_a_re_assembled_page_keeps_the_keywords_it_shed() -> None:
+    """Assembly rebuilds the skills block, so the shed has to survive it.
+
+    The trim used to run once, beside the other page trims, while the
+    project-cut loop assembled again afterwards and handed every keyword
+    straight back. A live husky run on 2026-08-28 shed 23 keywords, shipped
+    all 43, and then cut a project to recover space the keywords were still
+    occupying.
+    """
+    from job_os.services.resume_writing import estimated_page_lines, page_shape
+    from job_os.services.tailor import _trim_skills_to_fit
+
+    def keywords(document: dict) -> int:
+        return sum(len(g.get("keywords") or []) for g in (document.get("skills") or []))
+
+    document = _overfull_document()
+    budget = page_shape(None).max_lines
+    assert estimated_page_lines(document) > budget
+
+    before = keywords(document)
+    _trim_skills_to_fit(document, [], budget)
+    after = keywords(document)
+
+    assert after < before, "nothing was shed, so the rest of this proves nothing"
+    # The property that broke: shedding is idempotent, so a second pass over an
+    # already-trimmed page neither restores keywords nor sheds below the floor.
+    _trim_skills_to_fit(document, [], budget)
+    assert keywords(document) == after
