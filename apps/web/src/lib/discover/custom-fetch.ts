@@ -291,6 +291,44 @@ function isPrivateIpv6(host: string): boolean {
 // fetcher
 // ---------------------------------------------------------------------------
 
+/** How many hops a custom endpoint may redirect through before we give up. */
+const MAX_REDIRECTS = 3;
+
+/**
+ * `fetch`, with every hop of a redirect chain validated the way the first URL was.
+ *
+ * `assertFetchableUrl` checks the URL *as written*, but fetch defaults to
+ * `redirect: "follow"`, so it only ever governed the first hop. A custom source
+ * at an allowed https host could answer `302 Location: http://169.254.169.254/…`
+ * (or a private address, or plain http) and undici would follow it without
+ * re-checking anything — which hands back exactly the private-network probe the
+ * check exists to prevent, and needs only an HTTP redirect rather than the DNS
+ * control the docstring above scopes out.
+ *
+ * So: follow redirects manually and re-validate each `Location`. Legitimate
+ * feeds that redirect keep working; a redirect into the private network does not.
+ * Re-issuing the same method and body on each hop is deliberate — these are all
+ * requests the caller already authorised to the same logical endpoint, and a
+ * 303's GET semantics are not worth diverging for when the alternative is
+ * silently dropping the query.
+ */
+async function fetchFollowingValidatedRedirects(
+  start: URL,
+  init: RequestInit,
+): Promise<Response> {
+  let current = start;
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get("location");
+    if (!location) return res;
+    if (hop >= MAX_REDIRECTS) throw new Error("too many redirects");
+    // Resolved against the current URL so a relative Location works, then put
+    // through the same gate the original URL passed.
+    current = assertFetchableUrl(new URL(location, current).toString());
+  }
+}
+
 /**
  * Query one custom endpoint and normalize its answer.
  *
@@ -356,7 +394,7 @@ export async function fetchCustomSource(
 
   let text: string;
   try {
-    let res = await fetch(url, {
+    let res = await fetchFollowingValidatedRedirects(url, {
       method: "POST",
       signal: controller.signal,
       cache: "no-store",
@@ -368,7 +406,7 @@ export async function fetchCustomSource(
     // the way it wants to be called rather than reporting a failure the user
     // would have to read the contract to understand.
     if (res.status === 405 || res.status === 501) {
-      res = await fetch(getUrl, {
+      res = await fetchFollowingValidatedRedirects(getUrl, {
         method: "GET",
         signal: controller.signal,
         cache: "no-store",

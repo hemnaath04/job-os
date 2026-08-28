@@ -79,14 +79,32 @@ app = FastAPI(
     openapi_url=_DOCS["openapi_url"],
 )
 
-# CORS allow-list. Append production origins via WEB_ORIGINS env var
-# (comma-separated). The Next.js auth proxy fronts most calls so CORS is rarely
-# in the hot path, but we still need it correct for direct browser fetches
-# (e.g. file downloads from /resumes).
-_extra_origins = [o.strip() for o in os.environ.get("WEB_ORIGINS", "").split(",") if o.strip()]
+def cors_origins(settings: Settings) -> list[str]:
+    """The credentialed CORS allow-list. Production origins come from WEB_ORIGINS.
+
+    The Next.js auth proxy fronts most calls so CORS is rarely in the hot path, but
+    we still need it correct for direct browser fetches (e.g. file downloads from
+    /resumes).
+
+    `http://localhost:3000` used to be allowed unconditionally, including in
+    production, and `allow_credentials=True` makes that a real grant rather than a
+    leftover: any page a browser loads from localhost:3000 -- a dev server for an
+    untrusted repo, or any local process that binds the port -- could call the
+    production API with the user's cookies attached AND read the replies, because
+    the browser only checks the origin string, not who is actually listening on it.
+    Development is the only place that origin means what it says, so it is only
+    trusted there. Production supplies its real origins through WEB_ORIGINS, which
+    is already a documented Heroku config var (docs/DEPLOY.md).
+    """
+    extra = [o.strip() for o in os.environ.get("WEB_ORIGINS", "").split(",") if o.strip()]
+    if settings.is_dev:
+        return ["http://localhost:3000", *extra]
+    return extra
+
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", *_extra_origins],
+    allow_origins=cors_origins(get_settings()),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

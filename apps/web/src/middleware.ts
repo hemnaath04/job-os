@@ -1,6 +1,10 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { isMaintenanceModeOn, MAINTENANCE_BYPASS_COOKIE } from "@/lib/maintenance";
+import {
+  hasMaintenanceBypass,
+  isMaintenanceModeOn,
+  MAINTENANCE_BYPASS_COOKIE,
+} from "@/lib/maintenance";
 
 // Public routes: marketing page + auth handlers
 const isPublic = createRouteMatcher([
@@ -32,8 +36,10 @@ const isMaintenanceExempt = createRouteMatcher([
 
 export default clerkMiddleware(async (auth, req) => {
   if (!isMaintenanceExempt(req)) {
-    const bypassed =
-      req.cookies.get(MAINTENANCE_BYPASS_COOKIE)?.value === process.env.MAINTENANCE_BYPASS_SECRET;
+    const bypassed = hasMaintenanceBypass(
+      req.cookies.get(MAINTENANCE_BYPASS_COOKIE)?.value,
+      process.env.MAINTENANCE_BYPASS_SECRET,
+    );
     if (!bypassed && (await isMaintenanceModeOn())) {
       if (req.nextUrl.pathname.startsWith("/api/")) {
         return NextResponse.json(
