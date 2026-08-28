@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -51,6 +51,14 @@ from job_os.schemas.resumes import (
     SelectedBullet,
     TailorAgentOutput,
     TailorAnalysis,
+)
+from job_os.services.availability import (
+    AVAILABILITY_GAP_REQUIREMENT,
+    AVAILABILITY_GAP_WHY,
+    AVAILABILITY_GAP_WHY_PARTIAL,
+    Availability,
+    derive_availability,
+    posting_asks_for_availability,
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text as _identity_text
@@ -75,10 +83,14 @@ from job_os.services.resume_writing import (
     estimated_page_lines,
     mentions_word,
     normalize_dashes,
+    over_length_bullets,
     printed_bullets,
     records_provisional_status,
+    split_long_bullet,
+    unlinked_projects,
     upgrades_status,
 )
+from job_os.services.role_lane import jd_lanes, text_lanes
 from job_os.settings import get_settings
 
 # SQLAlchemy + ORM models are only needed by the Postgres-backed `tailor_resume`
@@ -191,6 +203,14 @@ TARGET_ATS_SCORE = Decimal("80")
 # fact touches it, and a page has room for a subset of that. Leaving headroom
 # keeps the target honest without making it trivial.
 ACHIEVABLE_TARGET_SHARE = Decimal("0.9")
+
+# How much of the posting's own text reaches the writer and the analyst. Named
+# rather than inlined twice because it is also the cap the API puts on the field
+# it serves the browser (`JD_CLEAN_MAX_CHARS` in schemas/jobs.py): a caller has
+# no reason to carry bytes that get truncated on arrival. The two are kept equal
+# by hand -- the schema layer deliberately does not import this module, which
+# pulls in the Anthropic client and the whole agent.
+JD_CLEAN_PROMPT_CHARS = 8000
 
 # Generous ceiling on purpose, and larger than the output alone needs, because the
 # gateway routes to a model with extended thinking and `max_tokens` covers the
@@ -329,6 +349,20 @@ BULLET WRITING (this is what a human reader judges):
   instance into several ("knowledge-distillation pipelines" when there is one).
 - 30 words maximum per bullet, one idea each. Cutting a verified bullet down is
   always allowed and usually improves it. Growing one is how padding gets in.
+  A verified bullet that arrives OVER 30 words is not exempt: keeping it whole
+  because it is safe leaves the reader a three-line paragraph. Shorten it by
+  deleting words, or split it into two bullets at a boundary already in the
+  sentence. Deleting is always safe; adding is never.
+- Lead with the result, then say how. A bullet reads action, then the outcome
+  the evidence records, then the method: "Cut nightly suite runtime from 40 to
+  12 minutes by parallelising fixtures" beats "Worked on test performance using
+  parallel fixtures". If the verified fact carries a number, that number is the
+  reason the bullet exists and it goes near the front.
+- If there is no verified number, do not manufacture one and do not gesture at
+  one. No "significantly", "drastically", "substantially", "by a large margin".
+  Say the concrete thing that happened instead: what was built, what it handles,
+  what changed. A specific unquantified bullet is stronger than a vague
+  quantified-sounding one, and infinitely stronger than an invented figure.
 - No first person. No "I", "my", "we", "our".
 - No em dashes, en dashes or double hyphens. Use commas, colons or periods.
 - Banned words, with no exceptions: leveraged, utilized, spearheaded,
@@ -380,7 +414,15 @@ ATS:
 
 SKILLS: the Skills section is assembled from the candidate's skill facts above
 (the ones with `"kind": "skill"`), grouped by category, exactly as written --
-you do not rewrite or select them. What you CAN do is `skills_dedup_drop`: a
+you do not rewrite or select them, and you do not order them either. Python
+already reorders each row so the languages and tools THIS posting names come
+first among the ones the candidate actually has, in the posting's own order. A
+posting asking for "C/C++/Java/Go/Python" is asking for any one of them, and the
+row shows the ones in the profile; the ones that are not in the profile are not
+added, by you or by anything else. So do not restate a language in a bullet to
+compensate for it being absent from the row, and do not treat a language the
+candidate does not have as something a rewrite can reach. What you CAN do is
+`skills_dedup_drop`: a
 list of skill keyword strings, copied verbatim from those facts, that are safe
 to remove because the same vendor, tool, or library already appears in another
 row. A profile that has one skill titled "LLM integration (OpenAI, Anthropic,
@@ -900,11 +942,37 @@ async def run_tailor(
     coverage = _requirement_coverage(
         requirements, _evidence_items(facts, bullets_by_fact)
     )
+    # What kind of engineering this posting is for, which the requirement count
+    # cannot see and a reader decides in a glance. Plural, because a full-stack
+    # posting is hiring for two kinds at once and reading it as one dropped the
+    # product/UI project first on every tie. Used only to break ties between
+    # equally-matching projects; see `_evidence_rank`.
+    lanes = jd_lanes(jd_parsed, jd_clean)
     # Same idea as the requirement coverage above, applied to the one decision
     # that had no Python signal behind it at all: which of the optional project
     # facts is actually worth the page. See `_ProjectScore` for the bug this closes.
-    project_scores = _project_relevance(facts, bullets_by_fact, requirements)
-    project_briefing = _project_relevance_briefing(project_scores)
+    project_scores = _project_relevance(
+        facts, bullets_by_fact, requirements, lanes=lanes
+    )
+    project_briefing = _project_relevance_briefing(project_scores, lanes=lanes)
+    # The posting's own order for its languages and tools, so the printed skills
+    # row answers this JD rather than whatever order the vault happens to hold.
+    skill_order = jd_skill_order(jd_parsed)
+    # Answered on the page only when the posting asked and the profile can back
+    # it. Both halves matter: an unasked-for line is clutter, and an invented one
+    # is the failure this whole service exists to prevent.
+    availability = Availability()
+    availability_asked = posting_asks_for_availability(jd_parsed, jd_clean)
+    if availability_asked:
+        availability = derive_availability(
+            facts, basics=master_json_resume.get("basics") or {}
+        )
+        log.info(
+            "tailor.availability",
+            asked=True,
+            answered=bool(availability),
+            explicit=availability.explicit,
+        )
     must_have = [req for req in requirements if not req.preferred]
     backed = [req for req in must_have if coverage[req.label].found]
     # What this posting is actually winnable at, given these facts. See
@@ -1001,6 +1069,9 @@ async def run_tailor(
         # different, JD-relevance question the writer needs answered before it
         # ever gets to `selected_fact_ids`.
         briefing = f"{briefing}\n\n{project_briefing}"
+    availability_briefing = _availability_briefing(availability, availability_asked)
+    if availability_briefing:
+        briefing = f"{briefing}\n\n{availability_briefing}"
 
     user_prompt = _build_user_prompt(
         jd_parsed=jd_parsed,
@@ -1167,6 +1238,8 @@ async def run_tailor(
             facts_payload=facts_payload,
             project_scores=project_scores,
             requirements=requirements,
+            skill_order=skill_order,
+            availability=availability,
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
@@ -1375,6 +1448,8 @@ async def run_tailor(
         facts_payload=facts_payload,
         project_scores=project_scores,
         requirements=requirements,
+        skill_order=skill_order,
+        availability=availability,
     )
 
     # Same frozen keyword set the loop used, so the score the user sees is the
@@ -1489,11 +1564,82 @@ async def run_tailor(
     return (
         json_resume,
         provenance,
-        list(agent.gap_questions),
+        _profile_gaps(
+            list(agent.gap_questions),
+            json_resume=json_resume,
+            availability=availability,
+            availability_asked=availability_asked,
+        ),
         ats_score,
         ats_report,
         note,
     )
+
+
+def _profile_gaps(
+    gaps: list[GapQuestion],
+    *,
+    json_resume: dict[str, Any],
+    availability: Availability,
+    availability_asked: bool,
+) -> list[GapQuestion]:
+    """The model's gap questions, plus the ones Python can prove.
+
+    A gap question has always been "the JD asks for this and your profile does
+    not have it", decided by a model reading the posting. Three of them do not
+    need a model at all, and were silently absent because of it: a posting that
+    asked when you can start against a profile with no dates, a project on the
+    page with no link on its heading, and a bullet still over the cap after the
+    page tried to split it.
+
+    Each names the edit rather than the defect. "Your saved bullet is 36 words"
+    is a diagnosis; "split it into two on Profile" is something a person who has
+    never heard of a resume parser can do this afternoon.
+    """
+    out = list(gaps)
+
+    def add(requirement: str, why: str) -> None:
+        if any(g.requirement == requirement for g in out):
+            return
+        out.append(GapQuestion(requirement=requirement, why_no_match=why))
+
+    if availability_asked and not availability:
+        add(AVAILABILITY_GAP_REQUIREMENT, AVAILABILITY_GAP_WHY)
+    elif availability_asked and not availability.explicit:
+        # A graduation date is on the page and it is not the window the posting
+        # asked for, so the user is told what would answer it in full.
+        add(AVAILABILITY_GAP_REQUIREMENT, AVAILABILITY_GAP_WHY_PARTIAL)
+
+    for name in unlinked_projects(json_resume):
+        add(
+            f"A link for {name}",
+            "This project is on the page with nothing to click. Add a link on "
+            "Profile if it has a public repo, demo or write-up, and it goes on "
+            "the heading.",
+        )
+
+    for text in over_length_bullets(json_resume):
+        words = len(text.split())
+        add(
+            f"A shorter version of: {_gap_excerpt(text)}",
+            f"This bullet runs to {words} words and prints as three lines, so "
+            "the point of it gets lost. It has no sentence break to split on. "
+            "Rewrite it as two shorter bullets on Profile.",
+        )
+
+    return out
+
+
+# Enough of a bullet to recognise it on the Profile page without reprinting the
+# whole thing inside a card that is already showing the fix.
+_GAP_EXCERPT_WORDS = 8
+
+
+def _gap_excerpt(text: str) -> str:
+    words = text.split()
+    if len(words) <= _GAP_EXCERPT_WORDS:
+        return text
+    return " ".join(words[:_GAP_EXCERPT_WORDS]) + "..."
 
 
 def _build_document(
@@ -1505,6 +1651,8 @@ def _build_document(
     facts_payload: list[dict[str, Any]],
     project_scores: list[_ProjectScore] | None = None,
     requirements: list[_Requirement] | None = None,
+    skill_order: list[str] | None = None,
+    availability: Availability | None = None,
 ) -> tuple[
     dict[str, Any],
     list[ProvenanceEntry],
@@ -1571,6 +1719,11 @@ def _build_document(
         bullets_by_id=bullets_by_id,
         facts_by_id=facts_by_id,
     )
+    # After sanitising, never before: reverting an unsafe rewrite compares the
+    # bullet against its verified source, and a half of a split bullet is not
+    # that source. Splitting last means the check still sees whole bullets and
+    # the page still gets short ones.
+    safe_bullets = _split_over_length(safe_bullets)
     summary_objective, summary_rejection = _safe_summary(
         agent.summary_objective,
         master_json_resume=master_json_resume,
@@ -1587,6 +1740,8 @@ def _build_document(
             bullets_by_fact=bullets_by_fact,
             summary_objective=summary_objective,
             skills_dedup_drop=agent.skills_dedup_drop,
+            jd_skill_order=skill_order,
+            availability=availability,
         )
 
     json_resume, provenance = assemble(selected_facts, safe_bullets)
@@ -1980,6 +2135,44 @@ def _sanitize_selected_bullets(
     return safe
 
 
+def _split_over_length(selected: list[SelectedBullet]) -> list[SelectedBullet]:
+    """Cut any chosen bullet that is over the cap into the statements it holds.
+
+    Every half keeps its `fact_bullet_id`, so both halves stay traceable to the
+    one verified bullet they came from and provenance still says where the words
+    came from. Nothing is written: see `split_long_bullet`, which only cuts at
+    punctuation the author already used and returns the bullet untouched when
+    there is none.
+
+    Why here rather than in the prompt: the prompt has always said 30 words, and
+    the safest thing a writer can do with a 36-word verified bullet is print it
+    exactly as saved, which is what it does. Both rules are right and they
+    disagree, so the page settles it in the one way that neither invents nor
+    overrides -- by using the author's own sentence break.
+    """
+    out: list[SelectedBullet] = []
+    for bullet in selected:
+        pieces = split_long_bullet(bullet.rewritten_text)
+        if len(pieces) < 2:
+            out.append(bullet)
+            continue
+        log.info(
+            "tailor.long_bullet_split",
+            bullet_id=str(bullet.fact_bullet_id),
+            words=len(bullet.rewritten_text.split()),
+            pieces=len(pieces),
+        )
+        out.extend(
+            SelectedBullet(
+                fact_bullet_id=bullet.fact_bullet_id,
+                rewritten_text=piece,
+                target_section=bullet.target_section,
+            )
+            for piece in pieces
+        )
+    return out
+
+
 def _safe_summary(
     summary: str | None,
     *,
@@ -2208,7 +2401,7 @@ def _build_user_prompt(
         "JOB DESCRIPTION (parsed):\n"
         f"{json.dumps(jd_parsed or {}, indent=2)}\n\n"
         "JOB DESCRIPTION (clean text, truncated):\n"
-        f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
+        f"<jd>\n{(jd_clean or '')[:JD_CLEAN_PROMPT_CHARS]}\n</jd>\n\n"
         "CANDIDATE MASTER RESUME (JSON Resume):\n"
         f"{json.dumps(master_json_resume, indent=2)[:6000]}\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
@@ -2352,6 +2545,91 @@ def _entry_title(title: str) -> str:
     return _TITLE_CONTEXT_SPLIT_RE.split(title, maxsplit=1)[0].strip() or title.strip()
 
 
+# Payload keys an importer or a hand-edited fact puts a project's link under.
+# `ProfileFact` has exactly one URL column, `source_url`, so anything a resume
+# or a README supplied as a second link -- the repository next to the demo, the
+# bot next to the repository -- landed in the payload and was never read again.
+# A real vault entry for a working Telegram claims bot rendered with `url: null`
+# for precisely that reason: the link was there, in `payload`, and assembly only
+# looked at the column.
+#
+# Ordered, because only one link fits the heading: the repository is what a
+# reviewer opens to check the work, so it leads, and a live demo comes next.
+_PROJECT_URL_KEYS = ("url", "github", "repo", "repository", "demo", "link", "website")
+
+
+def _project_url(fact: TailorFact) -> str | None:
+    """The one link that goes on this project's heading, from verified fields only."""
+    payload = fact.payload or {}
+    candidates = [fact.source_url, *(payload.get(key) for key in _PROJECT_URL_KEYS)]
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        # Nothing is repaired or completed here. A fact holding "github.com/x/y"
+        # without a scheme is a fact to fix on Profile, and guessing https:// in
+        # front of it is guessing a URL.
+        if text.startswith(("http://", "https://")):
+            return text
+    return None
+
+
+def _jd_skill_rank(keyword: str, jd_skill_order: list[str]) -> int:
+    """Where this vault skill first appears in the posting, or past the end.
+
+    Matched with `_mentions`, the same word-boundary test the ATS score uses, so
+    "Python" claims the posting's "Python" and "Async Python" claims it too,
+    while "Go" never claims "Django". The posting's own order is the ranking:
+    a JD that opens on C++ and mentions Python fourth is telling the reader
+    which one it cares about, and a skills row that leads with Python because
+    the vault happens to list it first is answering a different posting.
+    """
+    # `_mentions` casefolds the term and expects an already-folded haystack,
+    # because every other caller hands it one built by `_ats_source_text`.
+    folded = keyword.casefold()
+    for index, term in enumerate(jd_skill_order):
+        if _mentions(folded, term):
+            return index
+    return len(jd_skill_order)
+
+
+def _order_skills_by_jd(
+    groups: list[dict[str, Any]], jd_skill_order: list[str] | None
+) -> list[dict[str, Any]]:
+    """Put the posting's own languages and tools first, inside each row and across rows.
+
+    Only ever a REORDER. Nothing is added, so a language the posting asks for
+    and the vault does not hold cannot appear here, and nothing is removed, so a
+    skill the posting never mentions keeps its place at the back of its row.
+    That is the whole safety argument: the worst a bad match can do is stand in
+    the wrong position.
+
+    Slash-joined asks ("C/C++/Java/Go/Python") are handled upstream, where
+    `_keyword_alternatives` already splits an enumeration into the individual
+    skills it accepts any one of. By the time the order reaches here it is a
+    flat list of terms in the order the posting states them.
+    """
+    if not jd_skill_order:
+        return groups
+    ranked: list[tuple[tuple[bool, int, int], dict[str, Any]]] = []
+    for position, group in enumerate(groups):
+        keywords = list(group.get("keywords") or [])
+        order = sorted(
+            range(len(keywords)),
+            key=lambda i: (_jd_skill_rank(keywords[i], jd_skill_order), i),
+        )
+        reordered = {**group, "keywords": [keywords[i] for i in order]}
+        best = min(
+            (_jd_skill_rank(keyword, jd_skill_order) for keyword in keywords),
+            default=len(jd_skill_order),
+        )
+        # `Additional` stays last whatever it matched: it is the row that names
+        # no category, and a reader who reaches it has already read the ones
+        # that told them something. Original position is the final tiebreak, so
+        # two rows the posting never mentions keep the order they arrived in.
+        key = (reordered.get("name") == _ADDITIONAL_SKILL_LABEL, best, position)
+        ranked.append((key, reordered))
+    return [group for _key, group in sorted(ranked, key=lambda item: item[0])]
+
+
 def _assemble_json_resume(
     *,
     master_json_resume: dict[str, Any],
@@ -2361,6 +2639,8 @@ def _assemble_json_resume(
     bullets_by_fact: dict[str, list[TailorBullet]],
     summary_objective: str | None,
     skills_dedup_drop: list[str] | None = None,
+    jd_skill_order: list[str] | None = None,
+    availability: Availability | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry]]:
     """Build the tailored JSON Resume + provenance.
 
@@ -2382,6 +2662,17 @@ def _assemble_json_resume(
     basics = dict(master_json_resume.get("basics") or {})
     if summary_objective:
         basics["summary"] = summary_objective
+    # The one line a recruiter is told to look for when the posting asked for it.
+    # Assembled from verified dates in `availability`, never from anything here,
+    # and rendered on the contact row so it is answered above the fold rather
+    # than inferred from the education block. See services/availability.py.
+    if availability and availability.line:
+        basics["availability"] = availability.line
+    else:
+        # A stale line from a master resume must not survive onto a page for a
+        # posting that never asked, and must not survive a profile that no
+        # longer supports it.
+        basics.pop("availability", None)
 
     bullet_map: dict[str, TailorBullet] = {
         b.id: b for bs in bullets_by_fact.values() for b in bs
@@ -2436,7 +2727,13 @@ def _assemble_json_resume(
             rendered_bullets.extend(kept)
             return texts, kept
         all_b = bullets_by_fact.get(f.id, []) or []
-        return dedupe_bullets(b.text for b in all_b)[:limit], []
+        # The fallback path prints the vault's own wording, so it gets the same
+        # split the selected path got in `_split_over_length`: a 36-word saved
+        # bullet reads no better for having skipped the writer.
+        untailored = [
+            piece for b in all_b for piece in split_long_bullet(b.text)
+        ]
+        return dedupe_bullets(untailored)[:limit], []
 
     work: list[dict[str, Any]] = []
     for f in _facts_of("experience"):
@@ -2472,7 +2769,7 @@ def _assemble_json_resume(
                 "description": payload.get("description"),
                 "startDate": f.start_date.isoformat() if f.start_date else None,
                 "endDate": f.end_date.isoformat() if f.end_date else None,
-                "url": f.source_url,
+                "url": _project_url(f),
                 "highlights": bullets,
                 "keywords": payload.get("keywords", []),
                 "roles": payload.get("roles", []),
@@ -2584,7 +2881,10 @@ def _assemble_json_resume(
         "projects": projects,
         "volunteer": volunteer,
         "education": education,
-        "skills": _consolidate_skills(skills_by_category, drop=skills_dedup_drop),
+        "skills": _order_skills_by_jd(
+            _consolidate_skills(skills_by_category, drop=skills_dedup_drop),
+            jd_skill_order,
+        ),
         "certificates": certificates,
         "publications": publications,
         "awards": awards,
@@ -2889,6 +3189,16 @@ _NON_SKILL_RE = re.compile(
     # Soft-skill boilerplate
     r"work ethic|fast[- ]paced|team player|self[- ]starter|detail[- ]oriented|"
     r"passion for|genuine interest|interest in|communication skills|"
+    # The same class of term, arriving as its own short `required_skills` entry
+    # rather than inside a sentence. A real ByteDance posting supplied
+    # "problem-solving" on its own, and it was scored as a must-have no resume
+    # answers with a skill: nobody writes "problem-solving" in a bullet, and
+    # counting it missing deflated a genuine match by a whole requirement.
+    # "collaborative" is deliberately absent -- collaborative filtering is a
+    # real technique, and excluding the word would delete it.
+    r"problem[- ]solving|problem solvers?|critical thinking|analytical skills?|"
+    r"interpersonal|time management|attention to detail|teamwork|"
+    r"written communication|verbal communication|"
     # Enthusiasm/attitude phrasing. A real posting supplied "excited to learn"
     # and "open to feedback" as required_skills entries, each scored as a
     # missing skill no bullet could ever contain.
@@ -2908,6 +3218,83 @@ _NON_SKILL_RE = re.compile(
     r")\b",
     re.I,
 )
+
+# Culture, values and personality copy, which almost every posting carries and
+# no resume can answer with a skill.
+#
+# Kept apart from `_NON_SKILL_RE` because it is a different claim about the
+# term: that one says "this is an eligibility rule or a soft skill", this one
+# says "this is the employer describing itself or the person it hopes to like".
+# Counting either as a must-have deflates the number the same way, and this
+# half is the larger one: a values paragraph runs to a dozen terms, so a
+# posting with one can push a genuine match below half on wording alone.
+#
+# Two rules govern what goes in here, and both exist because a false positive
+# deletes a real skill from the score rather than merely leaving noise in it:
+#
+#  * A word with a technical homonym is matched only in its culture phrasing.
+#    "data-driven" and "event-driven architecture" are why bare "driven" is
+#    absent; "data integrity" is why "integrity" is; "resilience engineering"
+#    is why "resilient" is; "reliability" (SRE) is why "reliable" is.
+#  * "collaborative" stays out for the reason `_NON_SKILL_RE` already gives:
+#    collaborative filtering is a real technique. The noun and the verb do not
+#    share that problem, so "collaboration" and "collaborate" are matched and
+#    "collaborative" is not.
+#
+# Concrete qualifications are untouched. A named technology, a domain, a tool
+# and a measurable responsibility all still score, including ones that sound
+# soft in isolation: "accessibility" is a frontend skill, "mentoring" is a
+# senior engineer's job, "stakeholder management" is a PM's, and none of them
+# appear below.
+_CULTURE_FLUFF_RE = re.compile(
+    r"(?:"
+    # The employer describing its own culture, or introducing a values list.
+    # "We value curiosity" and "Our values" arrive as their own entries.
+    r"\bwe value\b|\bwe are looking for\b|\bour values\b|\bteam values\b|"
+    r"\bculture (?:fit|add)\b|\bcompany culture\b|\bcultural fit\b|"
+    r"\bwork[- ]life balance\b|\bdynamic environment\b|\bstartup environment\b|"
+    r"\bhigh[- ]growth environment\b|\bfast[- ]moving\b|"
+    # Diversity, equity and inclusion statements. Every posting that carries
+    # one carries several sentences of it, and a parser drops them straight
+    # into `required_skills` alongside the technologies.
+    r"\bdiversity\b|\binclusion\b|\bbelonging\b|\bunderrepresented\b|"
+    r"\bequal opportunity\b|\ball backgrounds\b|\bencouraged to apply\b|"
+    r"\binclusive (?:environment|workplace|culture|team|hiring)\b|"
+    # Personality and attitude. The half a reader would call "nice to have
+    # personality" rather than a qualification.
+    r"\bpassion\b|\bpassionate\b|\benthusias(?:m|tic)\b|\bcuriosity\b|"
+    r"\bcurious\b|\bhumility\b|\bhumble\b|\bempath(?:y|etic)\b|"
+    r"\badaptab(?:le|ility)\b|\bflexib(?:le|ility)\b|\bproactive(?:ly)?\b|"
+    r"\bmotivated\b|\bgrit\b|\btenacity\b|\bperseverance\b|\bhustle\b|"
+    r"\bscrappy\b|\bentrepreneurial\b|\bopen[- ]minded\b|\bambiguity\b|"
+    r"\bmultitask(?:ing)?\b|\bmulti[- ]task\b|\bwear many hats\b|"
+    r"\bcan[- ]do\b|\bpositive attitude\b|\bsense of humou?r\b|"
+    r"\bbias for action\b|\bcustomer obsess(?:ion|ed)\b|"
+    r"\bself[- ](?:driven|motivated|directed|sufficient)\b|"
+    r"\b(?:results|mission|purpose|value)[- ]driven\b|"
+    r"\bresults[- ]oriented\b|\bteam[- ]oriented\b|"
+    r"\btake[sn]? ownership\b|\b(?:sense of|ownership) (?:ownership|mentality|mindset)\b|"
+    r"\bwilling(?:ness)? to learn\b|\bdesire to learn\b|\blove of learning\b|"
+    r"\bcontinuous learning\b|\blearning mindset\b|\bthrives?\b|"
+    # Working-together copy. The noun and the verb only; see the note above on
+    # why "collaborative" is deliberately absent.
+    r"\bcollaborat(?:ion|ions|e|es|ed|ing)\b|\bworks? well with others\b|"
+    r"\bwork(?:s|ing)? independently\b|\bability to work independently\b|"
+    r"\b(?:strong|excellent|effective|clear) communicator\b|"
+    r"\bcommunicate effectively\b"
+    r")",
+    re.I,
+)
+
+
+def _is_culture_fluff(term: str) -> bool:
+    """True when a JD term is culture or values copy rather than a requirement.
+
+    Exposed for the same reason `_is_candidate_skill` is: the rule is worth
+    testing directly, and a caller that wants to explain WHY a term was set
+    aside needs to tell this apart from an eligibility rule.
+    """
+    return bool(_CULTURE_FLUFF_RE.search(term))
 
 
 _MONTH_NAMES = (
@@ -3030,7 +3417,175 @@ def _is_recoverable_skill(fragment: str) -> bool:
 
 def _is_candidate_skill(term: str) -> bool:
     """False for JD terms a resume could never legitimately match."""
-    return not _NON_SKILL_RE.search(term) and not _is_date_term(term)
+    return (
+        not _NON_SKILL_RE.search(term)
+        and not _is_culture_fluff(term)
+        and not _is_date_term(term)
+    )
+
+
+# What a JD hangs in FRONT of a skill without adding to it. A short entry never
+# reached `_skills_inside_prose`, so none of the prose path's normalisation ever
+# touched it, and "Experience with C/C++/Java/Go/Python" is 3 words and 36
+# characters -- inside both `_is_ats_keyword` limits. It was therefore scored
+# verbatim, as one requirement whose only wording no resume can contain, and the
+# five languages inside it (one of which the candidate writes) were never
+# recovered. On the real ByteDance AI Platform posting it was the single largest
+# miss behind a Keyword Match of 27 sitting next to a review of 98.
+_LEAD_IN_RE = re.compile(
+    r"^(?:(?:demonstrated|proven|strong|solid|excellent|good|deep|basic|working|"
+    r"prior|practical|extensive|significant|hands[- ]on)\s+)*"
+    r"(?:experience|experienced|familiarity|familiar|proficiency|proficient|"
+    r"knowledge|understanding|background|exposure|expertise|competency|comfort|"
+    r"comfortable|skilled|fluency)"
+    r"\s+(?:with|in|of|using|across|on)\s+",
+    re.I,
+)
+
+# Nouns a JD hangs off the END of a skill, naming a second wording the same
+# requirement is satisfied by. Distinct from `_FILLER_TAIL_RE`, which REPLACES a
+# fragment recovered from prose: this one only ever ADDS an alternative, so the
+# label the user reads stays the posting's own phrasing and the denominator does
+# not move. The ByteDance posting asked for "optimization techniques", "machine
+# learning systems" and "profiling tools" and scored all three missing against a
+# profile that says "optimization", "machine learning" and "profiling".
+_TRAILING_NOUN_RE = re.compile(
+    r"\s+(?:techniques?|tools?|tooling|technologies|practices?|principles?|"
+    r"methods?|methodolog(?:y|ies)|libraries|frameworks?|stacks?|patterns?|"
+    r"concepts?|fundamentals|systems? design|systems?|pipelines?|workflows?)$",
+    re.I,
+)
+# How long a ONE-WORD trimmed form has to be before it is offered as a wording.
+# Trimming is only safe while what is left still names something; "build systems"
+# leaves "build" and "design patterns" leaves "design", and either would match
+# almost any resume ever written, which is flattery rather than a match. A length
+# floor rules those out without a hand-kept blocklist: "optimization",
+# "profiling" and "concurrent" clear it, "build", "design", "test", "code",
+# "data", "web" and "cloud" do not. A multi-word remainder ("machine learning")
+# is specific by construction and is not length-checked.
+_TRIMMED_FORM_MIN_CHARS = 8
+
+# A slash-joined run of at least this many segments is an enumeration, not a
+# compound. Deliberately three rather than two: `_PROSE_SPLIT_RE` documents why
+# "/" is not a separator, and every compound that argument is about -- CI/CD,
+# Pub/Sub, TCP/IP, I/O -- has exactly two segments. "C/C++/Java/Go/Python" has
+# five and is a list of alternatives any one of which satisfies the posting.
+_SLASH_LIST_MIN_SEGMENTS = 3
+# A one-character segment is dropped rather than offered. `_mentions` treats "#"
+# as a word boundary, so a bare "C" alternative would credit a resume that only
+# ever says "C#", and the enumeration's other segments already carry the ask.
+_SLASH_SEGMENT_MIN_CHARS = 2
+
+
+def _slash_alternatives(term: str) -> list[str]:
+    """The individual skills inside a slash-joined enumeration, if it is one."""
+    segments = [segment.strip() for segment in term.split("/")]
+    if len(segments) < _SLASH_LIST_MIN_SEGMENTS or not all(segments):
+        return []
+    return [
+        segment
+        for segment in segments
+        if len(segment) >= _SLASH_SEGMENT_MIN_CHARS and _is_candidate_skill(segment)
+    ]
+
+
+def _keyword_alternatives(entry: str) -> tuple[list[str], bool]:
+    """Every wording a short JD entry is satisfied by, and whether they are an any-of set.
+
+    Returns the alternatives (the entry itself always first) and `any_of`: True
+    when they are DIFFERENT skills the posting accepts any one of, rather than
+    different phrasings of one skill. Only the second kind is safe to merge with
+    another requirement -- see `_jd_requirements`.
+
+    Extra alternatives that match nothing are free, because `covered_by` is an
+    OR; only an alternative that matches something it should not costs anything.
+    That is the whole reason this derives wordings instead of rewriting the entry.
+    """
+    alternatives = [entry]
+    any_of = False
+
+    def offer(candidate: str) -> None:
+        cleaned = candidate.strip(" .,;:")
+        if not cleaned or not _is_candidate_skill(cleaned):
+            return
+        if any(cleaned.casefold() == alt.casefold() for alt in alternatives):
+            return
+        alternatives.append(cleaned)
+
+    def offer_trimmed_tail(form: str) -> None:
+        shortened = _TRAILING_NOUN_RE.sub("", form).strip()
+        if shortened == form:
+            return
+        if " " not in shortened and len(shortened) < _TRIMMED_FORM_MIN_CHARS:
+            return
+        offer(shortened)
+
+    trimmed = _LEAD_IN_RE.sub("", entry).strip()
+    offer(trimmed)
+    for form in dict.fromkeys((entry, trimmed)):
+        offer_trimmed_tail(form)
+        segments = _slash_alternatives(form)
+        # A non-empty return proves the source was a `_SLASH_LIST_MIN_SEGMENTS`
+        # enumeration, which is what makes this an any-of set, however many of
+        # its segments survived the filter.
+        any_of = any_of or bool(segments)
+        for segment in segments:
+            offer(segment)
+    return alternatives, any_of
+
+
+# Where the posting's own skill vocabulary is read from, in the order a reader
+# meets it. `required_skills` leads because that is the section an employer puts
+# the things it will not compromise on; `technologies` and `keywords` follow
+# because they are the same asks restated; preferred trails, since a nice-to-have
+# should not push a must-have down the printed row.
+_SKILL_ORDER_FIELDS = (
+    "required_skills",
+    "qualifications",
+    "technologies",
+    "keywords",
+    "preferred_skills",
+)
+
+
+def jd_skill_order(jd_parsed: dict[str, Any] | None) -> list[str]:
+    """Every skill this posting names, in its own order, deduplicated.
+
+    Slash-joined enumerations are expanded through `_keyword_alternatives`, the
+    same function the score already uses, so "C/C++/Java/Go/Python" contributes
+    five orderable terms rather than one unmatchable string. Which of them the
+    candidate actually writes is not decided here: this list only says what the
+    posting asked for and in what order, and `_order_skills_by_jd` intersects it
+    with the vault.
+    """
+    out: list[str] = []
+    seen: set[str] = set()
+
+    def offer(term: str) -> None:
+        cleaned = term.strip(" .,;:")
+        folded = cleaned.casefold()
+        if not cleaned or folded in seen or not _is_candidate_skill(cleaned):
+            return
+        seen.add(folded)
+        out.append(cleaned)
+
+    for field_name in _SKILL_ORDER_FIELDS:
+        for entry in (jd_parsed or {}).get(field_name) or []:
+            text = str(entry or "").strip()
+            if not text:
+                continue
+            if _is_ats_keyword(text):
+                alternatives, _any_of = _keyword_alternatives(text)
+                for alternative in alternatives:
+                    offer(alternative)
+                continue
+            # A prose requirement carries its skills inside a sentence. The same
+            # recovery the scorer uses gets them out; anything it cannot recover
+            # contributes no ordering, which is right, because a skill nobody
+            # can name cannot be put first.
+            for fragment in _skills_inside_prose(text):
+                offer(fragment)
+    return out
 
 
 def _compute_ats(*, matched: list[str], missing: list[str]) -> tuple[Decimal, dict[str, Any]]:
@@ -3106,6 +3661,13 @@ class _Requirement:
     label: str
     alternatives: tuple[str, ...]
     preferred: bool
+    # True when the alternatives are DIFFERENT skills the posting accepts any one
+    # of, rather than different phrasings of one skill. It decides one thing: an
+    # any-of requirement is never merged with another. Folding a standalone,
+    # specific must-have for C++ into "one or more of C++, Python or TypeScript"
+    # would let a resume that only writes Python satisfy the C++ ask, which is
+    # exactly the flattery test_a_genuine_mismatch_is_not_flattered forbids.
+    any_of: bool = False
 
     def covered_by(self, resume_text: str) -> bool:
         return any(_mentions(resume_text, alt) for alt in self.alternatives)
@@ -3154,7 +3716,9 @@ def _jd_requirements(
     excluded: list[str] = []
     seen: set[tuple[str, ...]] = set()
 
-    def add(label: str, alternatives: list[str], *, preferred: bool) -> None:
+    def add(
+        label: str, alternatives: list[str], *, preferred: bool, any_of: bool = False
+    ) -> None:
         unique = list(dict.fromkeys(alt for alt in alternatives if alt.strip()))
         if not unique:
             return
@@ -3162,8 +3726,37 @@ def _jd_requirements(
         if key in seen:
             return
         seen.add(key)
+        # Two entries that name the same skill are ONE thing the posting asks
+        # for, not two. The ByteDance posting listed "optimization techniques"
+        # under required_skills and "optimization" under technologies, and both
+        # were scored: one ask took two slots in the denominator, and the missing
+        # list read "optimization" twice in two spellings, which is what made the
+        # panel look broken rather than informative. Merging on a shared wording
+        # rather than an identical label is safe because `covered_by` is already
+        # an OR over the wordings. Any-of requirements are left alone -- see
+        # `_Requirement.any_of` for why that distinction has to exist.
+        folded = {alt.casefold() for alt in unique}
+        if not any_of:
+            for index, existing in enumerate(requirements):
+                if existing.any_of:
+                    continue
+                if not folded & {alt.casefold() for alt in existing.alternatives}:
+                    continue
+                requirements[index] = _Requirement(
+                    label=existing.label,
+                    alternatives=tuple(dict.fromkeys([*existing.alternatives, *unique])),
+                    # A skill the employer named as required stays required even
+                    # when a preferred section spells it differently.
+                    preferred=existing.preferred and preferred,
+                )
+                return
         requirements.append(
-            _Requirement(label=label, alternatives=tuple(unique), preferred=preferred)
+            _Requirement(
+                label=label,
+                alternatives=tuple(unique),
+                preferred=preferred,
+                any_of=any_of,
+            )
         )
 
     # Terms the employer named as required are must-haves even when the preferred
@@ -3187,10 +3780,16 @@ def _jd_requirements(
     ]:
         if _is_ats_keyword(entry):
             if _is_candidate_skill(entry):
+                # Short enough to score verbatim, which used to mean scored ONLY
+                # verbatim. `_keyword_alternatives` gives this path the same
+                # normalisation the prose path has always had, without changing
+                # the label the user reads back.
+                alternatives, any_of = _keyword_alternatives(entry)
                 add(
                     entry,
-                    [entry],
+                    alternatives,
                     preferred=is_bonus(entry, section_is_preferred=section_is_preferred),
+                    any_of=any_of,
                 )
             else:
                 excluded.append(entry)
@@ -3203,20 +3802,33 @@ def _jd_requirements(
             continue
         recovered = _skills_inside_prose(entry)
         if not recovered:
+            # Deliberately NOT reported as culture copy, even when the sentence
+            # reads like it. "Collaborate with product managers to ship React
+            # features" matches the culture vocabulary and is a responsibility
+            # that names a technology, and calling it a values line would be a
+            # claim nobody checked. It is already unscored either way -- a whole
+            # sentence never appears verbatim in a resume -- so there is nothing
+            # to gain from labelling it and a wrong label to lose.
             continue
         if _ALTERNATIVES_RE.search(entry) and len(recovered) > 1:
             # "X, Y or Z" is satisfied by any one of them, so it is one unit.
+            # `recovered` is passed through untouched: these are already the
+            # distinct skills, and deriving more wordings here would only blur a
+            # set whose exact contents test_ats_scoring pins as the contract.
             add(
                 entry,
                 recovered,
                 preferred=is_bonus(entry, section_is_preferred=section_is_preferred),
+                any_of=True,
             )
         else:
             for term in recovered:
+                alternatives, any_of = _keyword_alternatives(term)
                 add(
                     term,
-                    [term],
+                    alternatives,
                     preferred=is_bonus(term, section_is_preferred=section_is_preferred),
+                    any_of=any_of,
                 )
 
     return requirements, prose, excluded
@@ -3347,12 +3959,19 @@ class _ProjectScore:
     live_url: bool = False
     ongoing: bool = False
     started_at: int = 0
+    # True when this project is the same KIND of engineering the posting is
+    # hiring for: a backend service against a platform role, a model against a
+    # vision role. See services/role_lane.py for why a requirement count alone
+    # gets this wrong, and `_evidence_rank` for how little it is allowed to do.
+    lane_match: bool = False
 
 
 def _project_relevance(
     facts: list[TailorFact],
     bullets_by_fact: dict[str, list[TailorBullet]],
     requirements: list[_Requirement],
+    *,
+    lanes: Sequence[str] = (),
 ) -> list[_ProjectScore]:
     """Rank every project fact by how many JD requirements its own text names.
 
@@ -3363,6 +3982,7 @@ def _project_relevance(
     the ranking is stable across runs of the same profile against the same JD
     rather than depending on incidental dict/list order.
     """
+    wanted = frozenset(lanes)
     scored: list[_ProjectScore] = []
     for f in facts:
         if f.kind != "project":
@@ -3395,9 +4015,20 @@ def _project_relevance(
                 score=len(matched),
                 matched=matched,
                 unscoreable=not matched and not declared,
-                live_url=str(f.source_url or "").startswith("http"),
+                # Reads the payload fallbacks too, so a project whose link was
+                # imported into `payload` rather than the column is no longer
+                # ranked as if it had none. Same source the heading prints from.
+                live_url=bool(_project_url(f)),
                 ongoing=f.end_date is None,
                 started_at=_as_sortable_date(f.start_date),
+                # Judged from the project's own words rather than from the
+                # requirement labels it matched, because the point is to see the
+                # kind of work a keyword count is blind to. Set overlap rather
+                # than equality: a full-stack posting is hiring for two lanes,
+                # and a project in either one is the same kind of work as the
+                # job. Comparing a single winner against a single winner is
+                # what put the product/UI project last on those postings.
+                lane_match=bool(wanted & text_lanes(haystack)),
             )
         )
     # Strongest first, and within a tier the keyword count cannot separate,
@@ -3563,8 +4194,17 @@ def _as_sortable_date(value: object) -> int:
     return int(digits) if digits else 0
 
 
-def _evidence_rank(score: _ProjectScore) -> tuple[int, int, int]:
+def _evidence_rank(score: _ProjectScore) -> tuple[int, int, int, int]:
     """How to order two projects the JD keyword count cannot separate.
+
+    Role lane leads, ahead of the URL and the dates, and it is still only a
+    tiebreak: it can reorder two projects the requirement count called equal and
+    it can never lift one over a project that matched more. That boundary is the
+    point. A platform posting naming computer vision once produces one vision
+    requirement, and a side project matching only that must not displace the
+    candidate's strongest backend work off a backend job; equally, when the
+    counts genuinely tie, the project that is the same kind of engineering as
+    the job belongs on the page. See services/role_lane.py.
 
     Against the real Amex posting his three strongest projects all scored 3 out
     of 66, so which one the page-fit cut removed was decided by the title
@@ -3582,7 +4222,12 @@ def _evidence_rank(score: _ProjectScore) -> tuple[int, int, int]:
     this same data floated a 2019 internship model suite above ClaimFarm, and
     the reason this rule does not is that it never gets to reorder across tiers.
     """
-    return (int(score.live_url), int(score.ongoing), score.started_at)
+    return (
+        int(score.lane_match),
+        int(score.live_url),
+        int(score.ongoing),
+        score.started_at,
+    )
 
 
 def _weakest_project_first(
@@ -3603,11 +4248,15 @@ def _weakest_project_first(
     rank = {p.fact_id: p.score for p in scored}
     evidence = {p.fact_id: _evidence_rank(p) for p in scored}
     projects = [f for f in selected if f.kind == "project"]
+    # The default has to have `_evidence_rank`'s own shape and element types. A
+    # short tuple padded with a string only compared cleanly while the leading
+    # elements happened to differ, and would raise the moment they did not.
+    unranked = tuple(0 for _ in _evidence_rank(_ProjectScore("", "", 0, ())))
     return sorted(
         projects,
         key=lambda f: (
             rank.get(f.id, -1),
-            evidence.get(f.id, (0, 0, "")),
+            evidence.get(f.id, unranked),
             f.title.casefold(),
         ),
     )
@@ -3878,7 +4527,7 @@ def _selection_correction_note(substitutions: list[tuple[str, str]]) -> str:
     )
 
 
-def _ranking_key(score: _ProjectScore) -> tuple[int, int, int, int]:
+def _ranking_key(score: _ProjectScore) -> tuple[int, int, int, int, int]:
     """How two projects compare on MERIT, worst first.
 
     Deliberately excludes the title. The title is in the sort orders as a final
@@ -3968,7 +4617,33 @@ def _enforce_project_ranking(
     return corrected, substitutions
 
 
-def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
+# How a lane is named to a reader. The keys are the engine's vocabulary; these
+# are the words a person would use for the same thing.
+_LANE_LABELS = {
+    "backend": "backend and platform",
+    "ml": "machine learning and models",
+    "data": "data engineering",
+    "test": "test and quality engineering",
+    "frontend": "frontend",
+}
+
+
+def _lane_phrase(lanes: Sequence[str]) -> str:
+    """The posting's kind of work, named the way a person would say it.
+
+    Two lanes get "and" rather than a slash, because a full-stack posting is
+    hiring for both and the sentence this feeds tells the writer that a project
+    in either counts.
+    """
+    named = [_LANE_LABELS.get(lane, lane) for lane in lanes]
+    if len(named) <= 1:
+        return "".join(named)
+    return f"{', '.join(named[:-1])} and {named[-1]}"
+
+
+def _project_relevance_briefing(
+    scored: list[_ProjectScore], *, lanes: Sequence[str] = ()
+) -> str:
     """The project ranking Python already computed, so "strongest first" in the
     prompts means a measured ranking rather than whatever the model notices first.
 
@@ -3983,6 +4658,21 @@ def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
         "this against every project fact's title, payload and bullets; it is not "
         "the model's impression of which project is more polished or more recent:",
     ]
+    if lanes:
+        both = (
+            " It asks for both, so a project in either one counts equally here."
+            if len(lanes) > 1
+            else ""
+        )
+        lines += [
+            "",
+            f"This posting is a {_lane_phrase(lanes)} role.{both} Where two "
+            "projects match the same number of requirements, the one that is "
+            "that same kind of work is marked below and goes on the page first. "
+            "This never outranks a higher requirement match: a posting that "
+            "names one term from another discipline does not make a side "
+            "project in that discipline the better evidence.",
+        ]
     for rank, item in enumerate(scored, start=1):
         if item.matched:
             detail = f": {', '.join(item.matched)}"
@@ -3997,7 +4687,8 @@ def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
         else:
             detail = " (no overlap found)"
         matches = _plural(item.score, "requirement match")
-        lines.append(f"  {rank}. {item.title} -- {matches}{detail}")
+        same_lane = "  [same kind of work as this role]" if item.lane_match else ""
+        lines.append(f"  {rank}. {item.title} -- {matches}{detail}{same_lane}")
     lines += [
         "",
         "Prefer the highest-scoring projects for shortlist_fact_ids and "
@@ -4008,6 +4699,34 @@ def _project_relevance_briefing(scored: list[_ProjectScore]) -> str:
         "real weakness in the higher-scoring project's own verified evidence is.",
     ]
     return "\n".join(lines)
+
+
+def _availability_briefing(availability: Availability, asked: bool) -> str:
+    """What the page will already say about when the candidate is free.
+
+    Told to the writer only so it does not spend a sentence of a 45-word summary
+    repeating a line the header already carries, and so it does not try to close
+    the gap with prose when the profile holds no dates. The writer never sets
+    this field: `_assemble_json_resume` does, from verified facts.
+    """
+    if not asked:
+        return ""
+    if availability.line:
+        return (
+            "AVAILABILITY. This posting asks the candidate to state when they "
+            f"are free, and the page answers it in the contact row: "
+            f'"{availability.line}". It is assembled from verified dates, it is '
+            "already on the page, and it is not yours to write. Do not repeat it "
+            "in the summary or in a bullet."
+        )
+    return (
+        "AVAILABILITY. This posting asks the candidate to state when they are "
+        "free, and their profile records no availability dates, no work "
+        "authorization window and no graduation month. The page therefore says "
+        "nothing about it and the user is told to add the dates on Profile. Do "
+        "not answer it in prose: a start date you infer is a start date you "
+        "invented, and it is the one claim on the page nobody can check."
+    )
 
 
 def _requirement_briefing(
@@ -4226,7 +4945,7 @@ async def _analyse_requirements(
         "JOB DESCRIPTION (parsed):\n"
         f"{json.dumps(jd_parsed or {}, indent=2)}\n\n"
         "JOB DESCRIPTION (clean text, truncated):\n"
-        f"<jd>\n{(jd_clean or '')[:8000]}\n</jd>\n\n"
+        f"<jd>\n{(jd_clean or '')[:JD_CLEAN_PROMPT_CHARS]}\n</jd>\n\n"
         "CANDIDATE VERIFIED FACTS + BULLETS:\n"
         f"{_facts_feed(facts_payload)}\n\n"
         f"{project_briefing}\n\n"

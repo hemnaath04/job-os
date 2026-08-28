@@ -15,6 +15,7 @@ from job_os.schemas.jobs import (
     JobCreateManual,
     JobDescriptionParse,
     JobDescriptionPaste,
+    JobDetailRead,
     JobEnrichPlan,
     JobEnrichResult,
     JobFromText,
@@ -84,12 +85,13 @@ async def list_jobs(
     return list(result.scalars().all())
 
 
-@router.get("/{job_id}", response_model=JobRead)
+@router.get("/{job_id}", response_model=JobDetailRead)
 async def get_job(
     job_id: UUID,
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    """One job, description included -- see `JobDetailRead` for why only this route."""
     job = await _load_job(session, job_id)
     if job is None:
         raise HTTPException(404, "job not found")
@@ -278,7 +280,16 @@ async def reparse_job(
     job.jd_parsed = dict(PENDING)
     await session.commit()
     schedule_job_parse(job.id)
-    await session.refresh(job, attribute_names=["company"])
+    # Re-SELECT, for the reason `add_description` sets out at length below: this
+    # is an UPDATE, `updated_at` carries onupdate=func.now(), and SQLAlchemy
+    # fetches server-generated columns back on an INSERT but not on an UPDATE.
+    # `refresh(attribute_names=["company"])` loaded the relationship and left
+    # `updated_at` expired, so serialising the response was one lazy load away
+    # from MissingGreenlet -- the same 500 that shipped on the paste route, on
+    # the retry button one endpoint over.
+    job = await _load_job(session, job_id)
+    if job is None:  # pragma: no cover - the row was committed moments ago
+        raise HTTPException(404, "Job not found.")
     return job
 
 

@@ -53,7 +53,7 @@ import { withTimeout } from "./async";
 // ESM loader (used by `pnpm test`'s `node --test`) cannot follow, so this
 // file cannot be loaded directly in a test. api-error.ts can, and that is
 // where its test lives.
-import { ApiError, detailFromErrorBody } from "./api-error";
+import { ApiError, detailFromErrorBody, friendlyStatusText } from "./api-error";
 export { ApiError };
 
 /** Body accepted by the /api/discover route handler. */
@@ -176,7 +176,19 @@ async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
     throw new ApiError(res.status, detailFromErrorBody(res.status, text));
   }
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // A 200 is not a promise of JSON. A maintenance page, a proxy that answered
+  // for the backend, or an auth redirect served as a document all arrive here
+  // with an ok status and an HTML body, and `res.json()` then throws
+  // `SyntaxError: Unexpected token '<'` -- which reaches the user as a toast
+  // about a "<" and reaches the finder as an unhandled crash. Same treatment
+  // as the error path above: say what happened in a sentence, with a status.
+  const text = await res.text();
+  if (!text) return undefined as T;
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new ApiError(502, friendlyStatusText(502));
+  }
 }
 
 /** Calls the FastAPI backend through the token-injecting proxy. */
@@ -457,6 +469,12 @@ const legacyApi = {
       method: "POST",
       body: JSON.stringify({ jd_text, company_hint }),
     }),
+  // Asks the backend to read a posting again, in place. The deferred parse
+  // runs in the API process, so a restart mid-parse strands a row at
+  // parse_pending with nothing coming for it; this is how a stuck row gets
+  // unstuck without re-importing it and orphaning its application.
+  reparseJob: (jobId: string) =>
+    request<Job>(`/jobs/${jobId}/reparse`, { method: "POST" }),
   // Fills in a job that was imported thin, in place. Deliberately not
   // jobFromText: that creates a row, and a job the person is already tracking
   // has an application, documents and a history hanging off the row it

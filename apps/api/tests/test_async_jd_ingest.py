@@ -246,6 +246,43 @@ async def test_reparse_requeues_a_stuck_row(
     assert no_scheduling == [job.id]
 
 
+@pytest.mark.asyncio
+async def test_reparse_returns_a_job_that_can_actually_be_serialised(
+    monkeypatch: pytest.MonkeyPatch, db_session, no_scheduling
+) -> None:
+    """The same 500 that shipped on the paste route, on the retry button.
+
+    `reparse_job` UPDATEs where its neighbours INSERT, and `updated_at` carries
+    onupdate=func.now(), so the flush leaves it expired -- SQLAlchemy fetches
+    server-generated columns back on an INSERT but not on an UPDATE. The old
+    `refresh(attribute_names=["company"])` loaded the relationship and left
+    `updated_at` alone, so `response_model=JobRead` was one lazy load away from
+    MissingGreenlet inside an async request. The test above cannot see it: it
+    reads `id` and `jd_parsed`, and neither is the expired attribute. Validating
+    the response model is the assertion, because that is what FastAPI does.
+    """
+    from job_os.schemas.jobs import JobRead
+
+    user = await _user(db_session, "reparse-serialise")
+
+    job = await jobs_router.create_from_text(
+        JobFromText(jd_text="Platform Engineer at Ramp.", company_hint="Ramp"),
+        _user=user,
+        session=db_session,
+    )
+    job.jd_parsed = {"parse_incomplete": True, "parse_error": "fetch_failed"}
+    await db_session.flush()
+    no_scheduling.clear()
+
+    again = await jobs_router.reparse_job(job.id, _user=user, session=db_session)
+
+    serialised = JobRead.model_validate(again)
+    assert serialised.updated_at is not None
+    assert serialised.created_at is not None
+    assert serialised.company is not None
+    assert serialised.title == job.title
+
+
 @pytest.mark.parametrize(
     ("url", "expected"),
     [

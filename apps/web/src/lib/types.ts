@@ -792,6 +792,21 @@ export interface DiscoverySearchResponse {
   errors: DiscoverySourceError[];
   /** Present on /api/discover responses only. */
   timings?: DiscoveryTimings;
+  /**
+   * What the merge step did, so the results header can account for the gap
+   * between the per-source counts and the number of cards on the page. Set by
+   * `mergeDiscoveryResponses`; absent on a single-backend response.
+   */
+  merge?: DiscoveryMergeStats;
+}
+
+export interface DiscoveryMergeStats {
+  /** Rows the sources handed over, before dedupe and before the cap. */
+  received: number;
+  /** Rows dropped because the same job had already been kept. */
+  duplicates: number;
+  /** True when the cap stopped the merge early, making `duplicates` a floor. */
+  capped: boolean;
 }
 
 export interface Application {

@@ -5,6 +5,7 @@ import { memo } from "react";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { StatusPill } from "@/components/status-pill";
 import { MatchScoreChip } from "@/components/ui/match-score";
+import { jobDisplay } from "@/lib/job-display";
 import type { Application } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -36,7 +37,12 @@ export const ApplicationRow = memo(function ApplicationRow({
   matchScore: number | null;
   onSelect: () => void;
 }) {
-  const company = application.job.company?.name ?? "Unknown company";
+  // Never the raw columns. An import that has not finished reading stores
+  // "Untitled" and a company guessed off the URL host, and printing those put a
+  // row that is still being fetched next to real roles as if it were finished.
+  // See lib/job-display.ts.
+  const display = jobDisplay(application.job);
+  const company = display.company ?? "Company not read yet";
   const stageDate = application.applied_at ?? application.updated_at;
   return (
     <button
@@ -82,8 +88,18 @@ export const ApplicationRow = memo(function ApplicationRow({
           </span>
           <StatusPill status={application.status} size="xs" />
         </div>
-        <span className="truncate text-xs leading-tight text-[color:var(--color-text-muted)]">
-          {application.job.title}
+        <span
+          className={cn(
+            "truncate text-xs leading-tight",
+            display.incomplete
+              ? "italic text-[color:var(--color-text-dim)]"
+              : "text-[color:var(--color-text-muted)]",
+          )}
+          // The full sentence does not fit on a 60px row, so the row says the
+          // state and the inspector next to it says what to do about it.
+          title={display.note ?? undefined}
+        >
+          {display.title}
         </span>
       </div>
 

@@ -517,6 +517,73 @@ def _opening_word(text: str) -> str:
     return match.group(0).casefold() if match else ""
 
 
+# Where a bullet can be cut in two without anybody having to write a word.
+#
+# A full stop or a semicolon inside a resume bullet is the author saying "these
+# are two statements" in punctuation, so honouring it costs nothing and invents
+# nothing. Everything else is left alone on purpose: splitting at a comma
+# produces "cutting build time by half" standing on its own, which is a fragment
+# rather than a bullet, and a splitter that has to add a verb to fix that is a
+# splitter that is writing.
+_HARD_SPLIT_RE = re.compile(r"(?<=[.!?;])\s+")
+
+# Both halves have to be worth a line of their own. Below this a "split" is a
+# bullet with an orphan clause hanging under it, which reads worse than the long
+# bullet did.
+MIN_SPLIT_WORDS = 6
+
+
+def split_long_bullet(text: str, *, limit: int = BULLET_MAX_WORDS) -> list[str]:
+    """An over-length bullet as the separate statements it already contains.
+
+    A verified bullet the candidate saved at 36 words prints as three lines and
+    buries whatever the reader was meant to take from it. The engine used to
+    only report that (`too_long_verbatim`), which is honest and leaves the page
+    exactly as bad as it was.
+
+    So the page splits what it can split safely. Only at punctuation the author
+    already wrote, never at a conjunction, and the words are never touched: the
+    output is the input, cut. A bullet with no such boundary comes back
+    unchanged and is raised with the user as a gap instead, because shortening
+    that one means deciding which of their claims to drop and that is theirs to
+    decide.
+    """
+    body = " ".join(str(text or "").split())
+    if not body or len(body.split()) <= limit:
+        return [body] if body else []
+    pieces = [piece.strip() for piece in _HARD_SPLIT_RE.split(body)]
+    pieces = [piece for piece in pieces if piece]
+    if len(pieces) < 2 or any(len(piece.split()) < MIN_SPLIT_WORDS for piece in pieces):
+        return [body]
+    out: list[str] = []
+    for piece in pieces:
+        # A semicolon ended a clause, not a sentence, so the fragment it leaves
+        # behind gets the terminator the rest of the page uses. Nothing is added
+        # that carries meaning.
+        cleaned = piece.rstrip(";").strip()
+        if not cleaned:
+            continue
+        out.append(cleaned[0].upper() + cleaned[1:])
+    return out or [body]
+
+
+def over_length_bullets(document: dict[str, Any], *, limit: int = BULLET_MAX_WORDS) -> list[str]:
+    """Printed bullets still over the cap after splitting, longest first.
+
+    The list the user is asked to fix, so it names the bullet rather than
+    counting them: "one bullet is too long" is not something anybody can act on
+    without being told which.
+    """
+    found: list[tuple[int, str]] = []
+    for section in ("work", "projects", "volunteer"):
+        for entry in document.get(section) or []:
+            for highlight in (entry.get("highlights") or []):
+                words = len(str(highlight or "").split())
+                if words > limit:
+                    found.append((words, str(highlight)))
+    return [text for _words, text in sorted(found, key=lambda item: -item[0])]
+
+
 # A bullet the writer printed exactly as the vault holds it is his wording, not
 # the model's. That distinction is the whole point of the two checks below: a
 # 46-word bullet is a defect either way, but "the writer padded this" and "your
@@ -775,6 +842,23 @@ def missing_link_kinds(document: dict) -> list[str]:
     ]
     blob = " ".join(haystack)
     return [name for name, pattern in _LINK_PATTERNS if not pattern.search(blob)]
+
+
+def unlinked_projects(document: dict[str, Any]) -> list[str]:
+    """Projects printed on the page with no URL on their heading.
+
+    Every template hyperlinks the project name and prints nothing when there is
+    no link, so a missing URL is silent: the reader is asked to go and search
+    for the repository, which they will not do. Naming the project makes it one
+    profile edit rather than a mystery.
+    """
+    return [
+        str(project.get("name") or "").strip()
+        for project in (document.get("projects") or [])
+        if isinstance(project, dict)
+        and str(project.get("name") or "").strip()
+        and not str(project.get("url") or "").strip()
+    ]
 
 
 # A skill row is a claim. The session's phrasing for the failure is

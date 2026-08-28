@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { Download, FileText, Sparkles } from "lucide-react";
+import { Download, FileSignature, FileText, Sparkles } from "lucide-react";
 import Link from "next/link";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { api } from "@/lib/api";
@@ -52,6 +52,11 @@ export function ApplicationDocuments({ application }: { application: Application
   // a tailor run started from here would produce a real draft that never
   // shows up here afterward, which is the bug this wiring exists to close.
   const tailorHref = `/tailor?job_id=${application.job.id}&application_id=${application.id}`;
+  // Carries the job the same way tailorHref does, so the letter page opens on
+  // this posting instead of an empty picker. Without it the only route to a
+  // cover letter from an application was the nav, and then choosing the job
+  // again from a list -- which is why there was no letter CTA here at all.
+  const letterHref = `/cover-letters?job_id=${application.job.id}`;
 
   if (!linkedResume && !linkedLetter) {
     return (
@@ -88,15 +93,38 @@ export function ApplicationDocuments({ application }: { application: Application
         <DocumentRow
           label="Cover letter"
           name={linkedLetter.name}
-          onDownload={undefined}
+          // Was hardcoded to undefined, so the letter was listed as a document
+          // of this application with no way to open it. The bytes have always
+          // been there: the same route the Cover Letters page downloads from.
+          onDownload={() =>
+            downloadPdf(
+              coverLetters.downloadUrl(linkedLetter.id, letterVersion.id),
+              `cover-letter-${application.job.company?.name || "letter"}.pdf`,
+            )
+          }
         />
       )}
-      <Link
-        href={tailorHref}
-        className="mt-1 inline-flex w-fit items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
-      >
-        <Sparkles className="size-3" /> Tailor another version
-      </Link>
+      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Link
+          href={tailorHref}
+          className="inline-flex w-fit items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
+        >
+          <Sparkles className="size-3" /> Tailor another version
+        </Link>
+        {/* The next step after a tailored resume, which this panel never
+            offered. Only shown once there IS a resume: a letter is written
+            from the same profile, so suggesting it first would just be a
+            second way to reach the same missing prerequisites. */}
+        {linkedResume && (
+          <Link
+            href={letterHref}
+            className="inline-flex w-fit items-center gap-1 text-[11px] text-[color:var(--color-violet)] hover:underline"
+          >
+            <FileSignature className="size-3" />
+            {linkedLetter ? "Write another letter" : "Write a cover letter"}
+          </Link>
+        )}
+      </div>
     </div>
   );
 }

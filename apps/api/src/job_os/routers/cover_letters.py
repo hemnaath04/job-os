@@ -94,10 +94,13 @@ async def generate_version(
         )
     ).scalar_one_or_none()
     if baseline is None:
+        # Named the endpoint the user was supposed to POST to, which is an
+        # instruction for whoever wrote this rather than for whoever is trying
+        # to send a letter.
         raise HTTPException(
             409,
-            "Master resume has no baseline version yet. Import a JSON Resume "
-            "into it first (POST /profile/import).",
+            "Your master resume has no content yet. Upload or import a resume "
+            "into it on the Resumes page, then write the letter.",
         )
 
     parent: CoverLetterVersion | None = None

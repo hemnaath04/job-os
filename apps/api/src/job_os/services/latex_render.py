@@ -461,6 +461,19 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
                 "url": profile["url"],
             }
         )
+    # Last, and only when the tailored document set it, which it does only when
+    # the posting asked when the candidate is free. Every template iterates this
+    # list, so this is the one field that reaches all of them; the two that
+    # re-sort it by a known-kind order put an unrecognised kind at the end,
+    # which is where this belongs anyway. Mirrors typst_render.py.
+    if latex_escape(basics.get("availability")):
+        contact.append(
+            {
+                "kind": "availability",
+                "text": latex_escape(basics.get("availability")),
+                "url": "",
+            }
+        )
 
     # Awesome-CV's \name takes two arguments, and its header sets them in
     # different weights. Split here rather than in a template, where the value

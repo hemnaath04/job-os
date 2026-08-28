@@ -26,6 +26,8 @@ import type {
 } from "../types";
 import { ATS_COMPANIES, type AtsCompany, type AtsProvider } from "./ats-companies";
 import { fetchCustomSource, type CustomFetchInput } from "./custom-fetch";
+import { htmlToText, toDisplayText } from "./html-text.ts";
+import { dedupeByJob } from "./job-identity.ts";
 import { fetchAdzuna, fetchJSearch } from "./keyed-sources";
 
 // jsearch and adzuna are not key-free, but they are served by this route
@@ -61,7 +63,6 @@ const KEYED_TIMEOUT_MS = 9_000;
 const DEFAULT_LIMIT = 60;
 /** Per-company cap applied before the global cap, newest first. */
 const MAX_PER_COMPANY = 40;
-const MAX_DESCRIPTION_CHARS = 6_000;
 const MAX_TECHNOLOGIES = 8;
 /** Boards are fast (sub-second) but Greenhouse payloads run to megabytes;
  *  a bounded pool keeps peak memory sane on a serverless function. */
@@ -220,71 +221,6 @@ async function mapPool<T, R>(
     Array.from({ length: Math.min(concurrency, items.length) }, worker),
   );
   return out;
-}
-
-const NAMED_ENTITIES: Record<string, string> = {
-  amp: "&",
-  lt: "<",
-  gt: ">",
-  quot: '"',
-  apos: "'",
-  nbsp: " ",
-  ndash: "-",
-  mdash: "-",
-  hellip: "...",
-  rsquo: "'",
-  lsquo: "'",
-  rdquo: '"',
-  ldquo: '"',
-  bull: "*",
-};
-
-function decodeEntities(input: string): string {
-  return input.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (match, body: string) => {
-    if (body.startsWith("#x") || body.startsWith("#X")) {
-      const code = Number.parseInt(body.slice(2), 16);
-      return Number.isNaN(code) ? match : String.fromCodePoint(code);
-    }
-    if (body.startsWith("#")) {
-      const code = Number.parseInt(body.slice(1), 10);
-      return Number.isNaN(code) ? match : String.fromCodePoint(code);
-    }
-    return NAMED_ENTITIES[body.toLowerCase()] ?? match;
-  });
-}
-
-function collapseWhitespace(text: string): string {
-  return text
-    .replace(/\r/g, "")
-    .replace(/[ \t ]+/g, " ")
-    .replace(/ ?\n ?/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-/**
- * Greenhouse returns `content` as entity-encoded HTML (&lt;p&gt;...), while
- * Lever / Ashby / Remotive / RemoteOK return real HTML. Detect the encoded
- * case and unwrap it once before stripping tags.
- */
-function htmlToText(html: string | null | undefined): string {
-  if (!html) return "";
-  let text = html;
-  if (text.includes("&lt;") && !text.includes("<")) text = decodeEntities(text);
-  text = text
-    .replace(/<(script|style)[\s\S]*?<\/\1>/gi, " ")
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|li|ul|ol|h[1-6]|tr|table|section)>/gi, "\n")
-    .replace(/<li[^>]*>/gi, "- ")
-    .replace(/<[^>]+>/g, " ");
-  return truncate(collapseWhitespace(decodeEntities(text)), MAX_DESCRIPTION_CHARS);
-}
-
-function truncate(text: string, max: number): string {
-  if (text.length <= max) return text;
-  const cut = text.slice(0, max);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > max * 0.8 ? cut.slice(0, lastSpace) : cut).trimEnd();
 }
 
 /** Accepts ISO strings, epoch millis (Lever) and naive UTC stamps (Remotive). */
@@ -515,9 +451,11 @@ export async function fetchLever(
       // Lever is the one board that hands us a real ISO country code.
       country_code: nonEmpty(job.country)?.toUpperCase() ?? inferCountryCode(location),
       posted_at: toIsoDate(job.createdAt),
-      description: job.descriptionPlain
-        ? truncate(collapseWhitespace(job.descriptionPlain), MAX_DESCRIPTION_CHARS)
-        : htmlToText(job.description),
+      // `descriptionPlain` is Lever's own plain rendering, but it is not
+      // guaranteed to be free of markup, so it goes through the same reader as
+      // everything else rather than being trusted on its name.
+      description:
+        toDisplayText(job.descriptionPlain) || htmlToText(job.description),
       technologies: [],
       already_imported: false,
     } satisfies DiscoveryResult;
@@ -577,9 +515,8 @@ export async function fetchAshby(
         location,
         country_code: inferCountryCode(countryHint) ?? inferCountryCode(location),
         posted_at: toIsoDate(job.publishedAt),
-        description: job.descriptionPlain
-          ? truncate(collapseWhitespace(job.descriptionPlain), MAX_DESCRIPTION_CHARS)
-          : htmlToText(job.descriptionHtml),
+        description:
+          toDisplayText(job.descriptionPlain) || htmlToText(job.descriptionHtml),
         technologies: [],
         already_imported: false,
       } satisfies DiscoveryResult;
@@ -885,28 +822,14 @@ function newestFirst(a: DiscoveryResult, b: DiscoveryResult): number {
 }
 
 /**
- * Two passes: exact URL, then company + title + location. The second pass
- * matters because companies file one opening per location as separate
- * requisitions (Affirm lists "Product Security Engineer II / Remote Canada"
- * twice), and the same role often appears on both an ATS board and a remote
- * aggregator. Callers sort newest-first beforehand so the survivor is fresh.
+ * One row per job. See ./job-identity for the identity rule and for why
+ * "same lowercased URL, or same company + title + location" was not enough:
+ * two sources linking the same requisition differ by host alias, tracking
+ * parameter and how each of them spells the city. Callers sort newest-first
+ * beforehand so the survivor is the freshest copy.
  */
 function dedupe(results: DiscoveryResult[]): DiscoveryResult[] {
-  const seen = new Set<string>();
-  const out: DiscoveryResult[] = [];
-  for (const r of results) {
-    const identity = [
-      (r.company_domain ?? r.company_name ?? "").toLowerCase(),
-      r.title.toLowerCase(),
-      (r.location ?? "").toLowerCase(),
-    ].join("|");
-    const url = r.source_url.toLowerCase();
-    if (seen.has(url) || seen.has(identity)) continue;
-    seen.add(url);
-    seen.add(identity);
-    out.push(r);
-  }
-  return out;
+  return dedupeByJob(results);
 }
 
 /** Take one item from each bucket in turn until `limit` is reached. */

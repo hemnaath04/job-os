@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import Field, HttpUrl
+from pydantic import Field, HttpUrl, field_validator
 
 from job_os.schemas.common import ORMModel, TimestampedRead
 
@@ -59,6 +59,35 @@ class JobRead(TimestampedRead):
     closes_at: datetime | None = None
     active: bool
     jd_parsed: JobParsed | None = None
+
+
+# How much of a description travels to a caller. Equal to the tailor prompt's own
+# cap (`JD_CLEAN_PROMPT_CHARS` in services/tailor.py), because the only caller
+# that wants this field is carrying it to that prompt, and anything past the cap
+# is truncated on arrival. Kept equal by hand: importing tailor.py here would
+# pull the Anthropic client and the whole agent into every schema import.
+JD_CLEAN_MAX_CHARS = 8000
+
+
+class JobDetailRead(JobRead):
+    """One job, description included.
+
+    Separate from `JobRead` because `list_jobs` returns up to 200 of these and a
+    full description on each would be megabytes to render a picker. The single-job
+    GET is the one caller that needs the text: jobs still live in Postgres while
+    the tailor agent runs in Appwrite, so the browser is the only thing that can
+    carry a JD from one to the other, and it could not read it here at all. It
+    sent the empty string instead, which meant the writer and the analyst saw the
+    parsed JSON and an empty `<jd>` block -- no requirement in the posting's own
+    phrasing, and no location-in-title -- on every production run.
+    """
+
+    jd_clean: str = ""
+
+    @field_validator("jd_clean", mode="before")
+    @classmethod
+    def _cap_length(cls, value: object) -> str:
+        return str(value or "")[:JD_CLEAN_MAX_CHARS]
 
 
 class JobCreateManual(ORMModel):

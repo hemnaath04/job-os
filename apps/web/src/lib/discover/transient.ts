@@ -90,6 +90,26 @@ function listNames(names: string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
+/** Distinguishes a backend coming up from a query that ran out of time. */
+const RESTARTING = /\b50[234]\b|restarting|bad gateway|service unavailable|temporarily unavailable/i;
+
+/**
+ * Why the index was not there, in its own words.
+ *
+ * "The saved index was restarting" was hardcoded, and for the deploy window it
+ * was written for that was true. It stopped being true: the index now fails
+ * most often because its own query times out (Appwrite answers a slow fulltext
+ * search with a 408), and a banner that blames a restart for that sends the
+ * reader to look at a deploy log where there is nothing to find. Two causes,
+ * two sentences, and each says what actually happened.
+ */
+function indexReason(message: string): string {
+  if (RESTARTING.test(message)) {
+    return "The saved index was restarting, so these results came from live sources only";
+  }
+  return "The saved index did not answer in time, so these results came from live sources only";
+}
+
 /**
  * One line for everything that was briefly busy, or null if nothing was.
  *
@@ -100,16 +120,15 @@ function listNames(names: string[]): string {
  */
 export function transientNotice(errors: DiscoverySourceError[]): string | null {
   if (!errors.length) return null;
-  const indexDown = errors.some((error) => error.source === "index");
+  const index = errors.find((error) => error.source === "index");
+  const indexDown = Boolean(index);
   const boards = errors
     .filter((error) => error.source !== "index")
     .map((error) => error.source.replace(/^custom:/, ""))
     .sort();
   const parts: string[] = [];
-  if (indexDown) {
-    parts.push(
-      "The saved index was restarting, so these results came from live sources only",
-    );
+  if (index) {
+    parts.push(indexReason(index.message));
   }
   if (boards.length) {
     parts.push(

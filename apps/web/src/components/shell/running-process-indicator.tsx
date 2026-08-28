@@ -97,16 +97,20 @@ function OperationCard({ op }: { op: Operation }) {
         </div>
       </Link>
 
-      {!running && (
-        <button
-          type="button"
-          onClick={() => dismissOperation(op.id)}
-          aria-label="Dismiss"
-          className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] text-[color:var(--color-text-dim)] shadow-[var(--shadow-xs)] transition hover:text-[color:var(--color-text)] active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-ink)]"
-        >
-          <X className="size-3" />
-        </button>
-      )}
+      {/* Offered on a running card too. It only hides the card: the run goes
+          on, and the label says so rather than implying this stops anything.
+          That is what the Tailor page's old "Cancel" was reaching for when it
+          instead wrote "You canceled this run" onto a job that was still
+          working. See lib/operations-store.ts. */}
+      <button
+        type="button"
+        onClick={() => dismissOperation(op.id)}
+        aria-label={running ? "Hide this, the run keeps going" : "Dismiss"}
+        title={running ? "Hides this card. The run keeps going." : undefined}
+        className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full border border-[color:var(--color-border)] bg-[color:var(--color-surface-1)] text-[color:var(--color-text-dim)] shadow-[var(--shadow-xs)] transition hover:text-[color:var(--color-text)] active:scale-[.96] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:var(--color-accent-ink)]"
+      >
+        <X className="size-3" />
+      </button>
     </div>
   );
 }

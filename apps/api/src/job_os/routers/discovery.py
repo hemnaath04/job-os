@@ -251,6 +251,7 @@ async def import_result(
     _user: User = Depends(get_current_user),
     session: AsyncSession = Depends(get_session),
 ) -> Job:
+    from job_os.integrations import ats_jd
     from job_os.integrations.firecrawl import fetch_url_markdown
     from job_os.services.jd_parse import parse_jd
 
@@ -266,23 +267,38 @@ async def import_result(
             return existing
 
     # If the description is missing/short (typical for github-sourced rows),
-    # fetch the JD via Firecrawl before parsing. This keeps the import flow
-    # uniform across sources without forcing the FE to know per-source rules.
+    # fetch the JD before parsing. This keeps the import flow uniform across
+    # sources without forcing the FE to know per-source rules.
+    #
+    # Two steps, cheapest first. The SimplifyJobs rows this exists for link
+    # overwhelmingly to Greenhouse and Lever, and both hand over the posting as
+    # JSON for free; asking the board is faster than rendering its page and
+    # returns the employer's own text. It also actually works, which the render
+    # did not: `job-boards.greenhouse.io` is a JavaScript shell, so the plain
+    # httpx fallback inside `fetch_url_markdown` came back with an empty page
+    # and the import created an application with no description on it. Anything
+    # `ats_jd` cannot read still goes to Firecrawl exactly as before.
     description = payload.description
     raw = payload.description
     if (len(description) < _MIN_DESCRIPTION_CHARS) and payload.source_url:
-        try:
-            fetched = await fetch_url_markdown(payload.source_url)
-            description = fetched.markdown or description
-            raw = fetched.raw or raw or description
-        except Exception as e:  # noqa: BLE001 — fallback is acceptable
-            # If the fetch fails we still create the Job with whatever we had,
-            # so the user can manually paste the JD later via /jobs/from-text.
-            from structlog import get_logger
+        from_board = await ats_jd.fetch_description(payload.source_url)
+        if from_board and len(from_board) >= _MIN_DESCRIPTION_CHARS:
+            description = from_board
+            raw = from_board
+        else:
+            try:
+                fetched = await fetch_url_markdown(payload.source_url)
+                description = fetched.markdown or description
+                raw = fetched.raw or raw or description
+            except Exception as e:  # noqa: BLE001 — fallback is acceptable
+                # If the fetch fails we still create the Job with whatever we
+                # had, so the user can manually paste the JD later via
+                # /jobs/from-text.
+                from structlog import get_logger
 
-            get_logger(__name__).warning(
-                "discovery.import.fetch_failed", url=payload.source_url, error=str(e)
-            )
+                get_logger(__name__).warning(
+                    "discovery.import.fetch_failed", url=payload.source_url, error=str(e)
+                )
 
     parsed = await parse_jd(description, title_hint=payload.title)
     company = await upsert_company(

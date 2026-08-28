@@ -9,6 +9,7 @@ import {
   ExternalLink,
   FileText,
   MoreHorizontal,
+  RefreshCw,
   Sparkles,
   StickyNote,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { MatchScoreChip, MatchScoreMeter, SkillChip, scoreLabel } from "@/components/ui/match-score";
 import { Select } from "@/components/ui/select";
+import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
 import {
   clearDraft,
@@ -36,6 +38,7 @@ import {
 } from "@/lib/pending-enrich";
 import type { ProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
+import { jobDisplay } from "@/lib/job-display";
 import type { Application, AppStatus } from "@/lib/types";
 import { STATUS_LABELS } from "@/lib/types";
 
@@ -91,8 +94,12 @@ export function ApplicationInspector({
 }) {
   const router = useRouter();
   const { job } = application;
+  // The honest reading of a row whose import has not finished. See
+  // lib/job-display.ts for why the raw columns are never printed.
+  const display = jobDisplay(job);
   const fit = scoreApplicationJob(job, vocab);
   const [notes, setNotes] = useState(application.notes ?? "");
+  const [rereading, setRereading] = useState(false);
   const [nextActionLabel, setNextActionLabel] = useState(application.next_action_label ?? "");
   const [nextActionDate, setNextActionDate] = useState(
     application.next_action_at ? application.next_action_at.slice(0, 10) : "",
@@ -190,11 +197,54 @@ export function ApplicationInspector({
     }
   }
 
+  /**
+   * Move this application to another stage.
+   *
+   * The board view has always confirmed a move and reported a failed one; this
+   * dropdown, which is the list view's way of doing the same thing and the one
+   * most people reach for, did neither. `onPatch` rolls its optimistic update
+   * back when the request fails, so a rejected change quietly snapped the
+   * stage back to where it was with nothing said, and the rejected promise
+   * went unhandled on top of that.
+   */
+  async function onStatusChange(next: AppStatus) {
+    if (next === application.status) return;
+    try {
+      await onPatch(application.id, { status: next });
+      toast.success(`Moved to ${STATUS_LABELS[next]}`);
+    } catch (err) {
+      reportFailure("change that application's stage", err);
+    }
+  }
+
+  /**
+   * Ask the backend to read this posting again.
+   *
+   * The parse is deferred server-side, so this returns before a title exists.
+   * Invalidating is what makes the row fill in on its own a few seconds later,
+   * and saying "this can take a moment" is the difference between waiting and
+   * pressing it four more times.
+   */
+  async function onRereadClick() {
+    setRereading(true);
+    try {
+      await api.reparseJob(job.id);
+      await queryClient.invalidateQueries({ queryKey: ["applications"] });
+      toast.success("Reading this posting again", {
+        description: "The title and company fill in here when it lands.",
+      });
+    } catch (err) {
+      reportFailure("read that posting again", err);
+    } finally {
+      setRereading(false);
+    }
+  }
+
   async function onArchiveClick() {
     try {
       await onArchive(application.id);
-      toast.success(`Archived "${job.title}"`, {
-        description: job.company?.name ?? undefined,
+      toast.success(`Archived "${display.title}"`, {
+        description: display.company ?? undefined,
         action: { label: "Undo", onClick: () => onRestore(application) },
       });
     } catch (err) {
@@ -227,13 +277,23 @@ export function ApplicationInspector({
               <ArrowLeft className="size-4" />
             </button>
           )}
-          <CompanyAvatar name={job.company?.name ?? "Unknown"} domain={job.company?.domain} size={32} />
+          <CompanyAvatar
+            name={display.company ?? "?"}
+            domain={job.company?.domain}
+            size={32}
+          />
           <div className="min-w-0 flex-1">
             <div className="truncate text-sm font-semibold leading-tight text-[color:var(--color-text)]">
-              {job.company?.name ?? "Unknown company"}
+              {display.company ?? "Company not read yet"}
             </div>
-            <div className="truncate text-xs leading-tight text-[color:var(--color-text-muted)]">
-              {job.title}
+            <div
+              className={
+                display.incomplete
+                  ? "truncate text-xs italic leading-tight text-[color:var(--color-text-dim)]"
+                  : "truncate text-xs leading-tight text-[color:var(--color-text-muted)]"
+              }
+            >
+              {display.title}
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
@@ -260,7 +320,15 @@ export function ApplicationInspector({
               <DropdownMenuContent>
                 <DropdownMenuItem
                   icon={<Sparkles className="size-3.5" />}
-                  onSelect={() => router.push(`/tailor?job_id=${job.id}`)}
+                  // application_id rides along, same as the Documents panel's
+                  // own link below: it is what lets the finished resume link
+                  // back to this application instead of landing in the library
+                  // with nothing here to show for it.
+                  onSelect={() =>
+                    router.push(
+                      `/tailor?job_id=${job.id}&application_id=${application.id}`,
+                    )
+                  }
                 >
                   Tailor a resume
                 </DropdownMenuItem>
@@ -307,7 +375,7 @@ export function ApplicationInspector({
           <Select
             compact
             value={application.status}
-            onChange={(value) => onPatch(application.id, { status: value as AppStatus })}
+            onChange={(value) => void onStatusChange(value as AppStatus)}
             options={STATUS_OPTIONS}
             aria-label="Application stage"
             className="!w-36"
@@ -333,6 +401,37 @@ export function ApplicationInspector({
           reserves this same room for the page; a nested scroller has to
           reserve it again for itself. */}
       <div className="@container min-h-0 flex-1 overflow-y-auto px-4 py-3.5 pb-[calc(4.75rem+env(safe-area-inset-bottom))] lg:pb-3.5">
+        {/* An import that never finished reading is the one thing about this
+            row the user cannot work out for themselves, and every panel below
+            is thin because of it. It goes first, with the action that fixes
+            it, rather than leaving them to wonder why the job has no name. */}
+        {display.incomplete && (
+          <div className="mb-4 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3">
+            <p className="text-xs leading-5 text-[color:var(--color-text-muted)]">
+              {display.note}
+            </p>
+            <div className="mt-2.5 flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={rereading}
+                onClick={onRereadClick}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)] disabled:opacity-50"
+              >
+                <RefreshCw
+                  className={rereading ? "size-3 animate-spin" : "size-3"}
+                />
+                {rereading ? "Reading…" : "Read it again"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setTimeout(() => descriptionRef.current?.focus(), 0)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-border-strong)] hover:text-[color:var(--color-text)]"
+              >
+                Paste the description
+              </button>
+            </div>
+          </div>
+        )}
         <div className="grid grid-cols-1 gap-x-8 gap-y-5 @2xl:grid-cols-[minmax(0,1.15fr)_minmax(0,0.85fr)]">
           {/* Left: the things you read, then the thing you do next. */}
           <div className="flex min-w-0 flex-col gap-5">

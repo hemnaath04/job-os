@@ -25,7 +25,9 @@ import {
   ShieldAlert,
   Sparkles,
 } from "lucide-react";
-import { useState } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
+import { Suspense, useState } from "react";
 import { toast } from "sonner";
 import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
@@ -39,6 +41,7 @@ import {
   type CoverLetterVersion,
 } from "@/lib/cover-letters";
 import { downloadPdf } from "@/lib/download";
+import { jobDisplay } from "@/lib/job-display";
 
 const TONES: { value: CoverLetterTone; label: string }[] = [
   { value: "plain", label: "Plain, flat and factual" },
@@ -46,8 +49,26 @@ const TONES: { value: CoverLetterTone; label: string }[] = [
   { value: "direct", label: "Direct, shortest that makes the case" },
 ];
 
+/**
+ * `?job_id=` support exists so a link from an application lands on this page
+ * with its posting already chosen. A CTA that drops the user at an empty
+ * picker and asks them to find the job they were just looking at is a step
+ * backwards, not a shortcut.
+ *
+ * Suspense because useSearchParams opts the route into client rendering, and
+ * Next requires the boundary to say what shows while it resolves.
+ */
 export default function CoverLettersPage() {
-  const [jobId, setJobId] = useState("");
+  return (
+    <Suspense fallback={<div className="workspace-page max-w-6xl" />}>
+      <CoverLettersView />
+    </Suspense>
+  );
+}
+
+function CoverLettersView() {
+  const searchParams = useSearchParams();
+  const [pickedJobId, setJobId] = useState(() => searchParams.get("job_id") ?? "");
   const [tone, setTone] = useState<CoverLetterTone>("plain");
   const [recipient, setRecipient] = useState("");
   const [version, setVersion] = useState<CoverLetterVersion | null>(null);
@@ -55,6 +76,14 @@ export default function CoverLettersPage() {
   const { data: jobs = [], isLoading: jobsLoading } = useQuery({
     queryKey: ["jobs"],
     queryFn: () => api.listJobs(),
+  });
+  // A letter is written from the master resume's latest version, so a vault
+  // with no master cannot produce one. The backend says so with a 409, which
+  // the user only sees after picking a job, filling in a tone and pressing a
+  // button that was always going to fail. Asked for up front instead.
+  const { data: resumes = [], isLoading: resumesLoading } = useQuery({
+    queryKey: ["resumes"],
+    queryFn: () => api.listResumes(),
   });
 
   const generate = useMutation({
@@ -86,12 +115,52 @@ export default function CoverLettersPage() {
     onError: (error: Error) => toast.error(error.message),
   });
 
+  // The same reading /tailor's picker uses: a row whose import never finished
+  // has no description to answer, so offering it as a choice only produces a
+  // letter about nothing. Hidden here rather than shown and then rejected.
+  const pickableJobs = jobs.filter((job) => !jobDisplay(job).incomplete);
+  // A `?job_id=` for a row that is not offered (deleted since, or an import
+  // that never finished reading) resolves to no selection rather than to a
+  // Select showing a value none of its options carry.
+  const jobId = pickableJobs.some((job) => job.id === pickedJobId) ? pickedJobId : "";
+  const hasMaster = resumes.some((resume) => resume.is_master);
+  const loading = jobsLoading || resumesLoading;
+  // Everything standing between this person and a letter, in the order they
+  // would fix it. Empty means the button works.
+  const blockers = loading
+    ? []
+    : [
+        !hasMaster && {
+          what: "a master resume",
+          why: "A letter is written from the same profile your resume is, so there has to be one to write from.",
+          href: "/resumes",
+          cta: "Add your resume",
+        },
+        pickableJobs.length === 0 && {
+          what: "a saved job",
+          why: "The letter answers one posting. Save a role from Job Finder, or paste one in.",
+          href: "/jobs",
+          cta: "Find a job",
+        },
+      ].filter((entry): entry is Exclude<typeof entry, false> => Boolean(entry));
+  const ready = !loading && blockers.length === 0;
+
   const jobOptions = [
-    { value: "", label: jobsLoading ? "Loading jobs…" : "Pick a job" },
-    ...jobs.map((job) => ({
-      value: job.id,
-      label: [job.title, job.company?.name].filter(Boolean).join(" at "),
-    })),
+    {
+      value: "",
+      label: loading
+        ? "Loading jobs…"
+        : pickableJobs.length === 0
+          ? "No saved jobs yet"
+          : "Pick a job",
+    },
+    ...pickableJobs.map((job) => {
+      const display = jobDisplay(job);
+      return {
+        value: job.id,
+        label: [display.title, display.company].filter(Boolean).join(" at "),
+      };
+    }),
   ];
 
   return (
@@ -107,6 +176,41 @@ export default function CoverLettersPage() {
         <InfoChip tone="clay">Matches your resume template</InfoChip>
       </PageIntro>
 
+      {/* The button below was disabled with no reason given for anyone whose
+          vault could not produce a letter yet, which reads as broken rather
+          than as unfinished. Each blocker names what is missing and links to
+          the page that fixes it. */}
+      {blockers.length > 0 && (
+        <section className="workspace-panel mt-7 p-6">
+          <h2 className="text-sm font-medium">
+            Two things make a letter: your profile, and one job to answer.
+          </h2>
+          <p className="mt-1 text-xs text-[color:var(--color-text-muted)]">
+            {blockers.length === 1
+              ? `You are missing ${blockers[0].what}.`
+              : `You are missing ${blockers.map((b) => b.what).join(" and ")}.`}
+          </p>
+          <ul className="mt-4 space-y-3">
+            {blockers.map((blocker) => (
+              <li
+                key={blocker.href}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-[color:var(--color-border)] bg-[color:var(--color-surface-2)] p-3"
+              >
+                <p className="min-w-0 flex-1 text-xs leading-5 text-[color:var(--color-text-muted)]">
+                  {blocker.why}
+                </p>
+                <Link
+                  href={blocker.href}
+                  className="kinetic-button kinetic-button-secondary shrink-0"
+                >
+                  {blocker.cta}
+                </Link>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
       <section className="workspace-panel mt-7 p-6">
         <div className="grid gap-4 sm:grid-cols-3">
           <Field label="Job" help="The posting this letter answers.">
@@ -116,7 +220,7 @@ export default function CoverLettersPage() {
                 value={jobId}
                 onChange={setJobId}
                 options={jobOptions}
-                disabled={jobsLoading}
+                disabled={loading || pickableJobs.length === 0}
               />
             )}
           </Field>
@@ -149,7 +253,12 @@ export default function CoverLettersPage() {
         <div className="mt-5 flex flex-wrap items-center gap-3">
           <button
             type="button"
-            disabled={!jobId || generate.isPending}
+            disabled={!ready || !jobId || generate.isPending}
+            title={
+              ready
+                ? undefined
+                : "Add the missing pieces above and this turns on."
+            }
             onClick={() => generate.mutate()}
             className="kinetic-button kinetic-button-primary disabled:opacity-50"
           >
@@ -195,12 +304,17 @@ export default function CoverLettersPage() {
         )}
       </section>
 
-      {!version && !generate.isPending && (
+      {/* Only shown once a letter is actually possible. Telling someone with no
+          resume and no saved job to "pick a job above" pointed at a control
+          that had nothing in it, and the one link went to Profile whether or
+          not Profile was the thing missing. The blockers panel above covers
+          that case now, so this can say the one useful thing instead. */}
+      {!version && !generate.isPending && ready && (
         <EmptyState
           icon={FileSignature}
           title="No letter yet"
           description="Pick a job above. The letter is assembled from bullets you have verified, so it can only say things you can defend in an interview."
-          cta={{ href: "/profile", label: "Open Profile" }}
+          cta={{ href: "/profile", label: "Review what is verified" }}
         />
       )}
 

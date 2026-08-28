@@ -4,6 +4,12 @@ import { useSyncExternalStore } from "react";
 import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import type { AgentJobKind } from "@/lib/appwrite/workspace";
 import { setOperationHandler, type RegisteredOperation } from "@/lib/operations-bus";
+import {
+  isUnrecoverablePollError,
+  MAX_AGE_MS,
+  OPERATION_FAILURE,
+  readAgentJob,
+} from "@/lib/operation-outcome";
 
 /**
  * A global, navigation-surviving view of every long-running agent job the app
@@ -30,14 +36,6 @@ const STORAGE_KEY = "operations:v1";
 const TAILOR_ACTIVE_KEY = "tailor:active";
 const TAILOR_LAST_KEY = "tailor:last";
 
-// Generous on purpose: these operations run up to about five minutes, and the
-// whole point of this fix is to not give up before the result lands. The tailor
-// page uses a 20 minute max age; this matches that spirit for every job.
-const MAX_AGE_MS = 25 * 60 * 1_000;
-// A job that never leaves "queued" past this never reached the runtime (a bad
-// dispatch or a crash on boot). Long enough to cover a cold agent, short of the
-// full max age so a dead run is not shown as running for 25 minutes.
-const QUEUED_GRACE_MS = 5 * 60 * 1_000;
 // How long a finished pill stays reachable across a cold reload before it is
 // pruned. Long enough to come back to a result later in the day.
 const DONE_TTL_MS = 12 * 60 * 60 * 1_000;
@@ -253,28 +251,14 @@ function markFailed(id: string, message: string) {
   }));
 }
 
-/**
- * Mark a running operation canceled, on the user's own explicit action.
- *
- * This is the escape hatch dismissOperation deliberately does not have: a
- * page's own Cancel button (e.g. the Tailor page) can only detach itself, it
- * cannot abort the server run, so without this the pill it fed stayed
- * "running" (and therefore un-dismissable) forever even though the person
- * had already left. Same shape as markFailed, an honest "you did this"
- * message instead of a poll-detected error, so the card in the stack now
- * flips to failed and becomes dismissable right away.
- */
-export function cancelOperation(id: string) {
-  updateOp(id, (op) => ({
-    ...op,
-    status: "failed",
-    stage: null,
-    pct: null,
-    href: metaForKind(op.kind).origin(op.input),
-    message: "You canceled this run.",
-    finishedAt: nowIso(),
-  }));
-}
+// There is deliberately no "the user canceled this" path here. A page's own
+// stop-watching control detaches that page and nothing else: it cannot abort a
+// server run, the run goes on to finish, and marking the card failed both said
+// something untrue and stopped the poll that would have delivered the result.
+// See lib/operation-outcome.ts for the whole story. A card that is still
+// running stays running until the server says otherwise or `MAX_AGE_MS`
+// passes, and either way the sentence the user reads describes the run rather
+// than blaming them for it.
 
 // ---- tailor page hand-off (mirror of app/(app)/tailor/page.tsx) -------------
 
@@ -320,52 +304,48 @@ function handOffTailorResult(op: Operation, output: { resume_id?: string; id?: s
 
 async function pollOne(op: Operation) {
   const age = Date.now() - Date.parse(op.startedAt);
-  if (!Number.isFinite(age) || age > MAX_AGE_MS) {
-    markFailed(op.id, "This run timed out. Try again.");
-    return;
-  }
+  let job: Awaited<ReturnType<typeof appwriteWorkspace.getAgentJob>>;
   try {
-    const job = await appwriteWorkspace.getAgentJob(op.id);
-    if (job.status === "succeeded") {
-      if (job.output) {
-        const href = resultHref(op.kind, op.input, job.output);
-        if (op.kind === "resume_tailor") {
-          handOffTailorResult(op, job.output as { resume_id?: string; id?: string });
-        }
-        updateOp(op.id, (current) => ({
-          ...current,
-          status: "done",
-          stage: null,
-          detail: null,
-          pct: null,
-          href,
-          finishedAt: nowIso(),
-        }));
-      } else {
-        markFailed(op.id, "It finished without a result. Try again.");
-      }
-    } else if (job.status === "failed") {
-      markFailed(op.id, job.error || "The agent failed.");
-    } else if (job.status === "queued" && age > QUEUED_GRACE_MS) {
-      markFailed(op.id, "The agent never started this run. Try again.");
-    } else {
-      const stage = job.progress?.stage ?? null;
-      const detail = job.progress?.detail ?? null;
-      const pct = clamp01(job.progress?.pct);
-      updateOp(op.id, (current) =>
-        current.stage === stage && current.detail === detail && current.pct === pct
-          ? current
-          : { ...current, stage, detail, pct },
-      );
-    }
+    job = await appwriteWorkspace.getAgentJob(op.id);
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    // A missing job row cannot be recovered; anything else is treated as a
-    // transient blip and retried next tick, up to the generous max age above.
-    if (/404|not found|could not be found/i.test(message)) {
-      markFailed(op.id, "That run no longer exists. Start a new one.");
+    if (isUnrecoverablePollError(message)) {
+      markFailed(op.id, OPERATION_FAILURE.missing);
     }
+    // Anything else is a transient blip, retried next tick up to MAX_AGE_MS.
+    return;
   }
+  // Every terminal verdict is made in one place, so the sentence the card
+  // shows can never drift from the server state that produced it.
+  const outcome = readAgentJob(job, age);
+  if (outcome.kind === "failed") {
+    markFailed(op.id, outcome.message);
+    return;
+  }
+  if (outcome.kind === "done") {
+    const href = resultHref(op.kind, op.input, job.output);
+    if (op.kind === "resume_tailor") {
+      handOffTailorResult(op, job.output as { resume_id?: string; id?: string });
+    }
+    updateOp(op.id, (current) => ({
+      ...current,
+      status: "done",
+      stage: null,
+      detail: null,
+      pct: null,
+      href,
+      finishedAt: nowIso(),
+    }));
+    return;
+  }
+  const stage = job.progress?.stage ?? null;
+  const detail = job.progress?.detail ?? null;
+  const pct = clamp01(job.progress?.pct);
+  updateOp(op.id, (current) =>
+    current.stage === stage && current.detail === detail && current.pct === pct
+      ? current
+      : { ...current, stage, detail, pct },
+  );
 }
 
 async function tick() {
@@ -418,7 +398,7 @@ function initFromStorage() {
             return {
               ...record,
               status: "failed" as const,
-              message: "This run timed out. Try again.",
+              message: OPERATION_FAILURE.timedOut,
               finishedAt: nowIso(),
             };
           }
@@ -461,10 +441,18 @@ function handleRegistered(registered: RegisteredOperation) {
 // captured. Harmless during SSR: no agent job is created on the server.
 setOperationHandler(handleRegistered);
 
-/** Remove a finished or failed pill. Running pills are not dismissible. */
+/**
+ * Stop showing a card. Says nothing about the run itself.
+ *
+ * Running cards are dismissible too, which is the honest version of what
+ * `cancelOperation` used to provide. Removing a card from a list is not a
+ * claim that anything failed or was canceled, so it can be offered for a
+ * running job without writing down something untrue; the server run carries
+ * on and the version it saves is still in the library. What is lost is only
+ * the shortcut to it, which is the user's own choice to make.
+ */
 export function dismissOperation(id: string) {
-  const op = ops.find((entry) => entry.id === id);
-  if (!op || op.status === "running") return;
+  if (!ops.some((entry) => entry.id === id)) return;
   ops = ops.filter((entry) => entry.id !== id);
   emit();
 }

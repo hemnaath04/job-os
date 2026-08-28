@@ -10,10 +10,10 @@
 // the browser's localStorage, are used once, and are never stored or logged.
 
 import type { DiscoveryResult } from "../types";
+import { MAX_DESCRIPTION_CHARS, toDisplayText } from "./html-text.ts";
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_LIMIT = 60;
-const MAX_DESCRIPTION_CHARS = 6_000;
 /** A runaway endpoint must not be able to fill the function's heap. */
 const MAX_RESPONSE_CHARS = 2_000_000;
 /** However much the endpoint returns, only this many rows are mapped. */
@@ -60,15 +60,18 @@ function toIsoDate(value: unknown): string | null {
   return Number.isNaN(ms) ? null : new Date(ms).toISOString();
 }
 
+/**
+ * A description ready to render, whatever the endpoint sent.
+ *
+ * This used to be a truncate and nothing else, on the assumption that an
+ * endpoint answering a JSON job feed sends text. Half of them send HTML in the
+ * same field: freehire.me's Reddit rows open with a literal `<div>`, and the
+ * open board feeds (which reach this module through `mapJobsPayload`) open with
+ * `<h2>Overview</h2>`. Both were rendered verbatim on the card, and the fit
+ * scorer read the tag names as if they were requirements.
+ */
 function plainText(value: unknown): string {
-  const raw = typeof value === "string" ? value.trim() : "";
-  if (raw.length <= MAX_DESCRIPTION_CHARS) return raw;
-  const cut = raw.slice(0, MAX_DESCRIPTION_CHARS);
-  const lastSpace = cut.lastIndexOf(" ");
-  return (lastSpace > MAX_DESCRIPTION_CHARS * 0.8
-    ? cut.slice(0, lastSpace)
-    : cut
-  ).trimEnd();
+  return toDisplayText(value, MAX_DESCRIPTION_CHARS);
 }
 
 /**

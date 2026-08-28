@@ -40,6 +40,49 @@ export function friendlyStatusText(status: number): string {
   }
 }
 
+/** The last named field in a validation error's `loc`, e.g. `["body","url"] -> "url"`. */
+function fieldFromLoc(loc: unknown): string | null {
+  if (!Array.isArray(loc)) return null;
+  const named = loc.filter(
+    (part): part is string =>
+      typeof part === "string" && !["body", "query", "path", "header"].includes(part),
+  );
+  return named.length > 0 ? named[named.length - 1] : null;
+}
+
+/**
+ * A FastAPI validation error list, as a sentence.
+ *
+ * Each entry carries a `msg` that Pydantic already wrote in English ("Field
+ * required", "String should have at most 200 characters"), so the readable
+ * version is that message against the field it is about. Capped at three,
+ * because a body that fails ten ways is not ten things a person is going to
+ * read off a toast.
+ */
+function fromValidationErrors(entries: unknown[]): string | null {
+  const parts: string[] = [];
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const { msg, loc } = entry as { msg?: unknown; loc?: unknown };
+    if (typeof msg !== "string" || !msg.trim()) continue;
+    const field = fieldFromLoc(loc);
+    parts.push(field ? `${field}: ${msg}` : msg);
+  }
+  if (parts.length === 0) return null;
+  const shown = parts.slice(0, 3).join("; ");
+  const rest = parts.length - 3;
+  return `The server rejected that request. ${shown}${rest > 0 ? ` (and ${rest} more)` : ""}.`;
+}
+
+/** The human sentence inside an object-shaped detail, if it carries one. */
+function fromObjectDetail(value: Record<string, unknown>): string | null {
+  for (const key of ["message", "detail", "error"]) {
+    const candidate = value[key];
+    if (typeof candidate === "string" && candidate.trim()) return candidate.trim();
+  }
+  return null;
+}
+
 /**
  * Turn a failed response's body into the detail text a person should read.
  *
@@ -47,16 +90,22 @@ export function friendlyStatusText(status: number): string {
  * that detail is the plain string a handler wrote (e.g. "...use 'Paste the
  * description' instead."), that string IS the message: it was written for a
  * user to read, and JSON.stringify-ing the whole body around it used to bury
- * it inside a blob that nothing downstream ever unwrapped. A validation
- * error's `detail` is a list of field objects, not a string (and
- * resumes.py's finalize endpoint raises `HTTPException(409, {"message":
- * ..., "review": {...}})`, a dict, for the same reason), so that case (and
- * any other shape) falls back to stringifying the whole parsed body rather
- * than crashing or showing "[object Object]". A non-JSON body is a
- * platform's own error page (Heroku's "Application Error" HTML for a
- * crashed/asleep dyno, a CDN's 502/503/504 page), not anything this app
- * returned, so it gets a friendly, status-specific sentence instead of raw
- * markup.
+ * it inside a blob that nothing downstream ever unwrapped.
+ *
+ * The other two shapes this backend really returns are not strings, and used
+ * to fall through to `JSON.stringify(parsed)` -- which meant the failure toast
+ * printed raw JSON at the user. A 422 showed
+ * `{"detail":[{"type":"missing","loc":["body","url"],...}]}`, and resumes.py's
+ * finalize 409 (`HTTPException(409, {"message": ..., "review": {...}})`)
+ * showed its whole review object, burying the one sentence written for a
+ * person inside it. Both now yield that sentence: the validation entries carry
+ * a Pydantic `msg` in English, and the finalize dict carries `message`.
+ *
+ * Anything left is a shape nobody wrote for a reader, so it gets the friendly,
+ * status-specific sentence rather than its own markup or braces. That is also
+ * what a non-JSON body gets: a platform's own error page (Heroku's
+ * "Application Error" HTML for a crashed or asleep dyno, a CDN's 502/503/504
+ * page) is not anything this app returned.
  */
 export function detailFromErrorBody(status: number, bodyText: string): string {
   let parsed: unknown;
@@ -65,13 +114,21 @@ export function detailFromErrorBody(status: number, bodyText: string): string {
   } catch {
     return friendlyStatusText(status);
   }
-  if (
-    typeof parsed === "object" &&
-    parsed !== null &&
-    "detail" in parsed &&
-    typeof (parsed as { detail?: unknown }).detail === "string"
-  ) {
-    return (parsed as { detail: string }).detail;
+  if (typeof parsed !== "object" || parsed === null) return friendlyStatusText(status);
+
+  const detail = (parsed as { detail?: unknown }).detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail)) {
+    return fromValidationErrors(detail) ?? friendlyStatusText(status);
   }
-  return JSON.stringify(parsed);
+  if (typeof detail === "object" && detail !== null && !Array.isArray(detail)) {
+    return (
+      fromObjectDetail(detail as Record<string, unknown>) ?? friendlyStatusText(status)
+    );
+  }
+  // No `detail` at all: some proxies and route handlers answer with their own
+  // `{"message": ...}` or `{"error": ...}` instead.
+  return (
+    fromObjectDetail(parsed as Record<string, unknown>) ?? friendlyStatusText(status)
+  );
 }

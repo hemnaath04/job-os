@@ -31,25 +31,31 @@ export function OnboardingChecklist() {
   // beats a flash of "all done" that then reveals three unchecked steps.
   if (facts === undefined || resumes === undefined) return null;
 
+  // Written for someone who has never used this, which is the only person who
+  // ever sees it. The old wording named the machinery ("verified facts", "the
+  // canonical resume", "a general-purpose identity") and gave "SWE, ML, AI" as
+  // the examples of a role, which is a whole product's worth of assumption
+  // about who is signing in. Each line now says what the user does and why,
+  // in words that mean the same thing to a nurse and to a backend engineer.
   const steps: Step[] = [
     {
       key: "facts",
-      label: "Add your verified facts",
-      description: "The claims a tailored resume is ever allowed to draw from.",
+      label: "Add what you have done",
+      description: "Your jobs, projects and skills. A tailored resume only writes from these.",
       href: "/profile",
       done: facts.length > 0,
     },
     {
       key: "master",
-      label: "Build your master resume",
-      description: "The canonical resume every tailored version starts from.",
+      label: "Upload your master resume",
+      description: "The one resume every tailored version starts from.",
       href: "/resumes",
       done: resumes.some((r) => r.is_master),
     },
     {
       key: "source",
-      label: "Add a source resume",
-      description: "A general-purpose identity for one kind of role -- SWE, ML, AI.",
+      label: "Add a second resume to build on",
+      description: "A general version for one kind of role you apply to often.",
       href: "/resumes",
       done: resumes.some((r) => !r.is_master),
     },
@@ -70,7 +76,7 @@ export function OnboardingChecklist() {
         </span>
       </div>
       <p className="mt-1 text-xs text-[color:var(--color-text-muted)]">
-        Tailoring and job matching both read from what you set up here -- nothing gets invented.
+        Everything this app writes for you comes from what you add here. Nothing is invented.
       </p>
       <ul className="mt-3 flex flex-col gap-0.5">
         {steps.map((step) => (
