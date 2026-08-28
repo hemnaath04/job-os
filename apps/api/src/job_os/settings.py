@@ -61,6 +61,17 @@ class Settings(BaseSettings):
     clerk_secret_key: str | None = None
     clerk_publishable_key: str | None = None
     clerk_jwks_url: str | None = None
+    #: The `iss` every accepted Clerk session token must carry.
+    #:
+    #: Not optional, and not `None`-able: PyJWT skips issuer validation entirely
+    #: when the issuer it is handed is `None`, so an unset value would silently
+    #: turn the check off rather than fail closed. Overriding it via CLERK_ISSUER
+    #: is how a different Clerk instance is pointed at, not by clearing it.
+    #:
+    #: `azp` is deliberately NOT validated alongside this. The MCP OAuth clients
+    #: added in #75/#78 present varied `azp` values, so pinning one client id
+    #: would lock them out; the issuer is the part that is stable across them.
+    clerk_issuer: str = "https://clerk.jobs.hemnaath.tech"
 
     anthropic_api_key: str | None = None
     anthropic_base_url: str | None = None
