@@ -1,10 +1,13 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { Download, FileSignature, FileText, Sparkles } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Download, FileSignature, FileText, Sparkles, Upload } from "lucide-react";
+import { useRef, useState } from "react";
+import { toast } from "sonner";
 import Link from "next/link";
 import { buildResumeFilename, downloadPdf } from "@/lib/download";
 import { api } from "@/lib/api";
+import { appwriteWorkspace } from "@/lib/appwrite/workspace";
 import { coverLetters } from "@/lib/cover-letters";
 import type { Application } from "@/lib/types";
 
@@ -62,11 +65,16 @@ export function ApplicationDocuments({ application }: { application: Application
     return (
       <div className="flex flex-col gap-2">
         <p className="text-xs text-[color:var(--color-text-dim)]">
-          No resume or cover letter tailored for this application yet.
+          No resume or cover letter for this application yet.
         </p>
-        <Link href={tailorHref} className="product-button product-button-primary w-fit">
-          <Sparkles className="size-3.5" /> Tailor a resume for this role
-        </Link>
+        {/* Wraps rather than sitting in a row: at 390px two buttons side by
+            side leave neither with a readable label. */}
+        <div className="flex flex-wrap gap-2">
+          <Link href={tailorHref} className="product-button product-button-primary">
+            <Sparkles className="size-3.5" /> Tailor a resume
+          </Link>
+          <AttachResume application={application} />
+        </div>
       </div>
     );
   }
@@ -125,6 +133,12 @@ export function ApplicationDocuments({ application }: { application: Application
           </Link>
         )}
       </div>
+      {/* Also offered once something is here: a tailored draft and the file
+          that was actually sent are different documents, and an application
+          often ends up carrying both. */}
+      <div className="pt-1">
+        <AttachResume application={application} />
+      </div>
     </div>
   );
 }
@@ -160,3 +174,65 @@ function DocumentRow({
     </div>
   );
 }
+
+
+/**
+ * Keep a resume written elsewhere against this application.
+ *
+ * Stored as the file it is rather than imported: a resume already tailored
+ * somewhere else is finished work, and parsing it back into a JSON Resume
+ * would invite the page to rebuild something the person is done with.
+ */
+function AttachResume({ application }: { application: Application }) {
+  const queryClient = useQueryClient();
+  const inputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const attach = useMutation({
+    mutationFn: (file: File) =>
+      appwriteWorkspace.attachResumeToApplication(file, {
+        applicationId: application.id,
+        name:
+          [application.job.company?.name, application.job.title]
+            .filter(Boolean)
+            .join(" - ") || file.name.replace(/\.[^.]+$/, ""),
+      }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["resumes"] });
+      toast.success("Resume attached to this application.");
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Could not attach that file."),
+    onSettled: () => setBusy(false),
+  });
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf,.docx"
+        className="sr-only"
+        onChange={(event) => {
+          const file = event.target.files?.[0];
+          // Cleared before the upload starts, so picking the same file twice
+          // in a row still fires a change event the second time.
+          event.target.value = "";
+          if (!file) return;
+          setBusy(true);
+          attach.mutate(file);
+        }}
+      />
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => inputRef.current?.click()}
+        className="product-button disabled:opacity-60"
+      >
+        <Upload className="size-3.5" />
+        {busy ? "Attaching..." : "Attach a resume"}
+      </button>
+    </>
+  );
+}
+

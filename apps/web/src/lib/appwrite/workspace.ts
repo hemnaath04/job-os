@@ -324,6 +324,7 @@ export const appwriteWorkspace = {
     base_role?: string | null;
     is_master?: boolean;
     job_posting_id?: string | null;
+    spawned_from_application_id?: string | null;
   }): Promise<Resume> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
@@ -335,6 +336,7 @@ export const appwriteWorkspace = {
       base_role: input.base_role ?? null,
       is_master: input.is_master ?? false,
       job_posting_id: input.job_posting_id ?? null,
+      spawned_from_application_id: input.spawned_from_application_id ?? null,
       source_kind: "appwrite",
       source_label: null,
       archived_at: null,
@@ -752,7 +754,11 @@ export const appwriteWorkspace = {
   async createVersion(
     resumeId: string,
     jsonResume: JsonResume,
-    options: { revisionNote?: string | null; sourceFilename?: string | null } = {},
+    options: {
+      revisionNote?: string | null;
+      sourceFilename?: string | null;
+      sourceFileId?: string | null;
+    } = {},
   ): Promise<ResumeVersion> {
     await ensureAppwriteSession();
     const config = requirePublicAppwriteConfig();
@@ -771,6 +777,7 @@ export const appwriteWorkspace = {
       review_report: null,
       parent_version_id: null,
       source_filename: options.sourceFilename ?? null,
+      source_file_id: options.sourceFileId ?? null,
       revision_note: options.revisionNote ?? null,
       finalized_at: null,
       archived_at: null,
@@ -1227,6 +1234,42 @@ export const appwriteWorkspace = {
       data: { snapshot: JSON.stringify(bullet) },
     });
     return bullet;
+  },
+
+  /**
+   * Keep a resume that was written somewhere else against one application.
+   *
+   * Deliberately not `uploadResume`, which starts a `resume_import` agent job
+   * and parses the file into a JSON Resume so the tailor can rewrite it. A
+   * resume already tailored elsewhere is finished work: parsing it would
+   * invite the page to rebuild something the person is done with, and the
+   * import can fail on a layout it cannot read. This stores the file as it is
+   * and hangs it off the application, so the pipeline entry shows the document
+   * that was actually sent.
+   */
+  async attachResumeToApplication(
+    file: File,
+    input: { applicationId: string; name: string },
+  ): Promise<Resume> {
+    await ensureAppwriteSession();
+    const config = requirePublicAppwriteConfig();
+    const stored = await getAppwriteServices().storage.createFile({
+      bucketId: config.resumeFilesBucketId,
+      fileId: ID.unique(),
+      file,
+    });
+    const resume = await this.createResume({
+      name: input.name,
+      spawned_from_application_id: input.applicationId,
+    });
+    // An empty JSON Resume: the file is the document, and `source_file_id` is
+    // what the download path reads. Rendering is never asked of this version.
+    await this.createVersion(
+      resume.id,
+      { basics: {} } as JsonResume,
+      { sourceFilename: file.name, sourceFileId: stored.$id },
+    );
+    return resume;
   },
 
   async uploadResume(file: File, isMaster: boolean): Promise<AgentJob> {
