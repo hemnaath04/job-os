@@ -1755,15 +1755,20 @@ def _build_document(
     # Cutting is the decision, and the ranking already knows which one to cut.
     # Done by removing the fact and reassembling rather than by trimming the
     # finished document, so the provenance keeps describing the page that ships.
-    # Shed the cheap lines before shedding evidence. A summary is a sentence
-    # about his work and an unmatched keyword is a word; a project is the work.
-    # His real page came in six lines over, and the loop below would have spent
-    # a whole project to save a summary and thirty keywords the posting never
-    # mentioned.
+    # Shed the cheap lines before shedding evidence, cheapest first. Keywords
+    # the posting never mentioned cost a word each and say nothing; the summary
+    # is a written sentence about his work and the first thing anyone reads; a
+    # project is the work itself.
+    #
+    # These two ran the other way round, and a real AMD co-op page shows what
+    # that buys: the summary was deleted for space while forty-three skill
+    # keywords stayed, filling about a quarter of the page. The run then
+    # flagged the result `thin_page(8 bullets)`, which was correct and is the
+    # tell. The page was full, but full of keywords rather than evidence.
+    #
+    # Skills first, then. The summary only goes if shedding every keyword the
+    # posting did not ask about still leaves the page over.
     page_trims: list[str] = []
-    if estimated_page_lines(json_resume) > MAX_PAGE_LINES and _drop_summary(json_resume):
-        page_trims.append("the summary")
-        log.info("tailor.summary_dropped_for_space")
     if estimated_page_lines(json_resume) > MAX_PAGE_LINES:
         dropped = _trim_skills_to_fit(
             json_resume, requirements or [], MAX_PAGE_LINES
@@ -1773,6 +1778,9 @@ def _build_document(
                 f"{_plural(dropped, 'skill')} this posting did not ask about"
             )
             log.info("tailor.skills_trimmed_for_space", dropped=dropped)
+    if estimated_page_lines(json_resume) > MAX_PAGE_LINES and _drop_summary(json_resume):
+        page_trims.append("the summary")
+        log.info("tailor.summary_dropped_for_space")
 
     page_cuts: list[str] = []
     cut_facts: list[TailorFact] = []
