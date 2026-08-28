@@ -20,6 +20,7 @@ background task started here is one the poller can see the results of.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
@@ -60,6 +61,29 @@ _ATS_SLUG_HOSTS = {
 }
 
 
+# Hosts belonging to a recruiting vendor rather than to the employer. On these
+# the registrable domain names the vendor, so it is the wrong half to read.
+_ATS_VENDOR_HOSTS = (
+    "myworkdayjobs.com",
+    "myworkdaysite.com",
+    "oraclecloud.com",
+    "icims.com",
+    "taleo.net",
+    "successfactors.com",
+    "successfactors.eu",
+    "avature.net",
+    "eightfold.ai",
+)
+
+# Workday puts a routing label beside the tenant: wd1, wd5, wd503.
+_WORKDAY_ROUTING_RE = re.compile(r"wd\d+")
+
+
+def labels_of(host: str) -> list[str]:
+    """Host labels worth reading, with the ones that carry no name removed."""
+    return [label for label in host.split(".") if label not in ("www", "careers", "jobs")]
+
+
 def company_hint_from_url(url: str) -> str | None:
     """A readable company name from the URL alone, or None.
 
@@ -78,10 +102,21 @@ def company_hint_from_url(url: str) -> str | None:
         slug = segments[index].replace("-", " ").replace("_", " ").strip()
         if slug:
             return slug.title()
-    # Not an ATS we know: the registrable-looking part of the host is still
-    # better than nothing, minus the www and the careers subdomain that carry
-    # no information.
-    labels = [label for label in host.split(".") if label not in ("www", "careers", "jobs")]
+    # A host the employer does not own. On these the registrable domain is the
+    # recruiting vendor, and the employer is the leftmost label instead:
+    # workiva.wd503.myworkdayjobs.com is Workiva, not Myworkdayjobs. Taking the
+    # registrable part put "Myworkdayjobs" and "Oraclecloud" on a real board as
+    # company names.
+    if any(host.endswith(vendor) for vendor in _ATS_VENDOR_HOSTS):
+        for label in labels_of(host):
+            # Workday hosts a routing label like wd1/wd503 next to the tenant.
+            if label in ("fa", "hcm") or _WORKDAY_ROUTING_RE.fullmatch(label):
+                continue
+            return label.replace("-", " ").title()
+        return None
+    # Not a vendor host: the registrable-looking part is still better than
+    # nothing, minus the www and careers subdomains that carry no information.
+    labels = labels_of(host)
     if len(labels) >= 2:
         return labels[-2].replace("-", " ").title()
     return None
