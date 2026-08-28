@@ -16,9 +16,9 @@ Recommended Appwrite configuration:
 - Scopes: rows read/write, files read/write
 - Function ID: `job-os-agents`
 
-Set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, the three model variables, and
-the two Manifest tier variables as secret function variables. Appwrite injects
-the project ID, endpoint, and dynamic API key.
+Set `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, the three model variables,
+the two Manifest tier variables, and `ANALYST_EFFORT=medium` as function variables.
+Appwrite injects the project ID, endpoint, and dynamic API key.
 
 ## Tests
 

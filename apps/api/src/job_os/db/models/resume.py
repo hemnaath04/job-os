@@ -92,6 +92,11 @@ class ResumeVersion(UUIDPK, Timestamped, Base):
     latex_source: Mapped[str | None] = mapped_column(Text, nullable=True)
     finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The look this version was tailored/rendered with. Null means the default
+    # bundled template (jakes). Stored on the version rather than re-derived so
+    # every render of it -- tailor completion, finalize, preview, download --
+    # uses the template the user picked, not the default.
+    template_key: Mapped[str | None] = mapped_column(String, nullable=True)
 
 
 class ResumeRevisionMessage(UUIDPK, Timestamped, Base):

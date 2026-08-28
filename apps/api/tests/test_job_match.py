@@ -498,12 +498,36 @@ def test_industry_overlap_costs_nothing_and_a_full_miss_costs_the_axis() -> None
     assert any(line.reason == "industry_mismatch" for line in mismatch.lines)
 
 
-def test_an_unknown_industry_history_costs_less_than_a_known_mismatch() -> None:
-    """No evidence and contrary evidence are different, and priced differently."""
+def test_an_unknown_industry_history_costs_nothing() -> None:
+    """No evidence and contrary evidence are different: one is free, one is not.
+
+    Rewritten deliberately. This used to assert that an unknown industry history
+    cost SOMETHING (less than a mismatch, but more than nothing), and that flat
+    charge was the bug: `build_candidate_profile` has no industry field to fill,
+    so the branch fired on every posting that named an industry and capped a
+    perfect-fit resume at 93 with a gap no rewrite could close.
+
+    A deduction has to mean "the evidence is against you". Silence is not
+    evidence against a candidate, and this axis already charges nothing when the
+    POSTING names no industry -- a profile that names none is the same absence
+    from the other side. Contrary evidence still costs the whole axis.
+    """
     job = load("cisco_cloud_engineer")
     unknown = score_job(job, CandidateProfile.build()).axis("industry")
     mismatch = score_job(job, CandidateProfile.build(industries=["Agriculture"])).axis("industry")
-    assert mismatch.points < unknown.points < AXIS_WEIGHTS["industry"]
+    assert unknown.points == AXIS_WEIGHTS["industry"]
+    assert mismatch.points < unknown.points
+    assert any(line.reason == "industry_history_unknown" for line in unknown.lines)
+    assert all(line.points == 0 for line in unknown.lines)
+
+
+def test_a_perfect_fit_can_now_reach_the_top_of_the_industry_axis() -> None:
+    """The ceiling this unblocks: nothing about an absent industry holds a score down."""
+    job = load("cisco_cloud_engineer")
+    unknown = score_job(job, CandidateProfile.build())
+    assert unknown.axis("industry").points == AXIS_WEIGHTS["industry"]
+    # And the arithmetic still adds up, which is the invariant this file guards.
+    assert 100 + sum(line.points for line in unknown.lines) == unknown.raw_overall
 
 
 # --- bonuses and blockers ---------------------------------------------------

@@ -954,7 +954,9 @@ async def finalize_version(
     from job_os.services.resume_engine import generate_latex_source, review_resume
 
     version = await _load_version(session, resume_id, version_id, user)
-    review, pdf_bytes = await review_resume(version.json_resume)
+    review, pdf_bytes = await review_resume(
+        version.json_resume, template_key=version.template_key
+    )
     version.review_score = review.score
     version.review_report = review.model_dump(mode="json")
     version.pdf_bytes = pdf_bytes
@@ -990,7 +992,9 @@ async def preview_version(
 
     version = await _load_version(session, resume_id, version_id, user)
     try:
-        rendered = await render_resume_pdf_async(version.json_resume)
+        rendered = await render_resume_pdf_async(
+            version.json_resume, template_key=version.template_key
+        )
     except LatexRenderError as exc:
         raise HTTPException(422, f"{exc} {_render_hint(exc)}".strip()) from exc
     return Response(
@@ -1105,7 +1109,9 @@ async def download_version(
     else:
         from job_os.services.latex_render import render_resume_pdf_async
 
-        rendered = await render_resume_pdf_async(version.json_resume)
+        rendered = await render_resume_pdf_async(
+            version.json_resume, template_key=version.template_key
+        )
         pdf_bytes = rendered.bytes_
         # Persist for subsequent clicks. flush() not commit — the session
         # middleware commits at request end.
@@ -1397,12 +1403,15 @@ async def tailor_version(
     try:
         from job_os.services.resume_engine import generate_latex_source, review_resume
 
-        review, pdf_bytes = await review_resume(version.json_resume)
+        review, pdf_bytes = await review_resume(
+            version.json_resume, template_key=payload.template_key
+        )
         version.review_score = review.score
         version.review_report = review.model_dump(mode="json")
         version.status = "reviewed" if review.passed else "needs_changes"
         version.pdf_bytes = pdf_bytes
         version.latex_source = generate_latex_source(version.json_resume)
+        version.template_key = payload.template_key
         await session.flush()
     except Exception as e:  # noqa: BLE001 — render failure is non-fatal
         from structlog import get_logger

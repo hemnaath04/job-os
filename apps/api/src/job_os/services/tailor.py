@@ -91,6 +91,7 @@ from job_os.services.resume_writing import (
     upgrades_status,
 )
 from job_os.services.role_lane import jd_lanes, text_lanes
+from job_os.services.skill_match import alias_variants
 from job_os.settings import get_settings
 
 # SQLAlchemy + ORM models are only needed by the Postgres-backed `tailor_resume`
@@ -314,6 +315,20 @@ inventing experience):
 - Use an important keyword ONCE, in the strongest place, then let the evidence
   carry it. Repeating one JD phrase across the summary, a bullet and the skills
   block is keyword stuffing and it reads as gaming, not as tailoring.
+
+FEW-SHOT BULLET REWRITING EXAMPLES (Follow these exact patterns):
+- Example 1 (Keyword Alignment & Tightening):
+  Original: "Developed and maintained Python backend microservices deployed on Azure Functions with Pinecone vector search for automated semantic query processing."
+  JD Ask: "Experience with RAG pipelines, vector databases, and cloud deployment."
+  Rewrite: "Built a Python RAG pipeline using Pinecone vector databases and deployed serverless microservices on Azure Functions."
+- Example 2 (Team Credit & Action Verb):
+  Original: "Was part of an internal engineering group that created an LLM evaluation framework evaluating model hallucination rates across 500 test cases."
+  JD Ask: "Multi-agent systems, LLM evaluation, and prompt engineering."
+  Rewrite: "Built, with an engineering team, an LLM evaluation harness benchmarking model hallucination rates across 500 test cases."
+- Example 3 (Status Qualification & Metric Preservation):
+  Original: "Prototyped and demoed a real-time data streaming pipeline using Kafka and FastAPI handling 10k events/sec, pending production rollout."
+  JD Ask: "Event-driven architecture with Kafka and streaming data."
+  Rewrite: "Designed and demoed an event-driven streaming pipeline with Kafka and FastAPI processing 10k events/sec, pending production approval."
 
 KEYWORD STUFFING IS A FAILURE, NOT A SHORTCUT. Coverage is a diagnostic, not a
 target. These rewrites are all forbidden even though none of them invents a
@@ -1062,6 +1077,7 @@ async def run_tailor(
         requirements,
         coverage,
         status=_status_briefing(facts, bullets_by_fact),
+        achievable=achievable,
     )
     if project_briefing:
         # Appended rather than folded into `_requirement_briefing` itself: that
@@ -1473,6 +1489,23 @@ async def run_tailor(
     # rather than as the tailor underperforming.
     ats_report["achievable_ats_score"] = float(achievable)
     ats_report["reached_target"] = float(ats_score) >= float(target_score)
+    # The measurement the one-shot work is accountable to. `iterations` has one
+    # entry per composition, so its length IS the number of writer model calls
+    # this run spent: 1 means the first pass was shipped, 2+ means a repair ran.
+    # Telling the writer the ceiling can only make the first pass land closer to
+    # it, and the stop rule is untouched, so this number can fall but not rise.
+    # Logged per run so "did the aim cost us calls" is answerable from the fleet
+    # rather than argued from first principles.
+    log.info(
+        "tailor.model_calls",
+        compose_passes=len(iteration_scores),
+        repaired=len(iteration_scores) > 1,
+        first_pass_score=float(iteration_scores[0]) if iteration_scores else None,
+        final_score=float(ats_score),
+        achievable=float(achievable),
+        target=float(target_score),
+        reached_target=float(ats_score) >= float(target_score),
+    )
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
     # Which arm produced this run, recorded where it cannot be lost. The same
@@ -3687,7 +3720,11 @@ class _Requirement:
     any_of: bool = False
 
     def covered_by(self, resume_text: str) -> bool:
-        return any(_mentions(resume_text, alt) for alt in self.alternatives)
+        return any(
+            _mentions(resume_text, variant)
+            for alt in self.alternatives
+            for variant in alias_variants(alt)
+        )
 
 
 # JD sections that describe what the employer would LIKE, not what the role
@@ -3931,20 +3968,63 @@ def _requirement_coverage(
     bullet it had not selected. Python can say so for free, so it does.
     """
     coverage: dict[str, _Coverage] = {}
+    # P0 instrumentation. Three buckets, because "the resume did not cover this"
+    # has two very different causes and the difference decides what to build
+    # next: evidence the vault genuinely lacks (only the user can close that,
+    # and a gap question is the honest answer) versus evidence the vault holds
+    # under a name this pass did not recognise (our bug, and a silent one --
+    # it lowers `_achievable_ats_score`, which lowers the run's own target, so a
+    # matching miss makes the run stop EARLIER and then blames the candidate).
+    literal_only = 0
+    alias_rescued = 0
+    genuinely_absent = 0
     for requirement in requirements:
         free: list[str] = []
         selectable: list[str] = []
+        matched_literally = False
         for item in evidence:
             haystack = item.text.casefold()
-            if not any(_mentions(haystack, alt) for alt in requirement.alternatives):
+            literal = any(_mentions(haystack, alt) for alt in requirement.alternatives)
+            if not (literal or _mentions_with_aliases(haystack, requirement.alternatives)):
                 continue
+            matched_literally = matched_literally or literal
             bucket = free if item.always_on_page else selectable
             bucket.append(item.where)
+        found = bool(free or selectable)
+        if found and matched_literally:
+            literal_only += 1
+        elif found:
+            alias_rescued += 1
+        else:
+            genuinely_absent += 1
         coverage[requirement.label] = _Coverage(
             free=tuple(free[:_MAX_COVERAGE_CITATIONS]),
             selectable=tuple(selectable[:_MAX_COVERAGE_CITATIONS]),
         )
+    log.info(
+        "tailor.requirement_coverage",
+        requirements=len(requirements),
+        matched_literally=literal_only,
+        matched_via_alias=alias_rescued,
+        absent_from_vault=genuinely_absent,
+    )
     return coverage
+
+
+def _mentions_with_aliases(haystack: str, alternatives: tuple[str, ...]) -> bool:
+    """Whether the text names any alternative, under any name the table knows.
+
+    This pass used to search for the POSTING's wording only, so a vault saying
+    "k8s" against a posting saying "Kubernetes" read as no evidence -- while the
+    scorer, which compares canonical keys, counted the very same pair as a
+    match. Two components disagreeing about whether the candidate has a skill is
+    the bug; `skill_match` is the shared answer.
+    """
+    return any(
+        _mentions(haystack, variant)
+        for alt in alternatives
+        for variant in alias_variants(alt)
+    )
 
 
 @dataclass(frozen=True)
@@ -4751,12 +4831,19 @@ def _requirement_briefing(
     coverage: dict[str, _Coverage],
     *,
     status: str = "",
+    achievable: Decimal | None = None,
 ) -> str:
     """The scoring rubric, handed to the model before it writes anything.
 
     The writer used to guess which terms mattered and find out afterwards. It now
     reads the same list the score is computed from, which is the single change
     that makes a first pass worth shipping.
+
+    `achievable` names the number that list adds up to. The rubric told the
+    writer how it would be scored but never what score to reach, so a pass could
+    satisfy every instruction here and still stop short of what the evidence
+    supported -- and the repair pass existed to notice. Stating the ceiling costs
+    no extra model call: it is already computed before the prompt is built.
     """
     must = [req for req in requirements if not req.preferred]
     bonus = [req for req in requirements if req.preferred]
@@ -4816,6 +4903,23 @@ def _requirement_briefing(
         "failure this tool exists to prevent. A requirement you cannot name "
         "honestly stays a gap_question.",
     ]
+    if achievable is not None and must:
+        reachable = len(must) - len(absent)
+        lines += [
+            "",
+            f"THE NUMBER TO REACH, ON THIS PASS. The evidence can honestly cover "
+            f"{reachable} of the {len(must)} must-haves, which scores "
+            f"{achievable.quantize(Decimal('0.1'))}. That is this posting's ceiling "
+            "and it is this pass's aim. Write as though there is no second pass, "
+            "because there usually is not: reaching it means every requirement "
+            "listed above as already met, or as met if you select the bullet "
+            "carrying it, is on the finished page and still worded that way after "
+            "your rewrite.",
+            "The distance from that number to 100 is evidence the candidate does "
+            "not have. It is not yours to close, and closing it by padding is the "
+            "failure named above. A run that reaches the ceiling honestly has "
+            "done the whole job, whatever the ceiling happens to be.",
+        ]
     if status:
         lines += ["", status]
     return "\n".join(lines)
