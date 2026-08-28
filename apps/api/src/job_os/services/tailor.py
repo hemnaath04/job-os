@@ -3214,7 +3214,16 @@ _NON_SKILL_RE = re.compile(
     # asks of a skill. Crowe's "Ideal for students" scored as a missing
     # skill no resume text could ever satisfy, capping the ATS score
     # regardless of true fit.
-    r"ideal for (?:current )?students?"
+    r"ideal for (?:current )?students?|"
+    # The role type itself. `internships?` above catches the noun but not the
+    # bare word a keywords list actually carries: an AMD co-op posting listed
+    # "Intern" and "Co-op" as keywords and both scored as must-haves the
+    # candidate had failed to match, on a posting that IS an internship.
+    r"interns?|co[- ]?ops?|"
+    # Parse debris. Splitting "Familiarity with cloud (e.g., AWS, GCP, Azure)"
+    # on its punctuation leaves "e.g" behind as its own requirement. It is not
+    # a skill, it is the sentence's own shrapnel.
+    r"e\.g\.?|i\.e\.?|etc\.?"
     r")\b",
     re.I,
 )
