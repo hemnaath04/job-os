@@ -222,6 +222,7 @@ BUILTIN_TEMPLATES: tuple[BuiltinTemplate, ...] = (
             "generalised into the template contract."
         ),
         tags=("single column", "compact", "ats safe", "co-op", "times"),
+        typst_ready=True,
     ),
 )
 

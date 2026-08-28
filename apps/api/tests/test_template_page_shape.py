@@ -143,3 +143,20 @@ def test_the_over_page_flag_uses_the_template_budget_too() -> None:
     # And husky is the stricter of the two: it can never miss a page the
     # default budget already considers over.
     assert not (default_over and not husky_over)
+
+
+def test_husky_renders_through_typst_with_its_own_face() -> None:
+    """The co-op template moved off Tectonic, and the move needs its font.
+
+    `missing_fonts` returns nothing for a template it has no requirement for,
+    so an unlisted template passes it vacuously. husky is listed now, which is
+    what makes this assertion mean something: TeX Gyre Termes is really there
+    and Typst is not quietly substituting a different face.
+    """
+    from job_os.services import typst_render
+    from job_os.services.latex_catalog import builtin
+
+    assert builtin("husky").typst_ready is True
+    assert typst_render.has_builtin("husky") is True
+    assert typst_render.missing_fonts("husky") == []
+    assert "TeX Gyre Termes" in typst_render.available_font_families("husky")
