@@ -75,6 +75,8 @@ export default function McpDocsPage() {
       toc={[
         { id: "connect-claude", label: "Connect from Claude Code" },
         { id: "connect-any", label: "Connect from any MCP client" },
+        { id: "how-auth-works", label: "How the OAuth flow works" },
+        { id: "troubleshooting", label: "When the connection fails" },
         { id: "agent-prompt", label: "Agent instructions" },
         { id: "tools", label: "What's exposed" },
         { id: "for-your-users", label: "Add it for your own users" },
@@ -130,6 +132,84 @@ export default function McpDocsPage() {
           whichever harness you use, the same URL and the same OAuth flow apply. If your
           client&rsquo;s connect flow needs a name for it, <code>job-os</code> is as good as any;
           nothing about the server cares what the client calls it.
+        </p>
+
+        <H2 id="how-auth-works">How the OAuth flow works</H2>
+        <p>
+          You do not need any of this to connect a compliant client, which handles all of it.
+          It matters if you are writing your own client, or working out why one is failing.
+        </p>
+        <ol>
+          <li>
+            Call <code>POST /mcp</code> with no token. It answers <code>401</code> with a{" "}
+            <code>WWW-Authenticate</code> header naming the metadata document.
+          </li>
+          <li>
+            Fetch <code>/.well-known/oauth-protected-resource/mcp</code>. It names the
+            authorization server, <code>clerk.jobs.hemnaath.tech</code>, and the scopes to ask
+            for.
+          </li>
+          <li>
+            <code>POST</code> to that server&rsquo;s <code>/oauth/register</code>. Dynamic client
+            registration is open, so this needs no credentials and returns a{" "}
+            <code>client_id</code>.
+          </li>
+          <li>
+            Send the person to <code>/oauth/authorize</code> with PKCE (<code>S256</code>). They
+            sign in and approve a consent screen.
+          </li>
+          <li>
+            Exchange the code at <code>/oauth/token</code>. Public clients may exchange without a{" "}
+            <code>client_secret</code>, so a CLI or desktop client needs no secret of its own.
+          </li>
+          <li>
+            Send the token as <code>Authorization: Bearer</code> on every call.
+          </li>
+        </ol>
+        <p>
+          The scopes requested are <code>profile</code>, <code>email</code> and{" "}
+          <code>offline_access</code>, and no more. The first two say who you are; every tool
+          scopes its reads and writes to that person and nothing else. The third is what keeps
+          the connection alive: an access token expires after a day and a refresh token never
+          does, so without it an unattended agent would stop working every 24 hours and need
+          someone back at a browser. <code>public_metadata</code> and{" "}
+          <code>private_metadata</code> are deliberately not requested, because no tool here
+          reads them.
+        </p>
+        <p>
+          <strong>A human has to sign in once, per client.</strong> There is no
+          machine-to-machine path: only the authorization-code and refresh-token grants exist,
+          and the server accepts nothing but an OAuth access token, so there are no API keys to
+          issue. That is the point rather than a limitation. The token is issued to you, and an
+          agent holding it can reach your data and no one else&rsquo;s.
+        </p>
+
+        <H2 id="troubleshooting">When the connection fails</H2>
+        <p>
+          Almost every failure lands your browser on a <code>/callback</code> URL carrying an{" "}
+          <code>error</code> and an <code>error_description</code>. Read that description: it is
+          far more specific than whatever the client prints.
+        </p>
+        <p>
+          <code>invalid_scope</code> means the client asked for something it is not allowed. The
+          usual cause is a client that requests <code>openid</code> out of habit, since most
+          OpenID Connect clients always do. This server does not advertise it, because the
+          authorization server grants no client that scope, and asking for it fails only{" "}
+          <em>after</em> you have signed in. If your client insists on sending it, the fix is on
+          the Clerk side: assign <code>openid</code> to the instance&rsquo;s default scopes, then
+          re-register the client, since an existing registration keeps the scopes it was issued
+          with.
+        </p>
+        <p>
+          Worth knowing if you are debugging your own client: the authorization server&rsquo;s{" "}
+          <code>scopes_supported</code> lists what the instance supports, which is wider than
+          what any client may actually request. The <code>scope</code> returned by{" "}
+          <code>/oauth/register</code> is the real list.
+        </p>
+        <p>
+          A failed attempt leaves a registered client cached, so clear it before retrying, or the
+          client will repeat the request that failed. In Claude Code that is{" "}
+          <code>claude mcp logout job-os</code>; elsewhere, remove and re-add the connection.
         </p>
 
         <H2 id="agent-prompt">Agent instructions</H2>
