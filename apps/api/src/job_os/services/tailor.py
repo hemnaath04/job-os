@@ -71,7 +71,6 @@ from job_os.services.llm_json import (
     response_text,
 )
 from job_os.services.resume_writing import (
-    MAX_PAGE_LINES,
     MAX_PROJECT_BULLETS,
     MAX_SKILL_GROUPS,
     MAX_WORK_BULLETS,
@@ -84,6 +83,7 @@ from job_os.services.resume_writing import (
     mentions_word,
     normalize_dashes,
     over_length_bullets,
+    page_shape,
     printed_bullets,
     records_provisional_status,
     split_long_bullet,
@@ -870,6 +870,7 @@ async def run_tailor(
     master_json_resume: dict[str, Any],
     jd_parsed: dict[str, Any],
     jd_clean: str,
+    template_key: str | None = None,
     on_progress: Callable[[TailorStage], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
@@ -1270,6 +1271,7 @@ async def run_tailor(
             requirements=requirements,
             skill_order=skill_order,
             availability=availability,
+            template_key=template_key,
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
@@ -1480,6 +1482,7 @@ async def run_tailor(
         requirements=requirements,
         skill_order=skill_order,
         availability=availability,
+        template_key=template_key,
     )
 
     # Same frozen keyword set the loop used, so the score the user sees is the
@@ -1700,6 +1703,7 @@ def _build_document(
     requirements: list[_Requirement] | None = None,
     skill_order: list[str] | None = None,
     availability: Availability | None = None,
+    template_key: str | None = None,
 ) -> tuple[
     dict[str, Any],
     list[ProvenanceEntry],
@@ -1816,16 +1820,23 @@ def _build_document(
     # Skills first, then. The summary only goes if shedding every keyword the
     # posting did not ask about still leaves the page over.
     page_trims: list[str] = []
-    if estimated_page_lines(json_resume) > MAX_PAGE_LINES:
-        dropped = _trim_skills_to_fit(
-            json_resume, requirements or [], MAX_PAGE_LINES
-        )
+    shape = page_shape(template_key)
+    budget = shape.max_lines
+    if estimated_page_lines(json_resume, template_key) > budget:
+        dropped = _trim_skills_to_fit(json_resume, requirements or [], budget, template_key)
         if dropped:
             page_trims.append(
                 f"{_plural(dropped, 'skill')} this posting did not ask about"
             )
             log.info("tailor.skills_trimmed_for_space", dropped=dropped)
-    if estimated_page_lines(json_resume) > MAX_PAGE_LINES and _drop_summary(json_resume):
+    # Only where the template has a summary to drop. On husky it has none, so
+    # dropping it removes the candidate's opening paragraph and frees no lines
+    # at all; two real runs did exactly that and still came out two pages.
+    if (
+        shape.renders_summary
+        and estimated_page_lines(json_resume, template_key) > budget
+        and _drop_summary(json_resume)
+    ):
         page_trims.append("the summary")
         log.info("tailor.summary_dropped_for_space")
 
@@ -1833,7 +1844,7 @@ def _build_document(
     cut_facts: list[TailorFact] = []
     if project_scores:
         for weakest in _weakest_project_first(selected_facts, project_scores):
-            if estimated_page_lines(json_resume) <= MAX_PAGE_LINES:
+            if estimated_page_lines(json_resume, template_key) <= budget:
                 break
             remaining = [f for f in selected_facts if f.kind == "project"]
             if len(remaining) <= MIN_PROJECTS_ON_PAGE:
@@ -4224,7 +4235,10 @@ MIN_KEPT_SKILLS_ON_PAGE = 20
 
 
 def _trim_skills_to_fit(
-    json_resume: dict[str, Any], requirements: list[_Requirement], budget: int
+    json_resume: dict[str, Any],
+    requirements: list[_Requirement],
+    budget: int,
+    template_key: str | None = None,
 ) -> int:
     """Shed the least relevant skill keywords until the page fits. Returns how many.
 
@@ -4269,7 +4283,7 @@ def _trim_skills_to_fit(
     doomed: set[tuple[int, str]] = set()
     dropped = 0
     for _score, neg_gi, _neg_ki, keyword in ordered:
-        if estimated_page_lines(json_resume) <= budget:
+        if estimated_page_lines(json_resume, template_key) <= budget:
             break
         if total - dropped <= MIN_KEPT_SKILLS_ON_PAGE:
             # The floor #44 established: a skills block gutted below this stops
