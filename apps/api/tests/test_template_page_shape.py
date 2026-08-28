@@ -15,11 +15,15 @@ freed nothing, and still came out two pages.
 """
 from __future__ import annotations
 
+import pytest
+
+from job_os.services.latex_catalog import builtin
 from job_os.services.resume_writing import (
     DEFAULT_PAGE_SHAPE,
     estimated_page_lines,
     page_shape,
 )
+from job_os.services.typst_render import typst_binary
 
 SUMMARY = (
     "Backend engineer building evidence-backed tooling, with two years shipping "
@@ -145,6 +149,9 @@ def test_the_over_page_flag_uses_the_template_budget_too() -> None:
     assert not (default_over and not husky_over)
 
 
+@pytest.mark.skipif(
+    typst_binary() is None, reason="typst is not installed on this machine"
+)
 def test_husky_renders_through_typst_with_its_own_face() -> None:
     """The co-op template moved off Tectonic, and the move needs its font.
 
@@ -154,9 +161,16 @@ def test_husky_renders_through_typst_with_its_own_face() -> None:
     and Typst is not quietly substituting a different face.
     """
     from job_os.services import typst_render
-    from job_os.services.latex_catalog import builtin
+
+    assert typst_render.missing_fonts("husky") == []
+    assert "TeX Gyre Termes" in typst_render.available_font_families("husky")
+
+
+def test_husky_is_registered_as_a_typst_template() -> None:
+    """Needs no binary: this is the catalog flag that lets `_try_typst` pick
+    husky up at all. It was false while the port sat in the tree unusable."""
+    from job_os.services import typst_render
 
     assert builtin("husky").typst_ready is True
     assert typst_render.has_builtin("husky") is True
-    assert typst_render.missing_fonts("husky") == []
-    assert "TeX Gyre Termes" in typst_render.available_font_families("husky")
+
