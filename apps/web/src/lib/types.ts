@@ -279,6 +279,9 @@ export interface ResumeVersionSummary {
   review_report: ResumeReviewResult | null;
   parent_version_id: string | null;
   source_filename: string | null;
+  /** Set when the version IS an uploaded file rather than a rendered one. The
+   *  download path reads this before pdf_file_id. */
+  source_file_id?: string | null;
   revision_note: string | null;
   finalized_at: string | null;
   archived_at: string | null;
