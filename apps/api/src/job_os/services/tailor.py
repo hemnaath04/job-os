@@ -256,6 +256,33 @@ TECHNOLOGY_RE = re.compile(
     re.I,
 )
 
+# The few-shot examples, held apart from SYSTEM_PROMPT because they are the
+# only lines in it that run past the line limit, and a triple-quoted string
+# cannot be wrapped without wrapping the prompt itself. Implicit
+# concatenation keeps the rendered text byte-for-byte what it was.
+_FEW_SHOT_EXAMPLES = (
+    'FEW-SHOT BULLET REWRITING EXAMPLES (Follow these exact patterns):\n'
+    '- Example 1 (Keyword Alignment & Tightening):\n'
+    '  Original: "Developed and maintained Python backend microservices deployed on Azure '
+    'Functions with Pinecone vector search for automated semantic query processing."\n'
+    '  JD Ask: "Experience with RAG pipelines, vector databases, and cloud deployment."\n'
+    '  Rewrite: "Built a Python RAG pipeline using Pinecone vector databases and deployed '
+    'serverless microservices on Azure Functions."\n'
+    '- Example 2 (Team Credit & Action Verb):\n'
+    '  Original: "Was part of an internal engineering group that created an LLM evaluation '
+    'framework evaluating model hallucination rates across 500 test cases."\n'
+    '  JD Ask: "Multi-agent systems, LLM evaluation, and prompt engineering."\n'
+    '  Rewrite: "Built, with an engineering team, an LLM evaluation harness benchmarking '
+    'model hallucination rates across 500 test cases."\n'
+    '- Example 3 (Status Qualification & Metric Preservation):\n'
+    '  Original: "Prototyped and demoed a real-time data streaming pipeline using Kafka and '
+    'FastAPI handling 10k events/sec, pending production rollout."\n'
+    '  JD Ask: "Event-driven architecture with Kafka and streaming data."\n'
+    '  Rewrite: "Designed and demoed an event-driven streaming pipeline with Kafka and '
+    'FastAPI processing 10k events/sec, pending production approval."\n'
+)
+
+
 SYSTEM_PROMPT = """\
 You are a resume tailoring assistant. You receive (a) a parsed job description,
 (b) the candidate's master JSON Resume, (c) the candidate's full profile of
@@ -316,20 +343,7 @@ inventing experience):
   carry it. Repeating one JD phrase across the summary, a bullet and the skills
   block is keyword stuffing and it reads as gaming, not as tailoring.
 
-FEW-SHOT BULLET REWRITING EXAMPLES (Follow these exact patterns):
-- Example 1 (Keyword Alignment & Tightening):
-  Original: "Developed and maintained Python backend microservices deployed on Azure Functions with Pinecone vector search for automated semantic query processing."
-  JD Ask: "Experience with RAG pipelines, vector databases, and cloud deployment."
-  Rewrite: "Built a Python RAG pipeline using Pinecone vector databases and deployed serverless microservices on Azure Functions."
-- Example 2 (Team Credit & Action Verb):
-  Original: "Was part of an internal engineering group that created an LLM evaluation framework evaluating model hallucination rates across 500 test cases."
-  JD Ask: "Multi-agent systems, LLM evaluation, and prompt engineering."
-  Rewrite: "Built, with an engineering team, an LLM evaluation harness benchmarking model hallucination rates across 500 test cases."
-- Example 3 (Status Qualification & Metric Preservation):
-  Original: "Prototyped and demoed a real-time data streaming pipeline using Kafka and FastAPI handling 10k events/sec, pending production rollout."
-  JD Ask: "Event-driven architecture with Kafka and streaming data."
-  Rewrite: "Designed and demoed an event-driven streaming pipeline with Kafka and FastAPI processing 10k events/sec, pending production approval."
-
+{few_shot}
 KEYWORD STUFFING IS A FAILURE, NOT A SHORTCUT. Coverage is a diagnostic, not a
 target. These rewrites are all forbidden even though none of them invents a
 metric:
@@ -478,7 +492,7 @@ wasted the user's time:
 Work through that list before you answer, not after.
 
 Output: a single JSON object matching the provided schema. No prose, no fences.
-"""
+""".replace("{few_shot}", _FEW_SHOT_EXAMPLES)
 
 
 ANALYST_SYSTEM_PROMPT = """\
