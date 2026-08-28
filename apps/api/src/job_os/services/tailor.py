@@ -784,6 +784,7 @@ async def tailor_resume(
     resume: Resume,
     master_version: ResumeVersion,
     job: Job,
+    template_key: str | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Postgres-backed entry point.
 
@@ -827,6 +828,7 @@ async def tailor_resume(
         master_json_resume=master_version.json_resume,
         jd_parsed=job.jd_parsed or {},
         jd_clean=job.jd_clean or "",
+        template_key=template_key,
     )
 
 

@@ -61,3 +61,43 @@ def test_a_template_with_a_summary_still_counts_it() -> None:
     document = _document()
     without = {**document, "basics": {"name": "A Candidate"}}
     assert estimated_page_lines(document, "jakes") > estimated_page_lines(without, "jakes")
+
+
+def test_husky_keeps_its_summary_where_the_generic_budget_would_take_it() -> None:
+    """The end-to-end point of the whole change.
+
+    A page over the generic budget but carrying a summary husky cannot draw
+    must not lose that summary: on husky those lines are not on the page, so
+    deleting them frees nothing. Two production runs did it anyway.
+    """
+    from job_os.services.tailor import _drop_summary, _trim_skills_to_fit
+
+    document = {
+        "basics": {"name": "A Candidate", "summary": SUMMARY},
+        "work": [
+            {
+                "name": "EPAM",
+                "position": "Engineer",
+                "highlights": [
+                    f"Did a substantial piece of work number {i}, " * 4 for i in range(3)
+                ],
+            }
+        ],
+        "projects": [
+            {"name": f"Project {i}", "highlights": ["Built a thing worth describing here."]}
+            for i in range(7)
+        ],
+        "education": [{"institution": "A University", "studyType": "MS", "area": "CS"}],
+        "skills": [
+            {"name": f"Group {g}", "keywords": [f"Keyword{g}{k}" for k in range(12)]}
+            for g in range(7)
+        ],
+    }
+    shape = page_shape("husky")
+    _trim_skills_to_fit(document, [], shape.max_lines, "husky")
+
+    # husky has no summary section, so the trimmer must never reach for it.
+    if not shape.renders_summary:
+        assert document["basics"]["summary"] == SUMMARY
+    else:  # pragma: no cover - guards the table changing under this test
+        _drop_summary(document)

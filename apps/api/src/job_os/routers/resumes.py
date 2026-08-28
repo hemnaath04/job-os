@@ -1382,7 +1382,15 @@ async def tailor_version(
         ats_report,
         agent_note,
     ) = await tailor_resume(
-        session, user=user, resume=resume, master_version=baseline, job=job
+        session,
+        user=user,
+        resume=resume,
+        master_version=baseline,
+        job=job,
+        # The page budget depends on the template: husky holds fewer lines and
+        # has no summary section, so a trim decided without knowing which
+        # template renders it deletes content for a page it cannot measure.
+        template_key=payload.template_key,
     )
 
     version = ResumeVersion(

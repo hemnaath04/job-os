@@ -1235,6 +1235,7 @@ async def _tailor_resume(
         master_json_resume=master_json_resume,
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
+        template_key=payload.get("template_key"),
         on_progress=on_stage,
     )
 
