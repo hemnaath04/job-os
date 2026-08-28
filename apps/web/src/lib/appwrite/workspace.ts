@@ -1292,6 +1292,7 @@ export const appwriteWorkspace = {
     jdParsed: Record<string, unknown>,
     jdClean: string,
     applicationId?: string,
+    templateId?: string | null,
   ): Promise<AgentJob> {
     if (applicationId) {
       try {
@@ -1306,11 +1307,17 @@ export const appwriteWorkspace = {
         });
       }
     }
+    // Resolve the chosen template's row id to its bundled key so the agent
+    // renders the draft with the look the user selected, not the default.
+    const look = templateId
+      ? await this.getTemplateSource(templateId)
+      : null;
     return createAgentJob("resume_tailor", "/resume/tailor", {
       resume_id: resumeId,
       spawned_from_job_id: jobId,
       jd_parsed: jdParsed,
       jd_clean: jdClean,
+      template_key: look?.template_key ?? null,
     });
   },
 

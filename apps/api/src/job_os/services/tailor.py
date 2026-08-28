@@ -71,7 +71,6 @@ from job_os.services.llm_json import (
     response_text,
 )
 from job_os.services.resume_writing import (
-    MAX_PAGE_LINES,
     MAX_PROJECT_BULLETS,
     MAX_SKILL_GROUPS,
     MAX_WORK_BULLETS,
@@ -84,6 +83,7 @@ from job_os.services.resume_writing import (
     mentions_word,
     normalize_dashes,
     over_length_bullets,
+    page_shape,
     printed_bullets,
     records_provisional_status,
     split_long_bullet,
@@ -91,6 +91,7 @@ from job_os.services.resume_writing import (
     upgrades_status,
 )
 from job_os.services.role_lane import jd_lanes, text_lanes
+from job_os.services.skill_match import alias_variants
 from job_os.settings import get_settings
 
 # SQLAlchemy + ORM models are only needed by the Postgres-backed `tailor_resume`
@@ -255,6 +256,33 @@ TECHNOLOGY_RE = re.compile(
     re.I,
 )
 
+# The few-shot examples, held apart from SYSTEM_PROMPT because they are the
+# only lines in it that run past the line limit, and a triple-quoted string
+# cannot be wrapped without wrapping the prompt itself. Implicit
+# concatenation keeps the rendered text byte-for-byte what it was.
+_FEW_SHOT_EXAMPLES = (
+    'FEW-SHOT BULLET REWRITING EXAMPLES (Follow these exact patterns):\n'
+    '- Example 1 (Keyword Alignment & Tightening):\n'
+    '  Original: "Developed and maintained Python backend microservices deployed on Azure '
+    'Functions with Pinecone vector search for automated semantic query processing."\n'
+    '  JD Ask: "Experience with RAG pipelines, vector databases, and cloud deployment."\n'
+    '  Rewrite: "Built a Python RAG pipeline using Pinecone vector databases and deployed '
+    'serverless microservices on Azure Functions."\n'
+    '- Example 2 (Team Credit & Action Verb):\n'
+    '  Original: "Was part of an internal engineering group that created an LLM evaluation '
+    'framework evaluating model hallucination rates across 500 test cases."\n'
+    '  JD Ask: "Multi-agent systems, LLM evaluation, and prompt engineering."\n'
+    '  Rewrite: "Built, with an engineering team, an LLM evaluation harness benchmarking '
+    'model hallucination rates across 500 test cases."\n'
+    '- Example 3 (Status Qualification & Metric Preservation):\n'
+    '  Original: "Prototyped and demoed a real-time data streaming pipeline using Kafka and '
+    'FastAPI handling 10k events/sec, pending production rollout."\n'
+    '  JD Ask: "Event-driven architecture with Kafka and streaming data."\n'
+    '  Rewrite: "Designed and demoed an event-driven streaming pipeline with Kafka and '
+    'FastAPI processing 10k events/sec, pending production approval."\n'
+)
+
+
 SYSTEM_PROMPT = """\
 You are a resume tailoring assistant. You receive (a) a parsed job description,
 (b) the candidate's master JSON Resume, (c) the candidate's full profile of
@@ -315,6 +343,7 @@ inventing experience):
   carry it. Repeating one JD phrase across the summary, a bullet and the skills
   block is keyword stuffing and it reads as gaming, not as tailoring.
 
+{few_shot}
 KEYWORD STUFFING IS A FAILURE, NOT A SHORTCUT. Coverage is a diagnostic, not a
 target. These rewrites are all forbidden even though none of them invents a
 metric:
@@ -463,7 +492,7 @@ wasted the user's time:
 Work through that list before you answer, not after.
 
 Output: a single JSON object matching the provided schema. No prose, no fences.
-"""
+""".replace("{few_shot}", _FEW_SHOT_EXAMPLES)
 
 
 ANALYST_SYSTEM_PROMPT = """\
@@ -755,6 +784,7 @@ async def tailor_resume(
     resume: Resume,
     master_version: ResumeVersion,
     job: Job,
+    template_key: str | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Postgres-backed entry point.
 
@@ -798,6 +828,7 @@ async def tailor_resume(
         master_json_resume=master_version.json_resume,
         jd_parsed=job.jd_parsed or {},
         jd_clean=job.jd_clean or "",
+        template_key=template_key,
     )
 
 
@@ -841,6 +872,7 @@ async def run_tailor(
     master_json_resume: dict[str, Any],
     jd_parsed: dict[str, Any],
     jd_clean: str,
+    template_key: str | None = None,
     on_progress: Callable[[TailorStage], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
@@ -1062,6 +1094,7 @@ async def run_tailor(
         requirements,
         coverage,
         status=_status_briefing(facts, bullets_by_fact),
+        achievable=achievable,
     )
     if project_briefing:
         # Appended rather than folded into `_requirement_briefing` itself: that
@@ -1240,6 +1273,7 @@ async def run_tailor(
             requirements=requirements,
             skill_order=skill_order,
             availability=availability,
+            template_key=template_key,
         )
         frozen_terms.setdefault("matched", list(attempt.ats_keywords_matched))
         frozen_terms.setdefault("missing", list(attempt.ats_keywords_missing))
@@ -1253,6 +1287,7 @@ async def run_tailor(
             document,
             verified_sources=verified_sources,
             vault_evidence=vault_evidence,
+            template_key=template_key,
         )
         if summary_rejection:
             # A refused summary leaves the page without its lede, so it costs the
@@ -1450,6 +1485,7 @@ async def run_tailor(
         requirements=requirements,
         skill_order=skill_order,
         availability=availability,
+        template_key=template_key,
     )
 
     # Same frozen keyword set the loop used, so the score the user sees is the
@@ -1473,6 +1509,23 @@ async def run_tailor(
     # rather than as the tailor underperforming.
     ats_report["achievable_ats_score"] = float(achievable)
     ats_report["reached_target"] = float(ats_score) >= float(target_score)
+    # The measurement the one-shot work is accountable to. `iterations` has one
+    # entry per composition, so its length IS the number of writer model calls
+    # this run spent: 1 means the first pass was shipped, 2+ means a repair ran.
+    # Telling the writer the ceiling can only make the first pass land closer to
+    # it, and the stop rule is untouched, so this number can fall but not rise.
+    # Logged per run so "did the aim cost us calls" is answerable from the fleet
+    # rather than argued from first principles.
+    log.info(
+        "tailor.model_calls",
+        compose_passes=len(iteration_scores),
+        repaired=len(iteration_scores) > 1,
+        first_pass_score=float(iteration_scores[0]) if iteration_scores else None,
+        final_score=float(ats_score),
+        achievable=float(achievable),
+        target=float(target_score),
+        reached_target=float(ats_score) >= float(target_score),
+    )
     # What a human reader would hold against the document, alongside what an ATS
     # would. An empty dict is the good outcome and is worth reporting as such.
     # Which arm produced this run, recorded where it cannot be lost. The same
@@ -1487,6 +1540,7 @@ async def run_tailor(
         json_resume,
         verified_sources=verified_sources,
         vault_evidence=vault_evidence,
+        template_key=template_key,
     )
     # Which of the misses are the candidate's to close. A requirement absent from
     # every verified fact and bullet is not a keyword the writer skipped, and
@@ -1653,6 +1707,7 @@ def _build_document(
     requirements: list[_Requirement] | None = None,
     skill_order: list[str] | None = None,
     availability: Availability | None = None,
+    template_key: str | None = None,
 ) -> tuple[
     dict[str, Any],
     list[ProvenanceEntry],
@@ -1769,16 +1824,23 @@ def _build_document(
     # Skills first, then. The summary only goes if shedding every keyword the
     # posting did not ask about still leaves the page over.
     page_trims: list[str] = []
-    if estimated_page_lines(json_resume) > MAX_PAGE_LINES:
-        dropped = _trim_skills_to_fit(
-            json_resume, requirements or [], MAX_PAGE_LINES
-        )
+    shape = page_shape(template_key)
+    budget = shape.max_lines
+    if estimated_page_lines(json_resume, template_key) > budget:
+        dropped = _trim_skills_to_fit(json_resume, requirements or [], budget, template_key)
         if dropped:
             page_trims.append(
                 f"{_plural(dropped, 'skill')} this posting did not ask about"
             )
             log.info("tailor.skills_trimmed_for_space", dropped=dropped)
-    if estimated_page_lines(json_resume) > MAX_PAGE_LINES and _drop_summary(json_resume):
+    # Only where the template has a summary to drop. On husky it has none, so
+    # dropping it removes the candidate's opening paragraph and frees no lines
+    # at all; two real runs did exactly that and still came out two pages.
+    if (
+        shape.renders_summary
+        and estimated_page_lines(json_resume, template_key) > budget
+        and _drop_summary(json_resume)
+    ):
         page_trims.append("the summary")
         log.info("tailor.summary_dropped_for_space")
 
@@ -1786,7 +1848,7 @@ def _build_document(
     cut_facts: list[TailorFact] = []
     if project_scores:
         for weakest in _weakest_project_first(selected_facts, project_scores):
-            if estimated_page_lines(json_resume) <= MAX_PAGE_LINES:
+            if estimated_page_lines(json_resume, template_key) <= budget:
                 break
             remaining = [f for f in selected_facts if f.kind == "project"]
             if len(remaining) <= MIN_PROJECTS_ON_PAGE:
@@ -3687,7 +3749,11 @@ class _Requirement:
     any_of: bool = False
 
     def covered_by(self, resume_text: str) -> bool:
-        return any(_mentions(resume_text, alt) for alt in self.alternatives)
+        return any(
+            _mentions(resume_text, variant)
+            for alt in self.alternatives
+            for variant in alias_variants(alt)
+        )
 
 
 # JD sections that describe what the employer would LIKE, not what the role
@@ -3931,20 +3997,63 @@ def _requirement_coverage(
     bullet it had not selected. Python can say so for free, so it does.
     """
     coverage: dict[str, _Coverage] = {}
+    # P0 instrumentation. Three buckets, because "the resume did not cover this"
+    # has two very different causes and the difference decides what to build
+    # next: evidence the vault genuinely lacks (only the user can close that,
+    # and a gap question is the honest answer) versus evidence the vault holds
+    # under a name this pass did not recognise (our bug, and a silent one --
+    # it lowers `_achievable_ats_score`, which lowers the run's own target, so a
+    # matching miss makes the run stop EARLIER and then blames the candidate).
+    literal_only = 0
+    alias_rescued = 0
+    genuinely_absent = 0
     for requirement in requirements:
         free: list[str] = []
         selectable: list[str] = []
+        matched_literally = False
         for item in evidence:
             haystack = item.text.casefold()
-            if not any(_mentions(haystack, alt) for alt in requirement.alternatives):
+            literal = any(_mentions(haystack, alt) for alt in requirement.alternatives)
+            if not (literal or _mentions_with_aliases(haystack, requirement.alternatives)):
                 continue
+            matched_literally = matched_literally or literal
             bucket = free if item.always_on_page else selectable
             bucket.append(item.where)
+        found = bool(free or selectable)
+        if found and matched_literally:
+            literal_only += 1
+        elif found:
+            alias_rescued += 1
+        else:
+            genuinely_absent += 1
         coverage[requirement.label] = _Coverage(
             free=tuple(free[:_MAX_COVERAGE_CITATIONS]),
             selectable=tuple(selectable[:_MAX_COVERAGE_CITATIONS]),
         )
+    log.info(
+        "tailor.requirement_coverage",
+        requirements=len(requirements),
+        matched_literally=literal_only,
+        matched_via_alias=alias_rescued,
+        absent_from_vault=genuinely_absent,
+    )
     return coverage
+
+
+def _mentions_with_aliases(haystack: str, alternatives: tuple[str, ...]) -> bool:
+    """Whether the text names any alternative, under any name the table knows.
+
+    This pass used to search for the POSTING's wording only, so a vault saying
+    "k8s" against a posting saying "Kubernetes" read as no evidence -- while the
+    scorer, which compares canonical keys, counted the very same pair as a
+    match. Two components disagreeing about whether the candidate has a skill is
+    the bug; `skill_match` is the shared answer.
+    """
+    return any(
+        _mentions(haystack, variant)
+        for alt in alternatives
+        for variant in alias_variants(alt)
+    )
 
 
 @dataclass(frozen=True)
@@ -4130,7 +4239,10 @@ MIN_KEPT_SKILLS_ON_PAGE = 20
 
 
 def _trim_skills_to_fit(
-    json_resume: dict[str, Any], requirements: list[_Requirement], budget: int
+    json_resume: dict[str, Any],
+    requirements: list[_Requirement],
+    budget: int,
+    template_key: str | None = None,
 ) -> int:
     """Shed the least relevant skill keywords until the page fits. Returns how many.
 
@@ -4175,7 +4287,7 @@ def _trim_skills_to_fit(
     doomed: set[tuple[int, str]] = set()
     dropped = 0
     for _score, neg_gi, _neg_ki, keyword in ordered:
-        if estimated_page_lines(json_resume) <= budget:
+        if estimated_page_lines(json_resume, template_key) <= budget:
             break
         if total - dropped <= MIN_KEPT_SKILLS_ON_PAGE:
             # The floor #44 established: a skills block gutted below this stops
@@ -4751,12 +4863,19 @@ def _requirement_briefing(
     coverage: dict[str, _Coverage],
     *,
     status: str = "",
+    achievable: Decimal | None = None,
 ) -> str:
     """The scoring rubric, handed to the model before it writes anything.
 
     The writer used to guess which terms mattered and find out afterwards. It now
     reads the same list the score is computed from, which is the single change
     that makes a first pass worth shipping.
+
+    `achievable` names the number that list adds up to. The rubric told the
+    writer how it would be scored but never what score to reach, so a pass could
+    satisfy every instruction here and still stop short of what the evidence
+    supported -- and the repair pass existed to notice. Stating the ceiling costs
+    no extra model call: it is already computed before the prompt is built.
     """
     must = [req for req in requirements if not req.preferred]
     bonus = [req for req in requirements if req.preferred]
@@ -4816,6 +4935,23 @@ def _requirement_briefing(
         "failure this tool exists to prevent. A requirement you cannot name "
         "honestly stays a gap_question.",
     ]
+    if achievable is not None and must:
+        reachable = len(must) - len(absent)
+        lines += [
+            "",
+            f"THE NUMBER TO REACH, ON THIS PASS. The evidence can honestly cover "
+            f"{reachable} of the {len(must)} must-haves, which scores "
+            f"{achievable.quantize(Decimal('0.1'))}. That is this posting's ceiling "
+            "and it is this pass's aim. Write as though there is no second pass, "
+            "because there usually is not: reaching it means every requirement "
+            "listed above as already met, or as met if you select the bullet "
+            "carrying it, is on the finished page and still worded that way after "
+            "your rewrite.",
+            "The distance from that number to 100 is evidence the candidate does "
+            "not have. It is not yours to close, and closing it by padding is the "
+            "failure named above. A run that reaches the ceiling honestly has "
+            "done the whole job, whatever the ceiling happens to be.",
+        ]
     if status:
         lines += ["", status]
     return "\n".join(lines)

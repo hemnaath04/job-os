@@ -51,6 +51,7 @@ beside the score, in `blockers`.
 """
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import date
@@ -68,8 +69,14 @@ from job_os.schemas.enrichment import (
     SkillRequirement,
     canonical_skill,
 )
+from job_os.services.skill_match import known_skill_terms, satisfies
 
 Axis = Literal["skills", "experience", "education", "industry", "bonus"]
+
+#: Every skill name the alias table knows, longest first so a bullet naming
+#: "amazon web services" is credited with that rather than stopping at a
+#: shorter overlapping term. Built once at import; this file does no I/O.
+_KNOWN_SKILL_TERMS = known_skill_terms()
 
 BASE_SCORE = 100
 AXIS_WEIGHTS: dict[Axis, int] = {
@@ -141,7 +148,6 @@ EDUCATION_FIELD_MISS = 4
 # feature 0 for a candidate with no matching background. The axis is only 15% of
 # the total precisely because industry transfers well in software, so a zero here
 # is survivable rather than disqualifying.
-INDUSTRY_NO_HISTORY_DEDUCTION = 7
 
 # Bonuses, and the ceiling on all of them together.
 BONUS_CAP = 15
@@ -485,31 +491,18 @@ def _match_requirement(
 ) -> str | None:
     """The candidate skill that satisfies this requirement, or None.
 
-    Exact canonical equality first, then containment: a requirement whose token
-    set fully contains a candidate skill's token set is satisfied by that skill.
-
-    Containment is not a convenience. Real sources name compound requirements,
-    and the Jobright record in the evidence set carries its skills as "Cloud
-    Computing AWS", "Networking TCP/IP" and "Cloud Computing Google Cloud". Pure
-    set intersection scored a candidate with AWS as missing "Cloud Computing
-    AWS", which is both wrong and the kind of wrong a user immediately spots.
-
-    Tokenization is what keeps this from over-matching. "java" does not satisfy
-    "javascript framework", because the candidate's token is `java` and the
-    requirement's tokens are `javascript` and `framework`, and `java` is not
-    among them. Substring matching on raw strings would have matched it.
+    The rule itself is `skill_match.satisfies`, shared with the tailoring
+    coverage pass so the two cannot drift apart. See that module for why each
+    direction is allowed, and why the more-specific-candidate direction is gated
+    on a multi-token requirement.
     """
     if requirement.canonical in candidate.skills:
         return requirement.canonical
-    requirement_tokens = frozenset(requirement.canonical.split(" "))
-    if len(requirement_tokens) < 2:
-        return None
     # Longest candidate skill wins, so "google cloud" beats "cloud" on a
     # requirement that contains both and the attribution names the better one.
     best: str | None = None
     for skill in candidate.skills:
-        tokens = frozenset(skill.split(" "))
-        if tokens <= requirement_tokens and (best is None or len(skill) > len(best)):
+        if satisfies(requirement.canonical, skill) and (best is None or len(skill) > len(best)):
             best = skill
     return best
 
@@ -858,10 +851,23 @@ def _score_industry(job: JobEnrichment, candidate: CandidateProfile) -> AxisScor
 
     readable = _readable_list([job.company_industry or "", *job.company_domains])
     if not candidate.industries:
-        budget.deduct(
-            INDUSTRY_NO_HISTORY_DEDUCTION,
+        # Unknown is not a mismatch. `build_candidate_profile` has no industry
+        # field to fill (see its docstring), so this branch fired on EVERY
+        # posting that named an industry -- a flat, uncorrectable -7 that put a
+        # perfect-fit resume's ceiling at 93 and left the user with a gap no
+        # rewrite could close and no explanation of why.
+        #
+        # A deduction has to mean "the evidence is against you". Silence about
+        # an industry is not evidence against a candidate, and this axis already
+        # treats a posting that names no industry as costing nothing; a profile
+        # that names none is the same absence seen from the other side. A real
+        # mismatch -- both sides stated, no overlap -- still costs the axis
+        # below, which is the case this deduction was actually written for.
+        budget.note(
             "industry_history_unknown",
-            f"this role is in {readable} and the profile records no industry history",
+            f"this role is in {readable}; the profile records no industry history "
+            "either way, so this is not counted for or against the fit",
+            subject=readable,
         )
         return budget.finish(weight)
 
@@ -1105,6 +1111,23 @@ def _seniority_from_years(years: float) -> Seniority:
 _MANAGEMENT_TITLE_TERMS = ("manager", "lead", "head of", "director", "chief", "vp ", "vp,")
 
 
+def _skill_terms_in(text: str) -> list[str]:
+    """Skill names the alias table already knows, as written in this text.
+
+    Word-boundary matched rather than substring: "Go" must not be found inside
+    "MongoDB", and "R" must not be found inside every sentence. The same lesson
+    `tailor._mentions` records, applied to the scorer's side of the match.
+    """
+    if not text:
+        return []
+    haystack = text.casefold()
+    return [term for term in _KNOWN_SKILL_TERMS if _mentions_term(haystack, term)]
+
+
+def _mentions_term(haystack: str, term: str) -> bool:
+    return bool(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", haystack))
+
+
 def build_candidate_profile(facts: Sequence[ProfileFact]) -> CandidateProfile:
     """The only supported way to turn a user's profile facts into a
     `CandidateProfile`, so every caller canonicalizes and degrades the same way.
@@ -1127,6 +1150,23 @@ def build_candidate_profile(facts: Sequence[ProfileFact]) -> CandidateProfile:
             skills.append(fact.title)
         if fact.kind in ("experience", "project"):
             skills.extend(str(k) for k in (fact.payload or {}).get("keywords") or [])
+        # The bullets are where the work is actually described, and until now
+        # this function could not see them: a fact whose bullet says "built the
+        # retrieval service in FastAPI" contributed FastAPI to the resume the
+        # tailor writes and nothing at all to the score, so the same vault read
+        # as strong on the page and thin in the ranking. The tailoring coverage
+        # pass has always searched bullet text; this is the scorer catching up.
+        #
+        # Only the alias table's own surface forms are harvested, not every word
+        # in the bullet. A bullet is prose, and crediting the candidate with
+        # every noun in it would inflate every score at once -- "reduced cost"
+        # is not the skill "cost". Matching against known skill names keeps this
+        # to terms someone already decided were skills.
+        #
+        # `bullets` is lazy="selectin" on the model, so it is already loaded
+        # here and this adds no query.
+        for bullet in fact.bullets:
+            skills.extend(_skill_terms_in(bullet.text))
 
     today = date.today()
     years_experience = 0.0

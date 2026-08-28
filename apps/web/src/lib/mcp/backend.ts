@@ -10,11 +10,6 @@
 const API = process.env.API_BASE_URL ?? "http://localhost:8000";
 
 export class BackendError extends Error {
-  // Assigned in the body rather than declared as a constructor parameter
-  // property: this module has no imports, which is what lets Node's own test
-  // runner load it directly, and its strip-only TypeScript mode rejects
-  // parameter properties. Same reasoning, and the same shape, as ApiError in
-  // lib/api-error.ts.
   readonly status: number;
 
   constructor(status: number, message: string) {
@@ -74,7 +69,9 @@ export async function callBackend(
   const data = readJsonBody(resp.status, resp.statusText, text);
 
   if (!resp.ok) {
-    const detail = (data as { detail?: string } | null)?.detail ?? resp.statusText;
+    const detail =
+      (data as { detail?: string } | null)?.detail ??
+      (typeof data === "string" ? data : text ? text.slice(0, 300) : resp.statusText);
     throw new BackendError(resp.status, detail);
   }
   return data;
@@ -118,7 +115,9 @@ export async function callBackendMultipart(
   const data = readJsonBody(resp.status, resp.statusText, text);
 
   if (!resp.ok) {
-    const detail = (data as { detail?: string } | null)?.detail ?? resp.statusText;
+    const detail =
+      (data as { detail?: string } | null)?.detail ??
+      (typeof data === "string" ? data : text ? text.slice(0, 300) : resp.statusText);
     throw new BackendError(resp.status, detail);
   }
   return data;
@@ -127,6 +126,29 @@ export async function callBackendMultipart(
 const MAX_FETCHED_FILE_BYTES = 25 * 1024 * 1024; // 25MB — a resume PDF/DOCX is nowhere near this.
 const FETCH_TIMEOUT_MS = 20_000;
 const BLOCKED_HOSTNAMES = new Set(["localhost", "metadata.google.internal", "169.254.169.254"]);
+
+function isPrivateIpv4(host: string): boolean {
+  const parts = host.split(".");
+  if (parts.length !== 4) return false;
+  const octets = parts.map((p) => Number(p));
+  if (octets.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = octets;
+  if (a === 0 || a === 127 || a === 10) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  return false;
+}
+
+function isPrivateIpv6(host: string): boolean {
+  if (host === "::1" || host === "::") return true;
+  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
+  if (host.startsWith("::ffff:")) {
+    const ipv4Part = host.substring(7);
+    return isPrivateIpv4(ipv4Part);
+  }
+  return false;
+}
 
 /**
  * Deliberate copy of the guard in lib/discover/custom-fetch.ts rather than an
@@ -146,14 +168,25 @@ function assertFetchableUrl(raw: string): URL {
   const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
   if (BLOCKED_HOSTNAMES.has(host)) throw new Error("blocked host");
   if (host.endsWith(".local") || host.endsWith(".internal")) throw new Error("blocked host");
-  const parts = host.split(".");
-  if (parts.length === 4 && parts.every((p) => /^\d+$/.test(p))) {
-    const [a, b] = parts.map(Number);
-    if (a === 0 || a === 127 || a === 10 || (a === 169 && b === 254) || (a === 192 && b === 168) || (a === 172 && b >= 16 && b <= 31)) {
-      throw new Error("blocked host");
-    }
-  }
+  if (isPrivateIpv4(host) || isPrivateIpv6(host)) throw new Error("blocked host");
   return url;
+}
+
+const MAX_REDIRECTS = 3;
+
+async function fetchFollowingValidatedRedirects(
+  start: URL,
+  init: RequestInit,
+): Promise<Response> {
+  let current = start;
+  for (let hop = 0; ; hop++) {
+    const res = await fetch(current, { ...init, redirect: "manual" });
+    if (res.status < 300 || res.status >= 400) return res;
+    const location = res.headers.get("location");
+    if (!location) return res;
+    if (hop >= MAX_REDIRECTS) throw new Error("too many redirects");
+    current = assertFetchableUrl(new URL(location, current).toString());
+  }
 }
 
 /**
@@ -170,7 +203,7 @@ export async function fetchExternalFile(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const resp = await fetch(url, { signal: controller.signal, cache: "no-store" });
+    const resp = await fetchFollowingValidatedRedirects(url, { signal: controller.signal, cache: "no-store" });
     if (!resp.ok) throw new Error(`could not fetch source_url (HTTP ${resp.status})`);
     const contentLength = resp.headers.get("content-length");
     if (contentLength && Number(contentLength) > MAX_FETCHED_FILE_BYTES) {

@@ -51,6 +51,10 @@ class ResumeVersionSummary(TimestampedRead):
     revision_note: str | None = None
     finalized_at: datetime | None = None
     archived_at: datetime | None = None
+    # The look this version was rendered with. Null means the default bundled
+    # template. Surfaced so clients can render/preview the version with the same
+    # template the user picked instead of silently reverting to the default.
+    template_key: str | None = None
 
 
 class ResumeVersionRead(ResumeVersionSummary):
@@ -390,6 +394,10 @@ class ProvenanceEntry(BaseModel):
 
 class TailorRequest(ORMModel):
     job_id: UUID
+    # Which look to render the tailored PDF with. Null (or omitted) means the
+    # default bundled template. Persisted on the created version so finalize,
+    # preview and download reuse the same look the user picked at tailor time.
+    template_key: str | None = None
 
 
 class TailorResponse(ResumeVersionRead):

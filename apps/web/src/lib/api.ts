@@ -685,10 +685,14 @@ const legacyApi = {
     return URL.createObjectURL(blob);
   },
 
-  tailorResume: (resumeId: string, jobId: string) =>
+  tailorResume: (
+    resumeId: string,
+    jobId: string,
+    templateKey?: string | null,
+  ) =>
     request<TailorResponse>(`/resumes/${resumeId}/versions/tailor`, {
       method: "POST",
-      body: JSON.stringify({ job_id: jobId }),
+      body: JSON.stringify({ job_id: jobId, template_key: templateKey ?? null }),
     }),
 
   /**
@@ -1475,16 +1479,23 @@ export const api = {
     resumeId: string,
     jobId: string,
     applicationId?: string,
+    templateId?: string | null,
   ): Promise<TailorResponse> {
     if (!isAppwriteWorkspaceEnabled) {
-      return legacyApi.tailorResume(resumeId, jobId);
+      // Resolve the chosen template's row id to its bundled key before sending,
+      // so the Postgres tailor endpoint renders with the look the user picked
+      // instead of the default. An unknown/absent template falls back to null.
+      const look = templateId
+        ? await appwriteWorkspace.getTemplateSource(templateId)
+        : null;
+      return legacyApi.tailorResume(resumeId, jobId, look?.template_key ?? null);
     }
     // Job postings still live in Postgres, so fetch the JD here and hand it to
     // the Appwrite tailor agent, which has the resume + verified facts but not
     // the job posting.
     // `jd_clean` comes back from this single-job fetch (JobDetailRead) and not
     // from the jobs list. It used to be sent as "", so the agent's writer and
-    // analyst saw the parsed JSON and an empty <jd> block on every run.
+    // the analyst saw the parsed JSON and an empty <jd> block on every run.
     const job = await legacyApi.getJob(jobId);
     const agentJob = await appwriteWorkspace.tailorResume(
       resumeId,
@@ -1492,6 +1503,7 @@ export const api = {
       (job.jd_parsed ?? {}) as Record<string, unknown>,
       job.jd_clean ?? "",
       applicationId,
+      templateId,
     );
     const version = await waitForAgentJob<TailorResponse>(agentJob);
     appwriteWorkspace.registerVersionFile(version);

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test, { afterEach } from "node:test";
-import { BackendError, callBackend } from "./backend.ts";
+import { BackendError, callBackend, fetchExternalFile } from "./backend.ts";
 
 /**
  * A JSON tool never hands its caller an HTML page or a parser crash.
@@ -104,4 +104,63 @@ test("a 204 and an empty body are both null rather than a parse error", async ()
 
   respondWith(200, "");
   assert.equal(await callBackend("tok", "GET", "/applications"), null);
+});
+
+function stubRedirectingTo(to: string): { seen: string[] } {
+  const seen: string[] = [];
+  globalThis.fetch = (async (input: URL | RequestInfo) => {
+    const url = String(input);
+    seen.push(url);
+    if (seen.length === 1) {
+      return new Response(null, { status: 302, headers: { location: to } });
+    }
+    return new Response(
+      "fake file content",
+      { status: 200, headers: { "content-type": "application/pdf", "content-length": "17" } }
+    );
+  }) as typeof globalThis.fetch;
+  return { seen };
+}
+
+test("MCP fetchExternalFile: a redirect to cloud metadata is refused, and never requested", async () => {
+  const target = "http://169.254.169.254/latest/meta-data/";
+  const { seen } = stubRedirectingTo(target);
+
+  await assert.rejects(
+    fetchExternalFile("https://trusted.com/resume.pdf"),
+  );
+  assert.equal(seen.length, 1, "followed the redirect instead of stopping");
+  assert.ok(!seen.some((u) => u.includes("169.254.169.254")));
+});
+
+test("MCP fetchExternalFile: a redirect to loopback is refused", async () => {
+  const { seen } = stubRedirectingTo("http://127.0.0.1:8000/api/v1/me");
+  await assert.rejects(
+    fetchExternalFile("https://trusted.com/resume.pdf"),
+  );
+  assert.equal(seen.length, 1);
+});
+
+test("MCP fetchExternalFile: a redirect downgrading to plain http is refused", async () => {
+  const { seen } = stubRedirectingTo("http://trusted.com/resume.pdf");
+  await assert.rejects(
+    fetchExternalFile("https://trusted.com/resume.pdf"),
+  );
+  assert.equal(seen.length, 1);
+});
+
+test("MCP fetchExternalFile: a redirect to a private address is refused", async () => {
+  const { seen } = stubRedirectingTo("https://10.0.0.1/internal");
+  await assert.rejects(
+    fetchExternalFile("https://trusted.com/resume.pdf"),
+  );
+  assert.equal(seen.length, 1);
+});
+
+test("MCP fetchExternalFile: an ordinary redirect between public https hosts still works", async () => {
+  const { seen } = stubRedirectingTo("https://cdn.trusted.com/resume.pdf");
+  const out = await fetchExternalFile("https://trusted.com/resume.pdf");
+  assert.equal(seen.length, 2, "did not follow the safe redirect");
+  assert.ok(seen[1].startsWith("https://cdn.trusted.com/"));
+  assert.equal(new TextDecoder().decode(out.bytes), "fake file content");
 });

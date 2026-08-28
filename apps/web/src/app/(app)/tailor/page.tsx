@@ -560,7 +560,12 @@ function TailorInner() {
       if (!isAppwriteWorkspaceEnabled) {
         const target = await resolveTargetResume(await api.getJob(jobId));
         setResumeId(target.id);
-        const version = await api.tailorResume(target.id, jobId, applicationId);
+        const version = await api.tailorResume(
+          target.id,
+          jobId,
+          applicationId,
+          templateId || undefined,
+        );
         return { kind: "done" as const, version };
       }
       // Job postings still live in Postgres, so fetch the JD here and hand it to
@@ -607,6 +612,7 @@ function TailorInner() {
           jdParsed,
           jdClean,
           applicationId,
+          templateId || undefined,
         ),
         TAILOR_DISPATCH_TIMEOUT_MS,
         "Could not start the tailoring run. Check your connection and try again.",

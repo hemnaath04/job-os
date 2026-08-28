@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import Any
 
 # One idea per bullet, one or two rendered lines. Past this, a bullet wraps to a
@@ -65,6 +66,46 @@ MIN_PAGE_BULLETS = 9
 # which spills first. Going lower would cost page fill on documents that
 # demonstrably fit.
 MAX_PAGE_LINES = 47
+
+
+@dataclass(frozen=True)
+class PageShape:
+    """What one page of a given template actually holds.
+
+    The estimator used to model a generic resume and hand the same number to
+    every template, which is wrong in both directions at once. Measured against
+    real renders of one AMD co-op document: the six Typst templates carry 47
+    comfortably and the tightest of them, jakes, only spills at 49, while husky
+    goes to two pages somewhere above 42. So 47 was right for most of them and
+    too generous for the one the co-op resume uses.
+
+    `renders_summary` is the other half, and the more expensive mistake. husky
+    has no resume-level summary section at all -- its sections are Education,
+    Technical Skills, Professional Experience, Projects -- so counting summary
+    lines toward its page, and then deleting the summary to save them, removes
+    the candidate's opening paragraph and frees nothing. That happened on two
+    real runs, and both still came out two pages.
+    """
+
+    max_lines: int
+    renders_summary: bool = True
+
+
+DEFAULT_PAGE_SHAPE = PageShape(max_lines=MAX_PAGE_LINES)
+
+#: Measured by rendering the same document at a range of estimator values and
+#: reading the page count back, per template. Anything absent takes the default.
+PAGE_SHAPES: dict[str, PageShape] = {
+    # Tectonic, Times at 11pt, and denser than the Typst set.
+    "husky": PageShape(max_lines=41, renders_summary=False),
+}
+
+
+def page_shape(template_key: str | None) -> PageShape:
+    """The page budget and section list for a template, or the default."""
+    if not template_key:
+        return DEFAULT_PAGE_SHAPE
+    return PAGE_SHAPES.get(template_key, DEFAULT_PAGE_SHAPE)
 # Words a bullet fits on one line in the one-page template.
 WORDS_PER_RENDERED_LINE = 13
 
@@ -963,6 +1004,7 @@ def document_quality_flags(
     *,
     verified_sources: Iterable[str] = (),
     vault_evidence: Iterable[str] = (),
+    template_key: str | None = None,
 ) -> dict[str, list[str]]:
     """Every writing problem in an assembled resume, keyed by where it lives.
 
@@ -1055,9 +1097,12 @@ def document_quality_flags(
     if rendered_bullets < MIN_PAGE_BULLETS:
         page.append(f"thin_page({rendered_bullets} bullets)")
     else:
-        lines = estimated_page_lines(document)
-        if lines > MAX_PAGE_LINES:
-            page.append(f"over_page({lines} of {MAX_PAGE_LINES} lines)")
+        # Against the template's own budget, not the generic one. Flagging
+        # husky at 47 reports a page as fine at a length that renders two.
+        budget = page_shape(template_key).max_lines
+        lines = estimated_page_lines(document, template_key)
+        if lines > budget:
+            page.append(f"over_page({lines} of {budget} lines)")
     page.extend(page_opener_flags(document, verified_sources=sources))
     if page:
         found["page"] = page
@@ -1090,7 +1135,9 @@ def printed_bullets(document: dict[str, Any]) -> int:
     )
 
 
-def estimated_page_lines(document: dict[str, Any]) -> int:
+def estimated_page_lines(
+    document: dict[str, Any], template_key: str | None = None
+) -> int:
     """Rendered lines the whole page will take, close enough to budget by.
 
     It used to count the roles and projects and nothing else, which is most of
@@ -1113,8 +1160,12 @@ def estimated_page_lines(document: dict[str, Any]) -> int:
 
     # The lede. Prose at the top of the page, and on a real resume it is three
     # lines, not zero.
-    summary = (document.get("basics") or {}).get("summary")
-    lines += _wrapped(summary)
+    # Only where the template has somewhere to put it. Counting a summary that
+    # husky will not draw inflates the estimate and then invites the trimmer to
+    # delete the summary to recover lines the page never spent.
+    if page_shape(template_key).renders_summary:
+        summary = (document.get("basics") or {}).get("summary")
+        lines += _wrapped(summary)
 
     for section in ("work", "projects", "volunteer"):
         entries = document.get(section) or []
