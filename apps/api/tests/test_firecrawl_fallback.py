@@ -86,7 +86,9 @@ async def test_a_fetch_failure_lands_on_the_row_instead_of_the_request(
 
     monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", boom)
     scheduled: list[object] = []
-    monkeypatch.setattr(jd_ingest, "schedule_job_parse", scheduled.append)
+    monkeypatch.setattr(
+        jd_ingest, "schedule_job_parse", lambda job_id, owner_id=None: scheduled.append(job_id)
+    )
     monkeypatch.setattr(jobs_router, "_load_job", jobs_router._load_job)
 
     job = await jobs_router.create_from_url(

@@ -57,7 +57,13 @@ def no_scheduling(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
     about to roll back.
     """
     started: list[Any] = []
-    monkeypatch.setattr(jd_ingest, "schedule_job_parse", started.append)
+
+    # Takes the owner too now: the deferred parse writes the board card, and
+    # the card table is multi-tenant, so it has to know whose board.
+    def _record(job_id: Any, owner_id: Any = None) -> None:
+        started.append(job_id)
+
+    monkeypatch.setattr(jd_ingest, "schedule_job_parse", _record)
     return started
 
 
@@ -291,8 +297,15 @@ async def test_reparse_returns_a_job_that_can_actually_be_serialised(
         ("https://jobs.lever.co/attentive/abc-123", "Attentive"),
         ("https://jobs.ashbyhq.com/openai/xyz", "Openai"),
         ("https://apply.workable.com/some-co/j/ABC/", "Some Co"),
-        # Not an ATS we know: the host is still better than "Unknown".
         ("https://careers.stripe.com/jobs/1", "Stripe"),
+        # Vendor-hosted: the registrable domain is the recruiting vendor, and
+        # the employer is the leftmost label. Reading the wrong half put
+        # "Myworkdayjobs" and "Oraclecloud" on a real board as company names.
+        (
+            "https://workiva.wd503.myworkdayjobs.com/careers/job/Summer-2027-Intern_R1",
+            "Workiva",
+        ),
+        ("https://acme.wd1.myworkdayjobs.com/en-US/careers/job/X", "Acme"),
         ("https://www.example.com/careers/1", "Example"),
         # Nothing usable rather than something wrong.
         ("not a url", None),

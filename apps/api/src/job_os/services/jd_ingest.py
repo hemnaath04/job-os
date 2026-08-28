@@ -20,6 +20,8 @@ background task started here is one the poller can see the results of.
 from __future__ import annotations
 
 import asyncio
+import json
+import re
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
@@ -31,6 +33,7 @@ from sqlalchemy.orm import joinedload
 from job_os.db.models import Job
 from job_os.db.session import async_session
 from job_os.services.job_backfill import parse_has_signal
+from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
 
@@ -60,6 +63,29 @@ _ATS_SLUG_HOSTS = {
 }
 
 
+# Hosts belonging to a recruiting vendor rather than to the employer. On these
+# the registrable domain names the vendor, so it is the wrong half to read.
+_ATS_VENDOR_HOSTS = (
+    "myworkdayjobs.com",
+    "myworkdaysite.com",
+    "oraclecloud.com",
+    "icims.com",
+    "taleo.net",
+    "successfactors.com",
+    "successfactors.eu",
+    "avature.net",
+    "eightfold.ai",
+)
+
+# Workday puts a routing label beside the tenant: wd1, wd5, wd503.
+_WORKDAY_ROUTING_RE = re.compile(r"wd\d+")
+
+
+def labels_of(host: str) -> list[str]:
+    """Host labels worth reading, with the ones that carry no name removed."""
+    return [label for label in host.split(".") if label not in ("www", "careers", "jobs")]
+
+
 def company_hint_from_url(url: str) -> str | None:
     """A readable company name from the URL alone, or None.
 
@@ -78,10 +104,21 @@ def company_hint_from_url(url: str) -> str | None:
         slug = segments[index].replace("-", " ").replace("_", " ").strip()
         if slug:
             return slug.title()
-    # Not an ATS we know: the registrable-looking part of the host is still
-    # better than nothing, minus the www and the careers subdomain that carry
-    # no information.
-    labels = [label for label in host.split(".") if label not in ("www", "careers", "jobs")]
+    # A host the employer does not own. On these the registrable domain is the
+    # recruiting vendor, and the employer is the leftmost label instead:
+    # workiva.wd503.myworkdayjobs.com is Workiva, not Myworkdayjobs. Taking the
+    # registrable part put "Myworkdayjobs" and "Oraclecloud" on a real board as
+    # company names.
+    if any(host.endswith(vendor) for vendor in _ATS_VENDOR_HOSTS):
+        for label in labels_of(host):
+            # Workday hosts a routing label like wd1/wd503 next to the tenant.
+            if label in ("fa", "hcm") or _WORKDAY_ROUTING_RE.fullmatch(label):
+                continue
+            return label.replace("-", " ").title()
+        return None
+    # Not a vendor host: the registrable-looking part is still better than
+    # nothing, minus the www and careers subdomains that carry no information.
+    labels = labels_of(host)
     if len(labels) >= 2:
         return labels[-2].replace("-", " ").title()
     return None
@@ -123,7 +160,7 @@ async def _read_posting(job: Job) -> tuple[dict[str, Any], str | None, str | Non
     return parsed, None, None
 
 
-async def complete_job_parse(job_id: UUID) -> None:
+async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
     """Fill in a job whose parse was deferred, in place.
 
     Opens its own session: the request that scheduled this has long since
@@ -189,6 +226,12 @@ async def complete_job_parse(job_id: UUID) -> None:
             job.jd_parsed = parsed
             await session.commit()
 
+            # The board reads Appwrite, not this row. Without the write below a
+            # card keeps its insert-time snapshot and goes on saying "still
+            # reading this posting" long after the reading finished.
+            if owner_id:
+                await sync_job_into_cards(job, owner_id)
+
             log.info(
                 "jd_ingest.done",
                 job_id=str(job_id),
@@ -202,9 +245,9 @@ async def complete_job_parse(job_id: UUID) -> None:
         log.exception("jd_ingest.failed", job_id=str(job_id))
 
 
-def schedule_job_parse(job_id: UUID) -> None:
+def schedule_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
     """Start the deferred parse. Returns immediately."""
-    task = asyncio.create_task(complete_job_parse(job_id))
+    task = asyncio.create_task(complete_job_parse(job_id, owner_id))
     # create_task keeps only a weak reference, so a task nobody holds can be
     # garbage collected mid-flight. Holding it until it finishes is what makes
     # this reliable rather than usually-fine.
@@ -258,4 +301,82 @@ async def requeue_stranded_parses() -> int:
     if stranded:
         log.info("jd_ingest.requeued_stranded", count=len(stranded))
     return len(stranded)
+
+
+def _card_job_view(job: Job) -> dict[str, Any]:
+    """The job fields a board card shows, in the shape the card already holds."""
+    company = getattr(job, "company", None)
+    return {
+        "id": str(job.id),
+        "title": job.title,
+        "level": job.level,
+        "function": job.function,
+        "location": job.location,
+        "remote": job.remote,
+        "salary_min": job.salary_min,
+        "salary_max": job.salary_max,
+        "salary_currency": job.salary_currency,
+        "source": job.source,
+        "source_url": job.source_url,
+        "jd_parsed": job.jd_parsed or {},
+        "company": (
+            {"id": str(company.id), "name": company.name, "domain": company.domain}
+            if company is not None
+            else None
+        ),
+    }
+
+
+async def sync_job_into_cards(job: Job, owner_id: str) -> int:
+    """Write a freshly parsed job onto the board cards that show it.
+
+    The board reads Appwrite `application_cards`, not Postgres, and a card
+    carries its own copy of the job taken when the card was made. A deferred
+    parse updates Postgres only, so without this the card keeps saying "still
+    reading this posting" after the reading is long finished, with the title
+    and company it never had. Four cards on the live board sat that way.
+
+    Scanned within one owner rather than queried by job id, because the card
+    schema keeps the job id inside the `snapshot` JSON where Appwrite cannot
+    index it. Bounded by one person's board, and `owner_id` is filtered in the
+    query rather than after it: this table is multi-tenant and the API key
+    bypasses row permissions, so the filter is the whole of the isolation.
+    """
+    from job_os.services import appwrite_tables
+
+    settings = get_settings()
+    if not settings.appwrite_api_key:
+        return 0
+
+    table = settings.appwrite_application_cards_table_id
+    fresh = _card_job_view(job)
+    updated = 0
+    try:
+        rows = await appwrite_tables.list_rows(
+            filters=[f'equal("owner_id", ["{owner_id}"])', 'equal("archived", [false])'],
+            limit=500,
+            table_id=table,
+        )
+        for row in rows:
+            try:
+                snapshot = json.loads(row.get("snapshot") or "{}")
+            except ValueError:
+                continue
+            if str((snapshot.get("job") or {}).get("id")) != str(job.id):
+                continue
+            snapshot["job"] = {**(snapshot.get("job") or {}), **fresh}
+            await appwrite_tables.update_rows(
+                row_id=row["$id"],
+                data={"snapshot": json.dumps(snapshot)},
+                table_id=table,
+            )
+            updated += 1
+    except Exception:
+        # A card that does not get refreshed is a stale card, not a lost parse.
+        # The Postgres write has already committed by the time this runs.
+        log.exception("jd_ingest.card_sync_failed", job_id=str(job.id))
+        return updated
+    if updated:
+        log.info("jd_ingest.cards_synced", job_id=str(job.id), cards=updated)
+    return updated
 
