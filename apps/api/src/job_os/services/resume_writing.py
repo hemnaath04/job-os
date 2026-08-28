@@ -1004,6 +1004,7 @@ def document_quality_flags(
     *,
     verified_sources: Iterable[str] = (),
     vault_evidence: Iterable[str] = (),
+    template_key: str | None = None,
 ) -> dict[str, list[str]]:
     """Every writing problem in an assembled resume, keyed by where it lives.
 
@@ -1096,9 +1097,12 @@ def document_quality_flags(
     if rendered_bullets < MIN_PAGE_BULLETS:
         page.append(f"thin_page({rendered_bullets} bullets)")
     else:
-        lines = estimated_page_lines(document)
-        if lines > MAX_PAGE_LINES:
-            page.append(f"over_page({lines} of {MAX_PAGE_LINES} lines)")
+        # Against the template's own budget, not the generic one. Flagging
+        # husky at 47 reports a page as fine at a length that renders two.
+        budget = page_shape(template_key).max_lines
+        lines = estimated_page_lines(document, template_key)
+        if lines > budget:
+            page.append(f"over_page({lines} of {budget} lines)")
     page.extend(page_opener_flags(document, verified_sources=sources))
     if page:
         found["page"] = page

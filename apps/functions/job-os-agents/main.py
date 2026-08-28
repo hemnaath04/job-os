@@ -1302,6 +1302,11 @@ async def _tailor_resume(
         "id": version_id,
         "resume_id": resume_id,
         "json_resume": json_resume,
+        # The look the person picked, kept on the row like the FastAPI path
+        # already keeps it (routers/resumes.py). Without it a later render of
+        # this version falls back to the default and quietly changes its
+        # appearance, and Appwrite is the live backend.
+        "template_key": payload.get("template_key"),
         "provenance": [p.model_dump(mode="json") for p in provenance],
         # None when the JD parse failed or named nothing scoreable (see
         # tailor.py's run_tailor). str(None) would have stored the literal

@@ -101,3 +101,45 @@ def test_husky_keeps_its_summary_where_the_generic_budget_would_take_it() -> Non
         assert document["basics"]["summary"] == SUMMARY
     else:  # pragma: no cover - guards the table changing under this test
         _drop_summary(document)
+
+
+def test_the_over_page_flag_uses_the_template_budget_too() -> None:
+    """The flag has to agree with the trimmer, or the report contradicts it.
+
+    Flagging husky against 47 calls a page fine at a length that renders two,
+    which is how a run reported no page problem and produced a second page.
+    """
+    from job_os.services.resume_writing import document_quality_flags
+
+    document = {
+        "basics": {"name": "A Candidate"},
+        "work": [
+            {
+                "name": "EPAM",
+                "position": "Engineer",
+                "highlights": [
+                    f"A substantial line of real evidence number {i}." for i in range(4)
+                ],
+            }
+        ],
+        "projects": [
+            {"name": f"Project {i}", "highlights": ["Built a thing worth describing here."]}
+            for i in range(9)
+        ],
+        "education": [{"institution": "A University", "studyType": "MS", "area": "CS"}],
+        "skills": [
+            {"name": f"Group {g}", "keywords": [f"Keyword{g}{k}" for k in range(10)]}
+            for g in range(6)
+        ],
+    }
+    husky_page = document_quality_flags(document, template_key="husky").get("page", [])
+    default_page = document_quality_flags(document).get("page", [])
+
+    husky_over = [f for f in husky_page if f.startswith("over_page")]
+    default_over = [f for f in default_page if f.startswith("over_page")]
+    if husky_over:
+        # Whatever it reports, it must report husky's budget, not the generic one.
+        assert f"of {page_shape('husky').max_lines} lines" in husky_over[0]
+    # And husky is the stricter of the two: it can never miss a page the
+    # default budget already considers over.
+    assert not (default_over and not husky_over)

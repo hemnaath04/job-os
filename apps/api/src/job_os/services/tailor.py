@@ -1287,6 +1287,7 @@ async def run_tailor(
             document,
             verified_sources=verified_sources,
             vault_evidence=vault_evidence,
+            template_key=template_key,
         )
         if summary_rejection:
             # A refused summary leaves the page without its lede, so it costs the
@@ -1539,6 +1540,7 @@ async def run_tailor(
         json_resume,
         verified_sources=verified_sources,
         vault_evidence=vault_evidence,
+        template_key=template_key,
     )
     # Which of the misses are the candidate's to close. A requirement absent from
     # every verified fact and bullet is not a keyword the writer skipped, and
