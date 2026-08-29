@@ -33,11 +33,19 @@ export type DisplayableJob = {
   jd_parsed?: {
     parse_pending?: boolean;
     parse_incomplete?: boolean;
+    /**
+     * Set by services/posting_status.py when the fetch landed on something
+     * that is not a job description. "expired" is the one that changes what
+     * the user should do: the others are still "we could not read it".
+     */
+    posting_status?: "ok" | "expired" | "sign_in_required" | "blocked";
+    /** A sentence written for the user, owned by the backend. */
+    posting_status_reason?: string | null;
   } | null;
 };
 
 /** Why a row is not showing a real title yet, or null when it is. */
-export type JobReadState = "reading" | "unreadable" | null;
+export type JobReadState = "reading" | "unreadable" | "closed" | null;
 
 export type JobDisplay = {
   /** What to print as the role. Never a raw placeholder. */
@@ -53,7 +61,13 @@ export type JobDisplay = {
   companyIsGuess: boolean;
   /**
    * "reading" while the import is still working, "unreadable" once it has
-   * stopped and left nothing usable, null for a row that landed properly.
+   * stopped and left nothing usable, "closed" when the page itself said the
+   * job is gone, null for a row that landed properly.
+   *
+   * "closed" is separate from "unreadable" because the two want opposite
+   * things from the user. An unreadable posting is worth pasting the
+   * description into. A closed one is not: the job does not exist, and
+   * offering to paste its description is busywork dressed as a fix.
    */
   state: JobReadState;
   /** One line under the title, or null when there is nothing to explain. */
@@ -162,6 +176,10 @@ export function isGuessedCompanyName(
 function readState(job: DisplayableJob): JobReadState {
   const parsed = job.jd_parsed;
   if (parsed?.parse_pending) return "reading";
+  // Checked before parse_incomplete, which a closed posting also carries: the
+  // read genuinely did not complete, but "the job is gone" is the more
+  // specific and more useful of the two facts.
+  if (parsed?.posting_status === "expired") return "closed";
   if (parsed?.parse_incomplete) return "unreadable";
   return null;
 }
@@ -205,11 +223,24 @@ export function jobDisplay(job: DisplayableJob): JobDisplay {
     };
   }
 
-  const title = titleMissing ? "Still reading this posting" : rawTitle;
+  const title =
+    state === "closed" && titleMissing
+      ? "This posting has closed"
+      : titleMissing
+        ? "Still reading this posting"
+        : rawTitle;
+  // The backend already wrote a sentence for the cases it recognised, and it
+  // knows which one it recognised. Preferring it here keeps one copy of that
+  // wording rather than a second one drifting alongside it.
+  const backendReason = job.jd_parsed?.posting_status_reason?.trim() || null;
   const note =
-    state === "unreadable"
-      ? "We could not read this posting. Open the original link, or paste the description in."
-      : "We are still reading it. The title and company will fill in on their own.";
+    state === "closed"
+      ? (backendReason ??
+        "This posting has closed. The page says the job is no longer open.")
+      : state === "unreadable"
+        ? (backendReason ??
+          "We could not read this posting. Open the original link, or paste the description in.")
+        : "We are still reading it. The title and company will fill in on their own.";
   return { title, company, companyIsGuess, state, note, incomplete: true };
 }
 

@@ -86,6 +86,13 @@ export interface Job {
     // nothing. Both arrive here as empty lists, and only one of them is a
     // fact about the job. See JobParsed in apps/api schemas/jobs.py.
     parse_incomplete?: boolean;
+    /**
+     * Set by services/posting_status.py when the fetch landed on something
+     * that is not a job description: an expired posting, a sign-in wall, or a
+     * bot check. "expired" is the one that changes what the user should do.
+     */
+    posting_status?: "ok" | "expired" | "sign_in_required" | "blocked";
+    posting_status_reason?: string | null;
     // Still being read. Neither a failure nor a fact about the job yet.
     parse_pending?: boolean;
     parse_error?: string | null;
