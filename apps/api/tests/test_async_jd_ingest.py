@@ -539,3 +539,88 @@ async def test_a_job_already_being_parsed_here_is_not_scheduled_twice(
         if job_id not in jd_ingest._INFLIGHT:
             break
     assert job_id not in jd_ingest._INFLIGHT
+
+
+@pytest.mark.asyncio
+async def test_a_closed_posting_is_not_parsed_and_not_left_active(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """The whole point of recognising it: stop, and say so.
+
+    Asking the extractor to find requirements in "Job Not Found" spends a model
+    call to arrive at the nothing that was already on the page. And a card that
+    can never score should not sit on the board looking live: `Job.active` is
+    what the jobs list filters on.
+    """
+    from job_os.integrations import firecrawl
+
+    user = await _user(db_session, "closed_posting")
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://www.disneycareers.com/en/job/lake-buena-vista/"),
+        _user=user,
+        session=db_session,
+    )
+
+    parsed_called = False
+
+    async def _must_not_parse(*_args: Any, **_kwargs: Any) -> dict:
+        nonlocal parsed_called
+        parsed_called = True
+        return {}
+
+    async def _fetch(_url: str) -> firecrawl.FetchedPage:
+        return firecrawl.FetchedPage(
+            url=_url,
+            markdown="# Job Not Found We are sorry this job post no longer exists.",
+            raw="<html></html>",
+            title="Custom Job Error - Disney Careers",
+            company_hint="Disneycareers",
+        )
+
+    monkeypatch.setattr(jd_ingest, "fetch_url_markdown", _fetch, raising=False)
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", _fetch)
+    monkeypatch.setattr("job_os.services.jd_parse.parse_jd", _must_not_parse)
+
+    await jd_ingest.complete_job_parse(job.id)
+
+    await db_session.refresh(job)
+    assert parsed_called is False, "no model call is spent on an error page"
+    assert job.jd_parsed.get("posting_status") == "expired"
+    assert job.jd_parsed.get("posting_status_reason")
+    assert job.active is False, "a closed posting is off the board"
+
+
+@pytest.mark.asyncio
+async def test_a_wall_is_reported_without_closing_the_job(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """A sign-in wall says nothing about whether the job is open.
+
+    Only `expired` deactivates. Reading "we could not fetch this" as "this job
+    is gone" would quietly remove postings that are still live.
+    """
+    from job_os.integrations import firecrawl
+
+    user = await _user(db_session, "wall_posting")
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://my.greenhouse.io/applications/59836123"),
+        _user=user,
+        session=db_session,
+    )
+
+    async def _fetch(_url: str) -> firecrawl.FetchedPage:
+        return firecrawl.FetchedPage(
+            url=_url,
+            markdown="Enter your email address to continue. Send security code",
+            raw="<html></html>",
+            title="MyGreenhouse",
+            company_hint="Greenhouse",
+        )
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", _fetch)
+
+    await jd_ingest.complete_job_parse(job.id)
+
+    await db_session.refresh(job)
+    assert job.jd_parsed.get("posting_status") == "sign_in_required"
+    assert job.active is True, "unreadable is not the same as closed"
