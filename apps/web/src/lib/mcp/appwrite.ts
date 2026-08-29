@@ -15,6 +15,7 @@
  * session-based browser client gets for free from Appwrite's permission
  * system instead.
  */
+import { withStaleness } from "@/lib/agent-job-stale";
 import {
   Client,
   ExecutionMethod,
@@ -676,7 +677,13 @@ export async function getResumeTailorJobStatus(
   if (row.owner_id !== appwriteUserId) {
     throw new Error("tailor job not found");
   }
-  return JSON.parse(row.snapshot) as AgentJobSnapshot;
+  // The same staleness reading the browser applies. Without it this returned
+  // the raw snapshot, so a run whose function process died was reported as
+  // "running" forever: the function-side reaper only fires on the owner's next
+  // dispatch, and an agent polling this tool has no other way to learn the run
+  // is gone. Observed twice in one session, both diagnosed by reading
+  // Appwrite's execution log by hand.
+  return withStaleness(JSON.parse(row.snapshot) as AgentJobSnapshot);
 }
 
 interface SnapshotOnlyRow extends Models.Row {
