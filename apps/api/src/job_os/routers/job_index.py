@@ -19,6 +19,7 @@ from job_os.auth import get_current_user
 from job_os.db.models import User
 from job_os.db.models.profile import ProfileFact
 from job_os.db.session import get_session
+from job_os.routers.me import _to_settings
 from job_os.schemas.job_index import (
     AxisScoreRead,
     IndexHitRead,
@@ -63,7 +64,12 @@ async def search(
     facts = (
         await session.execute(select(ProfileFact).where(ProfileFact.user_id == _user.id))
     ).scalars().all()
-    candidate = job_match.build_candidate_profile(facts)
+    # Settings, not facts. Whether an employer would have to file a petition
+    # is a statement the user makes about themselves, and until it was read
+    # here every eligibility blocker in the scorer was unreachable.
+    candidate = job_match.build_candidate_profile(
+        facts, eligibility=_to_settings(_user.settings).work_eligibility
+    )
     # A profile with nothing usable scores every job the same uninformative
     # way and still costs an enrichment call per un-cached posting on the
     # page -- skip it and let the frontend's own lexicon fallback (which

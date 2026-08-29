@@ -65,14 +65,13 @@ ago, still listed 1 hour ago" rather than presenting a re-dated repost as new.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any
-
-import json
 
 import structlog
 from sqlalchemy.ext.asyncio import AsyncSession
