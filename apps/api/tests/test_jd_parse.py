@@ -26,6 +26,14 @@ class _FakeSettings:
     anthropic_model_extract: str = "manifest/auto"
 
 
+# What a successful extraction looks like, for the tests whose subject is the
+# retry and timeout schedule rather than what counts as an answer. It names a
+# technology on purpose: a title alone is what the parser gets for free from
+# `title_hint`, so a title-only reply is a failed parse and gets retried, which
+# would make every test below count one call too many.
+_GOOD_REPLY = '{"title": "Backend Engineer", "technologies": ["Go"]}'
+
+
 @pytest.mark.asyncio
 async def test_no_api_key_returns_just_the_title_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings(anthropic_api_key=None))
@@ -94,7 +102,7 @@ async def test_a_single_timeout_is_retried_once_and_the_retry_succeeds(
         if calls == 1:
             request = httpx.Request("POST", "https://gateway.test/v1/messages")
             raise anthropic.APITimeoutError(request=request)
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _flaky)
 
@@ -170,7 +178,10 @@ async def test_a_truncated_answer_is_retried_rather_than_accepted_as_empty(
         calls += 1
         if calls == 1:
             return _TruncatedMessage(TRUNCATED_JSON)
-        return _FakeMessage('{"title": "Software Engineering Intern", "location": "New York, NY"}')
+        return _FakeMessage(
+            '{"title": "Software Engineering Intern", "location": "New York, NY", '
+            '"required_skills": ["Python"]}'
+        )
 
     monkeypatch.setattr(jd_parse, "create_message", _truncated_then_whole)
 
@@ -199,7 +210,7 @@ async def test_the_retry_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     async def _truncated_then_whole(*_args: Any, **_kwargs: Any) -> _FakeMessage:
         nonlocal calls
         calls += 1
-        return _TruncatedMessage(TRUNCATED_JSON) if calls == 1 else _FakeMessage('{"title": "X"}')
+        return _TruncatedMessage(TRUNCATED_JSON) if calls == 1 else _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _truncated_then_whole)
 
@@ -239,13 +250,13 @@ async def test_an_empty_reply_is_retried_too(monkeypatch: pytest.MonkeyPatch) ->
     async def _empty_then_whole(*_args: Any, **_kwargs: Any) -> _FakeMessage:
         nonlocal calls
         calls += 1
-        return _TruncatedMessage("") if calls == 1 else _FakeMessage('{"title": "X"}')
+        return _TruncatedMessage("") if calls == 1 else _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _empty_then_whole)
 
     result = await jd_parse.parse_jd("a full length jd")
     assert calls == 2
-    assert result["title"] == "X"
+    assert result["title"] == "Backend Engineer"
 
 
 @pytest.mark.asyncio
@@ -258,7 +269,7 @@ async def test_a_whole_answer_is_not_retried(monkeypatch: pytest.MonkeyPatch) ->
     async def _whole(*_args: Any, **_kwargs: Any) -> _FakeMessage:
         nonlocal calls
         calls += 1
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _whole)
 
@@ -278,7 +289,7 @@ async def test_the_token_ceiling_is_the_one_that_was_measured(
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
         seen.update(kwargs)
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _capture)
 
@@ -350,7 +361,7 @@ async def test_the_retry_still_runs_when_there_is_time_for_it(
         clock.advance(3.0)  # what the gateway actually did in production
         if calls == 1:
             return _TruncatedMessage(TRUNCATED_JSON)
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _fast_then_whole)
 
@@ -376,7 +387,7 @@ async def test_the_first_attempt_leaves_room_for_the_retry(
     seen: list[float] = []
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     # Mirrors asyncio.wait_for's own signature, which is the point of the
     # double, so the timeout parameter is not ours to rename.
@@ -418,7 +429,7 @@ async def test_a_timed_out_first_attempt_still_gets_its_retry(
     attempts: list[float] = []
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     async def _wait_for(coro: Any, timeout: float) -> Any:  # noqa: ASYNC109
         attempts.append(timeout)
@@ -428,7 +439,7 @@ async def test_a_timed_out_first_attempt_still_gets_its_retry(
             # timeout does, then advance the clock past it.
             clock.advance(timeout)
             raise TimeoutError
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _capture)
     monkeypatch.setattr(jd_parse.asyncio, "wait_for", _wait_for)
@@ -456,7 +467,7 @@ async def test_a_short_budget_still_gives_one_usable_attempt(
     seen: list[float] = []
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
-        return _FakeMessage('{"title": "Backend Engineer"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     async def _wait_for(coro: Any, timeout: float) -> Any:  # noqa: ASYNC109
         seen.append(timeout)
@@ -503,7 +514,7 @@ async def test_the_title_is_offered_to_the_parser(monkeypatch: pytest.MonkeyPatc
 
     async def _capture(*_args: Any, **kwargs: Any) -> _FakeMessage:
         seen.update(kwargs)
-        return _FakeMessage('{"title": "X"}')
+        return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _capture)
 
@@ -543,7 +554,13 @@ async def test_a_reply_that_names_nothing_is_retried_then_reported_incomplete(
     result = await jd_parse.parse_jd("a jd", title_hint="Backend Engineer")
 
     assert calls == 2, "an empty answer deserves the same second chance a truncated one gets"
-    assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
+    # Not an exact-dict compare any more: a flagged parse keeps whatever it did
+    # read, so the shape carries every field. What matters is that it is flagged
+    # and that nothing scoreable was invented to fill the gap.
+    assert result["parse_incomplete"] is True
+    assert result["title"] == "Backend Engineer"
+    assert result["required_skills"] == []
+    assert result["technologies"] == []
 
 
 @pytest.mark.asyncio
@@ -570,11 +587,25 @@ async def test_an_empty_first_reply_does_not_discard_a_good_second_one(
 
 
 @pytest.mark.asyncio
-async def test_one_named_field_is_enough_to_count_as_an_answer(
+async def test_a_title_on_its_own_is_not_an_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The emptiness check must not swallow a thin but real parse. A posting
-    that yielded only a title is still something the scorer can say it read."""
+    """This asserted the opposite, and the opposite is what shipped the bug.
+
+    The old claim was that "a posting that yielded only a title is still
+    something the scorer can say it read". Six real postings in one workspace
+    disagree: each is stored with a title, sometimes a seniority and a
+    location, not one skill or qualification between them, and every one
+    recorded as a successful parse. Two are not job pages at all, a Disney
+    error page and a Greenhouse applications dashboard. The other four include
+    NVIDIA's and Millennium's genuine postings, with 7KB and 15KB of
+    description sitting unread in `jd_clean`.
+
+    A title is the one thing the call gets for free: it is handed in as
+    `title_hint`. Treating it as evidence the body was read is what let a
+    failed extraction pass for a thin one, and cost the retry that would
+    probably have fixed the real four.
+    """
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
     monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
     calls = 0
@@ -584,11 +615,76 @@ async def test_one_named_field_is_enough_to_count_as_an_answer(
         calls += 1
         return _FakeMessage('{"title": "Backend Engineer"}')
 
+    async def _fake_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(jd_parse, "create_message", _thin)
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert calls == 2, "nothing scoreable came back, so the retry is worth spending"
+    assert result["parse_incomplete"] is True
+
+
+@pytest.mark.asyncio
+async def test_one_scoreable_field_is_enough_to_count_as_an_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The emptiness check must not swallow a thin but real parse.
+
+    The line is drawn at whether anything a resume can be measured against came
+    back, not at how much. One technology is a real answer and is not retried.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    calls = 0
+
+    async def _thin(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        nonlocal calls
+        calls += 1
+        return _FakeMessage('{"title": "Backend Engineer", "technologies": ["Go"]}')
+
     monkeypatch.setattr(jd_parse, "create_message", _thin)
 
     result = await jd_parse.parse_jd("a jd")
 
     assert calls == 1, "a thin answer is still an answer and must not be retried"
     assert result["parse_incomplete"] is False
-    assert result["required_skills"] == []
+    assert result["technologies"] == ["Go"]
+
+
+@pytest.mark.asyncio
+async def test_a_failed_parse_keeps_the_metadata_it_did_get_right(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Flagged, not blanked.
+
+    Millennium's posting came back with the company, the city and the seniority
+    correct and no skills at all. Those three are what the board prints on the
+    card, so reporting the parse honestly by discarding them would fix the
+    score and break the display in the same move.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    reply = (
+        '{"title": "2027 Applied AI Engineer Intern", "company": "Millennium", '
+        '"location": "Miami, Florida", "level": "intern"}'
+    )
+
+    async def _metadata_only(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        return _FakeMessage(reply)
+
+    async def _fake_sleep(seconds: float) -> None:
+        return None
+
+    monkeypatch.setattr(jd_parse, "create_message", _metadata_only)
+    monkeypatch.setattr(jd_parse, "_sleep", _fake_sleep)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert result["parse_incomplete"] is True
+    assert result["company"] == "Millennium"
+    assert result["location"] == "Miami, Florida"
+    assert result["level"] == "intern"
 

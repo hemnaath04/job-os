@@ -167,8 +167,21 @@ def _first_attempt_seconds(remaining: float) -> float:
     )
 
 
+# The fields that carry something a resume can be measured against. Title,
+# level, function, company and location are page metadata: they are read off a
+# heading or a URL and say nothing about what the job asks for.
+_REQUIREMENT_BEARING_FIELDS = (
+    "required_skills",
+    "preferred_skills",
+    "technologies",
+    "responsibilities",
+    "qualifications",
+    "keywords",
+)
+
+
 def _extracted_nothing(parsed: ParsedJD) -> bool:
-    """True when a valid reply named nothing at all.
+    """True when a valid reply named nothing a resume could be measured against.
 
     Every field on ParsedJD is optional with a default, so a bare `{}` from the
     gateway validates cleanly and dumps to all-empty with parse_incomplete
@@ -176,14 +189,23 @@ def _extracted_nothing(parsed: ParsedJD) -> bool:
     requirements. That is the same confusion _incomplete exists to prevent,
     reached through the one door it does not cover.
 
-    A real posting always yields something, if only a title, so nothing at all
-    means the extraction failed rather than that the JD asked for nothing. And
-    in the case where a JD really does state nothing scoreable, "we could not
-    read it" is still the honest report: both leave the scorer with no
-    requirements, and only one of them is a true 0% match.
+    This used to ask whether the reply named ANY field, which let the failure
+    through the door it was built to close. A title is the one thing the call
+    gets for free: it is handed in as `title_hint`, and it is what a model
+    returns when it could not read the body. Six real postings are stored with
+    a title, sometimes a seniority and a location, and not one skill,
+    technology, qualification or responsibility between them, each recorded as
+    a successful parse. Among them are a Disney error page, a Greenhouse
+    applications dashboard, a 139-character Tesla stub, and, less forgivably,
+    NVIDIA's and Millennium's real postings with 7KB and 15KB of description
+    sitting in `jd_clean` unread.
+
+    So the question is now whether anything scoreable came back, not whether
+    anything came back. In the case where a posting really does state nothing
+    scoreable, "we could not read it" remains the honest report: both leave the
+    scorer with no requirements, and only one of them is a true 0% match.
     """
-    stated = parsed.model_dump(exclude={"parse_incomplete"})
-    return not any(stated.values())
+    return not any(getattr(parsed, field) for field in _REQUIREMENT_BEARING_FIELDS)
 
 
 async def parse_jd(
@@ -313,7 +335,18 @@ async def parse_jd(
                 log.warning("jd_parse.empty_retrying", preview=raw[:300])
                 continue
             log.warning("jd_parse.empty", preview=raw[:300])
-            return _incomplete(title_hint)
+            # Flagged, but not blanked. `_incomplete` returns the title and
+            # nothing else, and a reply that read no requirements has often
+            # still read the company, the location and the seniority correctly
+            # off the page: Millennium's came back with "Millennium", "Miami,
+            # Florida" and "intern" attached to no skills at all. Those are
+            # what the board shows on the card, so discarding them to report
+            # the parse honestly would fix the score by breaking the display.
+            degraded = parsed.model_dump(exclude_none=False)
+            degraded["parse_incomplete"] = True
+            if title_hint and not degraded.get("title"):
+                degraded["title"] = title_hint
+            return degraded
 
         return parsed.model_dump(exclude_none=False)
 
