@@ -26,11 +26,9 @@ from datetime import UTC, datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from job_os.db.models.ingest import AtsBoardToken, CrawlRun, CrawlStatus
-from job_os.db.models.job_posting import JobPosting
 from job_os.ingest import liveness
 from job_os.ingest.dedupe import DedupeCandidate, find_duplicates
 from job_os.ingest.fetcher import BoardTiming, PoliteFetcher

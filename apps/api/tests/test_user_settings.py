@@ -71,7 +71,13 @@ def test_an_old_row_defaults_every_new_field_to_no_opinion() -> None:
     settings = _to_settings(LEGACY_ROW)
 
     assert settings.target_titles == []
-    assert settings.work_authorization is None
+    # The struct's own defaults ARE the "never stated" answer, and every one
+    # of them refuses nothing, so an untouched account gates exactly as it did
+    # before eligibility existed.
+    assert settings.work_eligibility.status is None
+    assert settings.work_eligibility.cpt_eligible_now is False
+    assert settings.work_eligibility.needs_future_sponsorship is False
+    assert settings.work_eligibility.us_person_for_export_control is True
     assert settings.salary_floor is None
     assert settings.work_models == []
     assert settings.target_companies == []
@@ -135,7 +141,7 @@ def test_a_patch_ignores_unknown_keys_without_failing() -> None:
 
 @pytest.mark.parametrize(
     "field",
-    ["theme", "work_authorization", "salary_currency"],
+    ["theme", "salary_currency"],
 )
 def test_an_out_of_range_enum_value_is_rejected(field: str) -> None:
     with pytest.raises(ValidationError) as raised:
@@ -148,7 +154,7 @@ def test_a_plausible_but_wrong_work_authorization_is_rejected() -> None:
     """"h1b" is what a client would guess. Guessing has to fail loudly, or the
     blob fills with values no filter will ever match."""
     with pytest.raises(ValidationError):
-        UserSettingsPatch.model_validate({"work_authorization": "h1b"})
+        UserSettingsPatch.model_validate({"work_eligibility": {"status": "h1b"}})
 
 
 @pytest.mark.parametrize(
@@ -156,15 +162,16 @@ def test_a_plausible_but_wrong_work_authorization_is_rejected() -> None:
     [
         "us_citizen",
         "permanent_resident",
+        "f1_student",
         "visa_holder_needs_transfer",
         "needs_sponsorship",
         "other",
     ],
 )
 def test_every_documented_work_authorization_is_accepted(value: str) -> None:
-    assert UserSettingsPatch.model_validate({"work_authorization": value}).work_authorization == (
-        value
-    )
+    patched = UserSettingsPatch.model_validate({"work_eligibility": {"status": value}})
+    assert patched.work_eligibility is not None
+    assert patched.work_eligibility.status == value
 
 
 def test_an_unknown_work_model_is_rejected() -> None:
@@ -251,9 +258,25 @@ def test_a_client_cannot_grow_the_blob_without_bound() -> None:
 
 def test_a_null_clears_a_field_that_can_hold_one() -> None:
     """Sending null is how the Settings page says "no answer" to a select."""
+    stored = {**LEGACY_ROW, "salary_floor": 120_000}
+
+    assert _merge(stored, {"salary_floor": None}).salary_floor is None
+
+
+def test_a_stored_work_authorization_from_before_the_struct_is_dropped() -> None:
+    """The flat enum this replaced was declared and never read.
+
+    `UserSettings` already ignores any key it does not declare, so a row
+    written before this reads back as the default struct rather than raising.
+    That is the whole migration: there is no column to alter and nothing to
+    backfill, because nothing ever consumed the old value.
+    """
     stored = {**LEGACY_ROW, "work_authorization": "needs_sponsorship"}
 
-    assert _merge(stored, {"work_authorization": None}).work_authorization is None
+    settings = _to_settings(stored)
+
+    assert settings.work_eligibility.status is None
+    assert not hasattr(settings, "work_authorization")
 
 
 def test_a_null_theme_is_ignored_rather_than_stored() -> None:
@@ -339,7 +362,13 @@ def test_a_saved_round_trip_is_stable() -> None:
         LEGACY_ROW,
         {
             "target_titles": ["Software Engineer", "ML Engineer"],
-            "work_authorization": "needs_sponsorship",
+            "work_eligibility": {
+                "status": "f1_student",
+                "cpt_eligible_now": True,
+                "needs_future_sponsorship": True,
+                "us_person_for_export_control": False,
+                "clearance_eligible": False,
+            },
             "salary_floor": 120_000,
             "salary_currency": "usd",
             "seniority_range": {"min": "intern", "max": "mid"},

@@ -27,8 +27,10 @@ from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPO
 from job_os.services.latex_catalog import builtin
 from job_os.services.latex_render import (
     TectonicUnavailableError,
-    date_range as shared_date_range,
     render_resume_pdf_async,
+)
+from job_os.services.latex_render import (
+    date_range as shared_date_range,
 )
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,

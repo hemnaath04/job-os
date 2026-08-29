@@ -27,23 +27,78 @@ from job_os.schemas.common import ORMModel
 
 Theme = Literal["system", "dark", "light"]
 
-WorkAuthorization = Literal[
+WorkAuthorizationStatus = Literal[
     "us_citizen",
     "permanent_resident",
+    "f1_student",
     "visa_holder_needs_transfer",
     "needs_sponsorship",
     "other",
 ]
-"""The candidate's half of the eligibility question.
+"""The candidate's immigration status, as coarse as it can be without lying.
 
-The employer's half is already read off the posting in
-apps/web/src/lib/discover/work-auth.ts, and on its own it can only warn: "does
-not sponsor" is disqualifying for one user and irrelevant to the next. Stored
-beside a status it becomes a filter instead of a chip.
+`f1_student` is new and is the reason this is no longer a flat enum on its own.
+The five values that were here could not express the case the eligibility gate
+exists for: a student who can lawfully work an internship NOW and would need a
+petition LATER is neither "needs_sponsorship" nor "visa_holder_needs_transfer",
+and answering with either one gets the gate wrong in opposite directions.
 
-Unset and `other` mean different things. Unset is "never asked" and nothing
-should be inferred from it; `other` is "asked, and none of the four fit".
+Unset and `other` mean different things. Unset is "never asked" and nothing may
+be inferred from it; `other` is "asked, and none of these fit".
 """
+
+
+class WorkEligibility(ORMModel):
+    """What a posting's eligibility clauses have to be compared against.
+
+    A struct rather than one enum, because the four questions a posting can ask
+    are genuinely independent and a single label answers at most one of them.
+    The case that forced this: an F-1 student can work an internship now under
+    CPT, cannot obtain a US security clearance, is not a US person for export
+    control, and would need an H-1B petition for full-time work afterwards.
+    Those are four different answers, and a posting may ask any one of them.
+
+    Every field defaults to the reading that REFUSES NOTHING. An account that
+    never opens Settings is treated exactly as it was before this existed: the
+    gate needs a positive statement from the user before it will decline to
+    write them a resume, because a wrong refusal costs a real application and
+    says nothing about why.
+    """
+
+    status: WorkAuthorizationStatus | None = None
+    """None means never asked. Nothing is inferred from it."""
+
+    cpt_eligible_now: bool = False
+    """Can lawfully start work now without the employer filing anything.
+
+    Distinct from sponsorship on purpose. This is the field that separates a
+    posting saying "no sponsorship for this internship" (which such a candidate
+    can still take) from one saying "no sponsorship ever" (which they cannot).
+    """
+
+    needs_future_sponsorship: bool = False
+    """Would need an employer petition for continued employment later.
+
+    The field the "now or in the future" clause is actually about.
+    """
+
+    us_person_for_export_control: bool = True
+    """Whether the candidate meets the ITAR/EAR "US person" definition.
+
+    Defaults True, which refuses nothing. This is a legal term of art and not
+    the same question as citizenship, so it is asked separately rather than
+    derived from `status`.
+    """
+
+    clearance_eligible: bool = False
+    """Whether the candidate could hold a US security clearance.
+
+    Defaults False, and that default deliberately does NOT refuse on its own:
+    the gate only declines a clearance posting when it also knows the
+    candidate's status. "We never asked" and "they cannot" are different
+    answers and only the second one is a reason to stop.
+    """
+
 
 SeniorityLevel = Literal["intern", "new-grad", "mid", "senior", "staff"]
 """Same spellings as the existing `default_level` values, hyphen included, so
@@ -143,9 +198,15 @@ class UserSettings(ORMModel):
     backfill rather than a breaking change, and nothing here has to wait for
     it."""
 
-    work_authorization: WorkAuthorization | None = None
-    """Nullable because "never stated" is a real answer, and the only answer any
-    row written before this field existed can give."""
+    work_eligibility: WorkEligibility = Field(default_factory=WorkEligibility)
+    """Replaces a flat `work_authorization` enum that nothing ever read.
+
+    Not nullable: the struct's own defaults already mean "never stated", and
+    every one of them refuses nothing, so an absent value and a default value
+    behave identically. A stored `work_authorization` key from before this
+    lands is dropped on the next write, which `UserSettings` already does for
+    any key it does not declare.
+    """
 
     salary_floor: int | None = Field(default=None, ge=0, le=100_000_000)
     """Lowest acceptable base pay per year, in `salary_currency`."""
@@ -219,7 +280,7 @@ class UserSettingsPatch(ORMModel):
     default_location: str | None = None
     timezone: str | None = None
     target_titles: StringList | None = None
-    work_authorization: WorkAuthorization | None = None
+    work_eligibility: WorkEligibility | None = None
     salary_floor: int | None = Field(default=None, ge=0, le=100_000_000)
     salary_currency: CurrencyCode | None = None
     seniority_range: SeniorityRange | None = None

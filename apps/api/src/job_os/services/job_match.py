@@ -69,6 +69,7 @@ from job_os.schemas.enrichment import (
     SkillRequirement,
     canonical_skill,
 )
+from job_os.schemas.me import WorkEligibility
 from job_os.services.skill_match import known_skill_terms, satisfies
 
 Axis = Literal["skills", "experience", "education", "industry", "bonus"]
@@ -1155,21 +1156,45 @@ def _mentions_term(haystack: str, term: str) -> bool:
     return bool(re.search(rf"(?<!\w){re.escape(term)}(?!\w)", haystack))
 
 
-def build_candidate_profile(facts: Sequence[ProfileFact]) -> CandidateProfile:
+def build_candidate_profile(
+    facts: Sequence[ProfileFact],
+    *,
+    eligibility: WorkEligibility | None = None,
+) -> CandidateProfile:
     """The only supported way to turn a user's profile facts into a
     `CandidateProfile`, so every caller canonicalizes and degrades the same way.
 
     Best-effort by necessity: today's profile data model has no field for
-    industries, target titles, visa/clearance/remote preference, or desired
-    commitment type, so those stay at `CandidateProfile.build`'s safe
-    defaults. That is not a bug to fix here -- `score_job` already treats an
-    absent signal as "no opinion" rather than "no", which is what lets the
-    industry axis and the bonus lines degrade gracefully instead of inventing
-    a claim about the candidate. Only `verified` facts count, the same rule
-    generated resumes already follow: an unconfirmed draft is not something
-    to score a candidate's fit on.
+    industries, target titles, remote preference, or desired commitment type,
+    so those stay at `CandidateProfile.build`'s safe defaults. That is not a
+    bug to fix here -- `score_job` already treats an absent signal as "no
+    opinion" rather than "no", which is what lets the industry axis and the
+    bonus lines degrade gracefully instead of inventing a claim about the
+    candidate. Only `verified` facts count, the same rule generated resumes
+    already follow: an unconfirmed draft is not something to score a
+    candidate's fit on.
+
+    `eligibility` is the exception, and the reason it is a separate argument
+    rather than a fact: it is a statement the user makes about themselves in
+    Settings, not something extractable from their career history. Until it
+    was passed, `needs_visa_sponsorship` and `has_security_clearance` were
+    always at their defaults, which meant every blocker in `_eligibility_lines`
+    was unreachable code for every real account -- a whole eligibility system
+    that could not fire.
+
+    None keeps that old behaviour exactly, which is what an account that has
+    never opened Settings deserves: no blockers claimed on its behalf.
     """
     verified = [f for f in facts if f.verified]
+    # `needs_future_sponsorship`, not "is on a visa". The blocker this feeds
+    # asks whether the employer would have to file something, and a candidate
+    # who can start now under CPT but needs an H-1B later still answers yes to
+    # a full-time posting. The narrower, internship-only case ("this role does
+    # not sponsor, but CPT sidesteps it") is not expressible in this boolean at
+    # all, and is handled by `eligibility_gate`, which can see the posting's
+    # commitment type. This stays the conservative reading.
+    needs_sponsorship = bool(eligibility and eligibility.needs_future_sponsorship)
+    has_clearance = bool(eligibility and eligibility.clearance_eligible)
 
     skills: list[str] = []
     for fact in verified:
@@ -1238,4 +1263,6 @@ def build_candidate_profile(facts: Sequence[ProfileFact]) -> CandidateProfile:
         in_progress_degree=in_progress_degree,
         degree_fields=degree_fields,
         has_management_experience=has_management,
+        needs_visa_sponsorship=needs_sponsorship,
+        has_security_clearance=has_clearance,
     )

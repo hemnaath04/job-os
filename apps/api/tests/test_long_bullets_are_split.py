@@ -14,13 +14,13 @@ candidate's claims to drop and that decision is theirs.
 """
 from __future__ import annotations
 
+from job_os.schemas.resumes import SelectedBullet
 from job_os.services.resume_writing import (
     BULLET_MAX_WORDS,
     over_length_bullets,
     split_long_bullet,
 )
 from job_os.services.tailor import _split_over_length
-from job_os.schemas.resumes import SelectedBullet
 
 # 36 words, two sentences, the shape the repro bullet had.
 TWO_STATEMENTS = (

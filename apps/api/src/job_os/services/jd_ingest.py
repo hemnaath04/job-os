@@ -214,6 +214,7 @@ async def complete_job_parse(
     replaced.
     """
     from job_os.services.companies import upsert_company
+    from job_os.services.job_enrich import enrich_job, store_enrichment
 
     try:
         async with async_session() as session:
@@ -280,6 +281,34 @@ async def complete_job_parse(
             # job is still open, only that we could not read it.
             if parsed.get("posting_status") == "expired":
                 job.active = False
+
+            # Read the posting a second way, for the fields the first pass does
+            # not extract: what the employer requires of the CANDIDATE rather
+            # than of the work. Sponsorship, citizenship, clearance, degree
+            # level, commitment type.
+            #
+            # `enrich_job` already existed and was only ever called from
+            # `job_index`, over the Discover corpus. That left the enrichment
+            # absent on exactly the jobs a person tailors against, which are
+            # the ones pasted or imported by URL and which arrive through here.
+            # So the eligibility gate had nothing to read, and Discover's
+            # blocker lines could never fire on a saved job.
+            #
+            # Discover caps this at twelve per search because a search enriches
+            # a page of jobs at once with somebody waiting on it. Neither half
+            # of that applies here: one job, in a background task that already
+            # spent a fetch and a parse. `enrich_job` is total by contract and
+            # never raises, returning a document that names its own gaps, so a
+            # failure costs this job its eligibility fields and nothing else.
+            parsed = store_enrichment(
+                parsed,
+                await enrich_job(
+                    job.jd_clean or job.jd_raw or "",
+                    title_hint=parsed.get("title") or job.title,
+                    company_hint=parsed.get("company"),
+                    posted_at=job.posted_at,
+                ),
+            )
 
             # Stored whether or not it found anything: an incomplete parse is
             # a fact about this job that the scorer and the interface both
