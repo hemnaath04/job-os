@@ -1504,6 +1504,7 @@ export const api = {
       job.jd_clean ?? "",
       applicationId,
       templateId,
+      job.source_url ?? null,
     );
     const version = await waitForAgentJob<TailorResponse>(agentJob);
     appwriteWorkspace.registerVersionFile(version);

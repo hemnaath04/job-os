@@ -557,6 +557,10 @@ export async function startResumeTailorJob(
   jdClean: string,
   applicationId?: string,
   templateKey?: string | null,
+  // The posting's own URL. The agent reads its host to decide which applicant
+  // tracking system will parse the PDF, which changes both how the document is
+  // written and how it is scored. A run without it uses the generic profile.
+  sourceUrl?: string | null,
 ): Promise<{ id: string }> {
   const { databaseId, resumesTableId, agentJobsTableId, agentFunctionId } = config();
   const tables = tablesClient();
@@ -595,6 +599,7 @@ export async function startResumeTailorJob(
     // templates and has no summary section, so a run that does not name its
     // template gets measured against a page it is not going to render.
     template_key: templateKey ?? null,
+    source_url: sourceUrl ?? null,
   };
   const snapshot: AgentJobSnapshot = {
     id,

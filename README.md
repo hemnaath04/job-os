@@ -167,6 +167,62 @@ denominator honest:
   arrive: past that point the honest move is to say nothing was read, now,
   instead of spending the whole budget to say it later.
 
+### Which applicant tracking system is going to read it
+
+Coverage answers "how much of what they asked for can this profile evidence".
+It does not answer "does this file get past the filter", and those come apart:
+a resume can be at its coverage ceiling and still be auto-ranked below Taleo's
+cutoff. So the posting's own host is read to decide which system will actually
+parse the PDF, and the document is scored a second time the way that system
+scores it.
+
+The six modelled platforms and what they disagree about:
+
+| Platform            | Detected from        | Matching | Heaviest dimension        | Passes at | Auto-rejects |
+| ------------------- | -------------------- | -------- | ------------------------- | --------- | ------------ |
+| Workday             | `myworkdayjobs.com`  | exact    | Keywords 30%, format 25%  | 70        | yes          |
+| Taleo (Oracle)      | `taleo.net`, `oraclecloud.com` | exact | Keywords 35%     | 75        | yes          |
+| iCIMS               | `icims.com`          | fuzzy    | Keywords 30%              | 60        | no           |
+| Greenhouse          | `greenhouse.io`      | semantic | Experience 25%, numbers 20% | 50      | no           |
+| Lever               | `lever.co`           | semantic | Experience 30%            | 50        | no           |
+| SuccessFactors (SAP)| `successfactors.com` | exact    | Format 25%, keywords 25%  | 65        | no           |
+
+Two consequences worth stating plainly, because they are the reason this exists
+rather than a detail of it:
+
+- **The same document scores differently on two platforms, by enough to matter.**
+  A resume with weak keyword overlap and fully quantified bullets scores over
+  ten points higher on Lever than on Taleo. Reporting one number for both would
+  be reporting the wrong one for at least one of them.
+- **A two-column template costs about two and a half times more on Workday than
+  on Lever**, because the parsing-strictness multiplier scales every formatting
+  deduction. job.os knows the column count from the template catalogue rather
+  than inferring it from the PDF, so this one is a fact rather than a guess.
+
+The detected platform also reaches the writer. Taleo is told that a synonym
+scores nothing and to prefer the posting's literal phrasing; Lever is told that
+no automated screening exists at all and to write for the person reading it.
+
+**The template is never changed by any of this.** The look is the user's choice.
+A tool that silently swapped a two-column template because a vendor prefers one
+column would be making a decision that is not its to make, and there is a test
+(`test_scoring_never_changes_the_template`) whose only job is to keep that true.
+
+Postings outside the six, including direct company career sites and the ATS
+vendors not modelled here (Ashby, Avature), fall back to job.os's own profile:
+the unweighted mean of the six, which is what every platform agrees on in the
+proportion they collectively agree on it.
+
+**Keyword frequency is weighted, with the saturation and without the pretence.**
+A posting that says "Python" nine times and "Terraform" once is not asking for
+two equal things, so missing the repeated term costs more. The weight is
+`1 + log(count)`, the term-frequency half of BM25. The inverse-document-frequency
+half is deliberately absent: one posting is not a corpus, and computing an IDF
+against an imaginary one would be dressing a guess up as information retrieval.
+This weighting only replaces plain coverage in the composite on the exact-match
+platforms, where literal overlap is what the index actually ranks on. Both
+numbers are always reported so they can be compared.
+
 ## Rendering
 
 
@@ -230,7 +286,53 @@ infra/                    Deployment configuration
 docs/                     Engine, cutover, deploy and setup notes
 ```
 
-Work is split by latency rather than by layer.
+Work is split by latency rather than by layer. The three deploy targets below
+are genuinely independent: the web app ships on merge, the agent function ships
+from `main`, and the API container is released by hand.
+
+```mermaid
+flowchart TB
+    subgraph browser["Browser"]
+        UI["Next.js App Router<br/>Vercel"]
+    end
+
+    Clerk["Clerk<br/>auth, bridged to a<br/>short-lived Appwrite session"]
+
+    subgraph appwrite["Appwrite Cloud"]
+        DB[("TablesDB + Storage<br/>cards, resumes, versions,<br/>facts, templates, agent jobs")]
+        FN["Function: job-os-agents<br/>tailor, review, finalize,<br/>parse, extract, discover"]
+    end
+
+    subgraph heroku["Heroku container"]
+        API["FastAPI<br/>jobs, search, discovery"]
+        RENDER["Typst / Tectonic<br/>PDF rendering"]
+    end
+
+    PG[("Neon Postgres + pgvector<br/>job postings, applications,<br/>companies, embeddings")]
+    LLM["Manifest gateway<br/>Claude"]
+    EXT["Firecrawl · TheirStack<br/>overnight crawl index"]
+
+    UI -.->|"signs in"| Clerk
+    Clerk -.->|"session"| DB
+    UI -->|"direct SDK reads/writes<br/>never waits on a cold start"| DB
+    UI -->|"enqueue job row, then poll"| DB
+    DB -->|"triggers"| FN
+    UI -->|"render, jobs, discovery"| API
+
+    FN -->|"run_tailor"| LLM
+    FN -->|"writes version"| DB
+    API --> RENDER
+    API --> PG
+    API --> EXT
+    API -->|"run_tailor<br/>same graph, no DB handle"| LLM
+
+    classDef store fill:#1f2937,stroke:#4b5563,color:#e5e7eb
+    class DB,PG store
+```
+
+The one thing worth reading twice: `run_tailor` hangs off both the function and
+the container, and takes no database handle in either. That is the only reason
+two runtimes can be trusted to produce the same resume.
 
 **Appwrite TablesDB and Storage** hold the interactive workspace: application
 cards, resumes, immutable resume versions, revision messages, verified profile
@@ -324,6 +426,32 @@ library's own `has_encoding_issues` flag does not fire on the LaTeX defects
 described under [Rendering](#rendering); it is not tuned for them. What it gives
 us is a trustworthy view of the string the parser actually gets, which is the
 part that used to be guesswork.
+
+[**ats-screener**](https://github.com/sunnypatell/ats-screener) by Sunny Patel
+(MIT) is where the applicant tracking system model above comes from: the six
+scoring dimensions, the per-platform weight matrix, the parsing-strictness
+multipliers, the three matching strategies and the pass thresholds are its
+published methodology, reproduced as constants in `ats_profiles.py`.
+
+None of its code is vendored. It is a TypeScript project and job.os reimplements
+the scoring in Python against its own JSON Resume documents, so the two will not
+produce identical numbers and are not meant to. Where job.os differs, and why:
+it scores formatting from the template catalogue rather than by inspecting a
+PDF, because it rendered the file and already knows the column count; it
+computes four of the nine formatting deductions and reports the other five as
+unchecked rather than silently scoring them as clean, because none of the
+bundled templates emit tables or images; and it keeps its own keyword matcher
+instead of substituting a second one, because two coverage numbers that disagree
+with each other are worse than one. `services/ATTRIBUTION.md` records this in
+full.
+
+[**Resume-Matcher**](https://github.com/srbhr/Resume-Matcher) by Saurabh Rai and
+contributors (Apache-2.0) is credited for the framing rather than for code:
+score a resume against the specific posting rather than against a general style
+rubric, and report the gap as named missing terms rather than as a grade. job.os
+already worked this way, and the term-frequency weighting described above is the
+one idea taken from it directly. Its embedding-based similarity scoring is not
+used.
 
 The six resume templates are vendored from their upstream authors under their
 own licences, listed in the table under [Rendering](#rendering), each with an
