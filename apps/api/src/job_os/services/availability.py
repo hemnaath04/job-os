@@ -57,6 +57,36 @@ _AVAILABILITY_ASK_RE = re.compile(
     re.I,
 )
 
+# The other way a posting makes timing matter: it states a schedule the
+# applicant has to satisfy, rather than asking them to state theirs.
+#
+# Salesforce's "Summer 2027 Intern" gates on "Returning to school after Summer
+# 2027 to complete your degree". Nothing there is an instruction, so the ask
+# pattern above reads it as prose and the page comes out with no date above the
+# education block. But the recruiter is checking exactly one thing, the
+# candidate answers it (enrolled through May 2028), and the resume never says
+# so. A condition the reader is screening against is worth answering whether or
+# not they thought to phrase it as a question.
+#
+# Narrower than the ask patterns on purpose, because the vocabulary here is
+# common. Each alternative needs the SHAPE of a requirement, not just the words:
+# "returning to school" and "recent graduates" both contain "return"/"graduat",
+# and only the first is a condition on when this person is free.
+_AVAILABILITY_CONDITION_RE = re.compile(
+    # "returning to school after Summer 2027", "must return to school following"
+    r"\b(?:returning|return)\s+to\s+(?:school|university|college|studies)\b"
+    # "enrolled in the fall following the internship", "enrolled through May 2027"
+    r"|\benrolled\b[^.\n]{0,40}\b(?:following|after|through|during)\b[^.\n]{0,40}"
+    r"\b(?:internship|programme|program|fall|spring|semester|term)\b"
+    # "graduating between December 2027 and June 2028"
+    r"|\bgraduat\w*\s+(?:between|in|by|no\s+earlier\s+than|no\s+later\s+than)\b"
+    # "must be enrolled for the duration", "currently enrolled and returning"
+    r"|\bmust\s+be\s+(?:currently\s+)?enrolled\b"
+    # "complete your degree after the internship"
+    r"|\bcomplete\s+your\s+degree\b",
+    re.I,
+)
+
 # How much of a long posting is read for the ask. The instruction lives in the
 # application section, which is at the end, so this is deliberately larger than
 # the slice the writer prompt gets.
@@ -155,7 +185,11 @@ def posting_asks_for_availability(
     for key in ("responsibilities", "qualifications", "required_skills", "keywords"):
         for entry in (jd_parsed or {}).get(key) or []:
             haystacks.append(str(entry))
-    return any(_AVAILABILITY_ASK_RE.search(text) for text in haystacks if text)
+    return any(
+        _AVAILABILITY_ASK_RE.search(text) or _AVAILABILITY_CONDITION_RE.search(text)
+        for text in haystacks
+        if text
+    )
 
 
 def _month_year(value: date | None) -> str:
