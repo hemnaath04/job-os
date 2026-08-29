@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from datetime import date
 
+import pytest
+
 from job_os.services.availability import (
     derive_availability,
     posting_asks_for_availability,
@@ -199,3 +201,62 @@ def test_the_latest_degree_decides_the_graduation_date() -> None:
         end_date=date(2028, 12, 1),
     )
     assert derive_availability([earlier, later], today=TODAY).line == "Graduating December 2028"
+
+
+# ---------------------------------------------------------------------------
+# A posting that states a schedule instead of asking for one.
+#
+# Salesforce's "Summer 2027 Intern" gates on "Returning to school after Summer
+# 2027 to complete your degree". Nothing there is an instruction, so the ask
+# patterns read it as prose and the page came out with no date above the
+# education block. The recruiter is screening on exactly one thing, the
+# candidate answers it, and the resume never said so.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # Verbatim from the Salesforce posting.
+        "Returning to school after Summer 2027 to complete your degree",
+        "You must return to university following the internship",
+        "Enrolled in a degree programme through the fall semester after the internship",
+        "Graduating between December 2027 and June 2028",
+        "Graduating no earlier than December 2027",
+        "Must be currently enrolled in an accredited institution",
+        "You will complete your degree after this placement",
+    ],
+)
+def test_a_schedule_the_applicant_must_satisfy_counts_as_asking(line: str) -> None:
+    assert posting_asks_for_availability({}, line) is True
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        # The vocabulary overlaps and the meaning does not. Each of these was a
+        # candidate false positive while the patterns were being narrowed.
+        "We welcome recent graduates and career changers",
+        "Our team values high availability and mentorship",
+        "The internship starts in June and runs for twelve weeks",
+        "You will return to the office three days a week",
+        "Graduates of any discipline are encouraged to apply",
+        "Experience with highly available distributed systems",
+        "Return on investment is how we measure every launch",
+    ],
+)
+def test_the_same_words_in_a_different_shape_do_not(line: str) -> None:
+    """The employer telling YOU the schedule, or using the words for something
+    else entirely, is not the employer asking when you are free."""
+    assert posting_asks_for_availability({}, line) is False
+
+
+def test_the_instruction_form_still_fires() -> None:
+    """The original behaviour is untouched; this only widens what counts."""
+    assert posting_asks_for_availability(
+        {}, "Please state your availability including start and end dates."
+    ) is True
+
+
+def test_a_posting_that_mentions_neither_is_still_silent() -> None:
+    assert posting_asks_for_availability({}, "Build backend services in Go.") is False
