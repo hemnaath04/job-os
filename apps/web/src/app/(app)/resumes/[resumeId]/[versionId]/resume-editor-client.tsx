@@ -740,9 +740,15 @@ function FinalizeReviewDialog({
                 )}
 
                 <p className="mt-4 text-xs leading-5 text-[color:var(--color-text-dim)]">
-                  Finalizing renders and stores the PDF as it stands now. Keep
-                  editing to address these first, or finalize anyway if they are
-                  intentional.
+                  {/* With no findings there is nothing to keep editing FOR, and
+                      the dialog was still telling the reader to address them.
+                      A review that ran clean does not open this dialog at all,
+                      so an empty list here means the reviewing model never
+                      answered and the score beside it came from the automatic
+                      checks alone. */}
+                  {review.issues.length === 0
+                    ? "The reviewing model did not answer, so this score comes from the automatic checks alone. Run the review again, or finalize as it stands."
+                    : "Finalizing renders and stores the PDF as it stands now. Keep editing to address these first, or finalize anyway if they are intentional."}
                 </p>
 
                 <div className="mt-4 flex justify-end gap-2">

@@ -1387,6 +1387,14 @@ function ResultView({
     null,
   );
   const [showAllBlockedIssues, setShowAllBlockedIssues] = useState(false);
+  // A review that ran and found nothing never reaches the panel below: it
+  // would have passed and finalized. So an empty issue list on a blocked
+  // result means the reviewing model did not answer, and `model_estimate`
+  // corroborates it -- that field is null for exactly that case.
+  const reviewDidNotRun =
+    !!blockedReview &&
+    blockedReview.issues.length === 0 &&
+    (blockedReview.model_estimate ?? null) === null;
   const approve = useMutation({
     mutationFn: (force: boolean) =>
       // Same look the review rendered with, so the finalized PDF matches what
@@ -1614,16 +1622,27 @@ function ResultView({
           <div className="flex items-center gap-2">
             <AlertCircle className="size-4 shrink-0" />
             <span className="font-semibold">
-              {/* The score itself lives on the Quality Review status next to
-                  Finalize, one line up. Restating it here just made the same
-                  number the first thing you'd read twice in a row. */}
-              The review flagged {blockedReview.issues.length} issue
-              {blockedReview.issues.length === 1 ? "" : "s"}
+              {/* Two different situations used to wear one sentence. A review
+                  that ran and found nothing does not reach this panel at all:
+                  `passed` would be true and Finalize would have gone through.
+                  So an empty issue list here means the reviewing model never
+                  answered, which is why `passed` is false. Saying "flagged 0
+                  issues" reported that as a clean review with nothing to fix,
+                  and then asked the user to override it anyway.
+
+                  The score itself lives on the Quality Review status next to
+                  Finalize, one line up, so it is not restated here. */}
+              {reviewDidNotRun
+                ? "The review could not run"
+                : `The review flagged ${blockedReview.issues.length} issue${
+                    blockedReview.issues.length === 1 ? "" : "s"
+                  }`}
             </span>
           </div>
           <p className="notice-detail mt-1.5">
-            This is advice, not a gate. Fix what you agree with in Edit with AI,
-            or finalize as is.
+            {reviewDidNotRun
+              ? "Nothing was checked by the reviewing model, so the score beside Finalize comes from the automatic checks alone. Run the review again, or finalize as is."
+              : "This is advice, not a gate. Fix what you agree with in Edit with AI, or finalize as is."}
           </p>
           <ul className="mt-2.5 space-y-1">
             {(showAllBlockedIssues
