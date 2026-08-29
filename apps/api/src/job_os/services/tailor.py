@@ -3813,12 +3813,25 @@ class _Requirement:
 # JD sections that describe what the employer would LIKE, not what the role
 # demands. Missing a nice-to-have is not the same failure as missing a must-have,
 # and averaging the two together is what made a strong match read as a weak one.
-_PREFERRED_FIELDS = ("preferred_skills", "nice_to_have", "bonus_skills")
+# `keywords` sits here rather than with the must-haves because of what a parser
+# actually puts in it. The extraction prompt already forbids product and org
+# names, and on a real Salesforce posting it produced them anyway: "AI CRM",
+# "Agentforce", "AI-powered experiences", "agentic technologies", "AI-first
+# mindset" and "Futureforce University Recruiting" were all scored as things the
+# candidate was missing. Six of that posting's fourteen must-haves were the
+# employer's own marketing, and no resume will ever contain the name of their
+# internship programme. Scoring them read 7.1% coverage for a candidate who was
+# short on two real skills.
+#
+# Demoted rather than dropped: a genuine skill does sometimes land here and
+# nowhere else, and a nice-to-have that goes unmatched is reported without
+# touching the denominator the headline score is a fraction of.
+_PREFERRED_FIELDS = ("preferred_skills", "nice_to_have", "bonus_skills", "keywords")
 # Fields where the employer said outright that they require the thing.
 _MUST_HAVE_FIELDS = ("required_skills", "qualifications")
 # Fields a parser fills with whatever it saw, with no marking either way. A term
 # here is a must-have unless the preferred section also names it.
-_UNLABELLED_FIELDS = ("technologies", "keywords")
+_UNLABELLED_FIELDS = ("technologies",)
 _REQUIRED_FIELDS = _MUST_HAVE_FIELDS + _UNLABELLED_FIELDS
 
 

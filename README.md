@@ -153,6 +153,16 @@ denominator honest:
   they were never asked to have. An internal team or product name ("you'll
   work with our Infra and Foundational AI teams") is never extracted as a
   requirement either, since no resume can state a name it has never heard of.
+- The parser's loose `keywords` field is scored as a nice-to-have, not as a
+  must-have. It is filled with whatever the model noticed, and across the real
+  postings in one workspace 41% of the terms that appeared **only** there were
+  things no resume can contain: "housing stipend", "June to August 2027",
+  "Dragon", "Starlink", "Anthropic Fellows Program", "internship". A Salesforce
+  posting scored six pieces of its own marketing ("Agentforce", "AI CRM",
+  "Futureforce University Recruiting") as missing must-haves, which read as 7.1%
+  coverage for a candidate short on two real skills. The terms are still
+  reported, so a genuine domain gap stays visible; they no longer sit in the
+  denominator the headline score is a fraction of.
 - If the job description fails to parse, or genuinely names nothing
   scoreable, Keyword Match reports as unavailable rather than a confident 0%.
   A parse failure and a real empty match used to look identical, which turned

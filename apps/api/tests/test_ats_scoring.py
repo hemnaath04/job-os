@@ -160,11 +160,27 @@ def test_a_real_score_passes_through_unchanged() -> None:
 
 
 def test_genuinely_absent_skills_still_count_against_the_score() -> None:
+    """Two languages he does not have stay in the denominator and stay named.
+
+    The score is higher than it once was, and the reason is deliberate: the
+    posting's `keywords` (trading, electronic trading, internship, summer
+    internship) are nice-to-haves now rather than must-haves. A parser fills
+    that field with whatever it saw, and across the real postings in this
+    workspace that meant "housing stipend", "June to August 2027", "Dragon" and
+    "Starlink" were each scored as a requirement the candidate had failed to
+    meet. What this test protects is unchanged: C++ and TypeScript are asked
+    for outright, he does not have them, and both are still counted and still
+    listed.
+    """
     score, report = _score()
     missing = {term.casefold() for term in report["missing"]}
     assert {"c++", "typescript"} <= missing
-    # A real mismatch stays a moderate score, not a flattering one.
-    assert 40 <= score <= 60
+    # Short of the 80 the tailor aims for, because two required languages are
+    # genuinely absent, and not the near-half it read when a summer internship
+    # counted as a skill he lacked.
+    assert 60 <= score <= 75
+    # The domain terms are reported rather than scored, not discarded.
+    assert "trading" in set(report["preferred_missing"])
 
 
 def test_a_term_the_model_claims_is_not_credited_unless_the_resume_says_it() -> None:

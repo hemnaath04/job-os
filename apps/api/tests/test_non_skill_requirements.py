@@ -41,8 +41,14 @@ def _required(jd: dict) -> list[str]:
 def test_the_role_type_is_not_a_skill_to_match(term: str) -> None:
     """`internships?` caught the noun but not the bare word a keywords list
     carries, so an internship posting scored "Intern" as a skill the candidate
-    had failed to demonstrate."""
-    assert term not in _required({"keywords": AMD_KEYWORDS})
+    had failed to demonstrate.
+
+    Fed in through `technologies` rather than `keywords`. `keywords` is scored
+    as a nice-to-have now, so asserting against it here would pass because the
+    field is not scored at all rather than because the filter works, and a
+    vacuous test is worse than no test. The filter is the thing under test.
+    """
+    assert term not in _required({"technologies": AMD_KEYWORDS})
 
 
 def test_parse_debris_is_not_a_requirement() -> None:
@@ -59,11 +65,11 @@ def test_parse_debris_is_not_a_requirement() -> None:
 
 def test_the_real_skills_in_that_posting_still_count() -> None:
     """The guard must not eat the requirements the posting actually makes."""
-    labels = " ".join(_required({"keywords": AMD_KEYWORDS}))
+    labels = " ".join(_required({"technologies": AMD_KEYWORDS}))
     for kept in ("Machine Learning", "Computer Vision", "Deep Learning"):
         assert kept in labels
 
 
 def test_internal_is_not_mistaken_for_intern() -> None:
     # Word-boundary matched, the same care `firm`/`firmware` already gets.
-    assert "Internal Tooling" in _required({"keywords": ["Internal Tooling"]})
+    assert "Internal Tooling" in _required({"technologies": ["Internal Tooling"]})
