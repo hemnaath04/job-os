@@ -55,12 +55,30 @@ jobs:
           fi
 
       - name: Warn if the deployed commit has drifted from main
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # How far behind main the running image may fall before this stops
+          # being a warning. Drift of a commit or two is the manual deploy
+          # working as intended; drift of this many is a container nobody has
+          # shipped, which is a different fact and deserves a different colour.
+          STALE_COMMITS: ${{ vars.STALE_COMMITS || 10 }}
         run: |
           set -uo pipefail
-          # WARNS, does not fail. Drift is normal for a while after a merge because
-          # the API deploys manually, and a red run for "not deployed yet" would
-          # train everyone to ignore this workflow -- which is the defect this file
-          # used to have, pointed the other way.
+          # Warns on any drift, and FAILS once it is unmistakably stale.
+          #
+          # Warning-only was the right first call: a red run for "not deployed
+          # yet" would train everyone to ignore this workflow, which is the
+          # defect this file used to have pointed the other way. But a warning
+          # that is true for fourteen commits and eight hours is one nobody
+          # reads either. On 2026-08-29 the container sat on 49fc979 while main
+          # reached 660da0a, and every one of those fourteen commits was a fix
+          # to code that only runs in this container: the JD parse race, the
+          # stranded-parse sweep, the Eightfold reader, the duplicate-company
+          # guard, and both education-scoring corrections. The check reported
+          # all of it correctly and stayed green.
+          #
+          # So the line moves rather than the behaviour: still amber while a
+          # deploy is merely pending, red once it is overdue.
           deployed=$(curl -sS --max-time 30 "$API_ORIGIN/health" \
             | python3 -c 'import json,sys; print(json.load(sys.stdin).get("git_sha","unknown"))' \
             2>/dev/null || echo "unreadable")
@@ -69,12 +87,31 @@ jobs:
 
           case "$deployed" in
             unknown|unreadable)
-              echo "::warning::/health reports no git_sha. The running image predates the build arg, so drift cannot be checked." ;;
+              echo "::warning::/health reports no git_sha. The running image predates the build arg, so drift cannot be checked."
+              exit 0 ;;
             "$GITHUB_SHA")
-              echo "production matches main" ;;
-            *)
-              echo "::warning::production is running $deployed but main is at $GITHUB_SHA. See docs/DEPLOY.md." ;;
+              echo "production matches main"
+              exit 0 ;;
           esac
+
+          # How far behind, asked of the API rather than inferred. A count is
+          # the thing that separates "merged ten minutes ago" from "forgotten".
+          behind=$(gh api "repos/${GITHUB_REPOSITORY}/compare/${deployed}...${GITHUB_SHA}" \
+            --jq '.ahead_by' 2>/dev/null || echo "")
+          if [ -z "$behind" ]; then
+            # A deployed commit the API cannot resolve is usually one built from
+            # a branch that has since been deleted. Worth saying, not worth
+            # failing over: the drift itself is already reported above.
+            echo "::warning::production is running $deployed but main is at $GITHUB_SHA, and the distance could not be computed. See docs/DEPLOY.md."
+            exit 0
+          fi
+
+          echo "commits behind   : $behind (threshold $STALE_COMMITS)"
+          if [ "$behind" -ge "$STALE_COMMITS" ]; then
+            echo "::error::production is $behind commits behind main ($deployed vs $GITHUB_SHA). That is past the point where this is a deploy in flight. See docs/DEPLOY.md."
+            exit 1
+          fi
+          echo "::warning::production is running $deployed but main is at $GITHUB_SHA ($behind commits). See docs/DEPLOY.md."
 
       - name: Check /health/ready
         run: |
