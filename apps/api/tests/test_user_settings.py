@@ -75,7 +75,7 @@ def test_an_old_row_defaults_every_new_field_to_no_opinion() -> None:
     # of them refuses nothing, so an untouched account gates exactly as it did
     # before eligibility existed.
     assert settings.work_eligibility.status is None
-    assert settings.work_eligibility.cpt_eligible_now is False
+    assert settings.work_eligibility.may_work_without_sponsorship_now is False
     assert settings.work_eligibility.needs_future_sponsorship is False
     assert settings.work_eligibility.us_person_for_export_control is True
     assert settings.salary_floor is None
@@ -364,7 +364,7 @@ def test_a_saved_round_trip_is_stable() -> None:
             "target_titles": ["Software Engineer", "ML Engineer"],
             "work_eligibility": {
                 "status": "f1_student",
-                "cpt_eligible_now": True,
+                "may_work_without_sponsorship_now": True,
                 "needs_future_sponsorship": True,
                 "us_person_for_export_control": False,
                 "clearance_eligible": False,

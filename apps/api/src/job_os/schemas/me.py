@@ -68,12 +68,28 @@ class WorkEligibility(ORMModel):
     status: WorkAuthorizationStatus | None = None
     """None means never asked. Nothing is inferred from it."""
 
-    cpt_eligible_now: bool = False
-    """Can lawfully start work now without the employer filing anything.
+    may_work_without_sponsorship_now: bool = False
+    """Believes they can start work now without the employer filing anything.
 
-    Distinct from sponsorship on purpose. This is the field that separates a
-    posting saying "no sponsorship for this internship" (which such a candidate
-    can still take) from one saying "no sponsorship ever" (which they cannot).
+    Deliberately NOT called `cpt_eligible_now`, and deliberately only ever
+    softens a verdict rather than causing one.
+
+    CPT eligibility is not a durable property of a student. 8 CFR 214.2(f)(10)
+    creates it per authorization: SEVP states that "authorization is for one
+    specific employer and for a specific period of time" and that "a separate
+    CPT authorization is needed for each employer and each CPT segment", and
+    the determination is the school's DSO's, made against a named offer, not
+    the student's. There is no point in time at which "I am CPT eligible" is
+    true in the abstract, so a stored boolean claiming it would be a field
+    whose question has no answer.
+
+    It also goes stale quickly. SEVP broadcasts on 2026-08-12 and 2026-08-24
+    tightened what counts as an "integral part of an established curriculum",
+    and several universities changed policy within weeks of them.
+
+    So this is a self-report of a belief, used only to choose between two
+    wordings of a warning. Nothing refuses on it, and leaving it unticked
+    cannot cost the user a posting.
     """
 
     needs_future_sponsorship: bool = False

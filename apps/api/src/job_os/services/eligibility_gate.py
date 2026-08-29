@@ -8,8 +8,9 @@ run costs three sequential model calls and several minutes to produce it.
 The distinction this module exists for is the one between REFUSING and
 FLAGGING, and it is narrower than it looks:
 
-    "we do not sponsor for this internship"          -> a student on CPT can
-                                                        take it. Flag it.
+    "we do not sponsor for this internship"          -> a student authorized
+                                                        to work now can take
+                                                        it. Flag it.
     "must be authorized to work without sponsorship
      now or in the future"                           -> the same student
                                                         cannot. Refuse it.
@@ -19,6 +20,12 @@ backwards in either direction is expensive: refuse the first and the candidate
 silently loses a job they were eligible for, with no page and no explanation;
 pass the second and they spend a real application on a posting that already
 said no.
+
+Only three clauses refuse: citizenship, an active clearance, and sponsorship
+closed into the future. Everything else is surfaced and left to the user. A
+bare "we do not sponsor" is NOT one of them -- it is legally compatible with
+hiring a student on school-authorized training, and employers who write it do
+take such interns.
 
 ## What this module does NOT do
 
@@ -270,12 +277,12 @@ def evaluate(
             # relationship, not about this requisition. A candidate who will
             # need a petition later cannot satisfy it however they start.
             #
-            # Refused, unlike the export-control case above, because of what
-            # the sentence IS: a requirement written about the candidate, which
-            # this candidate does not meet. It is employer policy rather than
-            # law and an employer may waive it, so this is the weakest of the
-            # three refusals; it is still a refusal because the posting stated
-            # the requirement in terms the applicant answers on the form.
+            # This is the ONLY sponsorship clause that refuses, and it refuses
+            # because of what the sentence is: a requirement written about the
+            # candidate, in the words the candidate answers on the application
+            # form, which this candidate does not meet. It is employer policy
+            # rather than law and an employer may waive it, so it is the
+            # weakest of the three refusals in this module.
             findings.append(
                 EligibilityFinding(
                     "refuse",
@@ -285,7 +292,7 @@ def evaluate(
                     "will need sponsorship later.",
                 )
             )
-        elif is_training_role and candidate.cpt_eligible_now:
+        elif is_training_role and candidate.may_work_without_sponsorship_now:
             # The AMD/Amex shape. The posting declines to sponsor THIS role and
             # says nothing about later; a student authorized to work now can
             # take it without the employer filing anything.
@@ -294,31 +301,36 @@ def evaluate(
                     "flag",
                     "no_sponsorship_this_role_only",
                     "This posting says it will not sponsor, but does not mention "
-                    "future sponsorship, and your profile says you can work now "
-                    "without it. Confirm with your school before applying.",
-                )
-            )
-        elif candidate.cpt_eligible_now:
-            # Can start now, but this is not a training role, so the clause is
-            # more likely to be about the ongoing relationship. Not refused:
-            # the posting did not actually say so, and guessing that it meant
-            # to is exactly the wrong-refusal this module is careful about.
-            findings.append(
-                EligibilityFinding(
-                    "flag",
-                    "no_sponsorship_unclear_term",
-                    "This posting says it will not sponsor. It does not say "
-                    "whether that covers future sponsorship, which your profile "
-                    "says you will eventually need.",
+                    "future sponsorship. If your school authorizes you to work "
+                    "this term, it may still be open to you: confirm with them "
+                    "for this specific employer and dates before applying.",
                 )
             )
         else:
+            # A bare "we do not sponsor", with nothing said about the future.
+            #
+            # Flagged, not refused, and this was a refusal until the law was
+            # checked. Such a clause is legally compatible with hiring this
+            # candidate: CPT is authorized by the school's DSO under 8 CFR
+            # 214.2(f)(10)(i), and 8 CFR 274a.12(b)(6)(iii) states that "no
+            # Service endorsement is necessary", so an employer who files
+            # nothing may still lawfully take them. Employers who write this
+            # sentence do take CPT interns.
+            #
+            # It also cannot depend on `may_work_without_sponsorship_now`,
+            # because that question has no answer a student can give in
+            # advance: CPT authorization is granted per employer and per date
+            # range against a named offer, so an honest candidate leaves it
+            # unticked. Refusing on an unticked box would refuse on the user
+            # having declined to guess.
             findings.append(
                 EligibilityFinding(
-                    "refuse",
-                    "no_sponsorship",
+                    "flag",
+                    "no_sponsorship_stated",
                     "This posting states it does not sponsor visas, and your "
-                    "profile says you need sponsorship to work.",
+                    "profile says you will need sponsorship. It does not say "
+                    "whether that covers the future, so it may still be worth "
+                    "asking rather than skipping.",
                 )
             )
 

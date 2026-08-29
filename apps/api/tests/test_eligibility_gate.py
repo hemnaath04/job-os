@@ -29,7 +29,7 @@ from job_os.services.eligibility_gate import evaluate  # noqa: E402
 # later, cannot hold a clearance, not a US person for export control.
 F1_STUDENT = WorkEligibility(
     status="f1_student",
-    cpt_eligible_now=True,
+    may_work_without_sponsorship_now=True,
     needs_future_sponsorship=True,
     us_person_for_export_control=False,
     clearance_eligible=False,
@@ -38,7 +38,7 @@ F1_STUDENT = WorkEligibility(
 # Somebody the gate should never stop for any of these reasons.
 CITIZEN = WorkEligibility(
     status="us_citizen",
-    cpt_eligible_now=True,
+    may_work_without_sponsorship_now=True,
     needs_future_sponsorship=False,
     us_person_for_export_control=True,
     clearance_eligible=True,
@@ -127,7 +127,10 @@ def test_no_sponsorship_for_this_internship_is_only_flagged() -> None:
 
     assert reading.verdict == "flag"
     assert reading.flags[0].reason == "no_sponsorship_this_role_only"
-    assert "school" in reading.flags[0].detail, "the flag has to say what to check"
+    # The flag has to name the per-offer nature of the check, because CPT is
+    # authorized for one employer and one date range and a student cannot know
+    # in advance that they qualify for a particular one.
+    assert "specific employer" in reading.flags[0].detail
 
 
 def test_the_two_sponsorship_clauses_are_not_confused_for_each_other() -> None:
@@ -145,12 +148,14 @@ def test_the_two_sponsorship_clauses_are_not_confused_for_each_other() -> None:
     assert (refused.verdict, flagged.verdict) == ("refuse", "flag")
 
 
-def test_a_non_training_role_that_does_not_mention_the_future_is_flagged() -> None:
-    """A full-time posting saying only "no sponsorship".
+def test_a_bare_no_sponsorship_is_flagged_not_refused() -> None:
+    """This was a refusal until the law was checked.
 
-    Likely about the ongoing relationship, and refusing on that guess is
-    exactly the wrong-refusal this module is careful about. The posting did not
-    say it, so the gate does not claim it did.
+    A bare "we do not sponsor" is legally compatible with hiring this
+    candidate: CPT is authorized by the school's DSO under 8 CFR
+    214.2(f)(10)(i), and 8 CFR 274a.12(b)(6)(iii) states that "no Service
+    endorsement is necessary", so an employer who files nothing may still
+    lawfully take them. Employers who write this sentence do take such interns.
     """
     reading = evaluate(
         posting(visa_sponsorship="no", commitment=["full-time"]),
@@ -159,7 +164,32 @@ def test_a_non_training_role_that_does_not_mention_the_future_is_flagged() -> No
     )
 
     assert reading.verdict == "flag"
-    assert reading.flags[0].reason == "no_sponsorship_unclear_term"
+    assert reading.flags[0].reason == "no_sponsorship_stated"
+
+
+def test_leaving_the_unanswerable_question_blank_never_refuses() -> None:
+    """The failure this rename exists to prevent.
+
+    "Am I authorized to work now?" has no answer a student can give in
+    advance. CPT is granted per employer and per date range against a named
+    offer, by the school's DSO, so the honest candidate leaves the box
+    unticked. Refusing on an unticked box would be refusing somebody for
+    declining to guess about their own legal status.
+    """
+    honest = WorkEligibility(
+        status="f1_student",
+        needs_future_sponsorship=True,
+        may_work_without_sponsorship_now=False,
+    )
+
+    for commitment in (["internship"], ["full-time"], []):
+        reading = evaluate(
+            posting(visa_sponsorship="no", commitment=commitment),
+            honest,
+            jd_text="We do not provide visa sponsorship.",
+        )
+        assert reading.verdict == "flag", commitment
+        assert not reading.refusals
 
 
 # ── Export control: flagged, never refused ──
