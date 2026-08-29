@@ -487,6 +487,37 @@ class EducationRequirements(BaseModel):
             return "high-school"
         return "none"
 
+    def undergraduate_only(self) -> bool:
+        """Whether this posting is addressed to current undergraduates only.
+
+        Three things have to hold at once, and each one is doing work:
+
+        * it addresses current students (`enrolled_student_ok`), which is what
+          separates "pursuing a Bachelor's" from a full-time role that merely
+          requires one. A posting of the second kind is happy to hire someone
+          with more education and must not be caught here.
+        * a bachelors is the level it gates on.
+        * it never mentions a master's or a doctorate at any status. A posting
+          that says "Bachelor's or Master's" is open to both and says so, and
+          `masters.status` records that.
+
+        Salesforce's "Summer 2027 Intern" is the shape this is for: "Enrolled
+        and currently pursuing a BS in Computer Science", "Returning to school
+        after Summer 2027 to complete your degree", and nothing above it.
+
+        This says nothing about any candidate. It is a fact about the posting,
+        and the scorer decides what it costs, which is the only way the answer
+        can differ for an undergraduate and for someone already in a master's.
+        """
+        if not self.enrolled_student_ok:
+            return False
+        if self.bachelors.status == "not-mentioned":
+            return False
+        return (
+            self.masters.status == "not-mentioned"
+            and self.doctorate.status == "not-mentioned"
+        )
+
     def highest_preferred(self) -> DegreeLevel:
         for level in reversed(DEGREE_ORDER):
             if level in ("none", "high-school"):

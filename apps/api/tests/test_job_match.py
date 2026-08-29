@@ -13,6 +13,8 @@ import pathlib
 import pytest
 
 from job_os.schemas.enrichment import (
+    DegreeRequirement,
+    EducationRequirements,
     Eligibility,
     JobEnrichment,
     SkillRequirement,
@@ -784,4 +786,102 @@ def test_the_scorer_is_total_on_an_empty_job_and_an_empty_profile() -> None:
     """
     score: MatchScore = score_job(JobEnrichment(), CandidateProfile.build())
     assert 0 <= score.overall <= 100
+    assert BASE_SCORE + sum(line.points for line in score.lines) == score.raw_overall
+
+
+# ---------------------------------------------------------------------------
+# Postings open only to current undergraduates.
+#
+# Salesforce's "Summer 2027 Intern - Software Engineer" asks for someone
+# "Enrolled and currently pursuing a BS in Computer Science" who is "Returning
+# to school after Summer 2027 to complete your degree". A candidate holding a
+# bachelors and enrolled in a masters is not that person, and the axis scored
+# him 15 out of 15 on it: he holds the degree it names, so `held >= required`
+# was true and the branch read "education_requirement_met".
+#
+# The rule has to fire on the CANDIDATE rather than on the posting, or it
+# becomes a blanket penalty on internships. The three negative tests below are
+# the ones that keep that true, and are the point of this block.
+# ---------------------------------------------------------------------------
+
+
+def _student_posting(
+    *, bachelors: str = "required", masters: str = "not-mentioned", enrolled_ok: bool = True
+) -> JobEnrichment:
+    return JobEnrichment(
+        core_job_title="Software Engineer Intern",
+        education=EducationRequirements(
+            bachelors=DegreeRequirement(status=bachelors),  # type: ignore[arg-type]
+            masters=DegreeRequirement(status=masters),  # type: ignore[arg-type]
+            enrolled_student_ok=enrolled_ok,
+        ),
+    )
+
+
+def _education_reasons(score: MatchScore) -> set[str]:
+    return {line.reason for line in score.lines if line.axis == "education"}
+
+
+BACHELORS_STUDENT = CandidateProfile.build(
+    skills=["Python", "Java"],
+    highest_degree="none",
+    in_progress_degree="bachelors",
+    degree_fields=["Computer Science"],
+)
+
+
+def test_an_undergraduate_only_posting_costs_a_masters_student() -> None:
+    """The reported bug: a posting he cannot hold scored full marks on education."""
+    score = score_job(_student_posting(), BACKEND_MS_STUDENT)
+
+    assert "undergraduate_only_posting" in _education_reasons(score)
+    assert "education_requirement_met" not in _education_reasons(score)
+    education = next(axis for axis in score.axes if axis.axis == "education")
+    assert education.points < AXIS_WEIGHTS["education"]
+
+
+def test_the_undergraduate_it_is_addressed_to_loses_nothing() -> None:
+    """Not a global cap on undergraduate roles, which was the explicit ask.
+
+    Same posting, and the candidate it was written for. If this ever deducts,
+    the rule has stopped being about the candidate and started being about the
+    posting.
+    """
+    score = score_job(_student_posting(), BACHELORS_STUDENT)
+
+    assert "undergraduate_only_posting" not in _education_reasons(score)
+
+
+def test_a_posting_open_to_both_degrees_is_not_undergraduate_only() -> None:
+    """"Bachelor's or Master's" is open to him and records that it is."""
+    score = score_job(
+        _student_posting(masters="required"), BACKEND_MS_STUDENT
+    )
+
+    assert "undergraduate_only_posting" not in _education_reasons(score)
+
+
+def test_a_full_time_role_requiring_a_bachelors_is_not_undergraduate_only() -> None:
+    """The distinction the whole rule turns on.
+
+    A permanent role that requires a bachelors is happy to hire someone with
+    more education. Only a posting addressed to CURRENT students is restricting
+    a degree status rather than stating a minimum, which is why
+    `enrolled_student_ok` is the first thing checked.
+    """
+    score = score_job(
+        _student_posting(enrolled_ok=False), BACKEND_MS_STUDENT
+    )
+
+    assert "undergraduate_only_posting" not in _education_reasons(score)
+
+
+def test_the_deduction_still_explains_itself_in_the_totals() -> None:
+    """The module's own invariant, on the new line.
+
+    100 + every line == raw_overall, with no residual. A deduction that does not
+    participate in that is a number nobody can trace.
+    """
+    score = score_job(_student_posting(), BACKEND_MS_STUDENT)
+
     assert BASE_SCORE + sum(line.points for line in score.lines) == score.raw_overall
