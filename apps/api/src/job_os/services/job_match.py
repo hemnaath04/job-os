@@ -777,7 +777,10 @@ def _score_education(job: JobEnrichment, candidate: CandidateProfile) -> AxisSco
     budget = _Budget("education", weight)
     education = job.education
 
-    required = education.highest_required()
+    # The floor, not the ceiling. A posting naming several degree levels is
+    # listing alternatives, and scoring against the tallest one turns "pursuing
+    # an undergraduate or graduate degree" into a demand for a doctorate.
+    required = education.required_floor()
     preferred = education.highest_preferred()
     held = _degree_index(candidate.highest_degree)
     in_progress = _degree_index(candidate.in_progress_degree)

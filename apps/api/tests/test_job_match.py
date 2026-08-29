@@ -885,3 +885,91 @@ def test_the_deduction_still_explains_itself_in_the_totals() -> None:
     score = score_job(_student_posting(), BACKEND_MS_STUDENT)
 
     assert BASE_SCORE + sum(line.points for line in score.lines) == score.raw_overall
+
+
+# ---------------------------------------------------------------------------
+# A posting naming several degree levels is listing alternatives.
+#
+# Roblox: "Pursuing an undergraduate or graduate degree in computer science,
+# engineering, or a related field." Every level it names is marked required,
+# because that is what the extraction is told to do. Reading the tallest as the
+# bar turned an either-or into a demand for the highest one.
+#
+# The same rule the tailoring pass already applies to skills, where "one or more
+# of Go, Node.js or Python" is one requirement Python satisfies rather than
+# three the candidate mostly fails.
+# ---------------------------------------------------------------------------
+
+
+UNDERGRAD_STUDENT = CandidateProfile.build(
+    skills=["Python", "Java"],
+    highest_degree="none",
+    in_progress_degree="bachelors",
+    degree_fields=["Computer Science"],
+)
+
+
+def _any_of(*levels: str, enrolled_ok: bool = True) -> JobEnrichment:
+    kwargs = {
+        level: DegreeRequirement(status="required")  # type: ignore[arg-type]
+        for level in levels
+    }
+    return JobEnrichment(
+        core_job_title="Machine Learning Research Intern",
+        education=EducationRequirements(enrolled_student_ok=enrolled_ok, **kwargs),
+    )
+
+
+def test_a_bachelors_student_is_eligible_for_a_bs_ms_or_phd_posting() -> None:
+    """The failure this fixes, at its worst.
+
+    A research internship open to a BS, MS or PhD scored an eligible bachelors
+    student two levels short: fourteen points off a fifteen-point axis, on a
+    posting they can apply to.
+    """
+    score = score_job(_any_of("bachelors", "masters", "doctorate"), UNDERGRAD_STUDENT)
+
+    assert "degree_short" not in _education_reasons(score)
+    education = next(axis for axis in score.axes if axis.axis == "education")
+    assert education.points == AXIS_WEIGHTS["education"]
+
+
+def test_a_masters_student_is_eligible_for_the_same_posting() -> None:
+    score = score_job(_any_of("bachelors", "masters", "doctorate"), BACKEND_MS_STUDENT)
+
+    assert "degree_short" not in _education_reasons(score)
+
+
+def test_undergraduate_or_graduate_is_not_a_demand_for_a_masters() -> None:
+    """Roblox's wording, and the shape it produces."""
+    score = score_job(_any_of("bachelors", "masters"), UNDERGRAD_STUDENT)
+
+    assert "degree_short" not in _education_reasons(score)
+
+
+def test_a_single_required_degree_is_still_a_floor_to_clear() -> None:
+    """The rule is about alternatives, not about lowering every bar.
+
+    One level named is not a list, and someone short of it is still short.
+    """
+    posting = JobEnrichment(
+        core_job_title="Research Scientist",
+        education=EducationRequirements(
+            doctorate=DegreeRequirement(status="required"),
+        ),
+    )
+    score = score_job(posting, UNDERGRAD_STUDENT)
+
+    assert "degree_short" in _education_reasons(score)
+
+
+def test_the_tallest_named_degree_is_still_reported_as_such() -> None:
+    """`highest_required` answers a different question and keeps answering it.
+
+    It describes the posting; `required_floor` scores a candidate against it.
+    Collapsing the two would lose the ability to say what a posting asked for.
+    """
+    education = _any_of("bachelors", "masters", "doctorate").education
+
+    assert education.highest_required() == "doctorate"
+    assert education.required_floor() == "bachelors"
