@@ -47,7 +47,9 @@ async def _jobs_by_id(ids: set[str]) -> dict[str, Job]:
 async def backfill(owner_id: str, *, apply: bool) -> int:
     table = get_settings().appwrite_application_cards_table_id
     rows = await appwrite_tables.list_rows(
-        filters=[f'equal("owner_id", ["{owner_id}"])', 'equal("archived", [false])'],
+        # `attribute=value`, which is what _parse_filter accepts. Appwrite's own
+            # Query JSON is not a filter expression here and raises.
+            filters=[f"owner_id={owner_id}", "archived=false"],
         limit=500,
         table_id=table,
     )
