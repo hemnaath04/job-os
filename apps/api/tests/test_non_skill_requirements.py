@@ -192,3 +192,62 @@ def test_stakeholder_management_is_still_a_skill() -> None:
     assert "stakeholder management" in " ".join(
         _required({"technologies": ["stakeholder management"]})
     )
+
+
+def test_keywords_are_promoted_when_they_are_all_the_posting_gives() -> None:
+    """A weak signal beats no signal, but only when it is the only one there is.
+
+    Crowe's posting names every skill it asks for (Machine Learning, Data
+    Science, Modelling, Software Development) in `keywords`, and puts nothing in
+    `required_skills` or `technologies`. Demoting keywords left it with no
+    must-haves at all and a score of "unavailable" on a posting whose asks are
+    perfectly legible.
+    """
+    jd = {
+        "qualifications": ["Ideal for students or recent graduates"],
+        "keywords": ["Machine Learning", "Data Science", "Modelling"],
+    }
+    must = _required(jd)
+    assert "Machine Learning" in must
+    assert "Data Science" in must
+
+
+def test_keywords_stay_a_nice_to_have_while_the_posting_states_real_ones() -> None:
+    """The promotion is a fallback, not a reversal of the demotion.
+
+    This is the Salesforce shape: real requirements alongside pieces of the
+    employer's own marketing. The marketing must stay out of the denominator.
+    """
+    jd = {
+        "technologies": ["Python", "Kubernetes"],
+        "keywords": ["Agentforce", "Futureforce University Recruiting"],
+    }
+    must = _required(jd)
+    assert "Python" in must
+    assert "Agentforce" not in must
+    assert "Futureforce University Recruiting" not in must
+
+
+def test_the_fallback_keeps_the_filters_but_cannot_spot_a_board_index() -> None:
+    """What the promotion does and does not guarantee, stated honestly.
+
+    It guarantees the filters still apply: a role-type word is dropped on the
+    way through, so "Internship" does not become a must-have.
+
+    It does NOT guarantee the result is a real requirement. "Jobs at Anthropic"
+    is a board index rather than a posting, and its keywords are the page's own
+    furniture: "Open Roles" and "AI Research & Engineering" survive every filter
+    and are promoted, because nothing here can tell a job description from a
+    list of links to job descriptions. An earlier version of this test claimed
+    otherwise and passed only because the one term it checked happened to be a
+    role-type word.
+
+    The cost is bounded and worth paying: it lands on rows that were imported by
+    mistake and are unusable either way, and it buys back Crowe and Datadog,
+    whose real skills live only in `keywords`. Telling a posting from an index
+    belongs at import, not here.
+    """
+    jd = {"keywords": ["Open Roles", "AI Research & Engineering", "Internship"]}
+    must = _required(jd)
+    assert "Internship" not in must
+    assert "Open Roles" in must, "the known limit, pinned so it is a decision"
