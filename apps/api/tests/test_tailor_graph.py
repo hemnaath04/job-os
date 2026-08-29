@@ -78,7 +78,14 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     user: Any = SimpleNamespace(id=uuid4())
     resume: Any = SimpleNamespace(id=uuid4())
     master_version: Any = SimpleNamespace(json_resume={"basics": {}})
-    job: Any = SimpleNamespace(jd_parsed={"technologies": ["Python"]}, jd_clean="Python agent role")
+    # `source_url` is a real column on Job and is what the tailor reads to
+    # decide which applicant tracking system will parse the PDF. A Workday host
+    # here so this path exercises a detected platform rather than the fallback.
+    job: Any = SimpleNamespace(
+        jd_parsed={"technologies": ["Python"]},
+        jd_clean="Python agent role",
+        source_url="https://acme.wd1.myworkdayjobs.com/en-US/careers/job/1",
+    )
     result = await tailor.tailor_resume(
         session,
         user=user,

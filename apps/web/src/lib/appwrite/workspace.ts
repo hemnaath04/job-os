@@ -1336,6 +1336,11 @@ export const appwriteWorkspace = {
     jdClean: string,
     applicationId?: string,
     templateId?: string | null,
+    // The posting's own URL. The agent reads the host off it to decide which
+    // applicant tracking system will parse the PDF, which changes how the
+    // document is written and scored. Optional, and a run without it scores
+    // against the generic profile rather than failing.
+    sourceUrl?: string | null,
   ): Promise<AgentJob> {
     if (applicationId) {
       try {
@@ -1361,6 +1366,7 @@ export const appwriteWorkspace = {
       jd_parsed: jdParsed,
       jd_clean: jdClean,
       template_key: look?.template_key ?? null,
+      source_url: sourceUrl ?? null,
     });
   },
 

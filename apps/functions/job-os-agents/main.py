@@ -1236,6 +1236,11 @@ async def _tailor_resume(
         jd_parsed=jd_parsed,
         jd_clean=jd_clean,
         template_key=payload.get("template_key"),
+        # Absent on a run enqueued before the browser started sending it, and on
+        # a job that was pasted as text rather than imported from a URL. Both
+        # score against the generic profile, which is the right answer for a
+        # posting whose host nobody knows.
+        source_url=payload.get("source_url"),
         on_progress=on_stage,
     )
 

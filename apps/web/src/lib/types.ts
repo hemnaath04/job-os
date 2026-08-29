@@ -401,6 +401,35 @@ export interface ResumeVersion extends ResumeVersionSummary {
     missing_needs_new_facts?: string[];
     preferred_matched?: string[];
     preferred_missing?: string[];
+    /**
+     * The same document scored the way the applicant tracking system on the
+     * other end scores it, detected from the posting's host. Absent on a run
+     * from before this existed, and on a job with no URL.
+     *
+     * This is a different question from the headline number above it. That one
+     * asks "how much of what they asked for can this profile evidence", which
+     * is what a repair can act on. This one asks "does the file get past the
+     * filter", which is what the candidate is actually gambling on. A resume
+     * can be at its coverage ceiling and still fail Taleo's 75.
+     */
+    platform?: {
+      platform: string;
+      platform_name: string;
+      matching: "exact" | "fuzzy" | "semantic";
+      composite_score: number;
+      pass_threshold: number;
+      passes: boolean;
+      auto_rejects: boolean;
+      dimensions: Record<string, number>;
+      notes: string[];
+      not_checked: string[];
+      keyword_coverage_plain?: number;
+      keyword_coverage_weighted?: number;
+      keyword_weighting?: { weighted: boolean; most_repeated_gaps?: string[] };
+      template_key?: string;
+      template_columns?: number;
+      estimated_pages?: number;
+    };
   } | null;
   latex_source: string | null;
 }

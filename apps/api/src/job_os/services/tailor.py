@@ -52,6 +52,7 @@ from job_os.schemas.resumes import (
     TailorAgentOutput,
     TailorAnalysis,
 )
+from job_os.services import ats_profiles
 from job_os.services.availability import (
     AVAILABILITY_GAP_REQUIREMENT,
     AVAILABILITY_GAP_WHY,
@@ -62,6 +63,8 @@ from job_os.services.availability import (
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text as _identity_text
+from job_os.services.latex_catalog import DEFAULT_TEMPLATE_KEY
+from job_os.services.latex_catalog import builtin as builtin_template
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
     JSON_ONLY_RETRY,
@@ -829,6 +832,7 @@ async def tailor_resume(
         jd_parsed=job.jd_parsed or {},
         jd_clean=job.jd_clean or "",
         template_key=template_key,
+        source_url=job.source_url,
     )
 
 
@@ -873,6 +877,7 @@ async def run_tailor(
     jd_parsed: dict[str, Any],
     jd_clean: str,
     template_key: str | None = None,
+    source_url: str | None = None,
     on_progress: Callable[[TailorStage], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
@@ -894,6 +899,14 @@ async def run_tailor(
     def report(step: str, label: str, detail: str | None, pct: float) -> None:
         if on_progress:
             on_progress(TailorStage(step=step, label=label, detail=detail, pct=pct))
+
+    # Which applicant tracking system is going to read the file, decided from
+    # the posting's own host. This changes what the writer is told to optimise
+    # for and how the finished document is scored. It deliberately does not
+    # change `template_key`: the look is the user's choice, and a tool that
+    # silently swapped their template because a vendor prefers one column would
+    # be making a decision that is not its to make.
+    ats = ats_profiles.detect(source_url)
 
     # One fact per real job, degree, project or skill before the model sees
     # anything. Re-importing a resume mints a second fact for the same job with
@@ -1115,6 +1128,7 @@ async def run_tailor(
         plan=_analysis_block(
             analysis, bullets_by_id=bullets_by_id, facts_by_id=facts_by_id
         ),
+        ats=ats,
     )
 
     graph = StateGraph(TailorGraphState)
@@ -1509,6 +1523,20 @@ async def run_tailor(
     # rather than as the tailor underperforming.
     ats_report["achievable_ats_score"] = float(achievable)
     ats_report["reached_target"] = float(ats_score) >= float(target_score)
+    # The same document, scored the way the system on the other end scores it.
+    # Requirement coverage stays the headline and stays what the loop steers by,
+    # because it is the number a repair can act on: "you are missing Kubernetes"
+    # names a fix, where "your composite is 63" does not. This sits beside it and
+    # answers the different question of whether the file gets past the filter.
+    ats_report["platform"] = _platform_report(
+        json_resume=json_resume,
+        keyword_score=float(ats_score),
+        template_key=template_key,
+        ats=ats,
+        matched=list(ats_report.get("matched") or []),
+        missing=list(ats_report.get("missing") or []),
+        jd_clean=jd_clean,
+    )
     # The measurement the one-shot work is accountable to. `iterations` has one
     # entry per composition, so its length IS the number of writer model calls
     # this run spent: 1 means the first pass was shipped, 2+ means a repair ran.
@@ -2476,8 +2504,24 @@ def _build_user_prompt(
     facts_payload: list[dict[str, Any]],
     briefing: str,
     plan: str,
+    ats: ats_profiles.AtsProfile | None = None,
 ) -> str:
+    profile = ats or ats_profiles.GENERIC
+    # Named platform first, then the instruction, then what it costs to ignore
+    # it. The weights are quoted because "keywords are 35% of the score here"
+    # earns a different decision from the writer than "keywords matter".
+    top = max(profile.weights, key=lambda name: profile.weights[name])
+    ats_block = (
+        "TARGET APPLICANT TRACKING SYSTEM:\n"
+        f"{profile.name}. {profile.guidance}\n"
+        f"Keyword matching on this platform is {profile.matching}. Its heaviest "
+        f"dimension is {top.replace('_', ' ')} at "
+        f"{profile.weights[top]:.0%} of the score, and it passes at "
+        f"{profile.pass_threshold}/100"
+        + (", with automatic rejection below that." if profile.auto_rejects else ".")
+    )
     return (
+        f"{ats_block}\n\n"
         "JOB DESCRIPTION (parsed):\n"
         f"{json.dumps(jd_parsed or {}, indent=2)}\n\n"
         "JOB DESCRIPTION (clean text, truncated):\n"
@@ -5186,6 +5230,61 @@ async def _analyse_requirements(
             count=len(analysis.covered) - len(kept),
         )
     return analysis.model_copy(update={"covered": kept})
+
+
+def _platform_report(
+    *,
+    json_resume: dict[str, Any],
+    keyword_score: float,
+    template_key: str | None,
+    ats: ats_profiles.AtsProfile,
+    matched: list[str],
+    missing: list[str],
+    jd_clean: str,
+) -> dict[str, Any]:
+    """Score the finished document the way the detected platform would.
+
+    The two inputs job.os has that an uploaded-file screener does not are the
+    template's column count and the page estimate, both of which come from the
+    catalogue rather than from parsing a PDF back out.
+    """
+    key = template_key or DEFAULT_TEMPLATE_KEY
+    try:
+        columns = builtin_template(key).columns
+    except KeyError:
+        # A user's own uploaded template. Assume the safe single column rather
+        # than penalising a layout nobody has looked at.
+        columns = 1
+    shape = page_shape(key)
+    lines = estimated_page_lines(json_resume, key)
+    pages = max(1, -(-lines // shape.max_lines)) if shape.max_lines else 1
+
+    # Frequency-weighted coverage is always computed and always reported, so the
+    # two numbers can be compared. It only replaces the plain one in the
+    # composite on the exact-match platforms, where literal term overlap is what
+    # the index actually ranks on and a repeated requirement genuinely does
+    # count for more. On the semantic platforms a synonym already scores, so
+    # weighting the literal count there would be modelling a mechanism that
+    # platform does not use.
+    weighted, weighting = ats_profiles.weighted_keyword_score(
+        matched=matched, missing=missing, jd_text=jd_clean
+    )
+    effective = weighted if ats.matching == "exact" and weighting["weighted"] else keyword_score
+
+    _score, _dimensions, report = ats_profiles.evaluate(
+        document=json_resume,
+        keyword_score=effective,
+        columns=columns,
+        page_count=pages,
+        ats=ats,
+    )
+    report["keyword_coverage_plain"] = round(float(keyword_score), 1)
+    report["keyword_coverage_weighted"] = weighted
+    report["keyword_weighting"] = weighting
+    report["template_key"] = key
+    report["template_columns"] = columns
+    report["estimated_pages"] = pages
+    return report
 
 
 def _compute_ats_from_document(

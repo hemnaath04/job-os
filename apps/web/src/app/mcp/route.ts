@@ -299,7 +299,7 @@ const handler = createMcpHandler(
       {
         title: "Start Resume Tailor",
         description:
-          "Kick off the AI tailoring agent for one resume against one job posting (from get_job/search_jobs/add_job_from_url), and return immediately with an agent_job_id rather than waiting for it to finish -- drafting a resume takes real time. Poll get_resume_tailor_status with that id to get the result. Call this as many times as you want for different resumes or jobs; each is its own independent agent job, so several builds genuinely run at once rather than queueing behind each other. The result is a draft resume version, not yet quality-reviewed or finalized. Pass application_id (from list_applications/get_application) to link resume_id's container to that pipeline entry -- the same field the web app's application view reads to show its tailored documents -- so it shows up there afterward. Only takes effect when the container has no conflicting link already: a master resume, one already linked to a different application, or an application some other container already claims are all left untouched. Pass `template_key` (e.g. \"husky\" for the co-op look) to build the page against that template's real budget; omitted, the run is measured against a generic page and can overflow the one it actually renders.",
+          "Kick off the AI tailoring agent for one resume against one job posting (from get_job/search_jobs/add_job_from_url), and return immediately with an agent_job_id rather than waiting for it to finish -- drafting a resume takes real time. Poll get_resume_tailor_status with that id to get the result. Call this as many times as you want for different resumes or jobs; each is its own independent agent job, so several builds genuinely run at once rather than queueing behind each other. The result is a draft resume version, not yet quality-reviewed or finalized. Pass application_id (from list_applications/get_application) to link resume_id's container to that pipeline entry -- the same field the web app's application view reads to show its tailored documents -- so it shows up there afterward. Only takes effect when the container has no conflicting link already: a master resume, one already linked to a different application, or an application some other container already claims are all left untouched. Pass `template_key` (e.g. \"husky\" for the co-op look) to build the page against that template's real budget; omitted, the run is measured against a generic page and can overflow the one it actually renders. The posting's URL is read automatically to detect which applicant tracking system will parse the PDF (Workday, Taleo, iCIMS, Greenhouse, Lever, SuccessFactors), which changes both how the document is written and how it is scored; the template you pass is never overridden by that detection.",
         inputSchema: z.object({
           resume_id: z.string().min(1).max(36),
           job_id: z.string().uuid(),
@@ -325,6 +325,7 @@ const handler = createMcpHandler(
           const job = (await callBackend(token(ctx), "GET", `/jobs/${args.job_id}`)) as {
             jd_parsed?: Record<string, unknown>;
             jd_clean?: string;
+            source_url?: string | null;
           };
           const { id } = await startResumeTailorJob(
             resolveAppwriteUserId(clerkUserId(ctx)),
@@ -334,6 +335,7 @@ const handler = createMcpHandler(
             job.jd_clean ?? "",
             args.application_id,
             args.template_key,
+            job.source_url ?? null,
           );
           return toolText({ agent_job_id: id });
         } catch (e) {
@@ -347,7 +349,7 @@ const handler = createMcpHandler(
       {
         title: "Get Resume Tailor Status",
         description:
-          "Poll an agent_job_id from start_resume_tailor. status is queued, running, succeeded, or failed; progress (when present) names the current step. On succeeded, output is the new draft resume version (matches the shape list_appwrite_resumes' versions take) -- still a draft, not yet run through the quality review or finalized.",
+          "Poll an agent_job_id from start_resume_tailor. status is queued, running, succeeded, or failed; progress (when present) names the current step. On succeeded, output is the new draft resume version (matches the shape list_appwrite_resumes' versions take) -- still a draft, not yet run through the quality review or finalized. Its `ats_report` carries `matched`/`missing` (coverage of the posting's must-haves) and, when the job had a URL on a known platform, `ats_report.platform` with that platform's own composite score, its pass threshold, whether the resume clears it, and the six dimension scores behind it.",
         inputSchema: z.object({ agent_job_id: z.string().min(1).max(36) }),
         annotations: { readOnlyHint: true, openWorldHint: false },
       },

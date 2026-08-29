@@ -1907,7 +1907,48 @@ function AtsBadge({
             {atCeiling && " · all this profile can reach"}
           </div>
         )}
+        <PlatformVerdict platform={report?.platform} />
       </div>
+    </div>
+  );
+}
+
+/**
+ * Whether this file survives the system that will actually parse it.
+ *
+ * Deliberately one line and deliberately not a second ring. The coverage ring
+ * beside it answers "how much of the posting can this profile evidence", and
+ * two rings showing two different numbers next to each other is the exact
+ * confusion the ceiling work above was undoing. This is the smaller, harder
+ * fact: named platform, its own threshold, and whether the score clears it.
+ */
+function PlatformVerdict({
+  platform,
+}: {
+  platform: NonNullable<TailorResponse["ats_report"]>["platform"];
+}) {
+  // Absent on a run from before this shipped, and on a pasted job with no URL.
+  // Nothing is the right thing to show: a "not detected" chip on every older
+  // run would be noise about a thing the user cannot act on.
+  if (!platform) return null;
+  // The generic profile is not a platform. Claiming "Unknown or direct posting
+  // scores 64" dresses up job.os's own opinion as a vendor's behaviour.
+  if (platform.platform === "generic") return null;
+  const { platform_name, composite_score, pass_threshold, passes, auto_rejects } = platform;
+  return (
+    <div
+      className="text-[10px] text-[color:var(--color-text-muted)]"
+      title={
+        passes
+          ? `Clears ${platform_name}'s ${pass_threshold}/100 screening threshold.`
+          : `Below ${platform_name}'s ${pass_threshold}/100 threshold.` +
+            (auto_rejects ? " This platform rejects automatically." : "")
+      }
+    >
+      <span className={passes ? "text-emerald-400" : "text-amber-400"}>
+        {passes ? "clears" : "below"} {platform_name}
+      </span>{" "}
+      · {Math.round(composite_score)}/{pass_threshold}
     </div>
   );
 }
