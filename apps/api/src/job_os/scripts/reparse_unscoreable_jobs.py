@@ -18,6 +18,16 @@ does not carry a job description.
     uv run python -m job_os.scripts.reparse_unscoreable_jobs --owner user_xxx --dry-run
     uv run python -m job_os.scripts.reparse_unscoreable_jobs --owner user_xxx --apply
 
+`--job-ids` re-reads named rows instead of searching for unscoreable ones. A
+posting can need re-reading while still naming plenty: Microsoft's three rows
+each carried about 498,000 characters of Eightfold app shell and still parsed
+to twenty-nine or more fields, because the extractor was handed the first 18KB
+of navigation and found something in it. Nothing about those rows says
+"unscoreable", and they were still wrong.
+
+    uv run python -m job_os.scripts.reparse_unscoreable_jobs \
+        --owner user_xxx --job-ids <uuid> <uuid> --apply
+
 Owner-scoped and required, not optional. `jobs` carries no owner column of its
 own -- a posting is shared, and users reach it through `applications` -- so the
 scoping is a join rather than a filter, and it is the reason this takes an
@@ -65,7 +75,7 @@ def names_nothing_scoreable(jd_parsed: dict[str, object] | None) -> bool:
     return not any(jd_parsed.get(field) for field in SCOREABLE_FIELDS)
 
 
-async def _candidates(owner_id: str) -> list[Job]:
+async def _candidates(owner_id: str, only: set[str] | None = None) -> list[Job]:
     async with async_session() as session:
         user = (
             await session.execute(select(User).where(User.clerk_id == owner_id))
@@ -80,12 +90,22 @@ async def _candidates(owner_id: str) -> list[Job]:
             .order_by(Job.created_at.desc())
         )
         jobs = result.unique().scalars().all()
+    if only is not None:
+        # Named explicitly, so the scoreable test does not apply: the caller has
+        # already decided these need re-reading. Still filtered through the same
+        # owner join, so naming a job somebody else saved finds nothing.
+        return [job for job in jobs if str(job.id) in only]
     return [job for job in jobs if names_nothing_scoreable(job.jd_parsed)]
 
 
-async def reparse(owner_id: str, *, apply: bool) -> int:
-    jobs = await _candidates(owner_id)
-    print(f"{len(jobs)} posting(s) whose stored parse names nothing scoreable\n")
+async def reparse(owner_id: str, *, apply: bool, only: set[str] | None = None) -> int:
+    jobs = await _candidates(owner_id, only)
+    if only is not None:
+        missing = only - {str(job.id) for job in jobs}
+        if missing:
+            print(f"not found under this owner: {sorted(missing)}")
+    label = "named" if only is not None else "whose stored parse names nothing scoreable"
+    print(f"{len(jobs)} posting(s) {label}\n")
     for job in jobs:
         chars = len(job.jd_clean or "")
         print(f"  {job.id}  jd_clean={chars:>7} chars  {(job.title or '')[:52]}")
@@ -110,7 +130,14 @@ async def reparse(owner_id: str, *, apply: bool) -> int:
     # Re-read the rows rather than trusting the loop: `complete_job_parse`
     # writes on every path including failure, so "it did not raise" is not the
     # same as "this posting is scoreable now".
-    still_empty = await _candidates(owner_id)
+    #
+    # Always the scoreable test, never the `--job-ids` filter. Reusing the
+    # filter here reported every named row as still broken no matter how well
+    # it had just been re-read, because naming a row is what put it in that
+    # list in the first place.
+    verified = await _candidates(owner_id)
+    named = {str(job.id) for job in jobs}
+    still_empty = [job for job in verified if str(job.id) in named]
     print(f"\nre-read {repaired} of {len(jobs)}")
     print(f"still naming nothing scoreable: {len(still_empty)}")
     for job in still_empty:
@@ -121,11 +148,23 @@ async def reparse(owner_id: str, *, apply: bool) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--owner", required=True, help="Clerk user id of the owner")
+    parser.add_argument(
+        "--job-ids",
+        nargs="+",
+        metavar="UUID",
+        help="Re-read these rows instead of searching for unscoreable ones",
+    )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true", help="List what would be re-read")
     group.add_argument("--apply", action="store_true", help="Re-read them")
     args = parser.parse_args()
-    asyncio.run(reparse(args.owner, apply=args.apply))
+    asyncio.run(
+        reparse(
+            args.owner,
+            apply=args.apply,
+            only=set(args.job_ids) if args.job_ids else None,
+        )
+    )
 
 
 if __name__ == "__main__":
