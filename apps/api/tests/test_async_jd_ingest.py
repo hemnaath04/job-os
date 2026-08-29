@@ -624,3 +624,121 @@ async def test_a_wall_is_reported_without_closing_the_job(
     await db_session.refresh(job)
     assert job.jd_parsed.get("posting_status") == "sign_in_required"
     assert job.active is True, "unreadable is not the same as closed"
+
+
+@pytest.mark.asyncio
+async def test_the_slug_guess_is_discarded_once_the_real_company_is_known(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """Six strays of this shape were sitting in production.
+
+    The import writes a company guessed from the link slug so the card has a
+    legible name while the parse runs. The parse then learns the employer's
+    real name and repoints the job, and nothing removed the guess. Because the
+    guess is usually a DIFFERENT name, the duplicate merge never saw it:
+    "Career Schwab" beside "Charles Schwab Corporation", and worse,
+    "Myworkdayjobs" and "Oraclecloud", which are the ATS vendor's hostname.
+    """
+    from sqlalchemy import select
+
+    from job_os.db.models import Company
+    from job_os.integrations import firecrawl
+
+    user = await _user(db_session, "slug_guess")
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://career-schwab.icims.com/jobs/126228/job"),
+        _user=user,
+        session=db_session,
+    )
+    guessed_id = job.company_id
+    guessed = await db_session.get(Company, guessed_id)
+    assert guessed is not None and guessed.domain is None
+
+    async def _fetch(_url: str) -> firecrawl.FetchedPage:
+        return firecrawl.FetchedPage(
+            url=_url,
+            markdown=(
+                "Technology 2027 Intern. Responsibilities include building "
+                "internal tooling. Requirements: Python and SQL."
+            ),
+            raw="<html></html>",
+            title="Technology 2027 Intern",
+            company_hint="Career Schwab",
+        )
+
+    async def _parsed(*_args: Any, **_kwargs: Any) -> dict:
+        return {
+            "title": "Technology 2027 Intern",
+            "company": "Charles Schwab Corporation",
+            "company_domain": "schwabjobs.com",
+            "technologies": ["Python", "SQL"],
+            "parse_incomplete": False,
+        }
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", _fetch)
+    monkeypatch.setattr("job_os.services.jd_parse.parse_jd", _parsed)
+
+    await jd_ingest.complete_job_parse(job.id)
+    await db_session.refresh(job)
+
+    real = await db_session.get(Company, job.company_id)
+    assert real is not None and real.name == "Charles Schwab Corporation"
+    assert await db_session.get(Company, guessed_id) is None, "the guess did not survive"
+    # And nothing else was collateral.
+    remaining = await db_session.execute(
+        select(Company).where(Company.name == "Charles Schwab Corporation")
+    )
+    assert len(remaining.scalars().all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_guess_other_jobs_still_use_is_left_alone(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """A guessed name can be right, and a right one is shared.
+
+    Checked rather than assumed: deleting a company a second job points at
+    would break that job's card to tidy this one's.
+    """
+    from job_os.db.models import Company, Job
+    from job_os.integrations import firecrawl
+
+    user = await _user(db_session, "shared_guess")
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://boards.greenhouse.io/stripe/jobs/1"),
+        _user=user,
+        session=db_session,
+    )
+    guessed_id = job.company_id
+    db_session.add(
+        Job(
+            company_id=guessed_id,
+            title="Another role at the same guess",
+            jd_raw="",
+            jd_clean="",
+            jd_parsed={},
+            source="text",
+            active=True,
+        )
+    )
+    await db_session.flush()
+
+    async def _fetch(_url: str) -> firecrawl.FetchedPage:
+        return firecrawl.FetchedPage(
+            url=_url,
+            markdown="Engineer. Responsibilities: build. Requirements: Go.",
+            raw="<html></html>",
+            title="Engineer",
+            company_hint="Stripe",
+        )
+
+    async def _parsed(*_args: Any, **_kwargs: Any) -> dict:
+        return {"company": "Stripe Payments", "company_domain": "stripe.com",
+                "technologies": ["Go"], "parse_incomplete": False}
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", _fetch)
+    monkeypatch.setattr("job_os.services.jd_parse.parse_jd", _parsed)
+
+    await jd_ingest.complete_job_parse(job.id)
+
+    assert await db_session.get(Company, guessed_id) is not None

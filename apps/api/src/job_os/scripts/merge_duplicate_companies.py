@@ -101,13 +101,79 @@ async def merge(*, apply: bool) -> int:
     return merged
 
 
+async def sweep_orphaned_guesses(*, apply: bool) -> int:
+    """Delete placeholder companies the parse has already replaced.
+
+    Importing from a URL writes a company guessed from the link slug before
+    anything is fetched. The parse then learns the real name and repoints the
+    job, and until now nothing removed the guess. It is usually a different
+    name rather than the same one, so the duplicate merge above never sees it:
+    "Hpe" beside "Hewlett Packard Enterprise", "Career Schwab" beside "Charles
+    Schwab Corporation", and worst of all "Myworkdayjobs" and "Oraclecloud",
+    which are the ATS vendor's hostname rather than any employer.
+
+    `jd_ingest` now discards its own guess at the moment it repoints, so no new
+    strays accumulate. This clears the ones already written.
+
+    Only a row with no domain and no jobs is touched. A guessed name can be
+    right, and a right one keeps its jobs and is left alone.
+    """
+    removed = 0
+    async with async_session() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(Company)
+                    .where(Company.domain.is_(None))
+                    .order_by(Company.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        stranded = []
+        for company in rows:
+            used = await session.scalar(
+                select(func.count()).select_from(Job).where(Job.company_id == company.id)
+            )
+            if not used:
+                stranded.append(company)
+
+        if not stranded:
+            print("no orphaned company guesses")
+            return 0
+
+        print(f"{len(stranded)} orphaned guess(es), no domain and no jobs\n")
+        for company in stranded:
+            print(f"  {company.id}  {company.name}")
+            if apply:
+                await session.delete(company)
+                removed += 1
+        if apply:
+            await session.commit()
+            print(f"\nremoved {removed}")
+        else:
+            print("\nDry run. Nothing was written.")
+    return removed
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--dry-run", action="store_true", help="Report what would merge")
     group.add_argument("--apply", action="store_true", help="Merge them")
     args = parser.parse_args()
-    asyncio.run(merge(apply=args.apply))
+    # One loop for both passes. `async_session` is bound to a module-level
+    # engine whose pool outlives the loop that created it, so a second
+    # `asyncio.run` here reached for connections belonging to a loop that had
+    # already closed and failed with "attached to a different loop".
+    asyncio.run(_run_both(apply=args.apply))
+
+
+async def _run_both(*, apply: bool) -> None:
+    await merge(apply=apply)
+    print()
+    await sweep_orphaned_guesses(apply=apply)
 
 
 if __name__ == "__main__":

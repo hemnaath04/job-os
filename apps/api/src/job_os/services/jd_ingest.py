@@ -27,10 +27,11 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from job_os.db.models import Job
+from job_os.db.models import Company, Job
 from job_os.db.session import async_session
 from job_os.services.job_backfill import parse_has_signal
 from job_os.services.posting_status import (
@@ -243,10 +244,12 @@ async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
             # resetting a legible card to "Unknown".
             company_name = parsed.get("company")
             if company_name:
+                guessed_id = job.company_id
                 company = await upsert_company(
                     session, name=company_name, domain=parsed.get("company_domain")
                 )
                 job.company_id = company.id
+                await _discard_stranded_guess(session, guessed_id, company.id)
 
             # A posting whose own page says it has closed is not an active job.
             # `Job.active` is what the jobs list filters on, so this is what
@@ -281,6 +284,47 @@ async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
         # be swallowed by the event loop and the row would sit at pending with
         # no record of why.
         log.exception("jd_ingest.failed", job_id=str(job_id))
+
+
+async def _discard_stranded_guess(
+    session: AsyncSession, guessed_id: UUID | None, real_id: UUID
+) -> None:
+    """Delete the placeholder company once the real one is known.
+
+    Importing from a URL writes a company before anything has been fetched,
+    guessed from the link slug, because a card with a legible name beats one
+    reading "Unknown" for the minute the parse takes. The parse then learns the
+    employer's actual name and the job is repointed to it.
+
+    Nothing ever removed the guess. It is usually a DIFFERENT name rather than
+    the same one, so `upsert_company` never sees it as a duplicate to fold:
+    "Hpe" beside "Hewlett Packard Enterprise", "Career Schwab" beside "Charles
+    Schwab Corporation". Six of the sixty-six companies in production were
+    strays of exactly this kind, and two of them were not employers at all --
+    "Myworkdayjobs" and "Oraclecloud" are the ATS vendor's hostname, which is
+    what the slug says when a posting is hosted rather than self-served.
+
+    Three conditions, each narrowing what can be deleted to something that
+    cannot be anyone's real record:
+
+    * the repoint actually moved the job, so the guess was wrong;
+    * the row carries no domain, which a guess never has and a parsed company
+      almost always does;
+    * no job is left pointing at it, checked rather than assumed, because a
+      guessed name can be right and be shared by other imports.
+    """
+    if guessed_id is None or guessed_id == real_id:
+        return
+    stranded = await session.get(Company, guessed_id)
+    if stranded is None or stranded.domain:
+        return
+    still_used = await session.scalar(
+        select(func.count()).select_from(Job).where(Job.company_id == guessed_id)
+    )
+    if still_used:
+        return
+    log.info("jd_ingest.discarded_guess", company=stranded.name, company_id=str(guessed_id))
+    await session.delete(stranded)
 
 
 def schedule_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
