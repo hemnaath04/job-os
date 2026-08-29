@@ -247,21 +247,46 @@ async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
 
 def schedule_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
     """Start the deferred parse. Returns immediately."""
+    if job_id in _INFLIGHT:
+        # Already being parsed in this process. Reached from the sweep below,
+        # whose age filter is a clock and cannot see a task that is simply
+        # taking a long time; parsing the same posting twice at once would
+        # spend two gateway calls to write the same row.
+        log.info("jd_ingest.already_running", job_id=str(job_id))
+        return
+    _INFLIGHT.add(job_id)
     task = asyncio.create_task(complete_job_parse(job_id, owner_id))
     # create_task keeps only a weak reference, so a task nobody holds can be
     # garbage collected mid-flight. Holding it until it finishes is what makes
     # this reliable rather than usually-fine.
     _RUNNING.add(task)
     task.add_done_callback(_RUNNING.discard)
+    task.add_done_callback(lambda _t: _INFLIGHT.discard(job_id))
 
 
 _RUNNING: set[asyncio.Task[None]] = set()
+# The job ids those tasks are working on. `_RUNNING` holds tasks, which cannot
+# be asked what they are parsing.
+_INFLIGHT: set[UUID] = set()
 
 
-# Nothing older than this could still be running: the parse budget is two
-# minutes and the fetch has its own timeout well under that. Anything still
-# pending past it belongs to a process that is gone.
-STRANDED_AFTER_SECONDS = 600
+# Nothing older than this could still be running here. The parse budget is two
+# minutes and the fetch adds at most about a minute on top of it, so five
+# minutes clears the real ceiling with room to spare.
+#
+# Was ten. Ten minutes was not a bound on the work, it was a guess, and it set
+# the floor on how long a lost parse could sit looking like a live one: a row
+# stranded thirty seconds before a restart was younger than the cutoff, so the
+# restart that could have rescued it skipped it, and it waited for the next
+# one. On a dyno that cycles daily that is a card reading "Still reading this
+# posting" for hours.
+STRANDED_AFTER_SECONDS = 300
+
+# How often the sweep runs once the process is up. The startup pass alone only
+# ever recovered a row if a restart happened to follow it, which is the wrong
+# thing to depend on: the parse is lost the moment its process dies, and
+# nothing about a later deploy makes that more or less true.
+SWEEP_INTERVAL_SECONDS = 60
 
 
 async def requeue_stranded_parses() -> int:
@@ -301,6 +326,37 @@ async def requeue_stranded_parses() -> int:
     if stranded:
         log.info("jd_ingest.requeued_stranded", count=len(stranded))
     return len(stranded)
+
+
+async def sweep_stranded_parses_forever() -> None:
+    """Re-run the stranded scan on a timer for as long as the process lives.
+
+    A deferred parse lives in the process that started it, so it is lost when
+    that process dies: a dyno cycle, a crash, an OOM kill. The row is left at
+    parse_pending and the card keeps saying "Still reading this posting".
+
+    Recovery used to happen only in `lifespan`, at startup, which recovers a row
+    only if a restart happens to come along AND the row is already older than
+    the cutoff at that moment. A row stranded shortly before a restart is
+    younger than the cutoff, gets skipped by the restart that could have saved
+    it, and then waits for the next one. That is the gap behind a posting that
+    appears to take ten minutes to parse when the parse itself takes ten
+    seconds.
+
+    Cancelled on shutdown, and never fatal: a failed scan costs one interval,
+    where an exception escaping here would take the loop down for the life of
+    the process and put the behaviour back exactly as it was.
+    """
+    while True:
+        try:
+            await asyncio.sleep(SWEEP_INTERVAL_SECONDS)
+            requeued = await requeue_stranded_parses()
+            if requeued:
+                log.info("jd_ingest.sweep_requeued", count=requeued)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("jd_ingest.sweep_failed")
 
 
 def _card_job_view(job: Job) -> dict[str, Any]:

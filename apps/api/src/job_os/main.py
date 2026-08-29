@@ -1,6 +1,7 @@
+import asyncio
 import os
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from time import perf_counter
 
 import structlog
@@ -44,10 +45,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # this dyno last went down is stranded at parse_pending with nothing
     # coming for it. Heroku restarts dynos daily, so that is a routine event
     # rather than an edge case. Never fatal: see requeue_stranded_parses.
-    from job_os.services.jd_ingest import requeue_stranded_parses
+    from job_os.services.jd_ingest import (
+        requeue_stranded_parses,
+        sweep_stranded_parses_forever,
+    )
 
     await requeue_stranded_parses()
-    yield
+    # And keep looking. The startup pass alone recovers a row only if a restart
+    # happens to follow it, and only if the row was already past the cutoff at
+    # that moment: a parse stranded shortly before a restart is too young to be
+    # picked up by it and waits for the next one.
+    sweep = asyncio.create_task(sweep_stranded_parses_forever())
+    try:
+        yield
+    finally:
+        sweep.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweep
     log.info("api.shutdown")
 
 
