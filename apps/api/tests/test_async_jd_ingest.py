@@ -62,7 +62,7 @@ def no_scheduling(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
 
     # Takes the owner too now: the deferred parse writes the board card, and
     # the card table is multi-tenant, so it has to know whose board.
-    def _record(job_id: Any, owner_id: Any = None) -> None:
+    def _record(job_id: Any, owner_id: Any = None, **_kwargs: Any) -> None:
         started.append(job_id)
 
     monkeypatch.setattr(jd_ingest, "schedule_job_parse", _record)
@@ -517,7 +517,7 @@ async def test_a_job_already_being_parsed_here_is_not_scheduled_twice(
     release = asyncio.Event()
     runs = 0
 
-    async def _slow(job_id, owner_id=None):  # type: ignore[no-untyped-def]
+    async def _slow(job_id, owner_id=None, **_kwargs):  # type: ignore[no-untyped-def]
         nonlocal runs
         runs += 1
         started.set()
@@ -742,3 +742,139 @@ async def test_a_guess_other_jobs_still_use_is_left_alone(
     await jd_ingest.complete_job_parse(job.id)
 
     assert await db_session.get(Company, guessed_id) is not None
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_reread_replaces_a_title_the_last_parse_got_wrong(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """The reason "read it again" needed more than a button.
+
+    The deferred parse fills only what is still blank, which is right for a
+    first read of a row carrying a URL-slug guess. It is wrong for a re-read:
+    a job that came back "Custom Job Error - Disney Careers" kept that title
+    forever, because the title was no longer blank, so pressing the button did
+    nothing a user could see.
+
+    Nothing in this app lets a job's title, level, location or salary be
+    edited by hand -- there is no PATCH route for a job -- so what
+    `replace_fields` overwrites is only ever a previous parse.
+    """
+    user = await _user(db_session, "reread_replaces")
+
+    async def fetch(url: str) -> FetchedPage:
+        return PAGE
+
+    async def parse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return dict(PARSED)
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", fetch)
+    monkeypatch.setattr("job_os.services.jd_parse.parse_jd", parse)
+
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://job-boards.greenhouse.io/glossgenius/jobs/1"),
+        _user=user,
+        session=db_session,
+    )
+    job.title = "Custom Job Error - Disney Careers"
+    job.location = "Nowhere"
+    await db_session.flush()
+
+    await jd_ingest.complete_job_parse(job.id, replace_fields=True)
+    await db_session.refresh(job)
+
+    assert job.title == "Senior Backend Engineer"
+    assert job.location == "New York, NY"
+
+
+@pytest.mark.asyncio
+async def test_a_first_parse_still_leaves_what_it_already_knows(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """The default has not changed, and it is a different job from the above.
+
+    A first read is filling a row in. If the parse comes back with a worse
+    company or location than the import already had, the import wins.
+    """
+    user = await _user(db_session, "first_parse_keeps")
+
+    async def fetch(url: str) -> FetchedPage:
+        return PAGE
+
+    async def parse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return dict(PARSED)
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", fetch)
+    monkeypatch.setattr("job_os.services.jd_parse.parse_jd", parse)
+
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://job-boards.greenhouse.io/glossgenius/jobs/2"),
+        _user=user,
+        session=db_session,
+    )
+    job.title = "Staff Engineer, Payments"
+    job.location = "Boston, MA"
+    await db_session.flush()
+
+    await jd_ingest.complete_job_parse(job.id)
+    await db_session.refresh(job)
+
+    assert job.title == "Staff Engineer, Payments"
+    assert job.location == "Boston, MA"
+
+
+@pytest.mark.asyncio
+async def test_a_failed_reread_never_blanks_what_was_already_there(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """`replace_fields` replaces a parse, not a success with silence.
+
+    Without this, a site being down would make the re-read button destructive:
+    press it once on a bad day and the job loses its title, its location and
+    its salary and there is no way back.
+    """
+    user = await _user(db_session, "reread_fails")
+
+    async def fetch(url: str) -> FetchedPage:
+        raise RuntimeError("the site was down")
+
+    monkeypatch.setattr("job_os.integrations.firecrawl.fetch_url_markdown", fetch)
+
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://job-boards.greenhouse.io/glossgenius/jobs/3"),
+        _user=user,
+        session=db_session,
+    )
+    job.title = "Senior Backend Engineer"
+    job.location = "New York, NY"
+    await db_session.flush()
+
+    await jd_ingest.complete_job_parse(job.id, replace_fields=True)
+    await db_session.refresh(job)
+
+    assert job.title == "Senior Backend Engineer"
+    assert job.location == "New York, NY"
+
+
+@pytest.mark.asyncio
+async def test_the_reparse_route_asks_for_a_replacing_read(
+    monkeypatch: pytest.MonkeyPatch, db_session
+) -> None:
+    """The button is only worth having if the route asks for the right thing."""
+    user = await _user(db_session, "reparse_route_flag")
+    asked: list[dict[str, Any]] = []
+
+    def _record(job_id: Any, owner_id: Any = None, **kwargs: Any) -> None:
+        asked.append(kwargs)
+
+    monkeypatch.setattr(jd_ingest, "schedule_job_parse", _record)
+
+    job = await jobs_router.create_from_url(
+        JobFromUrl(url="https://job-boards.greenhouse.io/glossgenius/jobs/4"),
+        _user=user,
+        session=db_session,
+    )
+    asked.clear()
+    await jobs_router.reparse_job(job.id, _user=user, session=db_session)
+
+    assert asked == [{"replace_fields": True}]

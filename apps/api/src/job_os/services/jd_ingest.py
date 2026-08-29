@@ -190,13 +190,28 @@ async def _read_posting(job: Job) -> tuple[dict[str, Any], str | None, str | Non
     return parsed, None, None
 
 
-async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
+async def complete_job_parse(
+    job_id: UUID, owner_id: str | None = None, *, replace_fields: bool = False
+) -> None:
     """Fill in a job whose parse was deferred, in place.
 
     Opens its own session: the request that scheduled this has long since
     returned and closed its own. Writes on every path, including failure,
     because a row left at `parse_pending` forever is the one outcome with no
     honest reading at all.
+
+    `replace_fields` is the difference between filling a row in and reading it
+    again. The default fills only what is still blank, which is right when this
+    is the FIRST read of a row that arrived carrying a URL-slug guess: a failed
+    parse then leaves the guess standing rather than resetting a legible card.
+
+    An explicit re-read is a different request. It is somebody saying the last
+    read was wrong, and fill-only cannot act on that: a job that came back
+    "Custom Job Error - Disney Careers" keeps that title forever, because the
+    title is no longer blank. Nothing in this app lets a job's title, level,
+    location or salary be edited by hand, so there is no user correction to
+    protect here -- only a previous parse, which is exactly what is being
+    replaced.
     """
     from job_os.services.companies import upsert_company
 
@@ -224,16 +239,22 @@ async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
             if clean is not None:
                 job.jd_clean = clean
 
+            # A read that failed is never allowed to overwrite. `replace_fields`
+            # replaces a previous PARSE, not a previous success with silence:
+            # blanking a job's title because the site was down would make the
+            # re-read button destructive.
+            replace = replace_fields and bool(parsed.get("title"))
+
             title = parsed.get("title")
-            if title and job.title in (None, "", "Untitled"):
+            if title and (replace or job.title in (None, "", "Untitled")):
                 job.title = title
             for attribute in ("level", "function", "location", "remote"):
                 value = parsed.get(attribute)
-                if value and getattr(job, attribute, None) in (None, ""):
+                if value and (replace or getattr(job, attribute, None) in (None, "")):
                     setattr(job, attribute, value)
-            if parsed.get("salary_min") and job.salary_min is None:
+            if parsed.get("salary_min") and (replace or job.salary_min is None):
                 job.salary_min = parsed["salary_min"]
-            if parsed.get("salary_max") and job.salary_max is None:
+            if parsed.get("salary_max") and (replace or job.salary_max is None):
                 job.salary_max = parsed["salary_max"]
                 if parsed.get("salary_currency"):
                     job.salary_currency = parsed["salary_currency"]
@@ -327,7 +348,9 @@ async def _discard_stranded_guess(
     await session.delete(stranded)
 
 
-def schedule_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
+def schedule_job_parse(
+    job_id: UUID, owner_id: str | None = None, *, replace_fields: bool = False
+) -> None:
     """Start the deferred parse. Returns immediately."""
     if job_id in _INFLIGHT:
         # Already being parsed in this process. Reached from the sweep below,
@@ -337,7 +360,9 @@ def schedule_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
         log.info("jd_ingest.already_running", job_id=str(job_id))
         return
     _INFLIGHT.add(job_id)
-    task = asyncio.create_task(complete_job_parse(job_id, owner_id))
+    task = asyncio.create_task(
+        complete_job_parse(job_id, owner_id, replace_fields=replace_fields)
+    )
     # create_task keeps only a weak reference, so a task nobody holds can be
     # garbage collected mid-flight. Holding it until it finishes is what makes
     # this reliable rather than usually-fine.

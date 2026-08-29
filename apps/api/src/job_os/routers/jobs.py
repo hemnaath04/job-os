@@ -270,7 +270,13 @@ async def reparse_job(
 
     job.jd_parsed = dict(PENDING)
     await session.commit()
-    schedule_job_parse(job.id, getattr(_user, "clerk_id", None))
+    # `replace_fields`, because this is somebody saying the last read was
+    # wrong. The background first-parse fills only what is blank, which would
+    # leave a job that came back "Custom Job Error - Disney Careers" carrying
+    # that title no matter how many times it were re-read.
+    schedule_job_parse(
+        job.id, getattr(_user, "clerk_id", None), replace_fields=True
+    )
     # Re-SELECT, for the reason `add_description` sets out at length below: this
     # is an UPDATE, `updated_at` carries onupdate=func.now(), and SQLAlchemy
     # fetches server-generated columns back on an INSERT but not on an UPDATE.
