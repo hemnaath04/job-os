@@ -193,7 +193,14 @@ def date_range(
     if not left and not right:
         return ""
     if not right:
-        return f"{left} {_EN_DASH} {present_label}" if left else ""
+        if not left:
+            return ""
+        # An empty `present_label` means "say nothing about the end", not "say
+        # nothing after a dash". Callers use it for entries where a missing end
+        # date is an absent record rather than a claim that the thing is still
+        # running; returning `left` alone is what makes that honest instead of
+        # leaving a dangling en dash on the page.
+        return f"{left} {_EN_DASH} {present_label}" if present_label else left
     if not left:
         return right
     if end and _is_future(end):
@@ -204,6 +211,57 @@ def date_range(
 # ---------------------------------------------------------------------------
 # The template contract
 # ---------------------------------------------------------------------------
+
+
+# How many technologies a project's tech line may name.
+#
+# From a rendered resume the user read back: BedRocked carries twelve
+# keywords in the vault, RoleReveal nine, ClaimFarm eight, and each was
+# comma-joined into one line under the project heading. Twelve nouns in a row
+# is not a tech stack, it is a keyword dump, and a reader skims past it exactly
+# as fast as an ATS scores it: the six that matter are diluted by the six that
+# do not.
+#
+# Six because that is what fits on one line at every template's body size
+# without wrapping, and a wrapped tech line costs a bullet on a one-page
+# resume. The tailor orders these by the posting first, so when this cuts, it
+# cuts the ones the posting never asked for.
+#
+# Applied at the render rather than in the tailor so it holds for every path
+# into a PDF, including a master resume that was never tailored at all.
+MAX_PROJECT_KEYWORDS = 6
+
+# ...and the count alone is not enough, because the link shares that line.
+#
+# Six keywords plus `sewershed-bedrocked.vercel.app` measured 101 characters
+# and wrapped in a real compile, which is the exact cost the cap exists to
+# avoid. So the whole line gets a budget and the keywords are what yields.
+#
+# The URL is never shortened to make room. It cannot be abbreviated without
+# becoming wrong, and it is the half a reader acts on: a project they can open
+# beats a sixth technology they cannot check. Roughly the characters that fit
+# across a resume's text column at the body sizes these templates use.
+MAX_PROJECT_META_CHARS = 88
+
+# Below this the line has stopped being a tech stack. A very long URL wraps
+# rather than leaving a project described by one noun.
+MIN_PROJECT_KEYWORDS = 2
+
+
+def _meta_line(keywords: list[str], url_label: str) -> str:
+    """The tech stack and the link, on one line, within the line's budget.
+
+    Keywords are dropped from the END, which is where the tailor has already
+    put the ones the posting never mentioned. Either half may be absent, so
+    the separator only appears when both are.
+    """
+    kept = list(keywords)
+    while kept:
+        line = " | ".join(part for part in (", ".join(kept), url_label) if part)
+        if len(line) <= MAX_PROJECT_META_CHARS or len(kept) <= MIN_PROJECT_KEYWORDS:
+            return line
+        kept.pop()
+    return url_label
 
 
 def _clean_list(values: Any) -> list[str]:
@@ -297,14 +355,29 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
     for item in json_resume.get("projects") or []:
         if not isinstance(item, dict):
             continue
-        keywords = _clean_list(item.get("keywords"))
+        keywords = _clean_list(item.get("keywords"))[:MAX_PROJECT_KEYWORDS]
         projects.append(
             {
                 "name": sanitize(item.get("name")),
                 "description": sanitize(item.get("description")),
                 "url": safe_url(item.get("url")),
                 "url_label": link_label(item.get("url")),
-                "dates": date_range(item.get("startDate"), item.get("endDate")),
+                # `present_label=""`, which `date_range` reads as "print the
+                # start alone". A project with no end date is not a claim that
+                # it is still running: "Present" is a convention that belongs
+                # to employment, where leaving the end blank means "I still
+                # work here" and the user asserts it.
+                #
+                # Projects have no such convention, and this app writes
+                # `end_date: null` for every project nobody gave an end to.
+                # In the vault behind the resume that reported this, all four
+                # projects had a null end date and at least two of them were
+                # weekend hackathons -- so "Jun 2026 - Present" was printed
+                # over a build that lasted two days. "Jun 2026" is true of
+                # every one of them and overclaims none.
+                "dates": date_range(
+                    item.get("startDate"), item.get("endDate"), present_label=""
+                ),
                 "keywords": keywords,
                 "keywords_line": ", ".join(keywords),
                 # What a template actually prints under a project heading. The
@@ -320,11 +393,7 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
                 #
                 # Either half may be empty, so the separator is only used when
                 # both are present.
-                "meta_line": " | ".join(
-                    part
-                    for part in (", ".join(keywords), link_label(item.get("url")))
-                    if part
-                ),
+                "meta_line": _meta_line(keywords, link_label(item.get("url"))),
                 "bullets": _clean_list(item.get("highlights")),
             }
         )
