@@ -57,9 +57,9 @@ const ELIGIBILITY_QUESTIONS: {
   invert?: boolean;
 }[] = [
   {
-    key: "cpt_eligible_now",
-    label: "I can start work now without the employer filing anything",
-    help: "CPT and OPT are authorized by your school, not by an employer petition. This is what separates a posting that will not sponsor THIS internship, which you may still be able to take, from one that will not sponsor at all. Your school's international office decides this for a specific offer.",
+    key: "may_work_without_sponsorship_now",
+    label: "I believe I can start work now without the employer filing anything",
+    help: "Worded as a belief because that is all it can be. Authorization like CPT is granted by your school for one specific employer and date range, against an offer you already have, so nobody can answer this in advance for jobs you have not applied to. Nothing is ever skipped because of this answer: it only changes how a sponsorship note is worded, and leaving it unticked costs you nothing.",
   },
   {
     key: "needs_future_sponsorship",
@@ -102,7 +102,7 @@ const DEFAULT_SETTINGS: UserSettings = {
   target_titles: [],
   work_eligibility: {
     status: null,
-    cpt_eligible_now: false,
+    may_work_without_sponsorship_now: false,
     needs_future_sponsorship: false,
     // True, and it is the value that FLAGS NOTHING. Every default here lets a
     // posting through, so an account that never opens this page behaves

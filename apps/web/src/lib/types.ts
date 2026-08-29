@@ -575,8 +575,16 @@ export type WorkAuthorizationStatus =
 export interface WorkEligibility {
   /** null means never asked. Nothing is inferred from it. */
   status: WorkAuthorizationStatus | null;
-  /** Can start work now without the employer filing anything. */
-  cpt_eligible_now: boolean;
+  /**
+   * Believes they can start work now without the employer filing anything.
+   *
+   * A self-reported belief, not a claim of eligibility. Work authorization
+   * like CPT is granted by a school for one specific employer and date range
+   * against a named offer, so there is no answer a student can give in
+   * advance. Nothing refuses on this; it only chooses between two wordings of
+   * a warning.
+   */
+  may_work_without_sponsorship_now: boolean;
   /** Would need an employer petition to keep working later. */
   needs_future_sponsorship: boolean;
   /** Meets the ITAR/EAR "US person" definition. Surfaced, never acted on. */
