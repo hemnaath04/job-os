@@ -149,21 +149,11 @@ async def create_from_url(
         company_hint_from_url,
         schedule_job_parse,
     )
+    from job_os.services.job_identity import find_job_by_url
 
     url = str(payload.url)
 
-    # Same dedup this app already does correctly for discovery imports
-    # (discovery.py's import_result, keyed on source_id there). A URL paste
-    # has no vendor id to key on, so source_url is the equivalent identity.
-    # Without this, `source_id IS NULL` on every row here, and Postgres does
-    # not treat NULL = NULL, so the unique constraint on (source, source_id)
-    # never once caught a repeat paste of the same link.
-    existing_q = await session.execute(
-        select(Job)
-        .options(joinedload(Job.company))
-        .where(Job.source == "url", Job.source_url == url)
-    )
-    existing = existing_q.unique().scalar_one_or_none()
+    existing = await find_job_by_url(session, url)
     if existing:
         return existing
 
@@ -213,24 +203,25 @@ async def create_from_text(
     what the model has to read out of it.
     """
     from job_os.services.jd_ingest import PENDING, schedule_job_parse
+    from job_os.services.job_identity import find_job_by_url
 
     source_url = str(payload.source_url) if payload.source_url else None
 
-    # Same reasoning as create_from_url: source_id is never set here either,
-    # so the DB constraint alone never caught a repeat paste. A source_url,
-    # when the user gave one, is the strongest identity available. Lacking
-    # that, the pasted text itself is the only identity a raw JD paste has.
-    dedup_clause = (
-        Job.source_url == source_url
-        if source_url
-        else Job.jd_clean == payload.jd_text
-    )
-    existing_q = await session.execute(
-        select(Job)
-        .options(joinedload(Job.company))
-        .where(Job.source == "text", dedup_clause)
-    )
-    existing = existing_q.unique().scalar_one_or_none()
+    # A source_url, when the user gave one, is the strongest identity
+    # available, and it is matched across every source: the same posting
+    # pasted here after arriving through discovery is still one job. Lacking a
+    # URL, the pasted text itself is the only identity a raw JD paste has, and
+    # that comparison stays scoped to `text` because it is only meaningful
+    # against another paste.
+    if source_url:
+        existing = await find_job_by_url(session, source_url)
+    else:
+        existing_q = await session.execute(
+            select(Job)
+            .options(joinedload(Job.company))
+            .where(Job.source == "text", Job.jd_clean == payload.jd_text)
+        )
+        existing = existing_q.unique().scalars().first()
     if existing:
         return existing
 
