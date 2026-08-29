@@ -239,6 +239,11 @@ export function ApplicationInspector({
    * Invalidating is what makes the row fill in on its own a few seconds later,
    * and saying "this can take a moment" is the difference between waiting and
    * pressing it four more times.
+   *
+   * There is no separate rescore. The match is computed here, on every render,
+   * from the parsed job and the profile vocabulary -- nothing stores a score
+   * to go stale. So re-reading the posting IS re-scoring it, and a button
+   * offering both would be one button pretending to be two.
    */
   async function onRereadClick() {
     setRereading(true);
@@ -246,7 +251,13 @@ export function ApplicationInspector({
       await api.reparseJob(job.id);
       await queryClient.invalidateQueries({ queryKey: ["applications"] });
       toast.success("Reading this posting again", {
-        description: "The title and company fill in here when it lands.",
+        // Two different promises, because the job this is pressed on is in
+        // one of two states and the wrong sentence reads as a bug: a broken
+        // import has no title yet, and a job that already parsed is being
+        // re-read for its skills and its match.
+        description: display.incomplete
+          ? "The title and company fill in here when it lands."
+          : "The skills and match update here when it lands.",
       });
     } catch (err) {
       reportFailure("read that posting again", err);
@@ -361,6 +372,35 @@ export function ApplicationInspector({
                 >
                   Add description
                 </DropdownMenuItem>
+                {/* Reachable for every job, not only a visibly broken one.
+                    The "Read it again" button below appears when the import
+                    failed outright, which covers the case the user can see:
+                    no title, no company. It does not cover the case they can
+                    only feel -- a posting that parsed into thin or wrong
+                    fields, which then scores wrong and tailors against the
+                    wrong requirements while looking perfectly fine here.
+                    There was no way to ask for that job to be read again
+                    short of deleting it and re-importing, which strands its
+                    application, documents and history. */}
+                {(job.source_url || (job.jd_clean ?? "").trim()) && (
+                  <DropdownMenuItem
+                    icon={
+                      <RefreshCw
+                        className={rereading ? "size-3.5 animate-spin" : "size-3.5"}
+                      />
+                    }
+                    disabled={rereading}
+                    onSelect={(event) => {
+                      // The menu closes on select and unmounts the item, so
+                      // the async work cannot live inside its handler if the
+                      // spinner is to mean anything.
+                      event.preventDefault();
+                      void onRereadClick();
+                    }}
+                  >
+                    {rereading ? "Reading again…" : "Read the posting again"}
+                  </DropdownMenuItem>
+                )}
                 <DropdownMenuItem
                   icon={<StickyNote className="size-3.5" />}
                   onSelect={() => setTimeout(() => notesRef.current?.focus(), 0)}
@@ -555,15 +595,36 @@ export function ApplicationInspector({
                           ? "This posting was imported without its description, so there is nothing to score against."
                           : "This posting names too few recognizable skills to score reliably."}
               </p>
-              {thin && !parsePending && !postingClosed && !pastingDescription && (
-                <button
-                  type="button"
-                  onClick={openDescriptionPaste}
-                  className="mt-2 flex items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)]"
-                >
-                  <FileText className="size-3" /> Add description
-                </button>
-              )}
+              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                {thin && !parsePending && !postingClosed && !pastingDescription && (
+                  <button
+                    type="button"
+                    onClick={openDescriptionPaste}
+                    className="flex items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)]"
+                  >
+                    <FileText className="size-3" /> Add description
+                  </button>
+                )}
+                {/* "Too few recognizable skills" is the one unscoreable state
+                    with no offer attached to it, and it is the most common:
+                    the posting read fine, the parse just came back thin. The
+                    honest fix for it is to read the posting again, so it is
+                    offered here rather than left as a dead end. Not shown
+                    while a parse is already running, and not for a closed
+                    posting or a wall, where reading it again would hit the
+                    same page. */}
+                {!thin && !parsePending && !postingClosed && !postingWall && !fetchFailed && (
+                  <button
+                    type="button"
+                    disabled={rereading}
+                    onClick={() => void onRereadClick()}
+                    className="flex items-center gap-1 rounded-lg border border-[color:var(--color-border)] px-2 py-1 text-[11px] text-[color:var(--color-text-muted)] transition-colors hover:border-[color:var(--color-accent-border)] hover:text-[color:var(--color-accent-ink)] disabled:opacity-50"
+                  >
+                    <RefreshCw className={rereading ? "size-3 animate-spin" : "size-3"} />
+                    {rereading ? "Reading…" : "Read it again"}
+                  </button>
+                )}
+              </div>
             </div>
           )}
         </Section>
