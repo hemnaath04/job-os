@@ -4395,6 +4395,29 @@ def _skills_shed_count(before: dict[str, Any], after: dict[str, Any]) -> int:
     return max(0, total(before) - total(after))
 
 
+# Enough to outrank any plausible number of posting-word overlaps, so a skill
+# the bullets prove is always shed after one the page only claims.
+_DEMONSTRATED_SKILL_BONUS = 100
+
+
+def _bullet_text(json_resume: dict[str, Any]) -> str:
+    """Every highlight the page prints, as one casefolded string.
+
+    Read from the assembled document rather than from the fact vault: the
+    question is what THIS page says, and a bullet that was cut for space no
+    longer backs anything on it.
+    """
+    parts: list[str] = []
+    for section in ("work", "projects", "volunteer"):
+        for entry in json_resume.get(section) or []:
+            if not isinstance(entry, dict):
+                continue
+            for highlight in entry.get("highlights") or []:
+                if isinstance(highlight, str):
+                    parts.append(highlight)
+    return " ".join(parts).casefold()
+
+
 def _trim_skills_to_fit(
     json_resume: dict[str, Any],
     requirements: list[_Requirement],
@@ -4415,6 +4438,15 @@ def _trim_skills_to_fit(
     Relevance here is word overlap, which is coarse but only decides ORDER. The
     keywords that survive are the ones the page has room for, so a keyword the
     matcher misjudges costs its position rather than its place on the resume.
+
+    One thing outranks the posting: a skill the page's own bullets demonstrate.
+    A real Salesforce run shed Selenium, TestNG, Cucumber, Pytest and Jenkins
+    while the EPAM entry two inches below still read "Migrated legacy test
+    suites to Cucumber and TestNG" and "tightening CI/CD integration". The
+    Testing row came out as the single word "GitHub Actions". A reader does not
+    see a tuned skills list there, they see a document disagreeing with itself,
+    and that costs more than the line it saved. So a keyword the bullets name is
+    shed last, after every keyword the page merely asserts.
     """
     groups = json_resume.get("skills")
     if not isinstance(groups, list) or not groups:
@@ -4425,10 +4457,18 @@ def _trim_skills_to_fit(
         for word in re.findall(r"[a-z0-9+#.]+", req.label.casefold())
         if len(word) > 2
     }
+    demonstrated = _bullet_text(json_resume)
 
     def relevance(keyword: str) -> int:
         words = set(re.findall(r"[a-z0-9+#.]+", keyword.casefold()))
-        return len(words & wanted)
+        score = len(words & wanted)
+        # Ranked above every posting match rather than protected outright. A
+        # page that is still over after shedding everything else has to shed
+        # something, and going one line over is not a better answer than losing
+        # the last keyword; this only fixes the ORDER it happens in.
+        if _mentions(demonstrated, keyword):
+            score += _DEMONSTRATED_SKILL_BONUS
+        return score
 
     # Every keyword, worst first, so shedding walks up from the least relevant.
     ordered: list[tuple[int, int, int, str]] = []

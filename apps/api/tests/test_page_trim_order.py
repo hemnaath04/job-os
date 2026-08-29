@@ -109,3 +109,104 @@ def test_a_re_assembled_page_keeps_the_keywords_it_shed() -> None:
     # already-trimmed page neither restores keywords nor sheds below the floor.
     _trim_skills_to_fit(document, [], budget)
     assert keywords(document) == after
+
+
+# ---------------------------------------------------------------------------
+# A skill the page's own bullets demonstrate.
+#
+# From a real Salesforce run: the trimmer shed Selenium, TestNG, Cucumber,
+# Pytest and Jenkins while the EPAM entry two inches below still read
+# "Migrated legacy test suites to Cucumber and TestNG" and "tightening CI/CD
+# integration". The Testing row came out as the single word "GitHub Actions".
+#
+# A reader does not see a tuned skills list there. They see a document
+# disagreeing with itself, which costs more than the line it saved.
+# ---------------------------------------------------------------------------
+
+
+def _document_whose_bullets_name_its_skills() -> dict:
+    return {
+        "basics": {"name": "A Candidate", "summary": "Backend and test automation."},
+        "work": [
+            {
+                "name": "EPAM Systems",
+                "position": "Test Automation Engineer",
+                "highlights": [
+                    "Migrated legacy test suites to Cucumber and TestNG, "
+                    "tightening CI/CD integration and reducing flaky failures.",
+                    "Wrote Selenium coverage against a pricing engine that could "
+                    "not be taken offline, triaging the daily failures it produced.",
+                ],
+            }
+        ],
+        "projects": [
+            {
+                "name": f"Project {i}",
+                "highlights": [
+                    "Built a thing worth describing at length here, twice over.",
+                    "And a second bullet, so the page is genuinely over budget.",
+                ],
+            }
+            for i in range(14)
+        ],
+        "education": [{"institution": "A University", "studyType": "MS", "area": "CS"}],
+        "skills": [
+            {"name": "Testing", "keywords": ["Selenium", "TestNG", "Cucumber", "GitHub Actions"]},
+            {"name": "Filler", "keywords": [f"Unrelated{k}" for k in range(40)]},
+        ],
+    }
+
+
+def test_a_skill_the_bullets_prove_outlives_one_the_page_only_claims() -> None:
+    document = _document_whose_bullets_name_its_skills()
+    assert estimated_page_lines(document) > MAX_PAGE_LINES, "fixture must be over budget"
+
+    _trim_skills_to_fit(document, [], MAX_PAGE_LINES)
+
+    kept = {k for group in document["skills"] for k in group["keywords"]}
+    for demonstrated in ("Selenium", "TestNG", "Cucumber"):
+        assert demonstrated in kept, f"{demonstrated} is named in a bullet on this page"
+
+
+def test_the_posting_does_not_outrank_the_page_s_own_evidence() -> None:
+    """Even when the posting names the filler and not the bullets.
+
+    Word overlap with the JD decides order among keywords the page merely
+    asserts. It must not promote one of those above a skill the document
+    already demonstrates, or the contradiction comes back through the front
+    door.
+    """
+    from job_os.services.tailor import _Requirement
+
+    document = _document_whose_bullets_name_its_skills()
+    requirements = [
+        _Requirement(label=f"Unrelated{k}", alternatives=(f"Unrelated{k}",), preferred=False)
+        for k in range(40)
+    ]
+
+    _trim_skills_to_fit(document, requirements, MAX_PAGE_LINES)
+
+    kept = {k for group in document["skills"] for k in group["keywords"]}
+    assert "Cucumber" in kept
+    assert "TestNG" in kept
+
+
+def test_a_page_still_over_after_everything_else_sheds_the_proven_ones_too() -> None:
+    """Ranking, not immunity.
+
+    Going one line over is not a better answer than losing the last keyword, so
+    the protection only decides the ORDER shedding happens in.
+    """
+    document = _document_whose_bullets_name_its_skills()
+    document["projects"] = [
+        {
+            "name": f"Project {i}",
+            "highlights": ["Built a thing worth describing at length here."] * 3,
+        }
+        for i in range(40)
+    ]
+
+    _trim_skills_to_fit(document, [], MAX_PAGE_LINES)
+
+    kept = [k for group in document["skills"] for k in group["keywords"]]
+    assert len(kept) <= 40, "the trimmer kept shedding rather than giving up"
