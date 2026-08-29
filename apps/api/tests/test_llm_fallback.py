@@ -52,9 +52,14 @@ class _ManifestMessages:
         self._errors = list(errors)
         self._answer = answer
         self.calls = 0
+        # What the SDK was actually handed. The real SDK rejects an unknown
+        # keyword, so a fallback-only option leaking into these is a broken
+        # primary call rather than a cosmetic slip.
+        self.seen_kwargs: list[dict[str, Any]] = []
 
     def stream(self, **_kwargs: Any) -> _Stream:
         self.calls += 1
+        self.seen_kwargs.append(dict(_kwargs))
         if self._errors:
             raise self._errors.pop(0)
         return _Stream(self._answer)
@@ -285,7 +290,10 @@ async def test_openrouter_serves_once_manifest_is_exhausted(
     # the user turn survived, and the primary call's 32000 max_tokens was
     # capped rather than passed through uncapped.
     assert fake_http.last_payload is not None
-    assert fake_http.last_payload["model"] == llm_json._OPENROUTER_MODEL
+    # The first rung of the ladder, and the free one. A change that reorders
+    # these should have to say so here.
+    assert fake_http.last_payload["model"] == llm_json._OPENROUTER_MODELS[0]
+    assert llm_json._OPENROUTER_MODELS[0].endswith(":free")
     assert fake_http.last_payload["messages"][0] == {"role": "system", "content": "be terse"}
     assert fake_http.last_payload["messages"][1] == {
         "role": "user",
@@ -317,9 +325,12 @@ async def test_openrouter_failing_surfaces_the_real_error(
     with pytest.raises(anthropic.APIStatusError):
         await llm_json.create_message(_ManifestClient(messages), **_TAILOR_KWARGS)
 
-    # Every layer was genuinely tried -- this is not a short-circuit.
+    # Every layer was genuinely tried -- this is not a short-circuit. That now
+    # includes every rung of the model ladder: a free model answering 429 is
+    # cheap to discover and a poor reason to give up while a second free model
+    # and a paid one are still untried.
     assert messages.calls == len(llm_json._RETRY_BACKOFF_SECONDS) + 1
-    assert fake_http.calls == 1
+    assert fake_http.calls == len(llm_json._OPENROUTER_MODELS)
 
 
 # ---------------------------------------------------------------------------
@@ -386,3 +397,154 @@ def test_fallback_max_tokens_is_capped() -> None:
     )
     assert llm_json._fallback_max_tokens({"max_tokens": 4000}) == 4000
     assert llm_json._fallback_max_tokens({}) == llm_json._FALLBACK_MAX_TOKENS_CEILING
+
+
+# ---------------------------------------------------------------------------
+# The model ladder. Free rungs first, and a rung that fails is not the end of
+# the attempt: the free tier answers 429 in a tenth of a second when it is
+# busy, which is cheap to discover and a poor reason to give up.
+# ---------------------------------------------------------------------------
+
+
+class _LadderHTTPClient(_FakeHTTPClient):
+    """Fails every model except one, and records the order they were tried."""
+
+    def __init__(self, succeed_on: str) -> None:
+        super().__init__()
+        self._succeed_on = succeed_on
+        self.models: list[str] = []
+        self.payloads: list[dict[str, Any]] = []
+
+    async def post(
+        self, url: str, *, headers: dict[str, str], json: dict[str, Any]
+    ) -> _FakeHTTPResponse:
+        self.calls += 1
+        self.last_payload = json
+        self.last_headers = headers
+        self.models.append(json["model"])
+        self.payloads.append(json)
+        if json["model"] != self._succeed_on:
+            raise httpx.ConnectError(f"{json['model']} is busy")
+        return _FakeHTTPResponse(
+            200,
+            {
+                "choices": [
+                    {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+                ],
+                "usage": {"completion_tokens": 5},
+            },
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_busy_free_model_falls_through_to_the_next_rung(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    """The failure this exists for: `z-ai/glm-5.2:free` answers 429 in 0.1s.
+
+    Giving up there would leave a configured, working, free second model and a
+    paid third one untried, and surface the gateway's error as if nothing could
+    have served the request.
+    """
+    monkeypatch.setattr(
+        llm_json, "get_settings", lambda: _FakeSettings(openrouter_api_key="or-key")
+    )
+    second = llm_json._OPENROUTER_MODELS[1]
+    fake_http = _LadderHTTPClient(succeed_on=second)
+    monkeypatch.setattr(llm_json.httpx, "AsyncClient", lambda **_kw: fake_http)
+
+    result = await llm_json.create_message(
+        _ManifestClient(_ManifestMessages(_sustained_429s())), **_TAILOR_KWARGS
+    )
+
+    assert fake_http.models == list(llm_json._OPENROUTER_MODELS[:2])
+    assert llm_json.response_text(result) == '{"ok": true}'
+
+
+@pytest.mark.asyncio
+async def test_a_two_hundred_carrying_nothing_is_treated_as_a_failure(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    """An empty body is a failure that happens to have the wrong status code.
+
+    Returning it would hand the caller a shim whose text is "", which every
+    JSON parser above here reports as a malformed reply rather than as a
+    provider that did not answer.
+    """
+    monkeypatch.setattr(
+        llm_json, "get_settings", lambda: _FakeSettings(openrouter_api_key="or-key")
+    )
+
+    class _EmptyThenFine(_LadderHTTPClient):
+        async def post(self, url: str, *, headers, json):  # type: ignore[no-untyped-def]
+            self.calls += 1
+            self.models.append(json["model"])
+            if len(self.models) == 1:
+                return _FakeHTTPResponse(
+                    200,
+                    {"choices": [{"message": {"content": "   "}, "finish_reason": "stop"}]},
+                )
+            return _FakeHTTPResponse(
+                200,
+                {
+                    "choices": [
+                        {"message": {"content": '{"ok": true}'}, "finish_reason": "stop"}
+                    ]
+                },
+            )
+
+    fake_http = _EmptyThenFine(succeed_on="unused")
+    monkeypatch.setattr(llm_json.httpx, "AsyncClient", lambda **_kw: fake_http)
+
+    result = await llm_json.create_message(
+        _ManifestClient(_ManifestMessages(_sustained_429s())), **_TAILOR_KWARGS
+    )
+
+    assert len(fake_http.models) == 2, "the empty reply did not end the attempt"
+    assert llm_json.response_text(result) == '{"ok": true}'
+
+
+@pytest.mark.asyncio
+async def test_json_mode_is_opt_in_and_never_reaches_the_sdk(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    """Two claims in one, because breaking either is silent.
+
+    `fallback_json` has to reach the OpenRouter payload, since without it the
+    free models returned unparseable JSON on nearly every measured attempt. And
+    it must never reach the Anthropic SDK, which rejects an unknown keyword:
+    forwarding it would break the primary call in order to improve the fallback.
+    """
+    monkeypatch.setattr(
+        llm_json, "get_settings", lambda: _FakeSettings(openrouter_api_key="or-key")
+    )
+    first = llm_json._OPENROUTER_MODELS[0]
+    fake_http = _LadderHTTPClient(succeed_on=first)
+    monkeypatch.setattr(llm_json.httpx, "AsyncClient", lambda **_kw: fake_http)
+
+    messages = _ManifestMessages(_sustained_429s())
+    await llm_json.create_message(
+        _ManifestClient(messages), **_TAILOR_KWARGS, fallback_json=True
+    )
+
+    assert fake_http.payloads[0]["response_format"] == {"type": "json_object"}
+    # The SDK saw the real request and nothing invented for the fallback.
+    assert "fallback_json" not in messages.seen_kwargs
+
+
+@pytest.mark.asyncio
+async def test_a_prose_caller_does_not_get_json_mode(
+    monkeypatch: pytest.MonkeyPatch, gateway_waits: list[float]
+) -> None:
+    """`latex_from_document` asks this function for LaTeX, not an object."""
+    monkeypatch.setattr(
+        llm_json, "get_settings", lambda: _FakeSettings(openrouter_api_key="or-key")
+    )
+    fake_http = _LadderHTTPClient(succeed_on=llm_json._OPENROUTER_MODELS[0])
+    monkeypatch.setattr(llm_json.httpx, "AsyncClient", lambda **_kw: fake_http)
+
+    await llm_json.create_message(
+        _ManifestClient(_ManifestMessages(_sustained_429s())), **_TAILOR_KWARGS
+    )
+
+    assert "response_format" not in fake_http.payloads[0]
