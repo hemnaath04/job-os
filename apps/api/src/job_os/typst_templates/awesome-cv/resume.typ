@@ -165,7 +165,7 @@
   section[Projects]
   for project in d.projects {
     cventry(
-      project.keywords_line,
+      project.meta_line,
       maybe-link(project.url, project.name),
       "",
       project.dates,

@@ -175,7 +175,7 @@
     for (i, project) in d.projects.enumerate() {
       cvevent(
         maybe-link(project.url, project.name),
-        project.keywords_line,
+        project.meta_line,
         project.dates,
         "",
       )

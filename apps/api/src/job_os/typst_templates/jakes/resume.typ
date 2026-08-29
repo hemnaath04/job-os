@@ -151,8 +151,8 @@
         column-gutter: 1em,
         {
           text(size: small, strong(maybe-link(project.url, project.name)))
-          if project.keywords_line != "" {
-            text(size: small)[ | #emph(project.keywords_line)]
+          if project.meta_line != "" {
+            text(size: small)[ | #emph(project.meta_line)]
           }
         },
         align(right, project.dates),

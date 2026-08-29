@@ -307,6 +307,24 @@ def build_render_model(json_resume: dict[str, Any]) -> dict[str, Any]:
                 "dates": date_range(item.get("startDate"), item.get("endDate")),
                 "keywords": keywords,
                 "keywords_line": ", ".join(keywords),
+                # What a template actually prints under a project heading. The
+                # link belongs here rather than only on the name, which is what
+                # every template did: `maybe-link` makes the title clickable and
+                # puts the URL nowhere a reader or a parser can see it. A
+                # rendered page came back with no address anywhere on it while
+                # the facts held jobs.hemnaath.tech and
+                # sewershed-bedrocked.vercel.app, and `pdf_text_audit` is right
+                # there checking that the text layer carries what the page
+                # claims. A link that is not in the text is a link the applicant
+                # tracking system never reads and a printed page never shows.
+                #
+                # Either half may be empty, so the separator is only used when
+                # both are present.
+                "meta_line": " | ".join(
+                    part
+                    for part in (", ".join(keywords), link_label(item.get("url")))
+                    if part
+                ),
                 "bullets": _clean_list(item.get("highlights")),
             }
         )

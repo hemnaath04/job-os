@@ -156,8 +156,8 @@
   section[Projects]
   for project in d.projects {
     entry-line(strong(maybe-link(project.url, project.name)), project.dates)
-    if project.keywords_line != "" {
-      text(size: small, emph(project.keywords_line))
+    if project.meta_line != "" {
+      text(size: small, emph(project.meta_line))
       linebreak()
     }
     if project.bullets.len() > 0 {

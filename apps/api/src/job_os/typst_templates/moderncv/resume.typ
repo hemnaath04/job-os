@@ -165,7 +165,7 @@
     // on the italic one, which is the reverse of how \cventry reads for a job.
     cventry(
       project.dates,
-      project.keywords_line,
+      project.meta_line,
       maybe-link(project.url, project.name),
       "",
       if project.bullets.len() > 0 {
