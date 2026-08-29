@@ -148,3 +148,43 @@ def test_a_prose_requirement_still_contributes_its_order() -> None:
     groups = ordered(vault, posting)
 
     assert groups[0]["keywords"] == ["Redis", "Kubernetes", "PostgreSQL"]
+
+
+def test_a_projects_technologies_follow_the_posting_too() -> None:
+    """The render caps a tech line at six. This decides which six.
+
+    Without an order the six kept are the six that happen to sit first in the
+    vault, which answers no posting in particular. BedRocked's twelve, taken
+    verbatim from the vault, against a posting written in computer-vision
+    nouns: the ones it asks for have to come off the front.
+    """
+    from job_os.services.tailor import _order_keywords_by_jd
+
+    vault = [
+        "Python", "FastAPI", "scikit-learn", "Anthropic Claude",
+        "Autodesk APS", "Vercel", "Knowledge Distillation",
+        "Computer Vision", "LLM Integration", "Generative AI",
+        "Model Inference", "Classification",
+    ]
+    posting = jd_skill_order(
+        {
+            "required_skills": ["Computer Vision", "Model Inference"],
+            "technologies": ["Classification", "Python"],
+        }
+    )
+
+    ordered = _order_keywords_by_jd(vault, posting)
+
+    assert set(ordered) == set(vault), "this is a reorder, nothing added or dropped"
+    kept = ordered[:6]
+    for wanted in ("Computer Vision", "Model Inference", "Classification", "Python"):
+        assert wanted in kept, f"{wanted} was asked for and did not survive the cut"
+
+
+def test_ordering_keywords_without_a_posting_changes_nothing() -> None:
+    """No posting is not an excuse to reshuffle somebody's own ordering."""
+    from job_os.services.tailor import _order_keywords_by_jd
+
+    vault = ["Vercel", "Python", "FastAPI"]
+    assert _order_keywords_by_jd(vault, None) == vault
+    assert _order_keywords_by_jd(vault, []) == vault

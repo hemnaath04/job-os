@@ -2754,6 +2754,31 @@ def _order_skills_by_jd(
     return [group for _key, group in sorted(ranked, key=lambda item: item[0])]
 
 
+def _order_keywords_by_jd(
+    keywords: list[str], jd_skill_order: list[str] | None
+) -> list[str]:
+    """Put the technologies the posting names first, inside one entry's list.
+
+    Only ever a REORDER, the same safety argument `_order_skills_by_jd` makes:
+    nothing is added, so a technology the posting wants and this project never
+    used cannot appear, and nothing is removed here, so the worst a bad match
+    does is stand in the wrong position.
+
+    It matters because the render caps a project's tech line at
+    `MAX_PROJECT_KEYWORDS`. That cap is what stops twelve nouns being printed
+    as a stack. This is what decides WHICH survive it: without an order, the
+    six kept are the six that happen to sit first in the vault, which answers
+    no posting in particular.
+    """
+    if not jd_skill_order or len(keywords) < 2:
+        return keywords
+    order = sorted(
+        range(len(keywords)),
+        key=lambda i: (_jd_skill_rank(keywords[i], jd_skill_order), i),
+    )
+    return [keywords[i] for i in order]
+
+
 def _assemble_json_resume(
     *,
     master_json_resume: dict[str, Any],
@@ -2873,7 +2898,9 @@ def _assemble_json_resume(
                 "summary": payload.get("summary"),
                 "url": f.source_url,
                 "highlights": bullets,
-                "keywords": payload.get("keywords", []),
+                "keywords": _order_keywords_by_jd(
+                    list(payload.get("keywords") or []), jd_skill_order
+                ),
             }
         )
 
@@ -2895,7 +2922,9 @@ def _assemble_json_resume(
                 "endDate": f.end_date.isoformat() if f.end_date else None,
                 "url": _project_url(f),
                 "highlights": bullets,
-                "keywords": payload.get("keywords", []),
+                "keywords": _order_keywords_by_jd(
+                    list(payload.get("keywords") or []), jd_skill_order
+                ),
                 "roles": payload.get("roles", []),
                 "entity": payload.get("entity"),
                 "type": payload.get("type"),

@@ -18,6 +18,8 @@ import pytest
 from job_os.services import latex_render
 from job_os.services.latex_catalog import BUILTIN_TEMPLATES, SAMPLE_RESUME
 from job_os.services.typst_render import (
+    MAX_PROJECT_KEYWORDS,
+    MAX_PROJECT_META_CHARS,
     TypstRenderError,
     build_render_model,
     builtin_directory,
@@ -376,3 +378,112 @@ def test_every_ported_template_prints_the_project_link() -> None:
                 f"{template.key} prints keywords without the project link; "
                 "use meta_line"
             )
+
+
+KEYWORD_DUMP = {
+    "basics": {"name": "A Candidate", "email": "a@b.com"},
+    "projects": [
+        {
+            # Verbatim from the vault behind the resume that reported this.
+            "name": "BedRocked",
+            "startDate": "2026-06-01",
+            "endDate": None,
+            "keywords": [
+                "Python", "FastAPI", "scikit-learn", "Anthropic Claude",
+                "Autodesk APS", "Vercel", "Knowledge Distillation",
+                "Computer Vision", "LLM Integration", "Generative AI",
+                "Model Inference", "Classification",
+            ],
+            "highlights": ["Trained a distilled classifier."],
+        },
+        {
+            "name": "Infant Cry Sound Detection",
+            "startDate": "2024-01-01",
+            "endDate": "2024-05-01",
+            "keywords": ["Deep Learning", "Audio Classification"],
+            "highlights": ["Classified infant cry types from raw audio."],
+        },
+    ],
+}
+
+
+def test_a_tech_line_is_a_stack_not_a_keyword_dump() -> None:
+    """Twelve nouns in a row is not a tech stack.
+
+    A reader skims past a line that long exactly as fast as an ATS dilutes it:
+    the six technologies that matter are buried among six that do not. The
+    tailor orders these by the posting first, so what this cuts is what the
+    posting never asked for.
+    """
+    projects = build_render_model(KEYWORD_DUMP)["projects"]
+    assert len(projects[0]["keywords"]) == MAX_PROJECT_KEYWORDS
+    # The order is preserved, so the tailor's ranking survives the cut.
+    assert projects[0]["keywords"][0] == "Python"
+    # A project that never had too many is untouched.
+    assert projects[1]["keywords"] == ["Deep Learning", "Audio Classification"]
+
+
+def test_a_project_with_no_end_date_is_not_claimed_as_ongoing() -> None:
+    """"Present" is a convention that belongs to employment.
+
+    Leaving a job's end date blank means "I still work here" and the user
+    asserts it. Projects have no such convention, and this app writes a null
+    end date for every project nobody gave an end to. In the vault behind the
+    reported resume all four projects had one, and at least two were weekend
+    hackathons -- so "Jun 2026 - Present" was printed over a build that lasted
+    two days.
+    """
+    projects = build_render_model(KEYWORD_DUMP)["projects"]
+    assert projects[0]["dates"] == "Jun 2026"
+    assert "Present" not in projects[0]["dates"]
+    # A real range is untouched, which is the half of this that must not move.
+    assert projects[1]["dates"] == f"Jan 2024 {chr(0x2013)} May 2024"
+
+
+def test_a_job_still_says_present() -> None:
+    """The distinction this rests on. Employment keeps the convention."""
+    model = build_render_model(
+        {
+            "basics": {"name": "A Candidate"},
+            "work": [
+                {
+                    "name": "Acme",
+                    "position": "Engineer",
+                    "startDate": "2024-07-01",
+                    "endDate": None,
+                    "highlights": ["Shipped things."],
+                }
+            ],
+        }
+    )
+    assert "Present" in model["work"][0]["dates"]
+
+
+def test_the_link_never_yields_to_a_sixth_technology() -> None:
+    """The wrap the keyword cap alone did not prevent.
+
+    Six keywords plus `sewershed-bedrocked.vercel.app` measured 101 characters
+    and wrapped in a real compile, which is exactly the cost the cap exists to
+    avoid. The whole line has a budget now and the keywords are what yields,
+    because a URL cannot be abbreviated without becoming wrong, and a project a
+    reader can open beats a sixth technology they cannot check.
+    """
+    long_url = dict(KEYWORD_DUMP)
+    long_url["projects"] = [
+        {**KEYWORD_DUMP["projects"][0], "url": "https://sewershed-bedrocked.vercel.app"}
+    ]
+    project = build_render_model(long_url)["projects"][0]
+
+    assert len(project["meta_line"]) <= MAX_PROJECT_META_CHARS
+    assert "sewershed-bedrocked.vercel.app" in project["meta_line"], (
+        "the link is whole; it is the keywords that give way"
+    )
+    assert len(project["keywords"]) == MAX_PROJECT_KEYWORDS, (
+        "the cut is to the printed line, not to the structured field"
+    )
+
+
+def test_a_project_with_no_link_spends_the_whole_line_on_its_stack() -> None:
+    """Nothing is dropped to leave room for a link that is not there."""
+    project = build_render_model(KEYWORD_DUMP)["projects"][0]
+    assert project["meta_line"] == ", ".join(project["keywords"])
