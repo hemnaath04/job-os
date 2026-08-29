@@ -210,3 +210,83 @@ def test_a_page_still_over_after_everything_else_sheds_the_proven_ones_too() -> 
 
     kept = [k for group in document["skills"] for k in group["keywords"]]
     assert len(kept) <= 40, "the trimmer kept shedding rather than giving up"
+
+
+# ---------------------------------------------------------------------------
+# The shape of the block, not just its size.
+#
+# The global floor says nothing about distribution: twenty keywords over five
+# categories satisfies it while one category is down to a single item. A real
+# Salesforce page came back with Testing reading only "GitHub Actions" and no
+# Infrastructure row at all.
+# ---------------------------------------------------------------------------
+
+
+def _many_categories_over_budget() -> dict:
+    return {
+        "basics": {"name": "A Candidate", "summary": "Backend and test automation."},
+        "work": [
+            {
+                "name": "EPAM Systems",
+                "position": "Test Automation Engineer",
+                "highlights": ["Did a substantial piece of work here, at length. " * 3],
+            }
+        ],
+        "projects": [
+            {
+                "name": f"Project {i}",
+                "highlights": ["Built a thing worth describing at length here."] * 3,
+            }
+            for i in range(20)
+        ],
+        "education": [{"institution": "A University", "studyType": "MS", "area": "CS"}],
+        "skills": [
+            {"name": "Languages", "keywords": ["Python", "Java", "Go", "SQL", "Bash"]},
+            {
+                "name": "Testing",
+                "keywords": ["Selenium", "TestNG", "Cucumber", "Pytest", "Jenkins"],
+            },
+            {"name": "Infrastructure", "keywords": ["Docker", "Linux", "Git", "Vercel", "nginx"]},
+            {"name": "Backend", "keywords": ["FastAPI", "REST APIs", "PostgreSQL", "MongoDB"]},
+        ],
+    }
+
+
+def test_no_category_is_gutted_to_a_remnant() -> None:
+    document = _many_categories_over_budget()
+    assert estimated_page_lines(document) > MAX_PAGE_LINES, "fixture must be over budget"
+
+    _trim_skills_to_fit(document, [], MAX_PAGE_LINES)
+
+    for group in document["skills"]:
+        assert len(group["keywords"]) >= 3, f"{group['name']} was reduced to a remnant"
+
+
+def test_no_category_disappears_entirely() -> None:
+    """The Infrastructure row vanished from a real page. It has to survive."""
+    document = _many_categories_over_budget()
+
+    _trim_skills_to_fit(document, [], MAX_PAGE_LINES)
+
+    assert {g["name"] for g in document["skills"]} == {
+        "Languages",
+        "Testing",
+        "Infrastructure",
+        "Backend",
+    }
+
+
+def test_a_row_at_its_floor_does_not_shelter_the_rest() -> None:
+    """The list is ordered by relevance across every row, so a row that has
+    given what it can sits among rows that have not. Stopping there would spare
+    keywords less relevant than the ones already shed."""
+    document = _many_categories_over_budget()
+    document["skills"].append(
+        {"name": "Tiny", "keywords": ["OnlyOne", "OnlyTwo"]},
+    )
+
+    dropped = _trim_skills_to_fit(document, [], MAX_PAGE_LINES)
+
+    tiny = next(g for g in document["skills"] if g["name"] == "Tiny")
+    assert tiny["keywords"] == ["OnlyOne", "OnlyTwo"], "a row already short is left alone"
+    assert dropped > 0, "the other rows still gave up their tail"

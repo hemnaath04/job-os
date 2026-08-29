@@ -4379,6 +4379,18 @@ def _drop_summary(json_resume: dict[str, Any]) -> bool:
 # So the page sheds the tail and keeps the block looking like a skills block.
 MIN_KEPT_SKILLS_ON_PAGE = 20
 
+# And the same floor per row, because the total says nothing about the shape.
+# Twenty keywords spread over five categories satisfies the global floor while
+# one of those categories is down to a single item, which is the render the
+# comment above describes and the one that keeps coming back: a Salesforce page
+# came out with Testing reading only "GitHub Actions" and no Infrastructure row
+# at all, while the resume's own bullets named Cucumber, TestNG and CI/CD.
+#
+# Three rather than one: two items still read as a remnant. A category that
+# starts below this is left alone entirely, since it is already as short as it
+# is going to get and shedding from it only makes the row look broken.
+MIN_KEPT_PER_CATEGORY = 3
+
 
 def _skills_shed_count(before: dict[str, Any], after: dict[str, Any]) -> int:
     """How many skill keywords the page gave up, for the note the user reads.
@@ -4481,6 +4493,11 @@ def _trim_skills_to_fit(
                 ordered.append((relevance(text), -gi, -ki, text))
     ordered.sort()
     total = len(ordered)
+    # How many keywords each row still has. A row is shed from only while it
+    # can spare one, so the page loses its tail rather than losing a category.
+    remaining: dict[int, int] = {}
+    for _score, neg_gi, _neg_ki, _keyword in ordered:
+        remaining[-neg_gi] = remaining.get(-neg_gi, 0) + 1
     doomed: set[tuple[int, str]] = set()
     dropped = 0
     for _score, neg_gi, _neg_ki, keyword in ordered:
@@ -4490,7 +4507,15 @@ def _trim_skills_to_fit(
             # The floor #44 established: a skills block gutted below this stops
             # being a skills block. A page still over here stays over.
             break
-        doomed.add((-neg_gi, keyword))
+        group_index = -neg_gi
+        if remaining.get(group_index, 0) <= MIN_KEPT_PER_CATEGORY:
+            # This row has given what it can. `continue` rather than `break`:
+            # the list is ordered by relevance across every row, so a row at its
+            # floor sits among rows that are not, and stopping here would spare
+            # keywords less relevant than the ones already gone.
+            continue
+        remaining[group_index] -= 1
+        doomed.add((group_index, keyword))
         dropped += 1
         json_resume["skills"] = [
             {
