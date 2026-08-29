@@ -265,6 +265,11 @@ async def parse_jd(
                     max_tokens=_JD_PARSE_MAX_TOKENS,
                     system=SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_prompt}],
+                    # The reply is fed straight to `ParsedJD.model_validate_json`,
+                    # so a fallback that answers in prose is the same as one that
+                    # did not answer. Measured: without this, the free models
+                    # returned unparseable JSON on nearly every attempt.
+                    fallback_json=True,
                     # temperature=0 was here for reproducibility (same JD -> same
                     # required_skills -> same ats_score) but is reverted for now:
                     # Anthropic's SDK v1.0.0 (2026-08-20) drops temperature/top_p/

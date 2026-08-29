@@ -142,7 +142,39 @@ _sleep = asyncio.sleep
 # confirm the correct request shape and valid model id against, rather than
 # guessing a second time.
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
-_OPENROUTER_MODEL = "deepseek/deepseek-v4-flash-0731"
+
+# Tried in order. Free first, because a fallback that costs nothing can be
+# reached for on every failure without anyone having to think about it, and
+# because the free tier turned out to be the faster path rather than the
+# consolation one.
+#
+# Benchmarked 2026-08-29 against a real 5.4KB iCIMS posting (Career Schwab),
+# extracting the full ParsedJD schema, four runs each, scored on whether the
+# reply validates rather than on whether it returns:
+#
+#   minimax/minimax-m3:free                  4/4 valid   3.6-4.9s   36-47 fields
+#   nvidia/nemotron-3-super-120b-a12b:free   2/4 valid    19-43s    18-55 fields
+#   deepseek/deepseek-v4-flash-0731 (paid)      -- kept as the last rung --
+#
+# For comparison the primary gateway took 9.6s on the same posting and
+# extracted 27 fields, so the first rung here is not a degraded mode.
+#
+# Several other free models were rejected on measurement, not on principle:
+# z-ai/glm-5.2:free and google/gemma-4-*:free answer 429 within a tenth of a
+# second (the free tier is provider-rate-limited, not queued), and
+# nvidia/nemotron-3.5-lightning:free and dots-studio/dots-3-note-preview:free
+# returned unparseable or truncated JSON on every attempt. openrouter/free
+# validated once and failed the next run, which is the trait that disqualifies
+# a fallback: the whole point is to be there when the primary is not.
+#
+# The paid DeepSeek model stays as the final rung rather than being removed.
+# It costs nothing while the free rungs answer, and a fallback that is free but
+# absent is worth less than one that bills a fraction of a cent.
+_OPENROUTER_MODELS = (
+    "minimax/minimax-m3:free",
+    "nvidia/nemotron-3-super-120b-a12b:free",
+    "deepseek/deepseek-v4-flash-0731",
+)
 
 # A fallback reply is a best-effort emergency draft, not a guarantee of
 # matching the primary call's own ceiling (which on some steps here goes as
@@ -278,45 +310,91 @@ def _fallback_max_tokens(kwargs: dict[str, Any]) -> int:
     return _FALLBACK_MAX_TOKENS_CEILING
 
 
-async def _call_openrouter(settings: Settings, kwargs: dict[str, Any]) -> Any | None:
-    """One best-effort call to OpenRouter's OpenAI-compatible chat-completions
-    endpoint. Returns `None` -- not an error -- when the request can't be
-    expressed in that shape at all, which `_try_fallback_providers` treats the
-    same as "this provider has nothing to offer, try the next one."
+async def _call_openrouter(
+    settings: Settings, kwargs: dict[str, Any], *, want_json: bool = False
+) -> Any | None:
+    """Walk the model ladder until one answers, or there is nothing left.
+
+    Returns `None` -- not an error -- when the request can't be expressed in
+    OpenAI shape at all, which `_try_fallback_providers` treats the same as
+    "this provider has nothing to offer."
+
+    A model that errors does not end the attempt. The free tier answers 429
+    within a tenth of a second when it is busy, which is cheap to discover and
+    pointless to give up over while a second free model and a paid one are
+    still untried.
+
+    `want_json` asks OpenRouter to constrain the reply to a JSON object. It is
+    opt-in per call rather than always on, because not every caller here wants
+    JSON: `latex_from_document` asks for LaTeX, and forcing an object on it
+    would break the one path least able to recover. Where it applies it is the
+    difference between a usable fallback and an unusable one. Measured on the
+    same posting, `nvidia/nemotron-3-super-120b-a12b:free` returned prose
+    without it and valid JSON with it.
     """
     try:
         openai_messages = _to_openai_messages(kwargs.get("system"), kwargs.get("messages") or [])
     except _FallbackUntranslatableError as exc:
         log.info("llm.fallback_skipped", provider="openrouter", reason=str(exc))
         return None
-    payload = {
-        "model": _OPENROUTER_MODEL,
-        "messages": openai_messages,
-        "max_tokens": _fallback_max_tokens(kwargs),
-    }
-    async with httpx.AsyncClient(timeout=_FALLBACK_HTTP_TIMEOUT) as http_client:
-        response = await http_client.post(
-            f"{_OPENROUTER_BASE_URL}/chat/completions",
-            headers={
-                "Authorization": f"Bearer {settings.openrouter_api_key}",
-                "Content-Type": "application/json",
-            },
-            json=payload,
+
+    last_error: Exception | None = None
+    for model in _OPENROUTER_MODELS:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": openai_messages,
+            "max_tokens": _fallback_max_tokens(kwargs),
+        }
+        if want_json:
+            payload["response_format"] = {"type": "json_object"}
+        try:
+            async with httpx.AsyncClient(timeout=_FALLBACK_HTTP_TIMEOUT) as http_client:
+                response = await http_client.post(
+                    f"{_OPENROUTER_BASE_URL}/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {settings.openrouter_api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json=payload,
+                )
+            response.raise_for_status()
+            data = response.json()
+            choice = data["choices"][0]
+        except Exception as exc:  # noqa: BLE001 - the next rung is the answer
+            last_error = exc
+            log.info(
+                "llm.fallback_model_failed",
+                provider="openrouter",
+                model=model,
+                error=repr(exc)[:160],
+            )
+            continue
+
+        text = (choice.get("message") or {}).get("content") or ""
+        if not text.strip():
+            # A 200 carrying nothing is a failure that happens to have the
+            # wrong status. Treated as one, so the next rung still runs.
+            log.info("llm.fallback_model_empty", provider="openrouter", model=model)
+            continue
+        finish_reason = choice.get("finish_reason")
+        usage = data.get("usage") or {}
+        log.warning("llm.fallback_model_served", provider="openrouter", model=model)
+        return _ShimMessage(
+            text=text,
+            stop_reason=_FINISH_REASON_TO_STOP_REASON.get(
+                finish_reason, finish_reason or "end_turn"
+            ),
+            output_tokens=usage.get("completion_tokens"),
         )
-    response.raise_for_status()
-    data = response.json()
-    choice = data["choices"][0]
-    text = (choice.get("message") or {}).get("content") or ""
-    finish_reason = choice.get("finish_reason")
-    usage = data.get("usage") or {}
-    return _ShimMessage(
-        text=text,
-        stop_reason=_FINISH_REASON_TO_STOP_REASON.get(finish_reason, finish_reason or "end_turn"),
-        output_tokens=usage.get("completion_tokens"),
-    )
+
+    if last_error is not None:
+        raise last_error
+    return None
 
 
-async def _try_fallback_providers(kwargs: dict[str, Any]) -> Any | None:
+async def _try_fallback_providers(
+    kwargs: dict[str, Any], *, want_json: bool = False
+) -> Any | None:
     """Ask OpenRouter for the same completion Manifest just exhausted its
     retries on. Returns `None` -- "give up, raise the real error" -- the
     instant there is nothing left to try: no key is configured, the request
@@ -329,7 +407,7 @@ async def _try_fallback_providers(kwargs: dict[str, Any]) -> Any | None:
     if not settings.openrouter_api_key:
         return None
     try:
-        result = await _call_openrouter(settings, kwargs)
+        result = await _call_openrouter(settings, kwargs, want_json=want_json)
     except Exception as exc:  # noqa: BLE001 - deliberately broad: any failure here
         # just means the fallback didn't work either, and the caller's own
         # re-raise of the real Manifest error is the failure a reader
@@ -386,10 +464,20 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
     giving up. Unconfigured, this is a no-op and behaviour is exactly what it
     was before this fallback existed: Manifest's own error surfaces.
 
+    Pass `fallback_json=True` when the reply has to be a JSON object. It is
+    consumed here and never forwarded to the SDK, and it only changes what the
+    fallback provider is asked for. Opt-in rather than always on because
+    `latex_from_document` asks this same function for LaTeX.
+
     The caller gets the same object `messages.create` would have returned --
     or, if a fallback provider answered instead, an object shaped enough like
     one that `response_text` and `response_diagnostics` still work unchanged.
     """
+    # Popped, never forwarded: the Anthropic SDK rejects an unknown keyword,
+    # so leaving it in kwargs would break the primary call to improve the
+    # fallback, which is exactly backwards.
+    want_json = bool(kwargs.pop("fallback_json", False))
+
     last_error: Exception | None = None
     for attempt, backoff in enumerate((*_RETRY_BACKOFF_SECONDS, None)):
         try:
@@ -422,7 +510,7 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
                 # sustained 429/529 below -- if anything, more likely, since
                 # an OpenRouter key is independent of whatever broke
                 # Manifest's own upstream auth.
-                fallback = await _try_fallback_providers(kwargs)
+                fallback = await _try_fallback_providers(kwargs, want_json=want_json)
                 if fallback is not None:
                     return fallback
                 raise
@@ -436,7 +524,7 @@ async def create_message(client: Any, **kwargs: Any) -> Any:
                 # configured provider also failed," in which case `raise`
                 # below surfaces this exact exhausted error exactly as it did
                 # before fallback existed.
-                fallback = await _try_fallback_providers(kwargs)
+                fallback = await _try_fallback_providers(kwargs, want_json=want_json)
                 if fallback is not None:
                     return fallback
                 raise
