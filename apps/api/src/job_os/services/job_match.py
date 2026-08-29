@@ -142,6 +142,15 @@ EDUCATION_POINTS_PER_LEVEL_SHORT = 7
 EDUCATION_IN_PROGRESS_DEDUCTION = 4
 EDUCATION_PREFERRED_MISS = 3
 EDUCATION_FIELD_MISS = 4
+# A posting open only to current undergraduates, read by someone already
+# enrolled in a higher degree. Costs a level, the same as being a level short
+# of the requirement, because it is the same kind of fact seen from the other
+# side: the posting gates on a degree status this candidate does not have.
+#
+# Not the whole axis. The wording is a strong signal and not a certainty --
+# some teams take a master's student who applies to an undergraduate
+# programme -- so this should cost a rank, not the result.
+EDUCATION_UNDERGRAD_ONLY_DEDUCTION = EDUCATION_POINTS_PER_LEVEL_SHORT
 
 # Industry. A full miss costs the whole axis, which is what Jobright does: the
 # real payload carries `industryMatchingScores: []` and scores the industry
@@ -781,7 +790,22 @@ def _score_education(job: JobEnrichment, candidate: CandidateProfile) -> AxisSco
         return budget.finish(weight)
 
     required_index = _degree_index(required)
-    if held >= required_index:
+    # Checked before the "requirement met" branch, because this candidate meets
+    # it. That is the whole failure: an undergraduate-only posting asks for a
+    # bachelors, someone in a master's holds one, and the axis called it a match
+    # and scored 15 out of 15 on the one thing the posting actually gates on.
+    #
+    # This fires on the candidate, not on the posting. Someone currently in a
+    # bachelors is exactly who the posting wants and loses nothing here, which
+    # is what keeps it from becoming a blanket penalty on internships.
+    if education.undergraduate_only() and in_progress > _degree_index("bachelors"):
+        budget.deduct(
+            EDUCATION_UNDERGRAD_ONLY_DEDUCTION,
+            "undergraduate_only_posting",
+            f"the posting is open to students pursuing a bachelors and the "
+            f"profile is enrolled in a {candidate.in_progress_degree}",
+        )
+    elif held >= required_index:
         budget.note(
             "education_requirement_met",
             f"profile holds a {candidate.highest_degree} against the {required} required",
