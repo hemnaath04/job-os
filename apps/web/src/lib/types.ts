@@ -457,6 +457,13 @@ export interface ResumeReviewResult {
   strengths: string[];
   github_projects_checked: string[];
   model_summary: string;
+  /**
+   * The reviewing model's own 0-100 guess, and null when that model never
+   * answered. `passed` requires it, deliberately: an unavailable review is an
+   * unknown and an unknown is not a pass. It is the only thing on this payload
+   * that tells a reader whether the review actually ran.
+   */
+  model_estimate?: number | null;
 }
 
 /**
