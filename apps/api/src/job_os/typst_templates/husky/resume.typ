@@ -180,7 +180,7 @@
     entry(
       maybe-link(project.url, project.name),
       project.dates,
-      project.keywords_line,
+      project.meta_line,
       "",
     )
     // A project with bullets shows them; one with only a description shows

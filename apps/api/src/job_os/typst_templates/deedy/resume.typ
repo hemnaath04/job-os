@@ -211,14 +211,14 @@
           fill: c-subheadings,
           maybe-link(project.url, upper(project.name)),
         )
-        if project.keywords_line != "" {
+        if project.meta_line != "" {
           h(0.4em)
           text(
             font: "Raleway",
             weight: 500,
             size: 11pt,
             fill: c-subheadings,
-            smallcaps("| " + project.keywords_line),
+            smallcaps("| " + project.meta_line),
           )
         }
       })

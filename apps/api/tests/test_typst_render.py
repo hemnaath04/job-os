@@ -20,6 +20,7 @@ from job_os.services.latex_catalog import BUILTIN_TEMPLATES, SAMPLE_RESUME
 from job_os.services.typst_render import (
     TypstRenderError,
     build_render_model,
+    builtin_directory,
     date_range,
     has_builtin,
     render_resume_pdf,
@@ -317,3 +318,61 @@ def test_an_unported_template_falls_back_to_tectonic(monkeypatch: pytest.MonkeyP
     monkeypatch.setattr(latex_render, "compile_pdf", record)
     latex_render.render_resume_pdf(SAMPLE_RESUME, template_key="moderncv")
     assert seen and "moderncv" in seen[0]
+
+
+PROJECT_WITH_LINK = {
+    "basics": {"name": "A Candidate", "email": "a@b.com"},
+    "projects": [
+        {
+            "name": "job.os",
+            "url": "https://jobs.hemnaath.tech",
+            "keywords": ["Python", "FastAPI"],
+            "highlights": ["Built a tailoring engine."],
+        },
+        {
+            "name": "NoLink",
+            "keywords": ["Go"],
+            "highlights": ["A project with no url."],
+        },
+    ],
+}
+
+
+def test_a_project_link_is_text_and_not_only_a_hyperlink() -> None:
+    """The defect: every template made the project NAME the clickable thing.
+
+    A `link()` around a title puts the URL in the PDF's annotation layer and
+    nowhere else. A human reading a printout, and every ATS parser, sees the
+    word "job.os" and no address. The user reported it exactly that way, from a
+    tailored resume where none of three real projects showed where to find
+    them.
+
+    So the URL is rendered as its own visible label alongside the tech line.
+    Asserted on the render model rather than the compiled PDF because that is
+    what all eight templates read, and the model is the thing they share.
+    """
+    model = build_render_model(PROJECT_WITH_LINK)
+    linked, unlinked = model["projects"]
+    assert "jobs.hemnaath.tech" in linked["meta_line"]
+    assert linked["keywords_line"] in linked["meta_line"]
+    # A project with no URL keeps exactly the line it had before, with no
+    # separator left dangling where the link would have gone.
+    assert unlinked["meta_line"] == unlinked["keywords_line"] == "Go"
+
+
+def test_every_ported_template_prints_the_project_link() -> None:
+    """The regression that would undo this quietly.
+
+    A new template, or a revert of one line in an existing one, puts the URL
+    back in the annotation layer where nobody sees it. Cheap to check by
+    reading the sources.
+    """
+    for template in BUILTIN_TEMPLATES:
+        if not has_builtin(template.key):
+            continue
+        source = (builtin_directory(template.key) / "resume.typ").read_text()
+        if "project.keywords_line" in source:
+            raise AssertionError(
+                f"{template.key} prints keywords without the project link; "
+                "use meta_line"
+            )

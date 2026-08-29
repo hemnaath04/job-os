@@ -135,14 +135,14 @@
     entry(
       maybe-link(project.url, project.name),
       project.dates,
-      if project.keywords_line != "" { project.keywords_line } else { project.description },
+      if project.meta_line != "" { project.meta_line } else { project.description },
       "",
     )
     // The description only earns its own line when the subtitle went to the
     // technology list instead, otherwise it would print twice.
     if project.bullets.len() > 0 {
       sub-bullets(project.bullets)
-    } else if project.description != "" and project.keywords_line != "" {
+    } else if project.description != "" and project.meta_line != "" {
       sub-bullets((project.description,))
     }
   }))
