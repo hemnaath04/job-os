@@ -3322,7 +3322,13 @@ _NON_SKILL_RE = re.compile(
     # real technique, and excluding the word would delete it.
     r"problem[- ]solving|problem solvers?|critical thinking|analytical skills?|"
     r"interpersonal|time management|attention to detail|teamwork|"
-    r"written communication|verbal communication|"
+    r"written communication|verbal communication|communicator|"
+    # The audience a posting asks you to explain things TO. "Clear, direct
+    # communicator who can explain technical tradeoffs to both engineers and
+    # non-engineers" was scoring "non-engineers" as a skill. Only the negated
+    # forms are listed: bare "stakeholders" stays out, because stakeholder
+    # management is a real thing a resume claims.
+    r"non[- ]engineers?|non[- ]technical(?: stakeholders?| audiences?)?|"
     # Enthusiasm/attitude phrasing. A real posting supplied "excited to learn"
     # and "open to feedback" as required_skills entries, each scored as a
     # missing skill no bullet could ever contain.
@@ -3485,6 +3491,15 @@ _ELIGIBILITY_REQUIREMENT_RE = re.compile(
     r"junior standing|senior standing|graduation|enrolled|"
     r"work authorization|sponsorship|visa|citizenship|clearance|"
     r"ability to start|able to start|start date|new grad|early[- ]career|"
+    # Where the work happens, which is a logistics rule and not a capability.
+    # "Available to work in person from our Union Square, NYC office" was
+    # yielding "NYC office" and scoring it as a skill the candidate lacked.
+    # Deliberately narrow: "hybrid" and a bare "on-site" are absent because
+    # this gate discards the WHOLE sentence, so a false positive here deletes
+    # real skills rather than merely leaving noise. "hybrid cloud" and
+    # "on-site data centres" are things a posting genuinely asks for.
+    r"available to work|work in person|in[- ]person|willing to relocate|"
+    r"able to relocate|"
     r"ideal for (?:current )?students?)\b",
     re.I,
 )
@@ -3493,12 +3508,44 @@ _CLAUSE_OPENER_RE = re.compile(
     r"^(?:how|what|why|which|who|where|when|that|with|for|in|on|to|of|at|by|"
     r"from|using|via|about|a|an|the|able|ability|comfortable|experience|"
     r"strong|solid|genuine|currently|at least|minimum|must|willing|"
+    # The rest of the evaluative vocabulary `_LEAD_IN_RE` already knows about.
+    # A fragment starting with one of these is the posting grading a skill
+    # rather than naming one. Real cases: "Hands-on experience or strong
+    # curiosity with ..." left "Hands-on" behind after the filler tail came
+    # off, "Proficient in one or more of JavaScript, ..." left "Proficient in
+    # one", and "Strong understanding of CS fundamentals and practical coding
+    # application" left "practical coding application". All three were scored
+    # as must-haves.
+    #
+    # "deep" and "basic" are deliberately absent. This matches at the start of
+    # a fragment with a word boundary, so `^deep\b` would reject "deep
+    # learning", which is a real and common requirement. The cost of a false
+    # positive here is a deleted skill, so the list only holds words that
+    # cannot begin one.
+    r"practical|proven|demonstrated|extensive|significant|prior|excellent|"
+    r"hands[- ]on|proficient|proficiency|clear|"
     # A verb at the front means the sentence's own clause survived the split, not a
     # skill name. "Built APIs" and "deploying code" were both being scored, and
     # neither appears in a resume as written.
     r"built|build|building|ship|ships|shipped|shipping|deploy|deploys|deployed|"
     r"deploying|own|owns|owned|owning|manage|manages|managed|managing|"
+    # "Use AI to learn faster, debug, and ship" left the bare verb "debug".
+    # The gerund is untouched on purpose: "debugging" is a skill somebody
+    # writes on a resume, and `debug\b` does not match it.
+    r"debug|debugs|debugged|"
     r"work|works|worked|working|write|writes|wrote|writing)\b",
+    re.I,
+)
+
+# A fragment that ends in a manner adverb is describing HOW something is done,
+# which is a clause the split left behind rather than the name of a skill. "A
+# budding AI-first mindset ... leveraging AI to learn across the stack, ramp up
+# quickly, and contribute meaningfully from day one" yielded "ramp up quickly"
+# and scored it as a must-have. No resume answers it, and no rewrite can.
+_MANNER_ADVERB_RE = re.compile(
+    r"\b(?:quickly|rapidly|effectively|efficiently|independently|autonomously|"
+    r"collaboratively|clearly|concisely|meaningfully|reliably|consistently|"
+    r"proactively|iteratively|seamlessly|successfully)$",
     re.I,
 )
 # Pronouns give away a clause that survived the opener check.
@@ -3545,7 +3592,11 @@ def _is_recoverable_skill(fragment: str) -> bool:
         return False
     if not _is_ats_keyword(fragment) or not _is_candidate_skill(fragment):
         return False
-    return not (_CLAUSE_OPENER_RE.match(fragment) or _PRONOUN_RE.search(fragment))
+    return not (
+        _CLAUSE_OPENER_RE.match(fragment)
+        or _PRONOUN_RE.search(fragment)
+        or _MANNER_ADVERB_RE.search(fragment)
+    )
 
 
 def _is_candidate_skill(term: str) -> bool:
