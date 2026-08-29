@@ -9,6 +9,7 @@ import httpx
 import structlog
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from job_os.integrations.eightfold import fetch_job as fetch_eightfold_job
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -91,6 +92,23 @@ async def fetch_url_markdown(url: str) -> FetchedPage:
     does the original Firecrawl error propagate, since a plain-fetch failure
     (network error, blocked host) is usually a symptom of the same root cause.
     """
+    # Eightfold career sites first, because for them no HTML fetch works. The
+    # page is client-rendered and returns the app's bootstrap payload: theme
+    # colours, navigation markup and CSS, with the job nowhere in it. Millennium
+    # stored 15KB of that and Microsoft roughly 498,000 characters, and both
+    # parsed to zero requirements because there were none in the text. Returns
+    # None for everything else, at the cost of one request against a URL shape
+    # that is rare.
+    eightfold = await fetch_eightfold_job(url)
+    if eightfold is not None:
+        return FetchedPage(
+            url=url,
+            markdown=eightfold.text,
+            raw=eightfold.raw,
+            title=eightfold.title,
+            company_hint=eightfold.company_hint,
+        )
+
     settings = get_settings()
     if not settings.firecrawl_api_key:
         log.warning("firecrawl.fallback.no_key", url=url)
