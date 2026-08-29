@@ -14,7 +14,8 @@ import type {
   SeniorityLevel,
   UserSettings,
   UserSettingsPatch,
-  WorkAuthorization,
+  WorkAuthorizationStatus,
+  WorkEligibility,
   WorkModel,
 } from "@/lib/types";
 
@@ -26,12 +27,56 @@ const THEMES: { value: UserSettings["theme"]; label: string }[] = [
 const FUNCTIONS = ["swe", "ml", "ai", "data", "research", "sre", "infra", "security", "pm", "design"];
 const LEVELS: SeniorityLevel[] = ["intern", "new-grad", "mid", "senior", "staff"];
 
-const WORK_AUTHORIZATIONS: { value: WorkAuthorization; label: string }[] = [
+const WORK_AUTHORIZATIONS: { value: WorkAuthorizationStatus; label: string }[] = [
   { value: "us_citizen", label: "US citizen" },
   { value: "permanent_resident", label: "Permanent resident" },
+  { value: "f1_student", label: "F-1 student" },
   { value: "visa_holder_needs_transfer", label: "Visa holder, needs transfer" },
   { value: "needs_sponsorship", label: "Needs sponsorship" },
   { value: "other", label: "Other" },
+];
+
+/**
+ * The four questions a posting can ask, each as its own answer.
+ *
+ * Worded as things the user knows about themselves, not as legal tests. The
+ * gate that reads these will refuse to write a resume for some postings, so
+ * every one of them has to be a question the person can answer honestly
+ * without a lawyer, and the help text says who actually decides where the
+ * answer is not theirs to give.
+ *
+ * `invert` is for the one field whose stored sense is the opposite of the
+ * checkbox: `us_person_for_export_control` defaults true so that an untouched
+ * account is never flagged, but the box a user ticks reads better as the
+ * exception rather than the rule.
+ */
+const ELIGIBILITY_QUESTIONS: {
+  key: keyof Omit<WorkEligibility, "status">;
+  label: string;
+  help: string;
+  invert?: boolean;
+}[] = [
+  {
+    key: "may_work_without_sponsorship_now",
+    label: "I believe I can start work now without the employer filing anything",
+    help: "Worded as a belief because that is all it can be. Authorization like CPT is granted by your school for one specific employer and date range, against an offer you already have, so nobody can answer this in advance for jobs you have not applied to. Nothing is ever skipped because of this answer: it only changes how a sponsorship note is worded, and leaving it unticked costs you nothing.",
+  },
+  {
+    key: "needs_future_sponsorship",
+    label: "I will need sponsorship to keep working later",
+    help: "A posting saying you must be authorized \u201cnow or in the future\u201d is asking about this. It is the one answer that stops a resume being written.",
+  },
+  {
+    key: "us_person_for_export_control",
+    label: "I am not a US person for export control (ITAR/EAR)",
+    help: "Only ever shown as a note, never used to skip a job. Export control law does not restrict who an employer may hire, and postings carry this text as boilerplate, so it is surfaced for you to check rather than acted on.",
+    invert: true,
+  },
+  {
+    key: "clearance_eligible",
+    label: "I could hold a US security clearance",
+    help: "Clearance eligibility is limited to US citizens, with no temporary or interim route, so a posting requiring one is the clearest case where a resume cannot help.",
+  },
 ];
 
 const WORK_MODELS: { value: WorkModel; label: string }[] = [
@@ -55,7 +100,16 @@ const DEFAULT_SETTINGS: UserSettings = {
   default_location: null,
   timezone: null,
   target_titles: [],
-  work_authorization: null,
+  work_eligibility: {
+    status: null,
+    may_work_without_sponsorship_now: false,
+    needs_future_sponsorship: false,
+    // True, and it is the value that FLAGS NOTHING. Every default here lets a
+    // posting through, so an account that never opens this page behaves
+    // exactly as it did before eligibility existed.
+    us_person_for_export_control: true,
+    clearance_eligible: false,
+  },
   salary_floor: null,
   salary_currency: "USD",
   seniority_range: { min: null, max: null },
@@ -163,6 +217,10 @@ export default function SettingsPage() {
    * API rejects an inverted range, and failing a whole save over the order two
    * selects happened to be touched in teaches the user nothing.
    */
+  function setEligibility<K extends keyof WorkEligibility>(key: K, value: WorkEligibility[K]) {
+    update("work_eligibility", { ...form.work_eligibility, [key]: value });
+  }
+
   function setSeniority(edge: "min" | "max", level: SeniorityLevel | null) {
     const next = { ...form.seniority_range, [edge]: level };
     if (next.min && next.max && LEVELS.indexOf(next.min) > LEVELS.indexOf(next.max)) {
@@ -239,9 +297,48 @@ export default function SettingsPage() {
 
         <section className="workspace-panel p-6">
           <SectionHeader title="Eligibility" />
-          <Field label="Work authorization" help="Paired with what a posting says about sponsorship, so a role that cannot hire you is filtered out rather than only flagged.">
-            {(control) => <Select {...control} value={form.work_authorization ?? ""} onChange={(v) => update("work_authorization", (v || null) as WorkAuthorization | null)} options={[{ value: "", label: "Not specified" }, ...WORK_AUTHORIZATIONS]} />}
+          <Field label="Work authorization" help="Compared against what a posting requires, so a role that cannot hire you is stopped before a resume is written for it. Leave every answer blank and nothing is ever stopped.">
+            {(control) => <Select {...control} value={form.work_eligibility.status ?? ""} onChange={(v) => setEligibility("status", (v || null) as WorkAuthorizationStatus | null)} options={[{ value: "", label: "Not specified" }, ...WORK_AUTHORIZATIONS]} />}
           </Field>
+          {/* Shown only once a status is chosen. Before that these four
+              questions have no context and answering them would be guessing;
+              the gate also ignores them until a status is set, so an unanswered
+              form and a hidden one behave identically. */}
+          {form.work_eligibility.status && (
+            <FieldGroup
+              label="What a posting can ask"
+              help="Each one is compared against a clause a posting might carry. Nothing here is worked out for you, and nothing you leave unticked is assumed."
+              className="mt-5"
+            >
+              <div className="flex flex-col gap-3">
+                {ELIGIBILITY_QUESTIONS.map((question) => {
+                  const stored = form.work_eligibility[question.key];
+                  const checked = question.invert ? !stored : Boolean(stored);
+                  return (
+                    <label key={question.key} className="flex gap-2.5 text-sm">
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(e) =>
+                          setEligibility(
+                            question.key,
+                            question.invert ? !e.target.checked : e.target.checked,
+                          )
+                        }
+                        className="mt-0.5 size-4 shrink-0 accent-[color:var(--color-accent)]"
+                      />
+                      <span className="min-w-0">
+                        <span className="block text-[color:var(--color-text)]">{question.label}</span>
+                        <span className="mt-0.5 block text-xs leading-relaxed text-[color:var(--color-text-dim)]">
+                          {question.help}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+            </FieldGroup>
+          )}
         </section>
 
         <section className="workspace-panel p-6">

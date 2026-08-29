@@ -540,20 +540,58 @@ export interface CalendarHistoryEntry {
 }
 
 /**
- * The candidate's own eligibility status, which is the half a posting cannot
- * tell you. `lib/discover/work-auth.ts` reads the employer's half off the
- * posting; on its own that can only warn, because "does not sponsor" is
- * disqualifying for one user and irrelevant to the next.
+ * The candidate's immigration status, as coarse as it can be without lying.
+ *
+ * `f1_student` is why this is no longer a flat enum on its own: a student who
+ * can work an internship NOW and needs a petition LATER is neither
+ * "needs_sponsorship" nor "visa_holder_needs_transfer", and either answer gets
+ * the eligibility gate wrong in opposite directions.
  *
  * `null` and "other" are different: null is never asked, and nothing should be
  * inferred from it.
  */
-export type WorkAuthorization =
+export type WorkAuthorizationStatus =
   | "us_citizen"
   | "permanent_resident"
+  | "f1_student"
   | "visa_holder_needs_transfer"
   | "needs_sponsorship"
   | "other";
+
+/**
+ * What a posting's eligibility clauses are compared against.
+ *
+ * A struct rather than one label, because the questions a posting can ask are
+ * independent and a single status answers at most one of them. A student can
+ * work an internship now, cannot hold a clearance, and would need a petition
+ * later; those are three different answers to three different clauses.
+ *
+ * Nothing here is derived from anything else. The gate that reads it refuses
+ * to generate a resume for some postings, so every value is one the user
+ * states about themselves rather than one the app works out on their behalf.
+ *
+ * Every default lets a posting through. Unset behaves exactly as no answer.
+ */
+export interface WorkEligibility {
+  /** null means never asked. Nothing is inferred from it. */
+  status: WorkAuthorizationStatus | null;
+  /**
+   * Believes they can start work now without the employer filing anything.
+   *
+   * A self-reported belief, not a claim of eligibility. Work authorization
+   * like CPT is granted by a school for one specific employer and date range
+   * against a named offer, so there is no answer a student can give in
+   * advance. Nothing refuses on this; it only chooses between two wordings of
+   * a warning.
+   */
+  may_work_without_sponsorship_now: boolean;
+  /** Would need an employer petition to keep working later. */
+  needs_future_sponsorship: boolean;
+  /** Meets the ITAR/EAR "US person" definition. Surfaced, never acted on. */
+  us_person_for_export_control: boolean;
+  /** Could hold a US security clearance. */
+  clearance_eligible: boolean;
+}
 
 export type SeniorityLevel = "intern" | "new-grad" | "mid" | "senior" | "staff";
 
@@ -582,7 +620,7 @@ export interface UserSettings {
    * title taxonomy will own these ids later.
    */
   target_titles: string[];
-  work_authorization: WorkAuthorization | null;
+  work_eligibility: WorkEligibility;
   /** Lowest acceptable base pay per year, in `salary_currency`. */
   salary_floor: number | null;
   /** ISO-4217 alpha-3, upper case. */
