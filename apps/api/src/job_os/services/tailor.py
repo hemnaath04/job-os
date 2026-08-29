@@ -33,7 +33,7 @@ import json
 import re
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import date
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
@@ -4031,6 +4031,30 @@ def _jd_requirements(
                     preferred=is_bonus(term, section_is_preferred=section_is_preferred),
                     any_of=any_of,
                 )
+
+    # A weak signal beats no signal, but only when it is the only one there is.
+    #
+    # `keywords` is a nice-to-have because a parser fills it with whatever it
+    # noticed, marketing and housing stipends included. That is the right
+    # default while the posting also states real requirements. It is the wrong
+    # answer when it does not: Crowe's posting puts every skill it names
+    # (Machine Learning, Data Science, Modelling, Software Development) in
+    # `keywords` and nothing in `required_skills` or `technologies`, so
+    # demoting them left it with no must-haves at all and a score of
+    # "unavailable" on a posting whose asks are perfectly legible.
+    #
+    # So when nothing else survived, the keywords are promoted rather than the
+    # posting being written off. They keep the non-skill filters that got them
+    # here, so a page whose only keywords are "Open Roles" and "Anthropic
+    # Fellows Program" still ends with nothing, which is the honest answer for
+    # a board index that is not a job posting.
+    if not any(not req.preferred for req in requirements):
+        promoted = [req for req in requirements if req.label in set(entries(("keywords",)))]
+        if promoted:
+            requirements = [
+                replace(req, preferred=False) if req in promoted else req
+                for req in requirements
+            ]
 
     return requirements, prose, excluded
 
