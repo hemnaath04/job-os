@@ -13,6 +13,8 @@ structured job, which is what makes this a shape change rather than tuning.
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import Any
 
 import pytest
@@ -409,3 +411,131 @@ async def test_a_finished_job_is_never_requeued(
     await jd_ingest.requeue_stranded_parses()
 
     assert job.id not in no_scheduling
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_recovers_a_row_without_waiting_for_a_restart(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """The gap behind a posting that appears to take ten minutes to parse.
+
+    Recovery used to happen only at startup, so a row was rescued only if a
+    restart came along AND the row was already past the cutoff at that moment.
+    A parse stranded shortly before a restart is younger than the cutoff, gets
+    skipped by the restart that could have saved it, and waits for the next one.
+    On a dyno that cycles daily that is a card reading "Still reading this
+    posting" for hours, over a parse that takes about ten seconds.
+
+    The sweep is driven here by shortening its interval rather than by waiting
+    on the real one.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import update
+
+    from job_os.db.models import Job
+
+    user = await _user(db_session, "swept")
+    job = await jobs_router.create_from_text(
+        JobFromText(jd_text="Senior Backend Engineer at GlossGenius.", company_hint="GlossGenius"),
+        _user=user,
+        session=db_session,
+    )
+    await db_session.execute(
+        update(Job)
+        .where(Job.id == job.id)
+        .values(
+            updated_at=datetime.now(UTC)
+            - timedelta(seconds=jd_ingest.STRANDED_AFTER_SECONDS + 60)
+        )
+    )
+    no_scheduling.clear()
+    monkeypatch.setattr(jd_ingest, "SWEEP_INTERVAL_SECONDS", 0.01)
+
+    sweep = asyncio.create_task(jd_ingest.sweep_stranded_parses_forever())
+    try:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if job.id in no_scheduling:
+                break
+    finally:
+        sweep.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweep
+
+    assert job.id in no_scheduling, "no restart happened, and it was still picked up"
+
+
+@pytest.mark.asyncio
+async def test_the_sweep_survives_a_failing_scan(
+    monkeypatch: pytest.MonkeyPatch, db_session, background_session, no_scheduling
+) -> None:
+    """One bad scan costs an interval, not the loop.
+
+    An exception escaping the sweep would take it down for the life of the
+    process and put the behaviour back to startup-only, silently.
+    """
+    calls = 0
+
+    async def _explode() -> int:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise RuntimeError("database went away")
+        return 0
+
+    monkeypatch.setattr(jd_ingest, "requeue_stranded_parses", _explode)
+    monkeypatch.setattr(jd_ingest, "SWEEP_INTERVAL_SECONDS", 0.01)
+
+    sweep = asyncio.create_task(jd_ingest.sweep_stranded_parses_forever())
+    try:
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if calls >= 3:
+                break
+    finally:
+        sweep.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sweep
+
+    assert calls >= 3, "the loop kept running after the first scan raised"
+
+
+@pytest.mark.asyncio
+async def test_a_job_already_being_parsed_here_is_not_scheduled_twice(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sweep's age filter is a clock and cannot see a slow live task.
+
+    Without this guard a parse that simply takes longer than the cutoff gets a
+    second task on the same row, which spends two gateway calls to write one
+    result. Reachable now that the sweep runs on a timer rather than once.
+    """
+    from uuid import uuid4
+
+    started = asyncio.Event()
+    release = asyncio.Event()
+    runs = 0
+
+    async def _slow(job_id, owner_id=None):  # type: ignore[no-untyped-def]
+        nonlocal runs
+        runs += 1
+        started.set()
+        await release.wait()
+
+    monkeypatch.setattr(jd_ingest, "complete_job_parse", _slow)
+    job_id = uuid4()
+
+    jd_ingest.schedule_job_parse(job_id)
+    await started.wait()
+    jd_ingest.schedule_job_parse(job_id)  # the sweep, arriving mid-parse
+
+    assert runs == 1
+    release.set()
+    await asyncio.sleep(0)
+    # And once it finishes, the id is free again rather than blocked forever.
+    for _ in range(50):
+        await asyncio.sleep(0.01)
+        if job_id not in jd_ingest._INFLIGHT:
+            break
+    assert job_id not in jd_ingest._INFLIGHT
