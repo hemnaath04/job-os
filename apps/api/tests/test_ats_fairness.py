@@ -151,8 +151,19 @@ def test_clause_debris_is_not_scored_as_a_requirement() -> None:
 def test_a_genuine_mismatch_is_not_flattered() -> None:
     """The hard limit: fairer must not mean higher on a role he does not fit.
 
-    Only the eligibility requirement is met here. The job's own language and its
-    whole domain are absent, and the score says so.
+    The stack the job runs on is the part that must stay in the denominator.
+    Satisfying the "one or more of" eligibility line with Python does not mean
+    the C++ codebase stops being a gap, so C++ and TypeScript are still scored
+    against him and the score is still a clear miss rather than a pass.
+
+    The domain words moved. `keywords` is a nice-to-have field now, because a
+    parser fills it with whatever it saw: across the real postings in this
+    workspace, the keyword-only terms included "housing stipend", "June to
+    August 2027", "Dragon", "Starlink" and "Anthropic Fellows Program", each
+    scored as a must-have the candidate had failed to have. So the domain terms
+    here are asserted to be *reported* rather than to be *scored*. They are
+    still visible, which was the point of naming them; they no longer sit in a
+    denominator alongside a housing stipend.
     """
     jd = {
         "required_skills": ["Comfortable with one or more of C++, Python or TypeScript"],
@@ -160,12 +171,11 @@ def test_a_genuine_mismatch_is_not_flattered() -> None:
         "keywords": ["trading", "electronic trading"],
     }
     score, report = _score(jd)
-    assert score <= 30, score
-    assert {"C++", "TypeScript", "trading", "electronic trading"} <= set(report["missing"])
-    # Naming the job's stack independently of the "one or more of" rule is what
-    # keeps the mismatch visible: satisfying the eligibility line with Python does
-    # not mean the C++ codebase stops being a gap.
-    assert report["required_total"] == 5
+    assert score <= 40, score
+    assert {"C++", "TypeScript"} <= set(report["missing"])
+    assert report["required_total"] == 3
+    # Not silently dropped: the domain gap is still on the report.
+    assert {"trading", "electronic trading"} <= set(report["preferred_missing"])
 
 
 def test_requirements_are_reported_as_a_count_for_context() -> None:
