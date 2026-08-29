@@ -487,6 +487,43 @@ class EducationRequirements(BaseModel):
             return "high-school"
         return "none"
 
+    def required_floor(self) -> DegreeLevel:
+        """The lowest degree that actually satisfies this posting.
+
+        `highest_required` answers a different question: the tallest degree the
+        posting names. That is the right answer for describing a posting and
+        the wrong one for scoring a candidate against it, because a posting
+        naming several levels is almost always listing alternatives.
+
+        Roblox: "Pursuing an undergraduate or graduate degree in computer
+        science, engineering, or a related field." Every level it names is
+        marked required, because that is what the extraction is told to do, and
+        reading the tallest as the bar turns an either-or into a demand for the
+        highest one. A machine-learning research internship open to a BS, MS or
+        PhD then scored an eligible bachelors student two levels short: fourteen
+        points off a fifteen-point axis, on a posting they can apply to.
+
+        This is the rule the tailoring pass already applies to skills, where
+        "one or more of Go, Node.js or Python" is one requirement Python
+        satisfies rather than three the candidate mostly fails. A degree list is
+        the same shape.
+
+        The generous direction on purpose. Reading alternatives as a stack
+        penalises every eligible student on the commonest kind of posting they
+        see; reading a genuine "a BS, and enrolled in an MS" as satisfied by the
+        BS credits a candidate who does hold the degree it names. The first
+        failure is worse and far more frequent.
+        """
+        for level in DEGREE_ORDER:
+            if level in ("none", "high-school"):
+                continue
+            got = getattr(self, level, None)
+            if isinstance(got, DegreeRequirement) and got.status == "required":
+                return level  # type: ignore[return-value]
+        if self.high_school_required:
+            return "high-school"
+        return "none"
+
     def undergraduate_only(self) -> bool:
         """Whether this posting is addressed to current undergraduates only.
 
