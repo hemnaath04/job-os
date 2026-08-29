@@ -45,6 +45,7 @@ import structlog
 from langgraph.graph import END, START, StateGraph
 from pydantic import ValidationError
 
+from job_os.schemas.me import UserSettings, WorkEligibility
 from job_os.schemas.resumes import (
     GapQuestion,
     ProvenanceEntry,
@@ -52,7 +53,7 @@ from job_os.schemas.resumes import (
     TailorAgentOutput,
     TailorAnalysis,
 )
-from job_os.services import ats_profiles
+from job_os.services import ats_profiles, eligibility_gate
 from job_os.services.availability import (
     AVAILABILITY_GAP_REQUIREMENT,
     AVAILABILITY_GAP_WHY,
@@ -63,6 +64,7 @@ from job_os.services.availability import (
 )
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text as _identity_text
+from job_os.services.job_enrich import load_enrichment
 from job_os.services.latex_catalog import DEFAULT_TEMPLATE_KEY
 from job_os.services.latex_catalog import builtin as builtin_template
 from job_os.services.llm_json import (
@@ -833,6 +835,13 @@ async def tailor_resume(
         jd_clean=job.jd_clean or "",
         template_key=template_key,
         source_url=job.source_url,
+        # Settings, not facts. Whether an employer would have to file a
+        # petition, or whether the candidate could hold a clearance, are things
+        # the user states about themselves; nothing in a career history implies
+        # them. Absent, the gate refuses nothing.
+        candidate_eligibility=UserSettings.model_validate(
+            getattr(user, "settings", None) or {}
+        ).work_eligibility,
     )
 
 
@@ -878,6 +887,7 @@ async def run_tailor(
     jd_clean: str,
     template_key: str | None = None,
     source_url: str | None = None,
+    candidate_eligibility: WorkEligibility | None = None,
     on_progress: Callable[[TailorStage], None] | None = None,
 ) -> tuple[dict[str, Any], list[ProvenanceEntry], list[GapQuestion], Decimal | None, dict[str, Any], str]:
     """Backend-agnostic tailoring agent.
@@ -972,6 +982,24 @@ async def run_tailor(
     # Refusing costs him nothing and saves the run: `_jd_requirements` is pure
     # Python and returns in under a millisecond, so this fires before roughly
     # ninety seconds of gateway time is spent proving what is already known.
+    # Before the requirements check and before any model call: is this a
+    # posting the candidate could be hired for at all?
+    #
+    # Same shape and the same reasoning as the refusal below. `evaluate` is
+    # pure Python over two already-stored documents, so it costs nothing, and
+    # refusing here saves the three sequential model calls a run spends
+    # producing a resume for a job that has already said no.
+    #
+    # Everything it does not refuse it FLAGS, and the flags travel out as gap
+    # questions rather than through a new channel: "this posting says it will
+    # not sponsor" is a thing the user has to check before applying, which is
+    # exactly what that list is for and what the tailor page already renders.
+    eligibility_reading = eligibility_gate.evaluate(
+        load_enrichment(jd_parsed), candidate_eligibility, jd_text=jd_clean
+    )
+    if eligibility_reading.verdict == "refuse":
+        raise TailorInputError(eligibility_reading.message())
+
     if not requirements:
         if jd_parsed.get("parse_incomplete"):
             raise TailorInputError(
@@ -1647,7 +1675,7 @@ async def run_tailor(
         json_resume,
         provenance,
         _profile_gaps(
-            list(agent.gap_questions),
+            [*_eligibility_gaps(eligibility_reading), *agent.gap_questions],
             json_resume=json_resume,
             availability=availability,
             availability_asked=availability_asked,
@@ -1656,6 +1684,20 @@ async def run_tailor(
         ats_report,
         note,
     )
+
+
+def _eligibility_gaps(reading: eligibility_gate.EligibilityReading) -> list[GapQuestion]:
+    """Eligibility flags, as gap questions.
+
+    A flag is something the user has to check before applying and cannot check
+    from the page in front of them, which is what this list already means. They
+    are ordered first by the caller, because they decide whether the rest of
+    the page is worth sending at all.
+    """
+    return [
+        GapQuestion(requirement=finding.detail, why_no_match=finding.reason)
+        for finding in reading.flags
+    ]
 
 
 def _profile_gaps(
