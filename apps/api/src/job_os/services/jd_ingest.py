@@ -33,6 +33,12 @@ from sqlalchemy.orm import joinedload
 from job_os.db.models import Job
 from job_os.db.session import async_session
 from job_os.services.job_backfill import parse_has_signal
+from job_os.services.posting_status import (
+    classify as classify_posting,
+)
+from job_os.services.posting_status import (
+    reason_for as posting_status_reason,
+)
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -146,6 +152,29 @@ async def _read_posting(job: Job) -> tuple[dict[str, Any], str | None, str | Non
         # request path a two-call pipeline inside a 30 second ceiling, and
         # moving the parse alone would have left the 504 in place, just rarer.
         fetched = await fetch_url_markdown(job.source_url)
+        # Before spending a model call on it. A page that says "this job is no
+        # longer open" is not a parse failure, it is an answer, and asking the
+        # extractor to find requirements in an error page wastes a call to
+        # arrive at the same nothing.
+        status = classify_posting(fetched.markdown, title=fetched.title)
+        if status != "ok":
+            log.info(
+                "jd_ingest.not_a_posting",
+                job_id=str(job.id),
+                status=status,
+                url=job.source_url[:120],
+            )
+            # The reason is the status, not the title. `_incomplete` takes what
+            # went wrong, and passing the page's title there would have filed
+            # "Custom Job Error - Disney Careers" as the parse error.
+            unusable = _incomplete(status)
+            unusable["posting_status"] = status
+            unusable["posting_status_reason"] = posting_status_reason(status)
+            # Kept so the card reads as the page it came from rather than
+            # "Untitled": complete_job_parse takes the job's title from here.
+            if fetched.title:
+                unusable["title"] = fetched.title
+            return unusable, fetched.raw, fetched.markdown
         parsed = await parse_jd(
             fetched.markdown,
             title_hint=fetched.title,
@@ -218,6 +247,15 @@ async def complete_job_parse(job_id: UUID, owner_id: str | None = None) -> None:
                     session, name=company_name, domain=parsed.get("company_domain")
                 )
                 job.company_id = company.id
+
+            # A posting whose own page says it has closed is not an active job.
+            # `Job.active` is what the jobs list filters on, so this is what
+            # takes a dead link off the board instead of leaving a card that
+            # can never score and never explains itself. Only `expired` does
+            # this: a sign-in wall or a bot wall says nothing about whether the
+            # job is still open, only that we could not read it.
+            if parsed.get("posting_status") == "expired":
+                job.active = False
 
             # Stored whether or not it found anything: an incomplete parse is
             # a fact about this job that the scorer and the interface both
