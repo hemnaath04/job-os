@@ -30,6 +30,7 @@ import {
   type FitResult,
   type ProfileVocab,
 } from "@/lib/discover/fit-score";
+import { fitNotesFrom } from "@/lib/discover/fit-notes";
 import { indexHitToDiscoveryResult } from "@/lib/discover/index-results";
 import { rankByIntent, searchIntent } from "@/lib/discover/relevance";
 import {
@@ -119,8 +120,10 @@ function serverMatchToFitResult(match: IndexMatchScore): FitResult {
     matched: match.matched_skills,
     gaps: match.missing_skills,
     confident: match.confidence === "high",
+    notes: fitNotesFrom(match),
   };
 }
+
 
 type SortMode = "fit" | "recency" | "location";
 const SORT_LABEL: Record<SortMode, string> = {
@@ -1274,6 +1277,28 @@ function ResultCard({
               <ShieldAlert className="size-3" aria-hidden="true" />
               {flag.label}
             </span>
+          ))}
+        </div>
+      )}
+
+      {/* Why the number is what it is, for the half of the score the skill
+          lists below cannot show. A blocker is not a deduction at all -- it is
+          a fact that rules the application out -- so it is marked as one
+          rather than reading like another point lost. */}
+      {fit?.notes && fit.notes.length > 0 && (
+        <div className="mt-2 flex flex-col gap-1">
+          {fit.notes.map((note) => (
+            <p
+              key={note.reason}
+              className={`text-[10px] leading-relaxed ${
+                note.blocking
+                  ? "text-[color:var(--color-rose-ink)]"
+                  : "text-[color:var(--color-text-dim)]"
+              }`}
+            >
+              {note.blocking ? "Rules you out: " : ""}
+              {note.detail}
+            </p>
           ))}
         </div>
       )}

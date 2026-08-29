@@ -184,6 +184,27 @@ export interface ProfileVocab {
   display: Map<string, string>;
 }
 
+/**
+ * One reason the score is what it is, when the reason is not a skill.
+ *
+ * The card already shows matched and missing skills, so a skills line here
+ * would repeat what is on screen. What it cannot show is everything else the
+ * server weighed: the degree the posting gates on, the years it asks for, the
+ * industry, and the hard mismatches that make an application impossible.
+ */
+export interface FitNote {
+  /** Machine name from the scorer, e.g. "undergraduate_only_posting". */
+  reason: string;
+  /** The sentence the scorer wrote, already addressed to the reader. */
+  detail: string;
+  /**
+   * True for a `blocker`: not a deduction but a fact that rules the
+   * application out. The scorer keeps these out of the number on purpose, so
+   * the only way a reader learns them is if a surface prints them.
+   */
+  blocking: boolean;
+}
+
 export interface FitResult {
   score: number; // 0-100
   matched: string[]; // display skills the posting names and the profile backs
@@ -191,6 +212,12 @@ export interface FitResult {
   // False when the posting carried too little text to judge (for example a
   // GitHub listing whose description is only fetched at import time).
   confident: boolean;
+  /**
+   * Only ever populated from the server's own score. The client heuristic has
+   * no profile beyond a skills lexicon, so it cannot say anything about a
+   * degree or a visa without inventing it.
+   */
+  notes?: FitNote[];
 }
 
 function normalize(s: string): string {
