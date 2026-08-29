@@ -123,6 +123,21 @@ export function ApplicationInspector({
   const fetchFailed =
     Boolean(job.jd_parsed?.parse_incomplete) &&
     job.jd_parsed?.parse_error === "fetch_failed";
+  // A fifth state, and the only one where pasting a description is the wrong
+  // advice: the page itself said the job is gone. Disney's returned "Job Not
+  // Found. We are sorry this job post no longer exists." and Anthropic's "The
+  // job you are looking for is no longer open." Both used to land in `thin`
+  // and be offered an Add description button, which is busywork for a role
+  // that does not exist. Set by services/posting_status.py.
+  const postingStatus = job.jd_parsed?.posting_status;
+  const postingClosed = postingStatus === "expired";
+  // A wall is not a closure. A sign-in page or a bot check says nothing about
+  // whether the job is open, only that we could not see it, so it keeps the
+  // paste affordance that `fetchFailed` already offers and only sharpens the
+  // sentence.
+  const postingWall =
+    postingStatus === "sign_in_required" || postingStatus === "blocked";
+  const postingReason = job.jd_parsed?.posting_status_reason?.trim() || null;
   // Both live outside this component, keyed by job, so selecting another
   // application or leaving the page does not take them with it.
   const { running: savingDescription, draft: descriptionDraft } = usePendingEnrich(job.id);
@@ -515,7 +530,11 @@ export function ApplicationInspector({
           ) : (
             <div className="rounded-lg border border-dashed border-[color:var(--color-border)] px-3 py-2.5">
               <p className="text-xs font-medium text-[color:var(--color-text-muted)]">
-                {parsePending ? "Match pending" : "Match unavailable"}
+                {parsePending
+                  ? "Match pending"
+                  : postingClosed
+                    ? "Posting closed"
+                    : "Match unavailable"}
               </p>
               {/* Three states wearing one sentence at various points. A
                   posting still being read is not a dead end and needs no
@@ -526,13 +545,17 @@ export function ApplicationInspector({
               <p className="mt-0.5 text-[11px] leading-relaxed text-[color:var(--color-text-dim)]">
                 {parsePending
                   ? "Still reading this posting. The match appears on its own once it lands."
-                  : fetchFailed
-                    ? "This posting could not be fetched from its link, so there is nothing to score against. Paste the description in instead: retrying the URL will hit the same wall."
-                    : thin
-                      ? "This posting was imported without its description, so there is nothing to score against."
-                      : "This posting names too few recognizable skills to score reliably."}
+                  : postingClosed
+                    ? `${postingReason ?? "This posting has closed."} There is nothing to score against, and pasting the description would not change that.`
+                    : postingWall
+                      ? `${postingReason ?? "This posting could not be read."} Paste the description in instead: retrying the URL will hit the same wall.`
+                      : fetchFailed
+                        ? "This posting could not be fetched from its link, so there is nothing to score against. Paste the description in instead: retrying the URL will hit the same wall."
+                        : thin
+                          ? "This posting was imported without its description, so there is nothing to score against."
+                          : "This posting names too few recognizable skills to score reliably."}
               </p>
-              {thin && !parsePending && !pastingDescription && (
+              {thin && !parsePending && !postingClosed && !pastingDescription && (
                 <button
                   type="button"
                   onClick={openDescriptionPaste}

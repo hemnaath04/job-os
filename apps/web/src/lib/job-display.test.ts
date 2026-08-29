@@ -176,3 +176,75 @@ test("the finder will not save a result it could not read a title from", () => {
   // No link is nothing to fetch, so there is nothing to save either.
   assert.ok(!canSaveToPipeline({ title: "Software Engineer", source_url: null }));
 });
+
+test("a closed posting is not offered the same fix as an unreadable one", () => {
+  // Disney's page returned "Job Not Found. We are sorry this job post no
+  // longer exists." That used to read as "we could not read this posting,
+  // paste the description in", which is busywork for a role that is gone.
+  const closed = jobDisplay({
+    title: "Custom Job Error - Disney Careers",
+    jd_parsed: {
+      parse_incomplete: true,
+      posting_status: "expired",
+      posting_status_reason:
+        "This posting is closed. The page says the job is no longer open.",
+    },
+  });
+
+  assert.equal(closed.state, "closed");
+  assert.match(closed.note ?? "", /closed/i);
+  assert.doesNotMatch(closed.note ?? "", /paste/i);
+});
+
+test("closed is chosen over unreadable, which a closed posting also carries", () => {
+  // The read genuinely did not complete, so both flags are set. "The job is
+  // gone" is the more specific and more useful of the two.
+  const job = jobDisplay({
+    title: "Untitled",
+    jd_parsed: { parse_incomplete: true, posting_status: "expired" },
+  });
+
+  assert.equal(job.state, "closed");
+  assert.equal(job.title, "This posting has closed");
+});
+
+test("a wall is still unreadable, because the job may well be open", () => {
+  // A sign-in page says nothing about whether the role exists, so it keeps
+  // the advice that actually helps.
+  const wall = jobDisplay({
+    title: "MyGreenhouse",
+    jd_parsed: {
+      parse_incomplete: true,
+      posting_status: "sign_in_required",
+      posting_status_reason:
+        "This link needs a sign-in, so the posting could not be read.",
+    },
+  });
+
+  assert.equal(wall.state, "unreadable");
+  assert.match(wall.note ?? "", /sign-in/i);
+});
+
+test("the backend's sentence is preferred over a second copy of it here", () => {
+  const job = jobDisplay({
+    title: "Some Role",
+    jd_parsed: {
+      parse_incomplete: true,
+      posting_status: "blocked",
+      posting_status_reason: "The site blocked the fetch, so the posting could not be read.",
+    },
+  });
+
+  assert.equal(job.note, "The site blocked the fetch, so the posting could not be read.");
+});
+
+test("a posting with no status flag reads exactly as it did before", () => {
+  const job = jobDisplay({
+    title: "Backend Engineer",
+    company: { name: "Acme" },
+    jd_parsed: { parse_incomplete: true },
+  });
+
+  assert.equal(job.state, "unreadable");
+  assert.match(job.note ?? "", /paste the description/i);
+});
