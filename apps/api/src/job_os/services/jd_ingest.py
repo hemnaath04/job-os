@@ -353,7 +353,9 @@ async def sync_job_into_cards(job: Job, owner_id: str) -> int:
     updated = 0
     try:
         rows = await appwrite_tables.list_rows(
-            filters=[f'equal("owner_id", ["{owner_id}"])', 'equal("archived", [false])'],
+            # `attribute=value`, which is what _parse_filter accepts. Appwrite's own
+            # Query JSON is not a filter expression here and raises.
+            filters=[f"owner_id={owner_id}", "archived=false"],
             limit=500,
             table_id=table,
         )
