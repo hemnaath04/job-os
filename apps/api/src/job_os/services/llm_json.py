@@ -419,6 +419,39 @@ async def _try_fallback_providers(
     return result
 
 
+async def complete_json_via_openrouter(
+    *, system: str, user: str, max_tokens: int
+) -> str | None:
+    """One JSON completion from the free ladder, or None if none of it answered.
+
+    Public because `jd_parse` races this against the primary gateway rather
+    than only reaching for it after the primary has failed. The ladder, the
+    free-first ordering and the JSON constraint are all the same as the
+    fallback path uses, so the two cannot drift into asking for different
+    things from the same models.
+    """
+    settings = get_settings()
+    if not settings.openrouter_api_key:
+        return None
+    try:
+        result = await _call_openrouter(
+            settings,
+            {
+                "system": system,
+                "messages": [{"role": "user", "content": user}],
+                "max_tokens": max_tokens,
+            },
+            want_json=True,
+        )
+    except Exception as exc:  # noqa: BLE001 - a racer that raises is just a loser
+        log.info("llm.openrouter_direct_failed", error=repr(exc)[:160])
+        return None
+    if result is None:
+        return None
+    text = response_text(result)
+    return text or None
+
+
 def _retry_after_seconds(exc: anthropic.APIStatusError) -> float | None:
     """The wait the gateway asked for, when it asked for one we can honour."""
     headers = getattr(getattr(exc, "response", None), "headers", None)

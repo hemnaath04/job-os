@@ -8,6 +8,7 @@ straight through the add-job-from-url/text flow instead of degrading to
 """
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,10 @@ class _FakeSettings:
     anthropic_base_url: str | None = None
     manifest_tier_fast: str = "job-os-haiku"
     anthropic_model_extract: str = "manifest/auto"
+    # None by default so every test below races nothing and exercises the
+    # gateway path on its own, which is what they were all written about. The
+    # race has its own tests.
+    openrouter_api_key: str | None = None
 
 
 # What a successful extraction looks like, for the tests whose subject is the
@@ -688,3 +693,180 @@ async def test_a_failed_parse_keeps_the_metadata_it_did_get_right(
     assert result["location"] == "Miami, Florida"
     assert result["level"] == "intern"
 
+
+
+# ---------------------------------------------------------------------------
+# The race.
+#
+# Measured on twelve real postings, 16KB to 30KB, same schema and prompt:
+#
+#                     median    p90     max    usable
+#     Manifest         15.6s   22.4s   79.9s    10/12
+#     free ladder       5.1s   11.3s   13.1s    12/12
+#
+# The interactive budget is 25s, so the gateway's p90 of 22.4s was the problem
+# and its 79.9s outlier was the symptom. What these tests protect is that the
+# speed-up can never cost a parse: the gateway runs every time and is still the
+# side that degrades honestly.
+# ---------------------------------------------------------------------------
+
+
+_RACE_SETTINGS = _FakeSettings(openrouter_api_key="or-key")
+_GOOD_FREE_JSON = '{"title": "Backend Engineer", "technologies": ["Go", "Kubernetes"]}'
+
+
+@pytest.mark.asyncio
+async def test_the_free_model_wins_when_it_answers_first(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _RACE_SETTINGS)
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+
+    async def _slow_gateway(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        await asyncio.sleep(0.2)
+        return _FakeMessage(_GOOD_REPLY)
+
+    async def _fast_free(**_kwargs: Any) -> str:
+        return _GOOD_FREE_JSON
+
+    monkeypatch.setattr(jd_parse, "create_message", _slow_gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _fast_free)
+
+    result = await jd_parse.parse_jd("a jd", title_hint="Backend Engineer")
+
+    assert result["technologies"] == ["Go", "Kubernetes"]
+    assert result["parse_incomplete"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_free_model_that_answers_nothing_useful_does_not_win(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """It answers first and says nothing scoreable, which is not an answer.
+
+    Winning on speed alone would let the fast side overwrite a good extraction
+    with a title, which is the exact shape `_extracted_nothing` exists to catch.
+    """
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _RACE_SETTINGS)
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+
+    async def _gateway(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        await asyncio.sleep(0.05)
+        return _FakeMessage(_GOOD_REPLY)
+
+    async def _useless_free(**_kwargs: Any) -> str:
+        return '{"title": "Backend Engineer"}'  # no scoreable field
+
+    monkeypatch.setattr(jd_parse, "create_message", _gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _useless_free)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert result["technologies"] == ["Go"], "the gateway's answer survived"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "free",
+    [
+        None,  # no rung answered
+        "not json at all",
+        '{"title": "x", "salary_min": "not a number"}',  # invalid against the schema
+    ],
+)
+async def test_a_broken_free_side_never_costs_the_parse(
+    monkeypatch: pytest.MonkeyPatch, free: str | None
+) -> None:
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _RACE_SETTINGS)
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+
+    async def _gateway(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        return _FakeMessage(_GOOD_REPLY)
+
+    async def _free(**_kwargs: Any) -> str | None:
+        return free
+
+    monkeypatch.setattr(jd_parse, "create_message", _gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _free)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert result["technologies"] == ["Go"]
+    assert result["parse_incomplete"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_free_side_that_raises_is_just_a_loser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A racer's exception must not become the caller's."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _RACE_SETTINGS)
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+
+    async def _gateway(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        await asyncio.sleep(0.05)
+        return _FakeMessage(_GOOD_REPLY)
+
+    async def _exploding_free(**_kwargs: Any) -> str:
+        raise RuntimeError("openrouter fell over")
+
+    monkeypatch.setattr(jd_parse, "create_message", _gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _exploding_free)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert result["technologies"] == ["Go"]
+
+
+@pytest.mark.asyncio
+async def test_without_a_key_nothing_is_raced(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unconfigured, this is exactly the function it was before."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    called = False
+
+    async def _free(**_kwargs: Any) -> str:
+        nonlocal called
+        called = True
+        return _GOOD_FREE_JSON
+
+    async def _gateway(*_args: Any, **_kwargs: Any) -> _FakeMessage:
+        return _FakeMessage(_GOOD_REPLY)
+
+    monkeypatch.setattr(jd_parse, "create_message", _gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _free)
+
+    result = await jd_parse.parse_jd("a jd")
+
+    assert called is False
+    assert result["technologies"] == ["Go"]
+
+
+@pytest.mark.asyncio
+async def test_both_sides_are_asked_the_same_question(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A prompt that drifted between them would make the race a coin toss
+    between two different extractions rather than two attempts at one."""
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _RACE_SETTINGS)
+    monkeypatch.setattr(jd_parse, "_monotonic", _Clock())
+    seen: dict[str, Any] = {}
+
+    async def _gateway(*_args: Any, **kwargs: Any) -> _FakeMessage:
+        seen["gateway"] = kwargs["messages"][0]["content"]
+        seen["gateway_system"] = kwargs["system"]
+        await asyncio.sleep(0.05)
+        return _FakeMessage(_GOOD_REPLY)
+
+    async def _free(**kwargs: Any) -> None:
+        seen["free"] = kwargs["user"]
+        seen["free_system"] = kwargs["system"]
+        return
+
+    monkeypatch.setattr(jd_parse, "create_message", _gateway)
+    monkeypatch.setattr(jd_parse, "complete_json_via_openrouter", _free)
+
+    await jd_parse.parse_jd("a jd", title_hint="Backend Engineer")
+
+    assert seen["gateway"] == seen["free"]
+    assert seen["gateway_system"] == seen["free_system"]
