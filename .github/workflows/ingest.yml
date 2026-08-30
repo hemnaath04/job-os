@@ -120,5 +120,14 @@ jobs:
 
       - name: Report index state
         if: always()
+        # A diagnostic must never fail the work it is reporting on. A sweep
+        # that crawled 1,958 postings successfully was marked failed because
+        # this step could not read a counter afterwards, which is the wrong
+        # way round: the crawl is the job, this is the note about it.
+        #
+        # `index_stats` degrades per counter now, so a total failure here
+        # means Appwrite was unreachable for all six reads, and the Crawl step
+        # above would have said so first.
+        continue-on-error: true
         working-directory: apps/api
         run: uv run python -m job_os.ingest.cli status
