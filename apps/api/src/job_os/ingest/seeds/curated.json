@@ -508,5 +508,77 @@
     "name": "Sentry",
     "domain": "sentry.io",
     "provider": "ashby"
+  },
+  {
+    "token": "hcgn:us2:CX_1",
+    "name": "Citizens Financial Group",
+    "domain": "citizensbank.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "hdpc:us2:CX_3002",
+    "name": "Goldman Sachs",
+    "domain": "goldmansachs.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "hdpc:us2:CX_3001",
+    "name": "Goldman Sachs",
+    "domain": "goldmansachs.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "eeho:us2:CX_45001",
+    "name": "Oracle",
+    "domain": "oracle.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "eofd:us6:CX_1001",
+    "name": "Albertsons Companies",
+    "domain": "albertsons.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "ejwl:us2:CX",
+    "name": "Marriott International",
+    "domain": "marriott.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "egud:us2:CX_1",
+    "name": "AutoZone",
+    "domain": "autozone.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "ejhp:us6:CX_2",
+    "name": "Sherwin-Williams",
+    "domain": "sherwin-williams.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "fa-espx-saasfaprod1:ocs:CX_1",
+    "name": "Cummins",
+    "domain": "cummins.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "ebtw:us2:CX_1",
+    "name": "Southwest Gas",
+    "domain": "swgas.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "ejov:ca2:CX",
+    "name": "GHD",
+    "domain": "ghd.com",
+    "provider": "oracle_cloud"
+  },
+  {
+    "token": "hcri:em2:CX_1",
+    "name": "Save the Children International",
+    "domain": "savethechildren.net",
+    "provider": "oracle_cloud"
   }
 ]
