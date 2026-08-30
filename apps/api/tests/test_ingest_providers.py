@@ -25,6 +25,10 @@ rather than raise. The four that matter, and what each would cost:
   * Oracle answers 200 with `requisitionList: null` when the `expand` parameter
     is missing, facets and `TotalJobsCount` intact. Reading that as an empty
     board deactivates every Oracle posting in the index during a clean run.
+  * A BambooHR slug that does not exist answers HTTP 200 with the vendor's
+    marketing page, and a lapsed account answers 200 from an expired-account
+    page. Judging liveness on the status code files marketing pages as job
+    boards.
 
 The fetcher is faked rather than mocked at the socket, so these tests describe
 the parsing contract and never touch the network.
@@ -39,6 +43,7 @@ import pytest
 from job_os.ingest.fetcher import USER_AGENT, FetchResponse
 from job_os.ingest.providers import (
     AshbyProvider,
+    BambooHRProvider,
     BoardStatus,
     GreenhouseProvider,
     ICIMSProvider,
@@ -1591,3 +1596,308 @@ async def test_oracle_cloud_rejects_a_token_that_cannot_address_a_board(token: s
 
     assert result.status is BoardStatus.MISSING
     assert result.requests_made == 0, "a bad token must not reach the network"
+
+
+# ── BambooHR ──
+#
+# Payload shapes copied from real responses (soundstripe, canopy, anvil, titan,
+# trajectory, fetched 2026-08-30), trimmed to the fields the parser reads.
+
+BH_TOKEN = "soundstripe"
+
+BH_NASHVILLE = {
+    "country": "United States",
+    "state": "Tennessee",
+    "province": None,
+    "city": "Nashville",
+}
+
+
+def bh_row(
+    job_id: str = "167",
+    *,
+    name: str = "Head of Sales (Remote)",
+    location_type: str | None = "1",
+    location: dict[str, Any] | None = None,
+    ats_location: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """One `result` entry. `isRemote` is included precisely because it is the
+    decoy: it is null on every posting ever measured, so a parser that reads it
+    has to fail these tests rather than quietly pass them."""
+    return {
+        "id": job_id,
+        "jobOpeningName": name,
+        "departmentId": "18660",
+        "departmentLabel": "Sales",
+        "employmentStatusLabel": "Full-Time",
+        "employmentType": None,
+        "location": location if location is not None else {"city": None, "state": None},
+        "atsLocation": ats_location if ats_location is not None else dict(BH_NASHVILLE),
+        "isRemote": None,
+        "locationType": location_type,
+    }
+
+
+def bh_list(*rows: dict[str, Any]) -> dict[str, Any]:
+    return {"meta": {"totalCount": len(rows)}, "result": list(rows)}
+
+
+def bh_not_json(size: int) -> FetchResponse:
+    """What a slug with no tenant behind it actually returns.
+
+    A 302 that `httpx` follows, so the provider is handed HTTP 200 and a body of
+    HTML. `get_json` reports the parse failure through `error`, and that is the
+    only signal there is.
+    """
+    return FetchResponse(
+        status_code=200,
+        payload=None,
+        etag=None,
+        bytes_read=size,
+        requests_made=1,
+        error="not json: Expecting value: line 1 column 1 (char 0)",
+    )
+
+
+async def test_bamboohr_a_200_full_of_marketing_html_is_not_a_live_board() -> None:
+    """The single most important behaviour in this provider.
+
+    A nonexistent slug does not 404. It 302s to BambooHR's own marketing site
+    and answers 200 with 43,785 bytes of product copy, and every one of
+    `zzznotarealcompany9911`, `test`, `foo` and `xyzzy` produces exactly that.
+    A provider that trusted the status code would file a page selling HR
+    software as a live job board, for every dead slug in the corpus, forever.
+    """
+    result = await BambooHRProvider().fetch_board(FakeFetcher(bh_not_json(43785)), "notarealco")
+
+    assert result.status is BoardStatus.MISSING
+    assert result.http_status == 200, "the status code was 200 and proved nothing"
+    assert result.postings == []
+    assert result.usable is False
+
+
+async def test_bamboohr_an_expired_account_page_is_also_missing() -> None:
+    """The second non-board 200. A lapsed tenant redirects to
+    `/settings/account/expired.php` and returns 67,122 bytes of a different
+    page, so keying off the marketing page's size or content would miss it.
+    Only "did it parse into the documented shape" catches both."""
+    result = await BambooHRProvider().fetch_board(FakeFetcher(bh_not_json(67122)), "acme")
+
+    assert result.status is BoardStatus.MISSING
+
+
+async def test_bamboohr_json_in_an_unknown_shape_is_an_error_not_a_missing_board() -> None:
+    """MISSING prunes the token; ERROR retries it. Real JSON that this parser
+    does not recognise is a vendor change, and pruning the whole corpus on the
+    morning BambooHR renames `result` would be unrecoverable."""
+    result = await BambooHRProvider().fetch_board(
+        FakeFetcher(ok({"meta": {"totalCount": 3}, "openings": []})), BH_TOKEN
+    )
+
+    assert result.status is BoardStatus.ERROR
+    assert result.usable is False
+
+
+async def test_bamboohr_an_empty_result_is_a_real_board_with_nothing_open() -> None:
+    """`{"meta":{"totalCount":0},"result":[]}`, 37 bytes, is what a live tenant
+    between hiring rounds returns -- measured on `hover`. It is a completely
+    different answer from the marketing HTML above, and conflating the two would
+    prune every seasonal employer from the corpus."""
+    result = await BambooHRProvider().fetch_board(FakeFetcher(ok(bh_list())), "hover")
+
+    assert result.status is BoardStatus.EMPTY
+    assert result.status is not BoardStatus.MISSING
+    assert result.usable is True, "we did see the current list, and it was empty"
+
+
+async def test_bamboohr_reads_locationtype_and_never_the_isremote_decoy() -> None:
+    """`isRemote` is null on all 37 postings measured across ten boards,
+    including soundstripe's "Head of Sales (Remote)". A parser that read it
+    would mark every BambooHR role in the index as onsite, and the remote filter
+    would return nothing from this provider at all.
+
+    "1" is confirmed remote by that title; "2" is confirmed hybrid by anvil's
+    "(Forward Deployed)" roles, whose own descriptions say so.
+    """
+    payload = bh_list(
+        bh_row("167", location_type="1"),
+        bh_row("45", name="Sales Officer-FIP", location_type="0"),
+        bh_row("42", name="Account Manager", location_type="2"),
+    )
+
+    result = await BambooHRProvider().fetch_board(FakeFetcher(ok(payload)), BH_TOKEN)
+
+    by_id = {p.external_id: p for p in result.postings}
+    assert by_id["167"].remote is True
+    assert by_id["167"].workplace_type == "remote"
+    assert by_id["45"].remote is False
+    assert by_id["45"].workplace_type == "onsite"
+    assert by_id["42"].remote is False
+    assert by_id["42"].workplace_type == "hybrid"
+
+
+async def test_bamboohr_reads_whichever_location_object_the_board_filled() -> None:
+    """Both objects are always present and either can be entirely null, in both
+    directions: soundstripe fills `atsLocation` and nulls `location`, canopy
+    does the reverse. Reading only one loses the location on about half the
+    boards, which silently drops those postings out of any location search."""
+    payload = bh_list(
+        bh_row("167"),
+        bh_row(
+            "42",
+            location={"city": "Kingston", "state": None},
+            ats_location={"country": None, "state": None, "province": None, "city": None},
+        ),
+    )
+
+    result = await BambooHRProvider().fetch_board(FakeFetcher(ok(payload)), BH_TOKEN)
+
+    by_id = {p.external_id: p for p in result.postings}
+    assert by_id["167"].location == "Nashville, Tennessee, United States"
+    assert by_id["42"].location == "Kingston"
+
+
+async def test_bamboohr_list_rows_do_not_claim_a_posted_date() -> None:
+    """The list payload has no date field of any kind. Only the detail call
+    carries `datePosted`, so a list-only row is honestly `first_crawl` and
+    cannot be presented as the employer's own figure."""
+    result = await BambooHRProvider().fetch_board(FakeFetcher(ok(bh_list(bh_row()))), BH_TOKEN)
+
+    posting = result.postings[0]
+    assert posting.posted_at is None
+    assert posting.posted_at_basis == "first_crawl"
+    assert posting.posted_at_estimated is True
+    assert posting.jd_hydrated is False, "the list carries no description"
+
+
+async def test_bamboohr_hydration_supplies_the_employers_own_date_and_body() -> None:
+    """What the extra request per posting buys. Verified against
+    soundstripe/167: `datePosted: 2026-07-29`, and a description whose HTML is
+    mostly nested `<span style=...>` noise that has to come out."""
+    provider = BambooHRProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(bh_list(bh_row()))), BH_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "meta": {},
+                "result": {
+                    "jobOpening": {
+                        "jobOpeningShareUrl": "https://soundstripe.bamboohr.com/careers/167",
+                        "jobOpeningName": "Head of Sales (Remote)",
+                        "datePosted": "2026-07-29",
+                        "description": (
+                            '<p><span style="font-size: 10pt">Own the full sales '
+                            "motion.</span></p><ul><li>Manage a team of 4</li></ul>"
+                        ),
+                        "compensation": "$28 - $35/DOE and shift",
+                        "minimumExperience": "Senior Manager/Supervisor",
+                        "locationType": "1",
+                    },
+                    "formFields": [],
+                },
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, BH_TOKEN, result.postings[0])
+
+    assert hydrated.jd_hydrated is True
+    assert hydrated.posted_at_basis == "published"
+    assert hydrated.posted_at is not None
+    assert (hydrated.posted_at.year, hydrated.posted_at.month) == (2026, 7)
+    assert "<span" not in hydrated.jd_clean and "<p>" not in hydrated.jd_clean
+    assert "Own the full sales motion." in hydrated.jd_clean
+    assert "- Manage a team of 4" in hydrated.jd_clean
+    assert hydrated.extra["minimumExperience"] == "Senior Manager/Supervisor"
+
+
+async def test_bamboohr_a_deleted_posting_keeps_the_row_it_already_had() -> None:
+    """A detail 404 (`{"type":"not_found"}`) means that one posting went away
+    between the list call and the hydrate call. Emptying the row on that would
+    replace a usable title-ranked posting with a blank one."""
+    provider = BambooHRProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(bh_list(bh_row()))), BH_TOKEN)
+    before = result.postings[0]
+
+    after = await provider.hydrate(
+        FakeFetcher(status(404, payload={"type": "not_found"})), BH_TOKEN, before
+    )
+
+    assert after.title == "Head of Sales (Remote)"
+    assert after.jd_hydrated is False
+    assert after.posted_at_basis == "first_crawl"
+
+
+async def test_bamboohr_source_id_is_the_board_token_and_external_id() -> None:
+    """Matches the web app's `{token}:{id}`, so a crawled row and a live-fetched
+    row for the same posting collide instead of both being stored."""
+    result = await BambooHRProvider().fetch_board(FakeFetcher(ok(bh_list(bh_row("167")))), "acme")
+
+    assert result.postings[0].source_id == "acme:167"
+
+
+async def test_bamboohr_server_errors_are_not_usable() -> None:
+    result = await BambooHRProvider().fetch_board(FakeFetcher(status(500)), BH_TOKEN)
+
+    assert result.status is BoardStatus.ERROR
+    assert result.usable is False
+
+
+@pytest.mark.parametrize(
+    "token", ["sound stripe", "sound.stripe", "evil.com/x", "../etc", "", "a" * 64]
+)
+async def test_bamboohr_rejects_a_token_that_cannot_address_a_board(token: str) -> None:
+    """The token is interpolated into a hostname, not a path. `*.bamboohr.com`
+    resolves for names that are not tenants, so a malformed token does not fail
+    to connect -- it succeeds against something else, which means a request sent
+    to a stranger under this crawler's user agent."""
+    result = await BambooHRProvider().fetch_board(FakeFetcher(), token)
+
+    assert result.status is BoardStatus.MISSING
+    assert result.requests_made == 0, "a bad token must not reach the network"
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "$9.75/hour",
+        "$70,000 - $100,000 per year",
+        "$45,000-$50,000 per year",
+        "$18-$20 per hour",
+        "$40 per hour",
+        "$28 - $35/DOE and shift",
+    ],
+)
+async def test_bamboohr_keeps_compensation_raw_and_invents_no_salary(raw: str) -> None:
+    """`compensation` is set on about a quarter of postings and it is free text
+    an employer typed, with no unit, currency or period field beside it. These
+    six shapes all came off real boards in one small sample, and the last has
+    prose inside the range.
+
+    A regex over that would fill `salary_min`/`salary_max` confidently and
+    wrongly, and a wrong salary is worse than an absent one: nothing downstream
+    can tell that an hourly figure got stored as an annual one. So the string is
+    preserved for a future tested parser and the typed fields stay empty.
+    """
+    provider = BambooHRProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(bh_list(bh_row()))), BH_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "result": {
+                    "jobOpening": {
+                        "description": "<p>Work here.</p>",
+                        "datePosted": "2026-07-29",
+                        "compensation": raw,
+                    }
+                }
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, BH_TOKEN, result.postings[0])
+
+    assert hydrated.extra["compensation"] == raw, "the employer's own string survives"
+    assert hydrated.salary_min is None
+    assert hydrated.salary_max is None
+    assert hydrated.salary_currency is None

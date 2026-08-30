@@ -9,13 +9,15 @@ crawl do not depend on a developer's home directory.
     ashby.txt             3,161 tokens
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
+    bamboohr.txt          4,992 tokens
     icims.txt                31 tokens
     oracle_cloud.txt         12 tokens
     curated.json             97 companies, with real employer names and domains
 
-`workday.txt`, `icims.txt` and `oracle_cloud.txt` are the exceptions to the
-sentence below: every token in all three answered 200 with jobs on 2026-08-30.
-None of them is guessable, and each is unguessable in its own way.
+`workday.txt`, `icims.txt`, `oracle_cloud.txt` and `bamboohr.txt` are the
+exceptions to the sentence below: every token in all four answered 200 with
+jobs on 2026-08-30. None of them is guessable, and each is unguessable in its
+own way.
 
 A Workday token is `tenant:datacenter:site`, and there is nothing to derive it
 from: a wrong site on a real tenant returns 404, a wrong tenant returns 422. An
@@ -49,6 +51,19 @@ Those 12 rows are what stop 35,565 postings being filed under four-character
 strings, and unlike the rest of the file they were written by hand rather than
 derived from `ats-companies.ts`, so a regeneration has to carry them across.
 
+BambooHR is unguessable in the most dangerous way of the four, because it does
+not fail. A slug that does not exist redirects to the vendor's marketing site
+and returns HTTP 200, and a lapsed account returns 200 from an expired-account
+page. An unverified BambooHR token is therefore not a dead row, it is a row
+that looks alive, so the provider proves a board by parsing the body rather
+than by reading the status code. See `providers/bamboohr.py`.
+
+The 4,992 here are also the one place where guessing was measured against a
+better method rather than assumed to be the only one: guessing slugs returned
+74 boards with postings from 838 candidates (8.8%), while slugs harvested from
+the Common Crawl URL index returned 4,993 from 6,835 (73%). The conclusion in
+the sentence below still holds; the corpus just did not have to rest on it.
+
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass
 reported, so roughly four tokens in ten are dead on arrival. The corpus is
@@ -70,6 +85,42 @@ no SmartRecruiters token list, and the tokens are not derivable from company
 names. 120 plausible company names were probed and 9 were live, a 7.5% hit rate,
 so guessing is not a strategy. Growing this list needs a real source, and
 `docs/ingest-index.md` records the options.
+
+`bamboohr.txt` is where the sentence above got tested properly, and the result
+confirms it rather than contradicting it. Two discovery methods were run against
+BambooHR on 2026-08-30 and every candidate from both was fetched:
+
+  guessing         838 candidates ->   135 boards (16.1%) ->    74 with postings
+  public indexes  6,835 candidates -> 6,254 boards (91.5%) -> 4,993 with postings
+
+The guessing arm is the control, and it behaved exactly as the SmartRecruiters
+note predicts: company-name guesses hit 2 times in 150, and short generic English
+words did better (60 in 509) only because BambooHR's customers are small firms
+that took the obvious subdomain. 8.8% end to end. Guessing is still not a
+strategy.
+
+What changed the outcome was having a real source, which is the thing that note
+asks for:
+
+  * **Common Crawl.** The CC-MAIN-2026-34 URL index, queried for the
+    `bamboohr.com` domain and filtered to `[a-z0-9-]+\\.bamboohr\\.com/careers`,
+    yielded 6,816 distinct slugs. These are career pages a crawler actually saw
+    on the live web, which is why nine in ten of them resolve.
+  * **GitHub code search** for `bamboohr.com/careers` across several languages
+    yielded 82 distinct slugs. Small, but nearly all real.
+  * **Certificate transparency (crt.sh)** was tried and produced nothing: the
+    endpoint answered HTTP 502 throughout. Worth retrying another day, since a
+    wildcard-free tenant subdomain should be visible there.
+
+The 4,992 tokens seeded are the 4,993 boards that had at least one posting open,
+minus `demo`, which is BambooHR's own demo tenant and not an employer. They held
+37,301 live postings between them on the day they were checked, and the largest
+single board (lanesgroup) held 197. A random 40-token subsample was re-fetched
+afterwards and all 40 still answered with postings.
+
+Every token in the file was confirmed by fetching it. None is a guess left in to
+make the list look longer, and the ~1,261 slugs that were real boards with
+nothing open were deliberately left out rather than counted as wins.
 """
 from __future__ import annotations
 
