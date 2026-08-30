@@ -145,13 +145,49 @@ def _query_value(raw: str) -> Any:
     return value
 
 
+def _encoded_queries(queries: list[dict[str, Any]]) -> list[str]:
+    """Queries as Appwrite wants them in a REQUEST BODY: JSON strings.
+
+    The two transports disagree, and the difference stays invisible until a
+    write runs. A read sends each query as its own `queries[]` URL parameter,
+    already serialised, so `list_rows` was right. A bulk PATCH carries them in
+    the body, where Appwrite validates the array as strings and rejects
+    objects:
+
+        Invalid `queries` param: Value must a valid array no longer than 100
+        items and Value must be a valid string and at least 1 chars and no
+        longer than 4096 chars
+
+    That message reads like a size complaint, which is what sent an earlier
+    round of debugging into chunking `_lookup_chunk` by a character budget. It
+    is not about size: `deactivate_missing` sent two filters and got it.
+
+    It went unnoticed because the only caller runs in the scheduled sweep, and
+    that sweep had been failing earlier, on a missing API key, since the
+    migration. This line had never once executed against Appwrite.
+    """
+    import json as _json
+
+    return [_json.dumps(q) for q in queries]
+
+
 def _parse_filter(expression: str) -> dict[str, Any]:
     for pattern, method in _FILTER_OPERATORS:
         match = pattern.match(expression)
         if not match:
             continue
         attribute, raw_value = match.group(1).strip(), match.group(2)
-        return {"method": method, "attribute": attribute, "values": [_query_value(raw_value)]}
+        value = _query_value(raw_value)
+        if value is None and method in ("equal", "notEqual"):
+            # Appwrite has no null-valued equality: `equal` with a null value
+            # is rejected outright ("Query value is invalid for attribute").
+            # The null check is its own method, so `canonical_id=null` has to
+            # become one rather than pass a null through as a value.
+            return {
+                "method": "isNull" if method == "equal" else "isNotNull",
+                "attribute": attribute,
+            }
+        return {"method": method, "attribute": attribute, "values": [value]}
     raise ValueError(f"Unsupported filter expression: {expression!r}")
 
 
@@ -348,7 +384,9 @@ async def update_rows(
     for f in filters or []:
         queries_payload.append(_parse_filter(f))
     payload = await _request(
-        "PATCH", json_body={"data": data, "queries": queries_payload}, table_id=table_id
+        "PATCH",
+        json_body={"data": data, "queries": _encoded_queries(queries_payload)},
+        table_id=table_id,
     )
     rows = payload.get("rows")
     if isinstance(rows, list):

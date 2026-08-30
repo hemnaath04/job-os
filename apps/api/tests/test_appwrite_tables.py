@@ -11,6 +11,7 @@ real failure.
 """
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any
 
@@ -348,3 +349,85 @@ async def test_a_read_that_times_out_every_attempt_reports_it_as_a_timeout(
 
     assert raised.value.status_code == 504
     assert "attempts" in str(raised.value)
+
+
+# ---------------------------------------------------------------------------
+# The two request shapes Appwrite wants, which the unit tests above could not
+# see because they assert on what the module sends rather than on what Appwrite
+# accepts. Both of these shipped broken and were found by running the sweep.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_bulk_update_sends_its_queries_as_json_strings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A read and a write disagree about how a query travels, and only one was right.
+
+    A read sends each query as its own `queries[]` URL parameter, already
+    serialised. A bulk PATCH carries them in the body, where Appwrite validates
+    the array as strings and rejects objects with a message that reads like a
+    size complaint:
+
+        Invalid `queries` param: Value must a valid array no longer than 100
+        items and Value must be a valid string ...
+
+    It is not about size. `deactivate_missing` sent two filters and got it, so
+    every sweep died at the point it tried to close postings that had gone.
+    """
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+    sent: dict[str, Any] = {}
+
+    class _Capture(_FakeHTTPClient):
+        async def request(self, *args: Any, **kwargs: Any) -> _FakeResponse:
+            sent.update(kwargs.get("json") or {})
+            return await super().request(*args, **kwargs)
+
+    client = _Capture([_FakeResponse(200, {"total": 0})])
+    monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", lambda **_kw: client)
+
+    await appwrite_tables.update_rows(
+        filters=["source=greenhouse", "active=true"], data={"active": False}
+    )
+
+    assert all(isinstance(q, str) for q in sent["queries"]), sent["queries"]
+    # Still real queries, not stringified junk.
+    assert json.loads(sent["queries"][0]) == {
+        "method": "equal",
+        "attribute": "source",
+        "values": ["greenhouse"],
+    }
+
+
+@pytest.mark.parametrize(
+    ("expression", "expected"),
+    [
+        ("canonical_id=null", {"method": "isNull", "attribute": "canonical_id"}),
+        ("canonical_id!=null", {"method": "isNotNull", "attribute": "canonical_id"}),
+    ],
+)
+def test_a_null_comparison_becomes_a_null_check(
+    expression: str, expected: dict[str, Any]
+) -> None:
+    """Appwrite has no null-valued equality.
+
+    `equal` with a null value is rejected outright: "Query value is invalid for
+    attribute". So `canonical_id=null`, which is how `index_stats` counts
+    unmerged rows, has to become `isNull` rather than pass a null through as a
+    value. It did not, and the sweep's own status report died on it.
+    """
+    assert appwrite_tables._parse_filter(expression) == expected
+
+
+def test_a_normal_filter_still_carries_its_value() -> None:
+    """The null branch must not swallow ordinary comparisons."""
+    assert appwrite_tables._parse_filter("active=true") == {
+        "method": "equal",
+        "attribute": "active",
+        "values": [True],
+    }
+    assert appwrite_tables._parse_filter("salary_max>=40") == {
+        "method": "greaterThanEqual",
+        "attribute": "salary_max",
+        "values": [40],
+    }
