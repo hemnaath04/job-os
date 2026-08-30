@@ -19,6 +19,7 @@ import { EmptyState } from "@/components/empty-state";
 import { KanbanBoard } from "@/components/kanban-board";
 import { ChipSkeleton, InfoChip, PageIntro } from "@/components/page-intro";
 import { api } from "@/lib/api";
+import { parsePollInterval } from "@/lib/parse-in-flight";
 import { compareByGroupDate } from "@/lib/application-groups";
 import { buildProfileVocab } from "@/lib/discover/fit-score";
 import { scoreApplicationJob } from "@/lib/discover/job-fit";
@@ -44,6 +45,14 @@ export default function ApplicationsPage() {
   const { data: applications = [], refetch, isLoading } = useQuery({
     queryKey: ["applications"],
     queryFn: () => api.listApplications(),
+    // Ask again while anything on screen is still being read.
+    //
+    // Saving a URL answers before the posting has been fetched, so a fresh row
+    // arrives untitled and fills itself in seconds later. Nothing used to ask
+    // again, so "Still reading this posting" stayed on screen until a reload,
+    // long after the row was complete. `parsePollInterval` returns false the
+    // moment nothing is in flight, so a settled board is silent.
+    refetchInterval: (query) => parsePollInterval(query.state.data),
   });
   const { data: archivedApplications = [] } = useQuery({
     queryKey: ["applications", "archived"],
