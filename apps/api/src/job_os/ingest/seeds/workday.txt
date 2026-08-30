@@ -1,0 +1,13 @@
+adobe:wd5:external_experienced
+autodesk:wd1:Ext
+blackrock:wd1:BlackRock_Professional
+cisco:wd5:Cisco_Careers
+hpe:wd5:jobsathpe
+kla:wd1:Search
+mastercard:wd1:CorporateCareers
+micron:wd1:External
+nvidia:wd5:NVIDIAExternalCareerSite
+paypal:wd1:jobs
+salesforce:wd12:External_Career_Site
+workday:wd5:Workday
+workiva:wd503:careers

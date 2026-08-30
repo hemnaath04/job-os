@@ -8,7 +8,15 @@ crawl do not depend on a developer's home directory.
     lever.txt             4,368 tokens
     ashby.txt             3,161 tokens
     smartrecruiters.txt       9 tokens
+    workday.txt              13 tokens
     curated.json             85 companies, with real employer names and domains
+
+`workday.txt` is the exception to the sentence below: every one of its 13
+tokens answered 200 with jobs on 2026-08-30, because a Workday token is
+`tenant:datacenter:site` and there is nothing to guess it from -- a wrong
+site on a real tenant returns 404 and a wrong tenant returns 422, so an
+unverified Workday token is simply a dead row. 12 further candidates were
+tried and dropped for exactly that reason.
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass

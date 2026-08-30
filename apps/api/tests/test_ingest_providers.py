@@ -12,6 +12,9 @@ rather than raise. The four that matter, and what each would cost:
     status code alone and then iterating would read the error's keys as postings.
   * Greenhouse sends entity-encoded HTML. Skipping the unescape pass stores
     `&lt;p&gt;` as the job description.
+  * Workday's list `postedOn` is prose ("Posted 30+ Days Ago"). Recording it as
+    a date would date every posting to the day it was crawled and call that the
+    employer's own figure.
 
 The fetcher is faked rather than mocked at the socket, so these tests describe
 the parsing contract and never touch the network.
@@ -29,6 +32,7 @@ from job_os.ingest.providers import (
     GreenhouseProvider,
     LeverProvider,
     SmartRecruitersProvider,
+    WorkdayProvider,
 )
 
 pytestmark = pytest.mark.asyncio
@@ -41,12 +45,25 @@ class FakeFetcher:
         self._responses = list(responses)
         self.urls: list[str] = []
         self.etags: list[str | None] = []
+        self.bodies: list[dict[str, Any]] = []
 
     async def get_json(
         self, url: str, *, host: str, etag: str | None = None, expect_bytes: int = 0
     ) -> FetchResponse:
         self.urls.append(url)
         self.etags.append(etag)
+        if not self._responses:
+            raise AssertionError(f"unexpected extra request to {url}")
+        return self._responses.pop(0)
+
+    async def post_json(
+        self, url: str, *, host: str, body: dict[str, Any]
+    ) -> FetchResponse:
+        """Workday's list is a POST. The body is recorded because its `offset`
+        is how pagination is driven, and a provider that never advanced it
+        would loop on page one and look like a board of exactly 20 jobs."""
+        self.urls.append(url)
+        self.bodies.append(body)
         if not self._responses:
             raise AssertionError(f"unexpected extra request to {url}")
         return self._responses.pop(0)
@@ -629,3 +646,159 @@ async def test_source_id_is_the_board_token_and_external_id(provider: Any) -> No
     result = await provider.fetch_board(FakeFetcher(ok(payloads[provider.name])), "acme")
 
     assert result.postings[0].source_id == "acme:7"
+
+
+# ── Workday ──
+#
+# Payload shapes copied from real responses (NVIDIA wd5, Workiva wd503,
+# Salesforce wd12, fetched 2026-08-29), trimmed to the fields the parser reads.
+
+WD_TOKEN = "nvidia:wd5:NVIDIAExternalCareerSite"
+
+
+def wd_page(*paths: str, posted: str = "Posted Today") -> dict[str, Any]:
+    return {
+        "total": 2000,
+        "jobPostings": [
+            {
+                "title": f"Engineer {i}",
+                "externalPath": path,
+                "locationsText": "US-CA-Santa Clara",
+                "postedOn": posted,
+                "bulletFields": ["JR100" + str(i)],
+            }
+            for i, path in enumerate(paths)
+        ],
+    }
+
+
+async def test_workday_pages_until_a_short_page() -> None:
+    """`limit` is capped at 20 by the vendor, so pagination is not optional.
+
+    A provider that stopped after page one would report NVIDIA as a 20-job
+    company. Twenty is Workday's own ceiling: `limit=50` returns HTTP 400.
+    """
+    full = wd_page(*(f"/job/loc/Engineer_JR{i:04d}" for i in range(20)))
+    tail = wd_page("/job/loc/Engineer_JR9999")
+    fetcher = FakeFetcher(ok(full), ok(tail))
+
+    result = await WorkdayProvider().fetch_board(fetcher, WD_TOKEN)
+
+    assert result.status is BoardStatus.LIVE
+    assert len(result.postings) == 21
+    assert [b["offset"] for b in fetcher.bodies] == [0, 20]
+
+
+async def test_workday_never_claims_the_list_date_is_the_posting_date() -> None:
+    """The trap this provider exists around.
+
+    The list's `postedOn` is prose -- "Posted Today", "Posted 30+ Days Ago" --
+    with no date in it at all. Reading it as a date would stamp every posting
+    with the crawl date and label that the employer's own. Only the DETAIL
+    payload carries a real `startDate`, so a list-only row is `first_crawl`.
+    """
+    fetcher = FakeFetcher(ok(wd_page("/job/loc/E_JR1", posted="Posted 30+ Days Ago")))
+
+    result = await WorkdayProvider().fetch_board(fetcher, WD_TOKEN)
+
+    posting = result.postings[0]
+    assert posting.posted_at is None
+    assert posting.posted_at_basis == "first_crawl"
+    assert posting.posted_at_estimated is True
+    assert posting.jd_hydrated is False, "the list carries no description"
+
+
+async def test_workday_hydration_supplies_the_employers_own_date() -> None:
+    """And what hydration buys: a real date, from `startDate`.
+
+    Verified against a live board -- "Posted Today" on the list alongside
+    `startDate: 2026-08-29` on the detail for the same requisition.
+    """
+    fetcher = FakeFetcher(ok(wd_page("/job/loc/E_JR1")))
+    provider = WorkdayProvider()
+    result = await provider.fetch_board(fetcher, WD_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "jobPostingInfo": {
+                    "jobReqId": "JR2022858",
+                    "startDate": "2026-08-29",
+                    "jobDescription": "<p>Build <b>maps</b>.</p><li>C++</li>",
+                    "externalUrl": "https://nvidia.wd5.myworkdayjobs.com/x/job/JR2022858",
+                }
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, WD_TOKEN, result.postings[0])
+
+    assert hydrated.jd_hydrated is True
+    assert hydrated.posted_at_basis == "published"
+    assert hydrated.posted_at is not None and hydrated.posted_at.year == 2026
+    assert hydrated.external_id == "JR2022858"
+    # The HTML is flattened, not stored as tags.
+    assert "<p>" not in hydrated.jd_clean
+    assert "Build maps." in hydrated.jd_clean
+    assert "- C++" in hydrated.jd_clean
+
+
+@pytest.mark.parametrize(
+    ("response", "why"),
+    [
+        (status(422), "no such tenant: *.myworkdayjobs.com is wildcard DNS, so a "
+                      "wrong tenant resolves and answers rather than failing to connect"),
+        (status(404, payload={"errorCode": "S21"}), "tenant exists, site id does not"),
+    ],
+)
+async def test_workday_knows_its_two_missing_board_shapes(
+    response: FetchResponse, why: str
+) -> None:
+    """MISSING prunes the token; ERROR retries it. Confusing them either
+    strands a dead board forever or drops a live one."""
+    result = await WorkdayProvider().fetch_board(FakeFetcher(response), WD_TOKEN)
+
+    assert result.status is BoardStatus.MISSING, why
+
+
+async def test_workday_a_bare_404_is_not_a_missing_board() -> None:
+    """Only 404 WITH `errorCode: S21` means the site is gone. A bare 404 is a
+    transport-level answer that says nothing about the board, and pruning on it
+    would delete boards over a bad afternoon."""
+    result = await WorkdayProvider().fetch_board(FakeFetcher(status(404)), WD_TOKEN)
+
+    assert result.status is BoardStatus.ERROR
+
+
+async def test_workday_a_multi_site_tenant_does_not_duplicate_a_requisition() -> None:
+    """Workday serves the same requisition under sibling sites, so one board
+    can repeat a path across pages. Two rows for one job would be counted
+    twice and shown twice."""
+    repeated = wd_page(*(["/job/loc/E_JR1"] * 20))
+    fetcher = FakeFetcher(ok(repeated), ok(wd_page()))
+
+    result = await WorkdayProvider().fetch_board(fetcher, WD_TOKEN)
+
+    assert len(result.postings) == 1
+
+
+async def test_workday_a_location_count_is_not_a_location() -> None:
+    """`locationsText` is "4 Locations" on a multi-site posting. Storing that
+    indexes the job as being in a city called "4 Locations"."""
+    page = wd_page("/job/loc/E_JR1")
+    page["jobPostings"][0]["locationsText"] = "4 Locations"
+
+    result = await WorkdayProvider().fetch_board(FakeFetcher(ok(page)), WD_TOKEN)
+
+    assert result.postings[0].location is None
+
+
+@pytest.mark.parametrize("token", ["nvidia", "nvidia:careers", "nvidia:x5:site", ""])
+async def test_workday_rejects_a_token_that_cannot_address_a_board(token: str) -> None:
+    """Three parts, because the host is per-tenant and the site is not
+    derivable from it. A malformed token that reached a request would build a
+    URL pointing at some other tenant's board -- and wildcard DNS means that
+    URL resolves rather than failing."""
+    result = await WorkdayProvider().fetch_board(FakeFetcher(), token)
+
+    assert result.status is BoardStatus.MISSING
+    assert result.requests_made == 0, "a bad token must not reach the network"
