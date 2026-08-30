@@ -10,23 +10,44 @@ crawl do not depend on a developer's home directory.
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
     icims.txt                31 tokens
-    curated.json             85 companies, with real employer names and domains
+    oracle_cloud.txt         12 tokens
+    curated.json             97 companies, with real employer names and domains
 
-`workday.txt` and `icims.txt` are the exceptions to the sentence below: every
-token in both answered 200 with jobs on 2026-08-30. A Workday token is
-`tenant:datacenter:site` and there is nothing to guess it from -- a wrong
-site on a real tenant returns 404 and a wrong tenant returns 422, so an
-unverified Workday token is simply a dead row. 12 further candidates were
-tried and dropped for exactly that reason.
+`workday.txt`, `icims.txt` and `oracle_cloud.txt` are the exceptions to the
+sentence below: every token in all three answered 200 with jobs on 2026-08-30.
+None of them is guessable, and each is unguessable in its own way.
 
-An iCIMS token is a subdomain (`careers-here` from careers-here.icims.com) and
-is no more guessable: the prefix varies per tenant (`careers-`, `jobs-`,
-`uscareers-`, `staff-`, `clinical-`, `securitycareers-`, `us-`), so the 31 here
-came from search results and were then each fetched. Of 65 candidates probed,
-60 served a usable sitemap, 2 had opted out via `robots.txt: Disallow: /`, 1
-subdomain did not exist, 1 had migrated off iCIMS entirely, and 1 listed no job
-URLs. The 31 kept are a size-spread slice of the 60, from 31 job URLs
-(`jobs-getty`) to 8,804 (`securitycareers-aus`).
+A Workday token is `tenant:datacenter:site`, and there is nothing to derive it
+from: a wrong site on a real tenant returns 404, a wrong tenant returns 422. An
+unverified Workday token is simply a dead row. 12 further candidates were tried
+and dropped for exactly that reason.
+
+An iCIMS token is a subdomain (`careers-here` from careers-here.icims.com), and
+the prefix varies per tenant (`careers-`, `jobs-`, `uscareers-`, `staff-`,
+`clinical-`, `securitycareers-`, `us-`), so the 31 here came from search results
+and were then each fetched. Of 65 candidates probed, 60 served a usable sitemap,
+2 had opted out via `robots.txt: Disallow: /`, 1 subdomain did not exist, 1 had
+migrated off iCIMS entirely, and 1 listed no job URLs. The 31 kept are a
+size-spread slice of the 60, from 31 job URLs (`jobs-getty`) to 8,804
+(`securitycareers-aus`).
+
+Oracle is worse than dead, which is why its 12 tokens were each checked twice.
+A wrong Oracle tenant answers 504 from Oracle's edge, so it never prunes and
+just burns three requests a sweep forever. A wrong *site* on a real tenant does
+not fail at all: it returns the tenant's whole unfiltered requisition pool,
+measured at exactly the sum of the real sites (Goldman Sachs 1012 + 317 + 21 =
+1350, which is what `siteNumber=ZZ_NOT_A_SITE` returns). So a typo looks like a
+*bigger* board, silently merging pipelines the employer chose to separate. Every
+site number here was confirmed to exist via that tenant's `recruitingCESites`
+before being written down.
+
+`oracle_cloud` is also the reason `curated.json` grew by 12. Oracle's payload
+names no employer at all -- `LegalEmployer`, `Organization` and `BusinessUnit`
+were null on every requisition checked across three tenants -- and unlike a
+Workday tenant ("nvidia"), an Oracle tenant is an opaque code like "hcgn".
+Those 12 rows are what stop 35,565 postings being filed under four-character
+strings, and unlike the rest of the file they were written by hand rather than
+derived from `ats-companies.ts`, so a regeneration has to carry them across.
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass

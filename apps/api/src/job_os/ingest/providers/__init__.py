@@ -18,6 +18,7 @@ from job_os.ingest.providers.base import (
 from job_os.ingest.providers.greenhouse import GreenhouseProvider
 from job_os.ingest.providers.icims import ICIMSProvider
 from job_os.ingest.providers.lever import LeverProvider
+from job_os.ingest.providers.oracle_cloud import OracleCloudProvider
 from job_os.ingest.providers.smartrecruiters import SmartRecruitersProvider
 from job_os.ingest.providers.workday import WorkdayProvider
 
@@ -28,6 +29,7 @@ PROVIDERS: dict[str, Provider] = {
     SmartRecruitersProvider.name: SmartRecruitersProvider(),
     WorkdayProvider.name: WorkdayProvider(),
     ICIMSProvider.name: ICIMSProvider(),
+    OracleCloudProvider.name: OracleCloudProvider(),
 }
 
 PROVIDER_NAMES = tuple(PROVIDERS)
@@ -53,6 +55,7 @@ __all__ = [
     "GreenhouseProvider",
     "ICIMSProvider",
     "LeverProvider",
+    "OracleCloudProvider",
     "Provider",
     "RawPosting",
     "SmartRecruitersProvider",
