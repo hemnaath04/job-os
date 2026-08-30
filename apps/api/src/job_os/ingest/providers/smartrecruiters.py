@@ -23,13 +23,18 @@ needs a second call per posting to `/postings/{id}`, where it arrives as
 additionalInformation}`, each `{title, text}`. At 48 pages plus one call per
 posting, hydrating a board like that costs ~4,800 requests, so it is not done
 during a sweep. Rows land with `jd_hydrated=False` and a `jd_clean` built from
-the metadata the listing does provide, and `hydrate_descriptions` fills bodies in
-for a bounded set later. That mirrors how the web app hydrates Greenhouse
+the metadata the listing does provide, and `hydrate_descriptions`
+(`ingest/hydrate.py`) fills bodies in for a bounded set later, through this
+class's own `hydrate`. That mirrors how the web app hydrates Greenhouse
 descriptions only for postings it is about to show.
+
+Until 2026-08-30 that second pass did not exist and this class had no
+`hydrate`, so every row it wrote carried a flag nothing could ever clear.
 """
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlsplit
 
 from job_os.ingest import normalize
 from job_os.ingest.providers.base import BoardResult, BoardStatus, RawPosting, as_dict
@@ -162,6 +167,53 @@ class SmartRecruitersProvider:
             requests_made=requests_made,
         )
 
+    async def hydrate(self, fetcher: Any, token: str, posting: RawPosting) -> RawPosting:
+        """Fill in one posting's description from `/postings/{id}`.
+
+        Implemented rather than skipped, and that was a real choice. This
+        provider is the one the module docstring above names as the reason
+        `jd_hydrated` exists at all, and it was also the only one emitting
+        `jd_hydrated=False` with no way to ever fill it -- rows nothing in the
+        codebase could act on. The endpoint is documented, public and
+        unauthenticated like the list, and `sections_to_text` below was already
+        written and tested against its payload, so the alternative was leaving
+        a dead flag in the index to avoid writing eight lines.
+
+        Verified live against `PublicStorage/postings/744000146348479` on
+        2026-08-30: 6,480 bytes, all four documented sections present. Note the
+        failure shape, which is not the 404 you would expect: a posting id that
+        belongs to a different company answers **400 ILLEGAL_ARGUMENT**
+        ("Provided companyIdentifier (PublicStorage) does not match
+        companyIdentifier (PilotCompany) from publication"). Either way it is
+        `not response.ok`, so the row comes back untouched and stays a
+        candidate rather than being recorded as a job with no body.
+        """
+        response = await fetcher.get_json(
+            detail_url(token, posting_id(posting.external_id)), host=HOST
+        )
+        if not response.ok:
+            return posting
+
+        payload = as_dict(response.payload)
+        description = sections_to_text(payload.get("jobAd"))
+        if not description:
+            return posting
+
+        posting.jd_raw = sections_to_html(payload.get("jobAd"))
+        posting.jd_clean = description
+        posting.jd_hydrated = True
+
+        # The detail repeats the list's `releasedDate` rather than improving on
+        # it, so unlike Workday or BambooHR there is no date upgrade to win
+        # here -- `parse_posting` already recorded `published`. This only
+        # covers the case where the listing omitted the field entirely.
+        if posting.posted_at is None:
+            released = normalize.to_datetime(payload.get("releasedDate"))
+            if released is not None:
+                posting.posted_at = released
+                posting.posted_at_basis = "published"
+        return posting
+
 
 def parse_posting(token: str, raw: Any) -> RawPosting | None:
     if not isinstance(raw, dict):
@@ -287,34 +339,91 @@ def _metadata_body(
     return normalize.plain_text("\n".join(f for f in fields if f))
 
 
-def sections_to_text(job_ad: object) -> str:
-    """Flatten a detail response's `jobAd.sections` into plain text.
+#: SmartRecruiters' own documented section order. Sections arrive as a dict in
+#: no guaranteed order, so it is imposed here to keep the stored body stable
+#: across crawls; an unstable body would change the content hash and make every
+#: re-crawl look like an edit.
+_SECTION_ORDER = (
+    "companyDescription",
+    "jobDescription",
+    "qualifications",
+    "additionalInformation",
+)
 
-    Sections arrive as a dict of `{title, text}` in no guaranteed order, so the
-    documented order is imposed here to keep the stored body stable across
-    crawls; an unstable body would change the content hash and make every
-    re-crawl look like an edit.
+
+def _ordered_sections(job_ad: object) -> list[tuple[str | None, str]]:
+    """`jobAd.sections` as `(heading, html)` pairs in the documented order.
+
+    Shared by the text and raw-HTML flatteners below so the two cannot disagree
+    about which sections a posting has or what order they came in.
     """
     if not isinstance(job_ad, dict):
-        return ""
+        return []
     sections = job_ad.get("sections")
     if not isinstance(sections, dict):
-        return ""
-    order = ("companyDescription", "jobDescription", "qualifications", "additionalInformation")
-    keys = [k for k in order if k in sections] + sorted(
-        k for k in sections if k not in order
+        return []
+    keys = [k for k in _SECTION_ORDER if k in sections] + sorted(
+        k for k in sections if k not in _SECTION_ORDER
     )
-    chunks: list[str] = []
+    pairs: list[tuple[str | None, str]] = []
     for key in keys:
         section = sections[key]
         if not isinstance(section, dict):
             continue
-        text = normalize.html_to_text(section.get("text"))
+        html = section.get("text")
+        if not isinstance(html, str) or not html.strip():
+            continue
+        pairs.append((_text(section.get("title")), html))
+    return pairs
+
+
+def sections_to_text(job_ad: object) -> str:
+    """Flatten a detail response's `jobAd.sections` into plain text."""
+    chunks: list[str] = []
+    for heading, html in _ordered_sections(job_ad):
+        text = normalize.html_to_text(html)
         if not text:
             continue
-        heading = _text(section.get("title"))
         chunks.append(f"{heading}\n{text}" if heading else text)
     return normalize.plain_text("\n\n".join(chunks))
+
+
+def sections_to_html(job_ad: object) -> str:
+    """The same sections, unflattened, for `jd_raw`.
+
+    Every other provider stores the vendor's own markup in `jd_raw` and the
+    stripped text in `jd_clean`. SmartRecruiters is the one vendor that splits
+    the markup across four fields, so this rejoins them in the same order
+    `sections_to_text` uses rather than leaving `jd_raw` empty and losing the
+    only copy of the employer's formatting.
+    """
+    return "\n".join(html for _heading, html in _ordered_sections(job_ad))
+
+
+def posting_id(external_id: str) -> str:
+    """The bare posting id, even when the stored one is a whole URL.
+
+    `scraper_import._row_to_posting` falls back to `row["url"]` when the
+    standalone scraper's export carries no `ats_job_id`, and `upsert.to_row`
+    says so plainly. The live index holds SmartRecruiters rows whose
+    `external_id` is the string
+    `https://api.smartrecruiters.com/v1/companies/Wise/postings/744000143803679`.
+
+    Interpolated into `detail_url` unchanged that becomes a path with a second
+    URL inside it, and SmartRecruiters answers 404 with an HTML error page.
+    Measured before this existed: a hydration run against
+    `--providers smartrecruiters` failed 20 of 20 candidates that way, every
+    one of them a request spent to learn nothing. The id is the tail of that
+    URL, so take it from there rather than pay for the 404.
+
+    A native id contains no slash, so the split is a no-op for it; the
+    `://` check is there to make the intent legible rather than because it is
+    load-bearing.
+    """
+    if "://" not in external_id:
+        return external_id
+    path = urlsplit(external_id).path.rstrip("/")
+    return path.rsplit("/", 1)[-1] or external_id
 
 
 def detail_url(token: str, external_id: str) -> str:

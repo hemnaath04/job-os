@@ -42,6 +42,33 @@ log = structlog.get_logger(__name__)
 BATCH_SIZE = 25
 
 
+#: How much of a description reaches the fulltext index. Appwrite's `search_text`
+#: is `longtext`, so this is not a column limit -- it is the same 8,000 characters
+#: the write path has always indexed, kept as a named constant now that a second
+#: caller (`ingest/hydrate.py`) has to produce a byte-identical value.
+SEARCH_TEXT_DESCRIPTION_CHARS = 8_000
+
+
+def search_text_for(
+    *, title: str | None, company_name: str | None, location: str | None, jd_clean: str | None
+) -> str:
+    """The fulltext blob `job_index.search_index` matches against.
+
+    Extracted from `to_row` rather than copied into the hydration pass. The two
+    have to agree exactly: hydration rewrites `search_text` for a row the sweep
+    wrote, and a second copy of this join that drifted by a field or a slice
+    length would leave two rows from the same board matching different queries
+    for no reason a reader could see.
+    """
+    parts = [
+        title or "",
+        company_name or "",
+        location or "",
+        (jd_clean or "")[:SEARCH_TEXT_DESCRIPTION_CHARS],
+    ]
+    return " ".join(part for part in parts if part)
+
+
 @dataclass(slots=True)
 class UpsertStats:
     inserted: int = 0
@@ -142,8 +169,12 @@ def to_row(
         "last_crawl_run_id": str(run_id) if run_id else None,
         "content_updated_at": seen_at.isoformat(),
     }
-    text_bits = [row["title"] or "", row["company_name"] or "", row["location"] or "", (row["jd_clean"] or "")[:8000]]
-    row["search_text"] = " ".join(b for b in text_bits if b)
+    row["search_text"] = search_text_for(
+        title=posting.title,
+        company_name=name,
+        location=posting.location,
+        jd_clean=description,
+    )
     return row
 
 

@@ -2,9 +2,18 @@
 
     uv run python -m job_os.ingest.cli seed
     uv run python -m job_os.ingest.cli sweep --providers greenhouse --limit 200
+    uv run python -m job_os.ingest.cli hydrate --limit 200
     uv run python -m job_os.ingest.cli status
     uv run python -m job_os.ingest.cli sample --provider lever --limit 120
     uv run python -m job_os.ingest.cli import-scraper
+
+`hydrate` is the second half of `sweep` for the five vendors whose list
+endpoint carries no description. It is a separate command, not a sweep stage,
+because it is an N+1 (one request per posting) and so has to be budgeted
+separately from the list crawl; `ingest/hydrate.py` explains the ordering and
+the limit. It touches Appwrite only, so it can be scheduled independently of
+`sweep` -- though running it shortly after one is what keeps its newest-first
+queue pointed at rows a search will actually reach.
 
 `sweep` (this repo's own direct-to-ATS crawl) is still not scheduled anywhere -
 `docs/ingest-index.md` has the three lines of workflow YAML and says what to
@@ -31,6 +40,7 @@ from sqlalchemy import select
 
 from job_os.ingest.corpus import corpus_summary, seed_tokens
 from job_os.ingest.fetcher import PoliteFetcher
+from job_os.ingest.hydrate import DEFAULT_LIMIT as DEFAULT_HYDRATE_LIMIT
 from job_os.ingest.providers import PROVIDER_NAMES, BoardStatus, get_provider
 from job_os.ingest.worker import (
     DEFAULT_CONCURRENCY,
@@ -93,6 +103,32 @@ async def _cmd_sweep(args: argparse.Namespace) -> int:
     # A sweep that reached nothing is a failure worth a nonzero exit, so a
     # scheduler surfaces it instead of reporting a green run that did nothing.
     return 0 if result.tokens_attempted else 1
+
+
+async def _cmd_hydrate(args: argparse.Namespace) -> int:
+    """Fetch the descriptions the list endpoints did not carry.
+
+    No database session: this pass reads and writes `job_postings` in Appwrite
+    and never touches Postgres, so it does not open one. It records no
+    `crawl_runs` row for the same reason, and because a `crawl_run` means "a
+    board's list was read", which this never does.
+    """
+    from job_os.ingest.hydrate import hydrate_descriptions
+    from job_os.services.appwrite_tables import AppwriteTablesError
+
+    try:
+        result = await hydrate_descriptions(
+            providers=args.providers, limit=args.limit, concurrency=args.concurrency
+        )
+    except AppwriteTablesError as exc:
+        _emit({"command": "hydrate", "error": str(exc)})
+        return 1
+    _emit({"command": "hydrate", **result.as_dict()})
+    # Unlike `sweep`, zero work is the success case here: it means every
+    # posting a search can reach already has its body. Exiting nonzero on it
+    # would page whoever reads the scheduler's logs to tell them the index is
+    # finished.
+    return 0
 
 
 async def _cmd_status(args: argparse.Namespace) -> int:
@@ -209,6 +245,23 @@ def build_parser() -> argparse.ArgumentParser:
     sweep.add_argument("--no-dedupe", action="store_true")
     sweep.set_defaults(handler=_cmd_sweep)
 
+    hydrate = sub.add_parser(
+        "hydrate",
+        help="fetch real descriptions for postings whose board list carried none",
+    )
+    hydrate.add_argument("--providers", nargs="*", choices=PROVIDER_NAMES, default=None)
+    hydrate.add_argument(
+        "--limit",
+        type=int,
+        default=DEFAULT_HYDRATE_LIMIT,
+        help=(
+            f"postings this run may hydrate (default {DEFAULT_HYDRATE_LIMIT}). "
+            "One posting is one request, so this is the whole budget"
+        ),
+    )
+    hydrate.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
+    hydrate.set_defaults(handler=_cmd_hydrate)
+
     status = sub.add_parser("status", help="index and corpus counters")
     status.set_defaults(handler=_cmd_status)
 
@@ -232,6 +285,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    # Only `sweep` reads 0 as "no limit". `hydrate` deliberately has no such
+    # escape hatch: unbounded there means one request per unhydrated posting in
+    # the whole index, which is the thing its own limit exists to prevent.
     if args.command == "sweep" and args.limit == 0:
         args.limit = None
     exit_code: int = asyncio.run(args.handler(args))
