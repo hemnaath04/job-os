@@ -107,7 +107,7 @@ NAME = "oracle_cloud"
 PAGE_SIZE = 200
 
 #: 100 pages x 200 = 20,000 postings. The largest board found while building
-#: the seed list was Marriott at 13,180, so this is headroom rather than a
+#: the seed list was Marriott at 13,182, so this is headroom rather than a
 #: limit anyone hits; a board genuinely past it loses its tail rather than the
 #: sweep spending an unbounded number of requests on one employer.
 MAX_PAGES = 100
