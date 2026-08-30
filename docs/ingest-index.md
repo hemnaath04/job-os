@@ -315,7 +315,13 @@ re-crawled together; the content hash catches the rest for free on write.
 
 ## Running it
 
-Nothing is scheduled. `sweep` is the entrypoint a cron would call:
+**The crawl IS scheduled**, every six hours, by
+`.github/workflows/ingest.yml`. This section used to say nothing was, and the
+next one described the workflow as sitting at `ingest.yml.disabled` awaiting a
+`git mv`. That rename happened on 2026-08-26; the prose did not follow it, and
+was still being read as current four days later.
+
+`sweep` is the entrypoint that cron calls, and the same one to use by hand:
 
 ```bash
 cd apps/api
@@ -333,15 +339,18 @@ is a log aggregator and a run that quietly crawled 3 boards instead of 400
 should be greppable rather than buried in prose. `sweep` exits nonzero when it
 reached no boards.
 
-### Turning the crawl on
+### What the crawl already commits you to
 
-The workflow is written and deliberately **not enabled**:
-`.github/workflows/ingest.yml.disabled`. GitHub only reads `.yml` and `.yaml`
-under `.github/workflows`, so the suffix is what keeps it off. Enabling it is a
-`git mv` and that rename is the decision point. The file itself carries the
-enable steps and the measured costs; what follows is what you are agreeing to.
+The workflow is **enabled and running**, so this is no longer a decision to
+make but a description of what is already happening every six hours.
 
-Before renaming it, be willing to own the following.
+It is worth reading anyway, because for its first four days it was also
+**failing** every run: `job_postings` moved to Appwrite and the workflow was
+never given `APPWRITE_API_KEY`, so each run exited 1 without crawling anything.
+A scheduled job that is red and unwatched looks exactly like one that was never
+switched on, which is precisely how this went unnoticed.
+
+What you are already agreeing to.
 
 - **You are crawling other people's APIs, unattended, forever.** At the settings
   in that file it is ~400 requests every six hours across four vendors, none of

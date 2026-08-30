@@ -65,6 +65,23 @@ _TIMEOUT_RETRY_DELAY_SECONDS = 1.0
 #: Per-attempt transport ceiling. Unchanged, and still what a write gets.
 _REQUEST_TIMEOUT_SECONDS = 30.0
 
+#: The longest a single READ attempt may take, so the ladder above can
+#: actually run.
+#:
+#: It could not before. `remaining()` returns the whole unspent budget, so
+#: attempt one was handed all 24 seconds; a slow draw consumed the budget and
+#: there was never an attempt two. The retry existed in the code, was
+#: documented at length, was unit tested, and could not fire on the failure it
+#: was written for.
+#:
+#: 8 seconds is chosen from the measured distribution rather than picked. The
+#: same fulltext search, run 18 times in a row against the live table, came
+#: back between 1.05s and 1.35s, median 1.13s. The multi-second draws are the
+#: first read after a quiet period, which is MariaDB reading a fulltext index
+#: it had evicted back off disk. So the shape to survive is one cold draw
+#: followed by warm ones, and 8s x 3 does that where 24s x 1 cannot.
+_MAX_ATTEMPT_SECONDS = 8.0
+
 #: Total wall clock a READ may spend here, retries and waits included.
 #:
 #: The retry ladder above is right about the shape of the failure and was wrong
@@ -186,13 +203,30 @@ async def _request(
     def remaining() -> float:
         if budget_seconds is None:
             return _REQUEST_TIMEOUT_SECONDS
-        return min(_REQUEST_TIMEOUT_SECONDS, budget_seconds - (time.monotonic() - started))
+        left = budget_seconds - (time.monotonic() - started)
+        return min(_REQUEST_TIMEOUT_SECONDS, _MAX_ATTEMPT_SECONDS, left)
 
     for attempt in range(1, total_attempts + 1):
-        async with httpx.AsyncClient(timeout=max(remaining(), _MIN_ATTEMPT_SECONDS)) as client:
-            response = await client.request(
-                method, url, headers=headers, params=params, json=json_body
-            )
+        try:
+            async with httpx.AsyncClient(
+                timeout=max(remaining(), _MIN_ATTEMPT_SECONDS)
+            ) as client:
+                response = await client.request(
+                    method, url, headers=headers, params=params, json=json_body
+                )
+        except httpx.TimeoutException as exc:
+            # The failure this ladder was written for, and the one it did not
+            # catch. Appwrite answers a slow query with its own 408 only
+            # sometimes; when the query outruns the client it raises here
+            # instead, as an exception rather than a response, and this loop
+            # used to let it straight out. That is the `httpx.ReadTimeout`
+            # behind a 500 on POST /api/v1/index/search: a documented retry
+            # policy that never once applied to the thing that actually broke.
+            if attempt < total_attempts and remaining() >= _MIN_ATTEMPT_SECONDS:
+                continue
+            raise AppwriteTablesError(
+                504, f"appwrite read timed out after {attempt} attempts: {exc}"
+            ) from exc
         if response.status_code >= 400:
             detail = response.text
             with contextlib.suppress(ValueError):

@@ -76,6 +76,13 @@ jobs:
     timeout-minutes: 30
     env:
       DATABASE_URL: ${{ secrets.INGEST_DATABASE_URL }}
+      # Added because every scheduled run since the migration has failed on
+      # its absence. `job_postings` moved to Appwrite and this workflow was
+      # not updated with it, so the sweep crawled nothing and exited 1 every
+      # six hours: `AppwriteTablesError: APPWRITE_API_KEY is not configured`.
+      # A red scheduled job that nobody is paged for is indistinguishable
+      # from one that was never turned on, which is how it stayed unnoticed.
+      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
