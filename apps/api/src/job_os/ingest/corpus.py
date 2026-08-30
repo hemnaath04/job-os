@@ -9,14 +9,24 @@ crawl do not depend on a developer's home directory.
     ashby.txt             3,161 tokens
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
+    bamboohr.txt          4,992 tokens
     curated.json             85 companies, with real employer names and domains
 
-`workday.txt` is the exception to the sentence below: every one of its 13
-tokens answered 200 with jobs on 2026-08-30, because a Workday token is
-`tenant:datacenter:site` and there is nothing to guess it from -- a wrong
-site on a real tenant returns 404 and a wrong tenant returns 422, so an
-unverified Workday token is simply a dead row. 12 further candidates were
-tried and dropped for exactly that reason.
+`workday.txt` and `bamboohr.txt` are the two exceptions to the sentence below:
+every token in both answered 200 with at least one posting on 2026-08-30.
+
+For Workday that is a necessity rather than diligence. A Workday token is
+`tenant:datacenter:site` and there is nothing to guess it from -- a wrong site on
+a real tenant returns 404 and a wrong tenant returns 422 -- so an unverified
+Workday token is simply a dead row. 12 further candidates were tried and dropped
+for exactly that reason.
+
+For BambooHR it is a necessity of a different kind, and the more dangerous one. A
+BambooHR slug that does not exist does not fail: it redirects to the vendor's
+marketing site and returns HTTP 200. An unverified BambooHR token is therefore
+not a dead row, it is a row that looks alive, and the provider has to prove the
+board by parsing the body rather than reading the status code. See
+`providers/bamboohr.py`.
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass
@@ -39,6 +49,42 @@ no SmartRecruiters token list, and the tokens are not derivable from company
 names. 120 plausible company names were probed and 9 were live, a 7.5% hit rate,
 so guessing is not a strategy. Growing this list needs a real source, and
 `docs/ingest-index.md` records the options.
+
+`bamboohr.txt` is where the sentence above got tested properly, and the result
+confirms it rather than contradicting it. Two discovery methods were run against
+BambooHR on 2026-08-30 and every candidate from both was fetched:
+
+  guessing         838 candidates ->   135 boards (16.1%) ->    74 with postings
+  public indexes  6,835 candidates -> 6,254 boards (91.5%) -> 4,993 with postings
+
+The guessing arm is the control, and it behaved exactly as the SmartRecruiters
+note predicts: company-name guesses hit 2 times in 150, and short generic English
+words did better (60 in 509) only because BambooHR's customers are small firms
+that took the obvious subdomain. 8.8% end to end. Guessing is still not a
+strategy.
+
+What changed the outcome was having a real source, which is the thing that note
+asks for:
+
+  * **Common Crawl.** The CC-MAIN-2026-34 URL index, queried for the
+    `bamboohr.com` domain and filtered to `[a-z0-9-]+\\.bamboohr\\.com/careers`,
+    yielded 6,816 distinct slugs. These are career pages a crawler actually saw
+    on the live web, which is why nine in ten of them resolve.
+  * **GitHub code search** for `bamboohr.com/careers` across several languages
+    yielded 82 distinct slugs. Small, but nearly all real.
+  * **Certificate transparency (crt.sh)** was tried and produced nothing: the
+    endpoint answered HTTP 502 throughout. Worth retrying another day, since a
+    wildcard-free tenant subdomain should be visible there.
+
+The 4,992 tokens seeded are the 4,993 boards that had at least one posting open,
+minus `demo`, which is BambooHR's own demo tenant and not an employer. They held
+37,301 live postings between them on the day they were checked, and the largest
+single board (lanesgroup) held 197. A random 40-token subsample was re-fetched
+afterwards and all 40 still answered with postings.
+
+Every token in the file was confirmed by fetching it. None is a guess left in to
+make the list look longer, and the ~1,261 slugs that were real boards with
+nothing open were deliberately left out rather than counted as wins.
 """
 from __future__ import annotations
 

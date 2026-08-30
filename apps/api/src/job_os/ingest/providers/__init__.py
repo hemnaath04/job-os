@@ -7,6 +7,7 @@ upsert, dedupe and read path do not change.
 from __future__ import annotations
 
 from job_os.ingest.providers.ashby import AshbyProvider
+from job_os.ingest.providers.bamboohr import BambooHRProvider
 from job_os.ingest.providers.base import (
     ESTIMATED_BASES,
     POSTED_AT_BASES,
@@ -26,6 +27,7 @@ PROVIDERS: dict[str, Provider] = {
     AshbyProvider.name: AshbyProvider(),
     SmartRecruitersProvider.name: SmartRecruitersProvider(),
     WorkdayProvider.name: WorkdayProvider(),
+    BambooHRProvider.name: BambooHRProvider(),
 }
 
 PROVIDER_NAMES = tuple(PROVIDERS)
@@ -46,6 +48,7 @@ __all__ = [
     "PROVIDERS",
     "PROVIDER_NAMES",
     "AshbyProvider",
+    "BambooHRProvider",
     "BoardResult",
     "BoardStatus",
     "GreenhouseProvider",
