@@ -15,6 +15,9 @@ rather than raise. The four that matter, and what each would cost:
   * Workday's list `postedOn` is prose ("Posted 30+ Days Ago"). Recording it as
     a date would date every posting to the day it was crawled and call that the
     employer's own figure.
+  * Oracle answers 200 with `requisitionList: null` when the `expand` parameter
+    is missing, facets and `TotalJobsCount` intact. Reading that as an empty
+    board deactivates every Oracle posting in the index during a clean run.
 
 The fetcher is faked rather than mocked at the socket, so these tests describe
 the parsing contract and never touch the network.
@@ -31,6 +34,7 @@ from job_os.ingest.providers import (
     BoardStatus,
     GreenhouseProvider,
     LeverProvider,
+    OracleCloudProvider,
     SmartRecruitersProvider,
     WorkdayProvider,
 )
@@ -799,6 +803,293 @@ async def test_workday_rejects_a_token_that_cannot_address_a_board(token: str) -
     URL pointing at some other tenant's board -- and wildcard DNS means that
     URL resolves rather than failing."""
     result = await WorkdayProvider().fetch_board(FakeFetcher(), token)
+
+    assert result.status is BoardStatus.MISSING
+    assert result.requests_made == 0, "a bad token must not reach the network"
+
+
+# ── Oracle Fusion Cloud Recruiting ──
+#
+# Payload shapes copied from real responses (Citizens Financial hcgn/us2,
+# Oracle eeho/us2, Goldman Sachs hdpc/us2, fetched 2026-08-30), trimmed to the
+# fields the parser reads.
+
+ORC_TOKEN = "hcgn:us2:CX_1"
+
+
+def orc_page(
+    *ids: str, posted: str | None = "2026-08-29", rows: int | None = None
+) -> dict[str, Any]:
+    """One list response. The postings sit two levels down, inside `items[0]`."""
+    listing = [
+        {
+            "Id": job_id,
+            "Title": f"Engineer {job_id}",
+            "PostedDate": posted,
+            "PostingEndDate": None,
+            "PrimaryLocation": "Johnston, RI, United States",
+            "PrimaryLocationCountry": "US",
+            "WorkplaceTypeCode": None,
+            "WorkplaceType": "",
+            "ShortDescriptionStr": "",
+            "secondaryLocations": [],
+        }
+        for job_id in ids
+    ]
+    return {
+        "items": [
+            {
+                "SearchId": 1,
+                "SiteNumber": "CX_1",
+                "TotalJobsCount": rows if rows is not None else len(listing),
+                "requisitionList": listing,
+            }
+        ]
+    }
+
+
+async def test_oracle_cloud_takes_the_list_date_as_the_employers_own() -> None:
+    """The one place this provider beats Workday, and the one it could lie.
+
+    Workday's list date is the prose "Posted Today", so a list-only Workday row
+    is `first_crawl`. Oracle's `PostedDate` is a real date: on hcgn it matched
+    the detail's `ExternalPostedStartDate` on 4 of 4 requisitions checked.
+    Downgrading it to `first_crawl` would throw away a date the employer
+    published and mark every Oracle posting as estimated; calling it `updated`
+    would describe a publish date as a modification stamp.
+    """
+    result = await OracleCloudProvider().fetch_board(
+        FakeFetcher(ok(orc_page("49062"))), ORC_TOKEN
+    )
+
+    posting = result.postings[0]
+    assert posting.posted_at is not None
+    assert (posting.posted_at.year, posting.posted_at.month, posting.posted_at.day) == (
+        2026,
+        8,
+        29,
+    )
+    assert posting.posted_at_basis == "published"
+    assert posting.posted_at_estimated is False
+    assert posting.jd_hydrated is False, "the list carries no description"
+
+
+async def test_oracle_cloud_a_null_requisition_list_is_an_error_not_an_empty_board() -> None:
+    """What dropping `expand=requisitionList...` looks like: HTTP 200, every
+    facet present, `TotalJobsCount` correct, and `requisitionList: null`.
+
+    Reading that as an empty board would deactivate every posting on every
+    Oracle board in the corpus while the crawl reported a clean run of 200s.
+    """
+    payload = orc_page("1")
+    payload["items"][0]["requisitionList"] = None
+
+    result = await OracleCloudProvider().fetch_board(FakeFetcher(ok(payload)), ORC_TOKEN)
+
+    assert result.status is BoardStatus.ERROR
+    assert result.usable is False
+
+
+async def test_oracle_cloud_an_empty_list_is_an_empty_board_not_a_missing_one() -> None:
+    """A real tenant whose site has nothing posted answers 200 with `[]`.
+
+    Goldman Sachs' `CX_1` is exactly this while its `CX_3002` carries 1,012
+    jobs, so an empty Oracle site is an ordinary state and not evidence the
+    token is dead.
+    """
+    result = await OracleCloudProvider().fetch_board(
+        FakeFetcher(ok(orc_page(rows=0))), ORC_TOKEN
+    )
+
+    assert result.status is BoardStatus.EMPTY
+    assert result.usable is True, "an empty board is still a board we saw"
+
+
+async def test_oracle_cloud_pages_past_a_short_page_because_oracle_serves_them() -> None:
+    """The bug this provider shipped with for one live run, and the fix.
+
+    Every other provider here ends its loop on a short page. Oracle serves
+    short pages in the MIDDLE of a list: measured on Oracle's own board,
+    `limit=200&offset=1800` returned 199 rows while `offset=2000` still
+    returned 171. Stopping on the short page collected 1,999 of 2,173
+    postings, silently, and the missing 174 would have been deactivated as
+    closed on the next sweep.
+    """
+    short = orc_page(*(str(i) for i in range(199)), rows=250)
+    tail = orc_page(*(str(200 + i) for i in range(51)), rows=250)
+    done = orc_page(rows=250)
+    fetcher = FakeFetcher(ok(short), ok(tail), ok(done))
+
+    result = await OracleCloudProvider().fetch_board(fetcher, ORC_TOKEN)
+
+    assert result.status is BoardStatus.LIVE
+    assert len(result.postings) == 250, "the short page was not the end"
+    assert "offset=0," in fetcher.urls[0]
+    assert "offset=200," in fetcher.urls[1]
+
+
+async def test_oracle_cloud_stops_once_page_ones_own_count_is_reached() -> None:
+    """`TotalJobsCount` is a real count on page one, so honour it.
+
+    Without this, every board costs one extra request to prove the next page
+    is empty. With it, the count is read from the FIRST page only: at
+    offset=10000 Marriott answered 200 with `TotalJobsCount: 0` while page one
+    said 13,184, so a later page's count would end the loop early.
+    """
+    page_one = orc_page(*(str(i) for i in range(200)), rows=400)
+    page_two = orc_page(*(str(200 + i) for i in range(200)), rows=0)
+    fetcher = FakeFetcher(ok(page_one), ok(page_two))
+
+    result = await OracleCloudProvider().fetch_board(fetcher, ORC_TOKEN)
+
+    assert len(result.postings) == 400
+    assert len(fetcher.urls) == 2, "page one's count of 400 was reached, so stop"
+
+
+async def test_oracle_cloud_stops_when_a_full_page_repeats_itself() -> None:
+    """A board that ignored `offset` would serve page one forever.
+
+    `MAX_PAGES` is 100, so without this the sweep would spend 100 requests and
+    20MB on one board to collect the same 200 rows it already had.
+    """
+    page = orc_page(*(str(i) for i in range(200)), rows=100_000)
+    fetcher = FakeFetcher(*([ok(page)] * 5))
+
+    result = await OracleCloudProvider().fetch_board(fetcher, ORC_TOKEN)
+
+    assert len(result.postings) == 200
+    assert len(fetcher.urls) == 2, "one page to read it, one to prove it repeated"
+
+
+async def test_oracle_cloud_404_is_missing_but_a_dead_tenant_is_only_an_error() -> None:
+    """The two failure signatures, and why only one of them prunes.
+
+    A real host with no recruiting resource on it answers 404. A tenant that
+    does not exist answers 504 from Oracle's Akamai edge instead, reproducibly
+    across datacenters, and 504 is a retryable status that says nothing about
+    whether the board exists. Treating it as MISSING would delete live boards
+    during an Oracle outage.
+    """
+    gone = await OracleCloudProvider().fetch_board(FakeFetcher(status(404)), ORC_TOKEN)
+    assert gone.status is BoardStatus.MISSING
+
+    edge = await OracleCloudProvider().fetch_board(FakeFetcher(status(504)), ORC_TOKEN)
+    assert edge.status is BoardStatus.ERROR
+    assert edge.usable is False
+
+
+async def test_oracle_cloud_hydration_supplies_the_description_not_the_boilerplate() -> None:
+    """Oracle splits a posting across three authored fields and one boilerplate.
+
+    `CorporateDescriptionStr` is the byte-identical EEO block on every posting
+    on a board. Folding it in would pad every row with the same few thousand
+    characters the fit scorer has to read past to reach the job.
+    """
+    provider = OracleCloudProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(orc_page("49062"))), ORC_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "items": [
+                    {
+                        "Id": "49062",
+                        "Category": "Technology Operations",
+                        "ExternalDescriptionStr": "<p>Build <b>pipelines</b>.</p>",
+                        "ExternalResponsibilitiesStr": "<ul><li>Own the model</li></ul>",
+                        "ExternalQualificationsStr": "",
+                        "CorporateDescriptionStr": "<p>Equal Employment Opportunity</p>",
+                        "ExternalPostedStartDate": "2026-08-29T13:00:57+00:00",
+                    }
+                ]
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, ORC_TOKEN, result.postings[0])
+
+    assert hydrated.jd_hydrated is True
+    assert "Build pipelines." in hydrated.jd_clean
+    assert "- Own the model" in hydrated.jd_clean
+    assert "Equal Employment Opportunity" not in hydrated.jd_clean
+    assert "<p>" not in hydrated.jd_clean
+    assert hydrated.department == "Technology Operations"
+    # A timestamp where the list had a date. Same claim, sharper value.
+    assert hydrated.posted_at_basis == "published"
+    assert hydrated.posted_at is not None and hydrated.posted_at.hour == 13
+
+
+async def test_oracle_cloud_hydration_keeps_the_posting_when_the_detail_fails() -> None:
+    """A 404 on one requisition must not empty a row the list already filled.
+
+    Requisitions close between the list call and the detail call on a board of
+    11,000, so this is the ordinary case, not the exceptional one.
+    """
+    provider = OracleCloudProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(orc_page("49062"))), ORC_TOKEN)
+    before = result.postings[0].jd_clean
+
+    hydrated = await provider.hydrate(FakeFetcher(status(404)), ORC_TOKEN, result.postings[0])
+
+    assert hydrated.jd_clean == before
+    assert hydrated.jd_hydrated is False
+
+
+async def test_oracle_cloud_country_code_is_only_taken_when_it_is_an_alpha_2() -> None:
+    """`PrimaryLocationCountry` sits beside free-text location fields.
+
+    A country column holding "United States" does not join to anything, and a
+    work-authorization filter reading it silently matches nothing.
+    """
+    page = orc_page("1", "2")
+    page["items"][0]["requisitionList"][1]["PrimaryLocationCountry"] = "United States"
+
+    result = await OracleCloudProvider().fetch_board(FakeFetcher(ok(page)), ORC_TOKEN)
+
+    assert result.postings[0].country_code == "US"
+    assert result.postings[1].country_code is None
+
+
+async def test_oracle_cloud_remote_comes_from_the_workplace_code() -> None:
+    """Oracle states the workplace type in a code, not in the location string.
+
+    A posting whose location is "Johnston, RI" and whose code is `ORA_REMOTE`
+    is remote, and reading only the location string would file it as onsite.
+    """
+    page = orc_page("1")
+    page["items"][0]["requisitionList"][0]["WorkplaceTypeCode"] = "ORA_REMOTE"
+
+    result = await OracleCloudProvider().fetch_board(FakeFetcher(ok(page)), ORC_TOKEN)
+
+    assert result.postings[0].remote is True
+    assert result.postings[0].workplace_type == "remote"
+
+
+async def test_oracle_cloud_urls_carry_the_site_the_token_names() -> None:
+    """A requisition id is only unique within a site, and the detail call needs
+    the site too. A URL built without it reaches the tenant's default site, so
+    a multi-site tenant like Goldman Sachs would hydrate the wrong board."""
+    provider = OracleCloudProvider()
+    token = "hdpc:us2:CX_3002"
+
+    assert provider.host_for(token) == "hdpc.fa.us2.oraclecloud.com"
+    assert "siteNumber=CX_3002," in provider.api_url(token, 0)
+    assert "siteNumber=CX_3002" in provider.detail_url(token, "9")
+    assert provider.job_url(token, "9").endswith("/sites/CX_3002/job/9")
+    # The finder quotes the id, and the quotes have to survive as %22.
+    assert "Id=%229%22" in provider.detail_url(token, "9")
+
+
+@pytest.mark.parametrize(
+    "token", ["hcgn", "hcgn:CX_1", "hcgn:us2", "hcgn:us2:CX_1:extra", ""]
+)
+async def test_oracle_cloud_rejects_a_token_that_cannot_address_a_board(token: str) -> None:
+    """Three parts, because the host is per-tenant and the site is not
+    derivable from it. Worse than Workday's case: a wrong site on a real tenant
+    does not fail and does not come back empty, it comes back BIGGER -- Oracle
+    serves the tenant's unfiltered pool, measured at exactly the sum of the
+    real sites (Goldman 1012 + 317 + 21 = 1350). A token that got past this
+    would merge boards the employer separated and look healthy doing it."""
+    result = await OracleCloudProvider().fetch_board(FakeFetcher(), token)
 
     assert result.status is BoardStatus.MISSING
     assert result.requests_made == 0, "a bad token must not reach the network"

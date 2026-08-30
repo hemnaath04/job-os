@@ -9,14 +9,33 @@ crawl do not depend on a developer's home directory.
     ashby.txt             3,161 tokens
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
-    curated.json             85 companies, with real employer names and domains
+    oracle_cloud.txt         12 tokens
+    curated.json             97 companies, with real employer names and domains
 
-`workday.txt` is the exception to the sentence below: every one of its 13
-tokens answered 200 with jobs on 2026-08-30, because a Workday token is
-`tenant:datacenter:site` and there is nothing to guess it from -- a wrong
-site on a real tenant returns 404 and a wrong tenant returns 422, so an
-unverified Workday token is simply a dead row. 12 further candidates were
+`workday.txt` and `oracle_cloud.txt` are the exception to the sentence below:
+every one of their tokens answered 200 with jobs on 2026-08-30, because both
+are `tenant:datacenter:site` and there is nothing to guess them from. For
+Workday a wrong site on a real tenant returns 404 and a wrong tenant returns
+422, so an unverified token is simply a dead row; 12 further candidates were
 tried and dropped for exactly that reason.
+
+Oracle is worse than dead, which is why its 12 tokens were each checked twice.
+A wrong Oracle tenant answers 504 from Oracle's edge, so it never prunes and
+just burns three requests a sweep forever. A wrong *site* on a real tenant
+does not fail at all: it returns the tenant's whole unfiltered requisition
+pool, measured at exactly the sum of the real sites (Goldman Sachs 1012 + 317
++ 21 = 1350, which is what `siteNumber=ZZ_NOT_A_SITE` returns). So a typo
+looks like a *bigger* board, silently merging pipelines the employer chose to
+separate. Every site number here was confirmed to exist via that tenant's
+`recruitingCESites` before being written down.
+
+`oracle_cloud` is also the reason `curated.json` grew by 12. Oracle's payload
+names no employer at all -- `LegalEmployer`, `Organization` and `BusinessUnit`
+were null on every requisition checked across three tenants -- and unlike a
+Workday tenant ("nvidia"), an Oracle tenant is an opaque code like "hcgn".
+Those 12 rows are what stop 35,565 postings being filed under four-character
+strings, and unlike the rest of the file they were written by hand rather than
+derived from `ats-companies.ts`, so a regeneration has to carry them across.
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass
