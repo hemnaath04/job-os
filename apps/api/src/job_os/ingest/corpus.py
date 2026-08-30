@@ -10,23 +10,59 @@ crawl do not depend on a developer's home directory.
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
     bamboohr.txt          4,992 tokens
-    curated.json             85 companies, with real employer names and domains
+    icims.txt                31 tokens
+    oracle_cloud.txt         12 tokens
+    curated.json             97 companies, with real employer names and domains
 
-`workday.txt` and `bamboohr.txt` are the two exceptions to the sentence below:
-every token in both answered 200 with at least one posting on 2026-08-30.
+`workday.txt`, `icims.txt`, `oracle_cloud.txt` and `bamboohr.txt` are the
+exceptions to the sentence below: every token in all four answered 200 with
+jobs on 2026-08-30. None of them is guessable, and each is unguessable in its
+own way.
 
-For Workday that is a necessity rather than diligence. A Workday token is
-`tenant:datacenter:site` and there is nothing to guess it from -- a wrong site on
-a real tenant returns 404 and a wrong tenant returns 422 -- so an unverified
-Workday token is simply a dead row. 12 further candidates were tried and dropped
-for exactly that reason.
+A Workday token is `tenant:datacenter:site`, and there is nothing to derive it
+from: a wrong site on a real tenant returns 404, a wrong tenant returns 422. An
+unverified Workday token is simply a dead row. 12 further candidates were tried
+and dropped for exactly that reason.
 
-For BambooHR it is a necessity of a different kind, and the more dangerous one. A
-BambooHR slug that does not exist does not fail: it redirects to the vendor's
-marketing site and returns HTTP 200. An unverified BambooHR token is therefore
-not a dead row, it is a row that looks alive, and the provider has to prove the
-board by parsing the body rather than reading the status code. See
-`providers/bamboohr.py`.
+An iCIMS token is a subdomain (`careers-here` from careers-here.icims.com), and
+the prefix varies per tenant (`careers-`, `jobs-`, `uscareers-`, `staff-`,
+`clinical-`, `securitycareers-`, `us-`), so the 31 here came from search results
+and were then each fetched. Of 65 candidates probed, 60 served a usable sitemap,
+2 had opted out via `robots.txt: Disallow: /`, 1 subdomain did not exist, 1 had
+migrated off iCIMS entirely, and 1 listed no job URLs. The 31 kept are a
+size-spread slice of the 60, from 31 job URLs (`jobs-getty`) to 8,804
+(`securitycareers-aus`).
+
+Oracle is worse than dead, which is why its 12 tokens were each checked twice.
+A wrong Oracle tenant answers 504 from Oracle's edge, so it never prunes and
+just burns three requests a sweep forever. A wrong *site* on a real tenant does
+not fail at all: it returns the tenant's whole unfiltered requisition pool,
+measured at exactly the sum of the real sites (Goldman Sachs 1012 + 317 + 21 =
+1350, which is what `siteNumber=ZZ_NOT_A_SITE` returns). So a typo looks like a
+*bigger* board, silently merging pipelines the employer chose to separate. Every
+site number here was confirmed to exist via that tenant's `recruitingCESites`
+before being written down.
+
+`oracle_cloud` is also the reason `curated.json` grew by 12. Oracle's payload
+names no employer at all -- `LegalEmployer`, `Organization` and `BusinessUnit`
+were null on every requisition checked across three tenants -- and unlike a
+Workday tenant ("nvidia"), an Oracle tenant is an opaque code like "hcgn".
+Those 12 rows are what stop 35,565 postings being filed under four-character
+strings, and unlike the rest of the file they were written by hand rather than
+derived from `ats-companies.ts`, so a regeneration has to carry them across.
+
+BambooHR is unguessable in the most dangerous way of the four, because it does
+not fail. A slug that does not exist redirects to the vendor's marketing site
+and returns HTTP 200, and a lapsed account returns 200 from an expired-account
+page. An unverified BambooHR token is therefore not a dead row, it is a row
+that looks alive, so the provider proves a board by parsing the body rather
+than by reading the status code. See `providers/bamboohr.py`.
+
+The 4,992 here are also the one place where guessing was measured against a
+better method rather than assumed to be the only one: guessing slugs returned
+74 boards with postings from 838 candidates (8.8%), while slugs harvested from
+the Common Crawl URL index returned 4,993 from 6,835 (73%). The conclusion in
+the sentence below still holds; the corpus just did not have to rest on it.
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass
