@@ -897,18 +897,42 @@ async def index_stats() -> dict[str, object]:
     source breakdown would each need a full table scan on every call to this
     endpoint, which isn't worth it for an ops view; both are dropped rather
     than silently wrong or slow.
+
+    Every counter degrades to None on its own rather than taking the report
+    down with it. This is a diagnostic: five counters and a null is a useful
+    answer, and an exception is not.
     """
-    total = await appwrite_tables.count_rows()
-    active = await appwrite_tables.count_rows(filters=["active=true", "canonical_id=null"])
-    duplicates = await appwrite_tables.count_rows(filters=["canonical_id!=null"])
-    estimated = await appwrite_tables.count_rows(
-        filters=["active=true", "posted_at_estimated=true"]
-    )
-    unhydrated = await appwrite_tables.count_rows(filters=["active=true", "jd_hydrated=false"])
-    newest_rows = await appwrite_tables.list_rows(
-        select=["last_seen_at"], sort_desc="last_seen_at", limit=1
-    )
-    newest = newest_rows[0]["last_seen_at"] if newest_rows else None
+    async def _count(**kwargs: Any) -> int | None:
+        """One counter, or None if Appwrite would not answer in time.
+
+        Six sequential reads, each able to draw a cold fulltext or sort cache
+        and time out. All-or-nothing made any one of those lose the entire
+        report, and because the workflow step exits non-zero on it, a sweep
+        that had crawled 1,958 postings successfully was reported as failed.
+        A missing counter is worth far less than the other five together.
+        """
+        try:
+            return await appwrite_tables.count_rows(**kwargs)
+        except appwrite_tables.AppwriteTablesError as exc:
+            log.warning("index_stats.counter_unavailable", filters=kwargs, error=str(exc)[:200])
+            return None
+
+    total = await _count()
+    active = await _count(filters=["active=true", "canonical_id=null"])
+    duplicates = await _count(filters=["canonical_id!=null"])
+    estimated = await _count(filters=["active=true", "posted_at_estimated=true"])
+    unhydrated = await _count(filters=["active=true", "jd_hydrated=false"])
+    try:
+        newest_rows = await appwrite_tables.list_rows(
+            select=["last_seen_at"], sort_desc="last_seen_at", limit=1
+        )
+        newest = newest_rows[0]["last_seen_at"] if newest_rows else None
+    except appwrite_tables.AppwriteTablesError as exc:
+        # The sorted read, which is the slowest of the six and the one that
+        # actually failed in production: a cold `last_seen_at` sort measured
+        # 24s against 1.75s warm.
+        log.warning("index_stats.newest_unavailable", error=str(exc)[:200])
+        newest = None
 
     return {
         "postings_total": total,
