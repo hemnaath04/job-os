@@ -269,6 +269,82 @@ async def test_each_read_attempt_is_given_only_the_time_that_is_left(
     monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", _client)
     await appwrite_tables.list_rows(filters=["active=true"])
 
-    # First attempt: the whole 24s budget. Second: what the first attempt and
-    # the one-second wait left of it.
-    assert seen == [24.0, 15.0]
+    # Each attempt is capped, so the ladder can actually run.
+    #
+    # This asserted `[24.0, 15.0]` and that was the bug rather than the
+    # contract: handing attempt one the entire 24s budget means a single slow
+    # draw consumes it and there is never an attempt two. The retry was
+    # documented, tested and unable to fire on the failure it was written for.
+    assert seen == [8.0, 8.0]
+
+
+@pytest.mark.asyncio
+async def test_a_transport_timeout_is_retried_like_a_408(
+    monkeypatch: pytest.MonkeyPatch, frozen_clock
+) -> None:
+    """The failure the ladder was written for and did not catch.
+
+    Appwrite answers a slow query with its own 408 only sometimes. When the
+    query outruns the client it raises `httpx.ReadTimeout` instead, which is an
+    exception rather than a response, and the loop let it straight out. That is
+    the `httpx.ReadTimeout` behind a 500 on `POST /api/v1/index/search`: a
+    retry policy that never once applied to the thing that actually broke.
+    """
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+    calls = 0
+
+    class _TimeoutThenOk:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _TimeoutThenOk:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def request(self, *_a: Any, **_kw: Any) -> Any:
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise appwrite_tables.httpx.ReadTimeout("timed out")
+            return _FakeResponse(200, {"rows": []})
+
+    monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", _TimeoutThenOk)
+
+    assert await appwrite_tables.list_rows(filters=["active=true"]) == []
+    assert calls == 2, "the timeout must be retried, not raised"
+
+
+@pytest.mark.asyncio
+async def test_a_read_that_times_out_every_attempt_reports_it_as_a_timeout(
+    monkeypatch: pytest.MonkeyPatch, frozen_clock
+) -> None:
+    """Exhausting the ladder must still say what happened.
+
+    Raising the raw `httpx.ReadTimeout` gave the caller a 500 with a traceback
+    into httpx internals and nothing about which table or how many tries. A
+    504 naming the attempts is something a log reader can act on.
+    """
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+
+    class _AlwaysTimeout:
+        def __init__(self, **_kwargs: Any) -> None:
+            pass
+
+        async def __aenter__(self) -> _AlwaysTimeout:
+            return self
+
+        async def __aexit__(self, *_exc: Any) -> None:
+            return None
+
+        async def request(self, *_a: Any, **_kw: Any) -> Any:
+            raise appwrite_tables.httpx.ReadTimeout("timed out")
+
+    monkeypatch.setattr(appwrite_tables.httpx, "AsyncClient", _AlwaysTimeout)
+
+    with pytest.raises(appwrite_tables.AppwriteTablesError) as raised:
+        await appwrite_tables.list_rows(filters=["active=true"])
+
+    assert raised.value.status_code == 504
+    assert "attempts" in str(raised.value)
