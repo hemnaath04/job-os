@@ -15,21 +15,30 @@ rather than raise. The four that matter, and what each would cost:
   * Workday's list `postedOn` is prose ("Posted 30+ Days Ago"). Recording it as
     a date would date every posting to the day it was crawled and call that the
     employer's own figure.
+  * iCIMS's sitemap gives `<lastmod>`, a modification stamp measured up to 728
+    days after the same posting's real `datePosted`. Calling that "published"
+    would present a two-year-old requisition as this week's, as the employer's
+    own figure.
+  * iCIMS tenants opt out through robots.txt while still serving a sitemap URL.
+    Reading the 403 instead of the robots.txt means crawling a board whose
+    operator said no in the one place we are obliged to look.
 
 The fetcher is faked rather than mocked at the socket, so these tests describe
 the parsing contract and never touch the network.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
 
-from job_os.ingest.fetcher import FetchResponse
+from job_os.ingest.fetcher import USER_AGENT, FetchResponse
 from job_os.ingest.providers import (
     AshbyProvider,
     BoardStatus,
     GreenhouseProvider,
+    ICIMSProvider,
     LeverProvider,
     SmartRecruitersProvider,
     WorkdayProvider,
@@ -64,6 +73,22 @@ class FakeFetcher:
         would loop on page one and look like a board of exactly 20 jobs."""
         self.urls.append(url)
         self.bodies.append(body)
+        if not self._responses:
+            raise AssertionError(f"unexpected extra request to {url}")
+        return self._responses.pop(0)
+
+    async def get_text(
+        self, url: str, *, host: str, etag: str | None = None, expect_bytes: int = 0
+    ) -> FetchResponse:
+        """iCIMS has no JSON anywhere: its list is XML and its detail is HTML.
+
+        Same queue as `get_json` on purpose. An iCIMS board is robots.txt then
+        sitemap.xml, in that order, and a provider that fetched them the other
+        way round would have already hit the sitemap of a board that told it not
+        to. Sharing the queue is what lets a test assert on that order.
+        """
+        self.urls.append(url)
+        self.etags.append(etag)
         if not self._responses:
             raise AssertionError(f"unexpected extra request to {url}")
         return self._responses.pop(0)
@@ -802,3 +827,478 @@ async def test_workday_rejects_a_token_that_cannot_address_a_board(token: str) -
 
     assert result.status is BoardStatus.MISSING
     assert result.requests_made == 0, "a bad token must not reach the network"
+
+
+# ── iCIMS ──
+#
+# Fixtures copied from real responses (careers-here, careers-libertymutual,
+# careers-cissecureco, careers-conehealth, fetched 2026-08-30), trimmed to the
+# fields the parser reads.
+
+IC_TOKEN = "careers-here"
+IC_ROBOTS_URL = "https://careers-here.icims.com/robots.txt"
+IC_SITEMAP_URL = "https://careers-here.icims.com/sitemap.xml"
+
+#: The default board robots.txt. It carries real `Disallow` rules, and none of
+#: them touch the `/jobs/{id}/{slug}/job` path this provider reads.
+IC_ROBOTS_ALLOWED = """User-agent: *
+Sitemap: https://careers-here.icims.com/sitemap.xml
+Disallow: /jobs/*referral
+Disallow: /jobs/referral
+Disallow: /jobs/*login
+Disallow: /jobs/login
+Disallow: /jobs/*candidate
+Disallow: /connect
+Disallow: /connect/*resume
+"""
+
+#: What careers-cissecureco and careers-acentra serve.
+IC_ROBOTS_OPT_OUT = "User-agent: *\nDisallow: /\n"
+
+IC_SITEMAP = (
+    "<?xml version='1.0' encoding='utf-8'?>"
+    '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+    "<url><loc>https://careers-here.icims.com/jobs/intro</loc></url>"
+    "<url><loc>https://careers-here.icims.com/jobs/search</loc></url>"
+    "<url><loc>https://careers-here.icims.com/jobs/81372/lead-software-engineer/job</loc>"
+    "<lastmod>2026-08-28T16:41:59-04:00</lastmod></url>"
+    "<url><loc>https://careers-here.icims.com/jobs/81488/"
+    "director%2c-enterprise-architecture/job</loc>"
+    "<lastmod>2026-08-28T16:41:19-04:00</lastmod></url>"
+    "</urlset>"
+)
+
+
+def ic_detail(posting: dict[str, Any]) -> str:
+    """A detail page carrying one `application/ld+json` JobPosting block."""
+    body = json.dumps({"@context": "https://schema.org", "@type": "JobPosting", **posting})
+    return (
+        "<!doctype html><html><head><title>Careers</title>"
+        f'<script type="application/ld+json">{body}</script>'
+        "</head><body>rendered by the career site</body></html>"
+    )
+
+
+async def test_icims_lastmod_is_an_upper_bound_not_a_publish_date() -> None:
+    """The trap this provider exists around.
+
+    The sitemap carries a URL and a `<lastmod>`, and `<lastmod>` is when the
+    requisition was last edited. Hydrating 93 postings across all 31 seeded
+    tenants, `lastmod` was later than that posting's own `datePosted` on 65 of
+    them, by up to 728 days. Recording it as `"published"` would show a
+    two-year-old requisition as posted this week and attribute that figure to
+    the employer.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN)
+
+    assert result.status is BoardStatus.LIVE
+    posting = result.postings[0]
+    assert posting.posted_at_basis == "updated"
+    assert posting.posted_at_basis != "published"
+    assert posting.posted_at_estimated is True, "an upper bound is an estimate"
+    assert posting.posted_at is not None and posting.posted_at.day == 28
+    assert posting.jd_hydrated is False, "the sitemap carries no description"
+
+
+async def test_icims_hydration_replaces_the_upper_bound_with_the_boards_own_date() -> None:
+    """And what hydration buys: the real date, 728 days before `lastmod`.
+
+    Taken from careers-libertymutual, where every posting's `<lastmod>` was
+    2026-08-28 and its `datePosted` was 2024-08-30. A crawl that never hydrated
+    would present that entire board as posted this week.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+    provider = ICIMSProvider()
+    result = await provider.fetch_board(fetcher, IC_TOKEN)
+    listed = result.postings[0]
+    assert listed.posted_at is not None and listed.posted_at.year == 2026
+
+    detail = FakeFetcher(
+        ok(
+            ic_detail(
+                {
+                    "title": "Lead Software Engineer",
+                    "datePosted": "2024-08-30T05:25:13.203Z",
+                    "validThrough": "2027-08-02T04:00:00.000Z",
+                    "employmentType": "FULL_TIME",
+                    "description": "<h2>The role</h2><p>Build <b>maps</b>.</p><li>C++</li>",
+                    "hiringOrganization": {
+                        "@type": "Organization",
+                        "name": "HERE Technologies",
+                    },
+                    "jobLocation": [
+                        {
+                            "@type": "Place",
+                            "address": {
+                                "@type": "PostalAddress",
+                                "addressCountry": "PL",
+                                "addressLocality": "Krakow",
+                                "addressRegion": "UNAVAILABLE",
+                                "streetAddress": "Ul. Jana Dekerta 24",
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+    )
+    hydrated = await provider.hydrate(detail, IC_TOKEN, listed)
+
+    assert hydrated.jd_hydrated is True
+    assert hydrated.posted_at_basis == "published"
+    assert hydrated.posted_at_estimated is False
+    assert hydrated.posted_at is not None and hydrated.posted_at.year == 2024
+    assert hydrated.closes_at is not None and hydrated.closes_at.year == 2027
+    assert hydrated.company_name == "HERE Technologies"
+    assert hydrated.employment_type == "Full-time"
+    # The HTML body is flattened by the shared `normalize.html_to_text`, which
+    # every other provider also uses, rather than by a private copy here.
+    assert "<p>" not in hydrated.jd_clean
+    assert "Build maps" in hydrated.jd_clean
+    assert "- C++" in hydrated.jd_clean
+    # "UNAVAILABLE" is iCIMS's blank-field placeholder, not a region.
+    assert hydrated.location == "Krakow"
+    assert hydrated.country_code == "PL"
+
+
+async def test_icims_a_robots_opt_out_never_reaches_the_sitemap() -> None:
+    """Some tenants say no, and the sitemap's 403 is not where they say it.
+
+    careers-cissecureco and careers-acentra serve `Disallow: /` and then 403 the
+    sitemap with "Your IP address is not on a trusted network". Reading only the
+    403, and falling back to scraping HTML, would be crawling a board whose
+    operator refused in the one file we are obliged to read. The assertion on
+    `urls` is the real test: consent is checked before the board is touched.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_OPT_OUT))
+
+    result = await ICIMSProvider().fetch_board(fetcher, "careers-cissecureco")
+
+    assert result.status is BoardStatus.MISSING
+    assert result.requests_made == 1
+    assert fetcher.urls == ["https://careers-cissecureco.icims.com/robots.txt"]
+    assert "robots" in (result.error or ""), "the log must not read as a dead tenant"
+
+
+async def test_icims_a_boards_own_disallow_rules_do_not_block_it() -> None:
+    """Every live tenant ships `Disallow` rules, and none of them apply here.
+
+    The default board robots.txt excludes `/jobs/*referral`, `/jobs/login` and a
+    dozen siblings. A robots check crude enough to see any `Disallow: /jobs...`
+    and stop would refuse the entire provider on every board it has.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN)
+
+    assert result.status is BoardStatus.LIVE
+    assert len(result.postings) == 2
+
+
+async def test_icims_a_missing_robots_txt_is_not_a_missing_board() -> None:
+    """404 on robots.txt is the RFC's "everything is allowed", and a real shape.
+
+    careers-seminolehardrock 404s robots.txt and serves a working sitemap.
+    Treating an absent robots.txt as either refusal or death would drop it.
+    """
+    fetcher = FakeFetcher(status(404), ok(IC_SITEMAP))
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN)
+
+    assert result.status is BoardStatus.LIVE
+    assert fetcher.urls == [IC_ROBOTS_URL, IC_SITEMAP_URL]
+
+
+async def test_icims_an_unreachable_robots_txt_is_not_permission() -> None:
+    """A 500 on robots.txt says nothing, so it buys no consent and no verdict.
+
+    ERROR retries later. MISSING would prune a live board over one bad response
+    from someone else's CDN, and crawling anyway would be assuming a yes.
+    """
+    fetcher = FakeFetcher(status(500))
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN)
+
+    assert result.status is BoardStatus.ERROR
+    assert result.usable is False
+    assert fetcher.urls == [IC_ROBOTS_URL], "the sitemap must not be fetched"
+
+
+async def test_icims_an_absent_tenant_is_missing_but_a_403_is_not() -> None:
+    """The two shapes that look alike and mean opposite things.
+
+    404 is verified unambiguous: a subdomain with nothing behind it answers
+    `<title>gone: {sub}.icims.com : dc409</title>`. A 403 on a board whose
+    robots.txt allowed us is an IP block or a WAF, which is transient, and
+    pruning on it would delete a live board.
+    """
+    gone = await ICIMSProvider().fetch_board(
+        FakeFetcher(ok(IC_ROBOTS_ALLOWED), status(404)), "zzznotarealtenant9911"
+    )
+    blocked = await ICIMSProvider().fetch_board(
+        FakeFetcher(ok(IC_ROBOTS_ALLOWED), status(403)), IC_TOKEN
+    )
+
+    assert gone.status is BoardStatus.MISSING
+    assert blocked.status is BoardStatus.ERROR
+    assert blocked.usable is False
+
+
+async def test_icims_a_200_that_is_not_a_sitemap_is_an_error() -> None:
+    """jobs-dollargeneral 301s off iCIMS and answers 200 with 450 KB of HTML.
+
+    Parsing that yields zero postings. Reporting zero postings as EMPTY would
+    let the caller deactivate every row on a board that only moved house.
+    """
+    fetcher = FakeFetcher(
+        ok(IC_ROBOTS_ALLOWED), ok("<!DOCTYPE html><html>a career site</html>")
+    )
+
+    result = await ICIMSProvider().fetch_board(fetcher, "jobs-dollargeneral")
+
+    assert result.status is BoardStatus.ERROR
+    assert result.usable is False
+    assert result.postings == []
+
+
+async def test_icims_only_real_job_urls_become_postings() -> None:
+    """Every sitemap lists `/jobs/intro`, and some list `/jobs/search`.
+
+    Matching on "contains /jobs/" would index a board's own landing pages as
+    vacancies that never close and never fill.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN)
+
+    assert [p.external_id for p in result.postings] == ["81372", "81488"]
+    assert all(p.source_url.endswith("/job") for p in result.postings)
+    # The slug is the only title the sitemap offers: percent-encoded, lowercased
+    # and hyphenated. It recovers the real title exactly on 44 of 90 sampled
+    # postings and case-insensitively on 62, and is replaced outright the moment
+    # hydration reads the board's own `title`.
+    assert result.postings[0].title == "Lead Software Engineer"
+    assert result.postings[1].title == "Director, Enterprise Architecture"
+
+
+async def test_icims_the_slug_title_is_a_placeholder_and_says_so() -> None:
+    """The list title is a guess, which is the argument for hydrating at all.
+
+    A slug has been lowercased and stripped of punctuation, so acronyms and
+    separators do not survive: `principal-ai-automation-engineer` is really
+    "Principal AI Automation Engineer" and
+    `mechanical-designer-drafter-iii-solidworks` is really "Mechanical
+    Designer/Drafter III - SolidWorks". Exact on 44 of 90 sampled postings.
+    Anyone tempted to skip hydration because the titles "look fine" is looking
+    at the half that survived.
+    """
+    sitemap = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc>https://careers-here.icims.com/jobs/81886/"
+        "principal-ai-automation-engineer/job</loc></url></urlset>"
+    )
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(sitemap))
+    provider = ICIMSProvider()
+
+    listed = (await provider.fetch_board(fetcher, IC_TOKEN)).postings[0]
+    assert listed.title == "Principal Ai Automation Engineer"
+    assert listed.jd_hydrated is False
+
+    hydrated = await provider.hydrate(
+        FakeFetcher(
+            ok(
+                ic_detail(
+                    {
+                        "title": "Principal AI Automation Engineer",
+                        "description": "<p>Automate things.</p>",
+                    }
+                )
+            )
+        ),
+        IC_TOKEN,
+        listed,
+    )
+
+    assert hydrated.title == "Principal AI Automation Engineer"
+
+
+async def test_icims_a_sitemap_with_no_job_urls_is_empty_not_missing() -> None:
+    """careers-conehealth lists only `/jobs/intro`, and careers-seminolehardrock
+    redirects to a marketing sitemap with no job URLs at all. Neither proves the
+    tenant is gone, so `liveness.py` resolves it over repeated observations."""
+    marketing = (
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">'
+        "<url><loc>https://careers-conehealth.icims.com/jobs/intro</loc></url></urlset>"
+    )
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(marketing))
+
+    result = await ICIMSProvider().fetch_board(fetcher, "careers-conehealth")
+
+    assert result.status is BoardStatus.EMPTY
+    assert result.status is not BoardStatus.MISSING
+
+
+async def test_icims_placeholders_never_reach_the_index() -> None:
+    """iCIMS writes literals into blank fields, and one of them is a company name.
+
+    All 211 careers-libertymutual postings carry
+    `hiringOrganization.name: "UNAVAILABLE"`, and one carries an unsubstituted
+    template variable as its country, `"Hidden (${12781}"`, with locality
+    `"${34271}-Remote)"`. Storing either puts a company called UNAVAILABLE, in a
+    country called Hidden, into the search index.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+    provider = ICIMSProvider()
+    result = await provider.fetch_board(fetcher, "careers-libertymutual")
+    listed = result.postings[0]
+
+    detail = FakeFetcher(
+        ok(
+            ic_detail(
+                {
+                    "title": "Senior Casualty Claims Specialist",
+                    "datePosted": "2024-08-30T05:25:13.437Z",
+                    "description": "<p>Adjust claims.</p>",
+                    "hiringOrganization": {"@type": "Organization", "name": "UNAVAILABLE"},
+                    "jobLocation": [
+                        {
+                            "@type": "Place",
+                            "address": {
+                                "@type": "PostalAddress",
+                                "addressCountry": "Hidden (${12781}",
+                                "addressLocality": "${34271}-Remote)",
+                                "addressRegion": "UNAVAILABLE",
+                                "streetAddress": "123 remoteJob Avenue",
+                            },
+                        },
+                        {
+                            "@type": "Place",
+                            "address": {
+                                "@type": "PostalAddress",
+                                "addressCountry": "US",
+                                "addressLocality": "Boston",
+                                "addressRegion": "MA",
+                            },
+                        },
+                    ],
+                }
+            )
+        )
+    )
+    hydrated = await provider.hydrate(detail, "careers-libertymutual", listed)
+
+    assert hydrated.company_name != "UNAVAILABLE"
+    # Falls back to the board token, which is at least true.
+    assert hydrated.company_name == "careers-libertymutual"
+    assert hydrated.location is None, "every field on that address was a placeholder"
+    assert hydrated.country_code is None
+    # The second Place is real, but no field says which site is primary, so the
+    # count is recorded rather than one of them being picked and presented.
+    assert hydrated.extra["job_locations"] == 2
+
+
+async def test_icims_salary_arrives_in_a_shape_schema_org_does_not_define() -> None:
+    """`minValue`/`maxValue`/`currency` sit directly on the `MonetaryAmount`.
+
+    Canonical schema.org nests them under `baseSalary.value`, so a parser that
+    only read the documented shape would drop every iCIMS salary on the floor.
+    No sampled posting carried a `unitText`, so the interval stays unset: 50,000
+    to 78,000 USD is obviously annual, and writing "YEAR" anyway would put a
+    figure in the index that no board ever stated.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+    provider = ICIMSProvider()
+    listed = (await provider.fetch_board(fetcher, IC_TOKEN)).postings[0]
+
+    detail = FakeFetcher(
+        ok(
+            ic_detail(
+                {
+                    "title": "Associate Claims Adjuster",
+                    "description": "<p>Adjust claims.</p>",
+                    "baseSalary": {
+                        "@type": "MonetaryAmount",
+                        "minValue": 50000,
+                        "maxValue": 78000,
+                        "currency": "USD",
+                    },
+                    "incentiveCompensation": "$57,000 - $71,000",
+                }
+            )
+        )
+    )
+    hydrated = await provider.hydrate(detail, IC_TOKEN, listed)
+
+    assert hydrated.salary_min == 50000
+    assert hydrated.salary_max == 78000
+    assert hydrated.salary_currency == "USD"
+    assert hydrated.salary_interval is None
+    # Prose, and a narrower range than baseSalary. Kept, not parsed into money.
+    assert hydrated.extra["incentive_compensation"] == "$57,000 - $71,000"
+
+
+async def test_icims_a_detail_page_with_no_json_ld_leaves_the_row_unhydrated() -> None:
+    """3 of 93 sampled job pages carried no structured data at all.
+
+    Leaving `jd_hydrated=False` keeps the row a candidate for a later pass.
+    Marking it hydrated with an empty body would record it as a job whose
+    employer wrote no description.
+    """
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), ok(IC_SITEMAP))
+    provider = ICIMSProvider()
+    listed = (await provider.fetch_board(fetcher, IC_TOKEN)).postings[0]
+
+    hydrated = await provider.hydrate(
+        FakeFetcher(ok("<!doctype html><html><body>no structured data</body></html>")),
+        IC_TOKEN,
+        listed,
+    )
+
+    assert hydrated.jd_hydrated is False
+    assert hydrated.posted_at_basis == "updated", "and the date stays an upper bound"
+
+
+async def test_icims_user_agent_must_still_look_like_a_crawler() -> None:
+    """Not a style rule. The User-Agent decides which page iCIMS serves.
+
+    Measured on careers-here job 81372: Chrome's UA, `curl/8.7.1`, `foo/1.0`
+    and no UA at all each return a 421,738-byte marketing wrapper containing
+    zero `application/ld+json`. `PoliteFetcher`'s `discovery-bot` UA returns
+    50,548 bytes carrying the JSON-LD. Tidying the UA into something that looks
+    like a browser would silently empty every iCIMS description in the index,
+    and cost 8x the bandwidth doing it.
+    """
+    assert any(token in USER_AGENT.lower() for token in ("bot", "crawler", "spider")), (
+        "iCIMS serves structured data only to a UA that identifies as a crawler"
+    )
+
+
+@pytest.mark.parametrize(
+    "token", ["careers-here.icims.com", "careers/../evil", "", "Careers Here", "-leading"]
+)
+async def test_icims_rejects_a_token_that_cannot_address_a_board(token: str) -> None:
+    """The token is interpolated into a hostname, and this provider stores
+    whatever that host returns as the named company's job postings. A token
+    carrying a dot or a slash builds a URL pointing somewhere else."""
+    result = await ICIMSProvider().fetch_board(FakeFetcher(), token)
+
+    assert result.status is BoardStatus.MISSING
+    assert result.requests_made == 0, "a bad token must not reach the network"
+
+
+async def test_icims_304_is_not_modified_and_not_usable() -> None:
+    """No iCIMS sitemap observed returned an ETag, so this path is unexercised
+    in the wild. It is still wired up and covered here, because the cost of the
+    conditional GET arriving later and being mishandled is deactivating a whole
+    board on every unchanged re-crawl."""
+    fetcher = FakeFetcher(ok(IC_ROBOTS_ALLOWED), not_modified())
+
+    result = await ICIMSProvider().fetch_board(fetcher, IC_TOKEN, 'W/"abc"')
+
+    assert result.status is BoardStatus.NOT_MODIFIED
+    assert result.usable is False
+    assert result.postings == []
+    # robots.txt is never conditional; only the sitemap carries the ETag back.
+    assert fetcher.etags == [None, 'W/"abc"']

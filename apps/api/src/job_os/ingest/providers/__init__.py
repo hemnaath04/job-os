@@ -16,6 +16,7 @@ from job_os.ingest.providers.base import (
     RawPosting,
 )
 from job_os.ingest.providers.greenhouse import GreenhouseProvider
+from job_os.ingest.providers.icims import ICIMSProvider
 from job_os.ingest.providers.lever import LeverProvider
 from job_os.ingest.providers.smartrecruiters import SmartRecruitersProvider
 from job_os.ingest.providers.workday import WorkdayProvider
@@ -26,6 +27,7 @@ PROVIDERS: dict[str, Provider] = {
     AshbyProvider.name: AshbyProvider(),
     SmartRecruitersProvider.name: SmartRecruitersProvider(),
     WorkdayProvider.name: WorkdayProvider(),
+    ICIMSProvider.name: ICIMSProvider(),
 }
 
 PROVIDER_NAMES = tuple(PROVIDERS)
@@ -49,9 +51,14 @@ __all__ = [
     "BoardResult",
     "BoardStatus",
     "GreenhouseProvider",
+    "ICIMSProvider",
     "LeverProvider",
     "Provider",
     "RawPosting",
     "SmartRecruitersProvider",
+    # Added here rather than left out with the other new provider: `workday`
+    # was registered in `PROVIDERS` but missed off this list, so it was the one
+    # provider `from ... import *` did not reach.
+    "WorkdayProvider",
     "get_provider",
 ]

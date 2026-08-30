@@ -9,14 +9,24 @@ crawl do not depend on a developer's home directory.
     ashby.txt             3,161 tokens
     smartrecruiters.txt       9 tokens
     workday.txt              13 tokens
+    icims.txt                31 tokens
     curated.json             85 companies, with real employer names and domains
 
-`workday.txt` is the exception to the sentence below: every one of its 13
-tokens answered 200 with jobs on 2026-08-30, because a Workday token is
+`workday.txt` and `icims.txt` are the exceptions to the sentence below: every
+token in both answered 200 with jobs on 2026-08-30. A Workday token is
 `tenant:datacenter:site` and there is nothing to guess it from -- a wrong
 site on a real tenant returns 404 and a wrong tenant returns 422, so an
 unverified Workday token is simply a dead row. 12 further candidates were
 tried and dropped for exactly that reason.
+
+An iCIMS token is a subdomain (`careers-here` from careers-here.icims.com) and
+is no more guessable: the prefix varies per tenant (`careers-`, `jobs-`,
+`uscareers-`, `staff-`, `clinical-`, `securitycareers-`, `us-`), so the 31 here
+came from search results and were then each fetched. Of 65 candidates probed,
+60 served a usable sitemap, 2 had opted out via `robots.txt: Disallow: /`, 1
+subdomain did not exist, 1 had migrated off iCIMS entirely, and 1 listed no job
+URLs. The 31 kept are a size-spread slice of the 60, from 31 job URLs
+(`jobs-getty`) to 8,804 (`securitycareers-aus`).
 
 **These are seeds, not a verified list.** A 200-token Greenhouse sample measured
 on this branch found 61.5% live, which matches the ~62% the research pass
