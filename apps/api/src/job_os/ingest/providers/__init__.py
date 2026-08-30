@@ -18,12 +18,14 @@ from job_os.ingest.providers.base import (
 from job_os.ingest.providers.greenhouse import GreenhouseProvider
 from job_os.ingest.providers.lever import LeverProvider
 from job_os.ingest.providers.smartrecruiters import SmartRecruitersProvider
+from job_os.ingest.providers.workday import WorkdayProvider
 
 PROVIDERS: dict[str, Provider] = {
     GreenhouseProvider.name: GreenhouseProvider(),
     LeverProvider.name: LeverProvider(),
     AshbyProvider.name: AshbyProvider(),
     SmartRecruitersProvider.name: SmartRecruitersProvider(),
+    WorkdayProvider.name: WorkdayProvider(),
 }
 
 PROVIDER_NAMES = tuple(PROVIDERS)

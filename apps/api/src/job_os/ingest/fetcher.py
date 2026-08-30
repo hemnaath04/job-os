@@ -152,6 +152,59 @@ class PoliteFetcher:
         used to attribute a saving to the 304 path, so the crawl can report how
         much bandwidth conditional GET actually avoided.
         """
+        return await self._request("GET", url, host=host, etag=etag, expect_bytes=expect_bytes)
+
+    async def post_json(
+        self,
+        url: str,
+        *,
+        host: str,
+        body: dict[str, Any],
+    ) -> FetchResponse:
+        """One POST with a JSON body, same retries and politeness as a GET.
+
+        Workday's job list is a POST. No conditional-GET arm: there is no ETag
+        on a POST response to send back, so the saving conditional GET buys on
+        the other providers is simply not available here.
+        """
+        return await self._request("POST", url, host=host, body=body)
+
+    async def get_text(
+        self,
+        url: str,
+        *,
+        host: str,
+        etag: str | None = None,
+        expect_bytes: int = 0,
+    ) -> FetchResponse:
+        """A conditional GET whose body is left as text.
+
+        For the boards whose list is XML (an iCIMS sitemap) or whose detail is
+        HTML carrying JSON-LD. `payload` is a `str` rather than parsed JSON, so
+        a caller has to know which method it asked for -- which it does.
+        """
+        return await self._request(
+            "GET", url, host=host, etag=etag, expect_bytes=expect_bytes, parse_json=False
+        )
+
+    async def _request(
+        self,
+        method: str,
+        url: str,
+        *,
+        host: str,
+        etag: str | None = None,
+        expect_bytes: int = 0,
+        body: dict[str, Any] | None = None,
+        parse_json: bool = True,
+    ) -> FetchResponse:
+        """The one retry/throttle/politeness ladder every fetch goes through.
+
+        Extracted rather than copied: the 429 handling, `Retry-After` cap,
+        jittered backoff, per-host gate and byte accounting are the parts that
+        make this crawler polite, and a second method that quietly lacked one
+        of them would be the kind of bug nobody notices until a vendor does.
+        """
         headers: dict[str, str] = {}
         if etag:
             headers["if-none-match"] = etag
@@ -167,14 +220,18 @@ class PoliteFetcher:
                 requests_made += 1
                 self.stats.requests += 1
                 try:
-                    response = await self._client.get(url, headers=headers)
+                    response = (
+                        await self._client.post(url, headers=headers, json=body)
+                        if method == "POST"
+                        else await self._client.get(url, headers=headers)
+                    )
                 except (TimeoutError, httpx.HTTPError) as exc:
                     last_error = f"{type(exc).__name__}: {exc}"
                     last_status = None
                 else:
                     last_status = response.status_code
-                    body = response.content
-                    self.stats.bytes_read += len(body)
+                    raw = response.content
+                    self.stats.bytes_read += len(raw)
 
                     if response.status_code == 304:
                         self.stats.not_modified += 1
@@ -183,39 +240,43 @@ class PoliteFetcher:
                             status_code=304,
                             payload=None,
                             etag=etag,
-                            bytes_read=len(body),
+                            bytes_read=len(raw),
                             requests_made=requests_made,
                             not_modified=True,
                         )
 
                     if response.status_code == 200:
-                        if len(body) > MAX_RESPONSE_BYTES:
+                        if len(raw) > MAX_RESPONSE_BYTES:
                             return FetchResponse(
                                 status_code=200,
                                 payload=None,
                                 etag=None,
-                                bytes_read=len(body),
+                                bytes_read=len(raw),
                                 requests_made=requests_made,
-                                error=f"payload {len(body)} bytes exceeds cap",
+                                error=f"payload {len(raw)} bytes exceeds cap",
                             )
-                        try:
-                            parsed = response.json()
-                        except ValueError as exc:
-                            # A board that answers 200 with HTML is a vendor
-                            # error page, not a board. Do not retry it.
-                            return FetchResponse(
-                                status_code=200,
-                                payload=None,
-                                etag=None,
-                                bytes_read=len(body),
-                                requests_made=requests_made,
-                                error=f"not json: {exc}",
-                            )
+                        parsed: Any
+                        if parse_json:
+                            try:
+                                parsed = response.json()
+                            except ValueError as exc:
+                                # A board that answers 200 with HTML is a vendor
+                                # error page, not a board. Do not retry it.
+                                return FetchResponse(
+                                    status_code=200,
+                                    payload=None,
+                                    etag=None,
+                                    bytes_read=len(response.content),
+                                    requests_made=requests_made,
+                                    error=f"not json: {exc}",
+                                )
+                        else:
+                            parsed = response.text
                         return FetchResponse(
                             status_code=200,
                             payload=parsed,
                             etag=response.headers.get("etag"),
-                            bytes_read=len(body),
+                            bytes_read=len(raw),
                             requests_made=requests_made,
                         )
 
@@ -231,7 +292,7 @@ class PoliteFetcher:
                             status_code=response.status_code,
                             payload=soft,
                             etag=None,
-                            bytes_read=len(body),
+                            bytes_read=len(raw),
                             requests_made=requests_made,
                         )
 
