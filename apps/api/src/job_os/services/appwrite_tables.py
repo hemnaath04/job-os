@@ -145,6 +145,52 @@ def _query_value(raw: str) -> Any:
     return value
 
 
+#: Appwrite stacks two independent caps on one `queries[]` entry, and a
+#: multi-value filter can breach either. Both measured against the live table
+#: on 2026-08-30 with 36-character ids:
+#:
+#:     100 ids  4,065 encoded chars  -> 200
+#:     101 ids  4,105 encoded chars  -> 400 "no longer than 100 items ..."
+#:     200 ids  8,065 encoded chars  -> 414 URI Too Long
+#:
+#: The item cap is the one that bites first on short ids and the character cap
+#: on long ones, so a chunker that honours only one of them is correct for
+#: exactly one provider mix. `ingest/upsert.py` had a character-only budget and
+#: carried a block of diagnostics for "a 400 this budget-based chunking should
+#: have prevented but, live, has not": at 8-character board ids its 3,500-char
+#: budget yields 437 items per chunk, four times over the item cap.
+MAX_QUERY_ITEMS = 100
+
+#: Under Appwrite's 4096 so the rest of the entry (method, attribute, quoting)
+#: cannot push a chunk over on its own.
+MAX_QUERY_CHARS = 3_500
+
+
+def chunk_values(values: list[str]) -> list[list[str]]:
+    """Split a filter's `values` array into chunks Appwrite will accept.
+
+    Honours BOTH caps, because which one binds depends on the data rather than
+    on the call site. A single value longer than the character budget still
+    gets its own chunk: splitting it would change what is being asked for, and
+    a query that is too long is better than a query that is wrong.
+    """
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    chars = 0
+    for value in values:
+        size = len(value) + 3  # the quotes and comma it costs once encoded
+        too_many = len(current) >= MAX_QUERY_ITEMS
+        too_long = current and chars + size > MAX_QUERY_CHARS
+        if too_many or too_long:
+            chunks.append(current)
+            current, chars = [], 0
+        current.append(value)
+        chars += size
+    if current:
+        chunks.append(current)
+    return chunks
+
+
 def _encoded_queries(queries: list[dict[str, Any]]) -> list[str]:
     """Queries as Appwrite wants them in a REQUEST BODY: JSON strings.
 

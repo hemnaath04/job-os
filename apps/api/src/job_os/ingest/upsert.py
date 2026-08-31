@@ -298,16 +298,20 @@ async def _lookup_chunk(chunk: list[str]) -> list[dict[str, object]]:
 
 
 async def _lookup_by_source_id(source_ids: list[str]) -> list[dict[str, object]]:
+    """Look the batch up, in chunks Appwrite will actually accept.
+
+    This used to bound the chunk by characters alone, which is right for the
+    scraper's URL-shaped ids and wrong for short board-native ones: at 8
+    characters apiece the 3,500-char budget yields 437 items in a chunk, over
+    four times Appwrite's separate 100-item cap. That is the "400 this
+    budget-based chunking should have prevented but, live, has not" the
+    diagnostics below were added for.
+
+    `chunk_values` honours both caps, and lives beside the constants it
+    enforces so the next caller does not have to rediscover them.
+    """
     existing: list[dict[str, object]] = []
-    chunk: list[str] = []
-    chunk_chars = 0
-    for source_id in source_ids:
-        if chunk and chunk_chars + len(source_id) > _LOOKUP_CHAR_BUDGET:
-            existing.extend(await _lookup_chunk(chunk))
-            chunk, chunk_chars = [], 0
-        chunk.append(source_id)
-        chunk_chars += len(source_id)
-    if chunk:
+    for chunk in appwrite_tables.chunk_values(source_ids):
         existing.extend(await _lookup_chunk(chunk))
     return existing
 
