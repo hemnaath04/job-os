@@ -1,15 +1,18 @@
-# Continuous ATS ingest. NOT ENABLED.
+# Continuous ATS ingest. ENABLED 2026-08-31, on a schedule, by the repo owner.
 #
-# This file ends in `.disabled` on purpose, so GitHub Actions does not pick it up.
 # Turning a crawler loose on other people's public APIs is a decision for a person,
-# not a side effect of merging a branch, and the numbers below should be read
-# before anyone makes it.
+# not a side effect of merging a branch. That decision has been made; the numbers
+# below are what it costs, and are worth re-reading before anyone widens it.
 #
-# TO ENABLE
-#   1. git mv .github/workflows/ingest.yml.disabled .github/workflows/ingest.yml
-#   2. Add a repository secret INGEST_DATABASE_URL pointing at the Postgres that
-#      serves /api/v1/index/search. It must already be migrated to head.
-#   3. Push. The first run seeds 15,874 tokens and crawls the 400 most valuable.
+# WHAT IS CRAWLED, and what is deliberately not
+#   The schedule crawls five providers. `bamboohr` is registered and seeded with
+#   4,992 tokens but is EXCLUDED on purpose, pending evidence that small-company
+#   boards earn their share of the table. `icims` (31 tokens) and
+#   `smartrecruiters` (9) are excluded too, by omission rather than by argument.
+#   The exclusion lives in the `--providers` default below, NOT in the registry,
+#   because a scheduled run carries no inputs: leaving that default empty means
+#   "every provider in PROVIDERS", so adding a vendor would silently enrol it in
+#   the schedule. Naming the five makes enrolment an edit rather than an accident.
 #
 # WHAT ONE RUN COSTS, measured on this branch at concurrency 8
 #   400 tokens is roughly 40 seconds of wall clock and 250MB of transfer on a cold
@@ -81,18 +84,19 @@ on:
   # anything per row, and the arithmetic above no longer applies to any step in
   # this workflow.
   #
-  # Left commented out anyway, because of the rule at the top of this file:
-  # turning a crawler loose on other people's public APIs is a decision for a
-  # person, not a side effect of merging a branch. Uncommenting the three lines
-  # below is the whole of it. Before doing so, read the storage section of
-  # `docs/ingest-index.md`: Postgres bills for what the crawl accumulates
-  # rather than for what search reads, so the resource to watch has moved from
-  # a monthly read quota to the size of the table.
+  # RESUMED 2026-08-31 once that was true, after a 25-token validation run
+  # (33447749790) wrote 38,457 rows green end to end.
   #
-  # schedule:
-  #   # Every six hours, offset off the hour because schedulers are busiest
-  #   # there. Matches the LIVE recheck interval in ingest/liveness.py.
-  #   - cron: "17 */6 * * *"
+  # The resource to watch has MOVED rather than gone away: Postgres bills for
+  # what the crawl accumulates, not for what search reads. Measured on those
+  # first 38,457 rows the table is 79 MB, about 2.1 KB a row at 7% hydration,
+  # so the 500 MB tier is roughly 240,000 rows away. Watch table size, not a
+  # read counter. See the storage section of `docs/ingest-index.md`.
+  #
+  schedule:
+    # Every six hours, offset off the hour because schedulers are busiest
+    # there. Matches the LIVE recheck interval in ingest/liveness.py.
+    - cron: "17 */6 * * *"
 
 # A sweep that overlaps itself would double the load on every vendor for no gain,
 # and the second one would find every token already claimed as not-yet-due.
@@ -121,6 +125,10 @@ jobs:
       # handing this job an Appwrite key would grant it access it has no use
       # for.
       DATABASE_URL: ${{ secrets.INGEST_DATABASE_URL }}
+      # What a run crawls when nothing tells it otherwise, which is every
+      # scheduled run. Excludes bamboohr, icims and smartrecruiters; see the
+      # header. A dispatch may still name any subset, including those.
+      SCHEDULED_PROVIDERS: "greenhouse lever ashby workday oracle_cloud"
     steps:
       - uses: actions/checkout@v4
 
@@ -154,7 +162,7 @@ jobs:
           uv run python -m job_os.ingest.cli sweep \
             --limit "${{ github.event.inputs.limit || 400 }}" \
             --concurrency 8 \
-            ${{ github.event.inputs.providers && format('--providers {0}', github.event.inputs.providers) || '' }}
+            --providers ${{ github.event.inputs.providers || env.SCHEDULED_PROVIDERS }}
 
       # Second pass, and separate on purpose. The list endpoints of five
       # vendors carry no job description, so those rows land with
@@ -182,7 +190,7 @@ jobs:
         run: |
           uv run python -m job_os.ingest.cli hydrate \
             --limit "${{ github.event.inputs.hydrate_limit || 200 }}" \
-            ${{ github.event.inputs.providers && format('--providers {0}', github.event.inputs.providers) || '' }}
+            --providers ${{ github.event.inputs.providers || env.SCHEDULED_PROVIDERS }}
 
       - name: Report index state
         if: always()
