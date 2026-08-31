@@ -11,9 +11,9 @@
 endpoint carries no description. It is a separate command, not a sweep stage,
 because it is an N+1 (one request per posting) and so has to be budgeted
 separately from the list crawl; `ingest/hydrate.py` explains the ordering and
-the limit. It touches Appwrite only, so it can be scheduled independently of
-`sweep` -- though running it shortly after one is what keeps its newest-first
-queue pointed at rows a search will actually reach.
+the limit. It can be scheduled independently of `sweep` -- though running it
+shortly after one is what keeps its newest-first queue pointed at rows a search
+will actually reach.
 
 `sweep` (this repo's own direct-to-ATS crawl) is still not scheduled anywhere -
 `docs/ingest-index.md` has the three lines of workflow YAML and says what to
@@ -21,9 +21,13 @@ weigh before turning it on. `import-scraper` is a different, lighter path: it
 pulls already-crawled postings from a personal standalone scraper (own infra,
 own schedule, covers BambooHR/Workday/iCIMS too) via SCRAPER_EXPORT_URL/KEY and
 writes them through the same upsert_postings/deactivate_missing this module's
-own sweep uses (which now write to Appwrite, not Postgres - see
-services/appwrite_tables.py) - no crawling here, so it's safe to schedule
-(e.g. Heroku Scheduler) independently of `sweep`.
+own sweep uses - no crawling here, so it's safe to schedule (e.g. Heroku
+Scheduler) independently of `sweep`.
+
+`sweep` and `seed` both default to `corpus.DEFAULT_CRAWL_PROVIDERS`, which is
+every provider except the held ones; `--providers bamboohr` still crawls a held
+one on demand. See `corpus.HELD_PROVIDERS` for why one is held and how to
+un-hold it.
 
 `sample` exists so liveness and throughput can be measured without writing to a
 database, which is how the numbers quoted in `liveness.py` were produced.
@@ -108,21 +112,19 @@ async def _cmd_sweep(args: argparse.Namespace) -> int:
 async def _cmd_hydrate(args: argparse.Namespace) -> int:
     """Fetch the descriptions the list endpoints did not carry.
 
-    No database session: this pass reads and writes `job_postings` in Appwrite
-    and never touches Postgres, so it does not open one. It records no
-    `crawl_runs` row for the same reason, and because a `crawl_run` means "a
-    board's list was read", which this never does.
+    It records no `crawl_runs` row, deliberately: a `crawl_run` means "a
+    board's list was read", which this pass never does.
     """
+    from job_os.db.session import async_session
     from job_os.ingest.hydrate import hydrate_descriptions
-    from job_os.services.appwrite_tables import AppwriteTablesError
 
-    try:
+    async with async_session() as session:
         result = await hydrate_descriptions(
-            providers=args.providers, limit=args.limit, concurrency=args.concurrency
+            session,
+            providers=args.providers,
+            limit=args.limit,
+            concurrency=args.concurrency,
         )
-    except AppwriteTablesError as exc:
-        _emit({"command": "hydrate", "error": str(exc)})
-        return 1
     _emit({"command": "hydrate", **result.as_dict()})
     # Unlike `sweep`, zero work is the success case here: it means every
     # posting a search can reach already has its body. Exiting nonzero on it
@@ -137,11 +139,12 @@ async def _cmd_status(args: argparse.Namespace) -> int:
     from job_os.ingest import liveness
     from job_os.services import job_index
 
-    # Exact here, unlike the HTTP endpoint: this runs in the scheduled
-    # sweep with no router timeout over it, and a status report whose
-    # numbers all read 5000 is the thing this command exists to avoid.
-    postings = await job_index.index_stats(exact=True)
     async with async_session() as session:
+        # Exact, and no longer a choice: every counter is a real COUNT(*)
+        # again. While this table lived in Appwrite the cheap count saturated
+        # at 5,000 on a 359,416-row table and the accurate one cost a billed
+        # read per row, so this command had to ask for the expensive one.
+        postings = await job_index.index_stats(session)
         tokens = await liveness.liveness_summary(session)
         last_run = await session.scalar(
             select(CrawlRun).order_by(CrawlRun.started_at.desc()).limit(1)
@@ -270,7 +273,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     import_scraper = sub.add_parser(
         "import-scraper",
-        help="pull from the standalone job-scraper's export and upsert into job_postings (Appwrite)",
+        help="pull from the standalone job-scraper's export and upsert into job_postings",
     )
     import_scraper.set_defaults(handler=_cmd_import_scraper)
 

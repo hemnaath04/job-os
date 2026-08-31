@@ -1,42 +1,36 @@
-"""The upsert contract, against an in-memory Appwrite.
+"""The upsert contract, against a real Postgres.
 
 `first_seen_at` is the load-bearing column of the whole honest-freshness story. If
 a re-crawl overwrites it, every "first seen 3 weeks ago, reposted 1 hour ago" claim
 becomes a lie and the product loses the differentiator it was built for. That is
 what most of this file is about.
 
-This file used to say "against a real Postgres" and be marked
-`requires_appwrite_key`, and both halves of that had stopped being true. The
-upsert path moved to Appwrite (`upsert_postings` opens with `del session`;
-nothing here touches Postgres), so every assertion that read a `JobPosting` row
-back out of the database was reading a table the code no longer writes -- twelve
-of the fourteen tests below failed outright the moment the skip was lifted. And
-the skip meant they only ever ran on a developer's machine, against the
-PRODUCTION `job_postings` table, leaving rows behind: 123 of them were still
-there when this was written.
+This file ran against an in-memory Appwrite fake between 2026-08-30 and
+2026-08-31, while `job_postings` lived in Appwrite. It is back on a real
+database because the contract is back to being a statement about what Postgres
+does: `ON CONFLICT DO UPDATE`, the generated `posted_at_estimated` column, the
+`xmax = 0` inserted-versus-updated test, the `case(..., else_=old)` that a
+`coalesce` would get wrong, and the `was_inactive` CTE the reactivation counter
+reads. A fake of all that would be a test of the fake.
 
-So the assertions now read the row back from `fake_appwrite`, which is the same
-row Appwrite would have served. Nothing about what they assert has been
-loosened; the storage they assert against is the one the code actually writes.
-No Postgres, no credentials, no network. See `tests/_fake_appwrite.py`.
+The tests skip cleanly without a database (see `db_session` in `conftest.py`)
+and every one runs inside a transaction that is rolled back, so pointing them
+at a database with real data in it leaves nothing behind. That mattered: an
+earlier arrangement pointed this file at the PRODUCTION table and left 123 rows
+with a `source` beginning `rank_` in it.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from _fake_appwrite import FakeAppwriteTables
+from job_os.db.models.job_posting import JobPosting
 from job_os.ingest.providers import RawPosting
 from job_os.ingest.upsert import deactivate_missing, mark_duplicates, upsert_postings
-
-#: `upsert_postings`, `deactivate_missing` and `mark_duplicates` all take a
-#: session and immediately `del` it -- the parameter survives only so their
-#: callers did not need a signature change. Named here rather than passing a
-#: bare `None` at fourteen call sites and leaving the reason to be guessed.
-NO_SESSION: Any = None
 
 
 def make_posting(
@@ -66,21 +60,19 @@ def make_posting(
     )
 
 
-def fetch(appwrite: FakeAppwriteTables, source: str, source_id: str) -> dict[str, Any]:
-    """The one stored row for this posting, as Appwrite would serve it.
-
-    `find` insists on exactly one match. That is not pedantry: most of this file
-    is about a re-crawl updating a row rather than writing a second one, and an
-    assertion that silently read the first of two would pass through precisely
-    the failure it exists to catch.
-    """
-    return appwrite.find(source=source, source_id=source_id)
-
-
-def when(row: dict[str, Any], column: str) -> datetime | None:
-    """A datetime column, parsed. Appwrite serves these as ISO 8601 text."""
-    raw = row.get(column)
-    return None if raw is None else datetime.fromisoformat(str(raw))
+async def fetch(session: AsyncSession, source: str, source_id: str) -> JobPosting:
+    # The upsert runs as a Core statement, so the ORM identity map does not learn
+    # that the row changed and a plain re-read hands back the stale Python object,
+    # making the assertions test nothing. `populate_existing` overwrites this row's
+    # attributes from the database. `expire_all()` would also work but expires
+    # every other loaded object too, and touching one of those afterwards triggers
+    # a lazy refresh outside the async context.
+    row = await session.execute(
+        select(JobPosting)
+        .where(JobPosting.source == source, JobPosting.source_id == source_id)
+        .execution_options(populate_existing=True)
+    )
+    return row.scalar_one()
 
 
 @pytest.fixture
@@ -90,75 +82,78 @@ def source() -> str:
 
 
 @pytest.fixture
-def crawl_run() -> uuid.UUID:
-    """A crawl run id.
+async def crawl_run(db_session: AsyncSession) -> uuid.UUID:
+    """A real crawl_runs row.
 
-    This was a real `crawl_runs` row, because `job_postings.last_crawl_run_id`
-    was a foreign key and the deactivation rule is only sound when the run it
-    names actually happened. Appwrite has no foreign keys and the column is a
-    plain 36-character string (see `bootstrap_appwrite_job_postings.py`), so
-    the referential half of that guarantee no longer exists to be tested here.
-    Manufacturing a Postgres row to obtain a UUID would only have re-introduced
-    a database dependency these tests no longer have.
+    `job_postings.last_crawl_run_id` is a foreign key, which is deliberate: the
+    deactivation rule is only sound when the run it names actually happened.
     """
-    return uuid.uuid4()
+    from job_os.db.models.ingest import CrawlRun
+
+    run = CrawlRun(status="running", providers=["test"])
+    db_session.add(run)
+    await db_session.flush()
+    return run.id
 
 
 @pytest.fixture
-def other_run() -> uuid.UUID:
-    return uuid.uuid4()
+async def other_run(db_session: AsyncSession) -> uuid.UUID:
+    from job_os.db.models.ingest import CrawlRun
+
+    run = CrawlRun(status="running", providers=["test"])
+    db_session.add(run)
+    await db_session.flush()
+    return run.id
 
 
 async def test_same_job_twice_preserves_first_seen_and_bumps_last_seen(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     posting = make_posting(source=source, token="acme")
     first_run = datetime(2026, 7, 1, 12, 0, tzinfo=UTC)
     second_run = datetime(2026, 8, 1, 12, 0, tzinfo=UTC)
 
-    stats = await upsert_postings(NO_SESSION, [posting], seen_at=first_run)
+    stats = await upsert_postings(db_session, [posting], seen_at=first_run)
     assert stats.inserted == 1
 
-    stats = await upsert_postings(NO_SESSION, [posting], seen_at=second_run)
+    stats = await upsert_postings(db_session, [posting], seen_at=second_run)
     assert stats.inserted == 0
     # Identical content, so this is a re-sighting rather than an edit.
     assert stats.unchanged == 1
     assert stats.updated == 0
 
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert when(row, "first_seen_at") == first_run, "a re-crawl must never re-date a posting"
-    assert when(row, "last_seen_at") == second_run
+    row = await fetch(db_session, source, "acme:1")
+    assert row.first_seen_at == first_run, "a re-crawl must never re-date a posting"
+    assert row.last_seen_at == second_run
 
 
 async def test_repeated_upserts_never_duplicate_the_row(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     posting = make_posting(source=source, token="acme")
     for day in range(1, 6):
         await upsert_postings(
-            NO_SESSION, [posting], seen_at=datetime(2026, 8, day, tzinfo=UTC)
+            db_session, [posting], seen_at=datetime(2026, 8, day, tzinfo=UTC)
         )
 
-    all_rows = [row for row in fake_appwrite.all_rows() if row["source"] == source]
+    rows = await db_session.execute(
+        select(JobPosting).where(JobPosting.source == source)
+    )
+    all_rows = list(rows.scalars().all())
     assert len(all_rows) == 1
-    assert when(all_rows[0], "first_seen_at") == datetime(2026, 8, 1, tzinfo=UTC)
-    assert when(all_rows[0], "last_seen_at") == datetime(2026, 8, 5, tzinfo=UTC)
+    assert all_rows[0].first_seen_at == datetime(2026, 8, 1, tzinfo=UTC)
+    assert all_rows[0].last_seen_at == datetime(2026, 8, 5, tzinfo=UTC)
 
 
 async def test_edited_posting_updates_values_but_keeps_first_seen(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     first_run = datetime(2026, 7, 1, tzinfo=UTC)
     await upsert_postings(
-        NO_SESSION, [make_posting(source=source, token="acme")], seen_at=first_run
+        db_session, [make_posting(source=source, token="acme")], seen_at=first_run
     )
-    before = fetch(fake_appwrite, source, "acme:1")
-    # Postgres called this `updated_at`. The Appwrite table's own `$updatedAt`
-    # moves on every write including a pure re-sighting, so the column that
-    # carries the old meaning -- "the employer changed it" -- is
-    # `content_updated_at`, which `_write_batch` only re-sends when the content
-    # hash moved. That is the one asserted on here and in the test below.
-    original_updated_at = before["content_updated_at"]
+    before = await fetch(db_session, source, "acme:1")
+    original_updated_at = before.updated_at
 
     edited = make_posting(
         source=source,
@@ -167,60 +162,59 @@ async def test_edited_posting_updates_values_but_keeps_first_seen(
         description="Now with more responsibility and a different scope entirely.",
     )
     second_run = datetime(2026, 8, 1, tzinfo=UTC)
-    stats = await upsert_postings(NO_SESSION, [edited], seen_at=second_run)
+    stats = await upsert_postings(db_session, [edited], seen_at=second_run)
     assert stats.updated == 1
     assert stats.unchanged == 0
 
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert row["title"] == "Senior Software Engineer"
-    assert when(row, "first_seen_at") == first_run
-    assert when(row, "last_seen_at") == second_run
-    assert row["content_updated_at"] != original_updated_at
+    row = await fetch(db_session, source, "acme:1")
+    assert row.title == "Senior Software Engineer"
+    assert row.first_seen_at == first_run
+    assert row.last_seen_at == second_run
+    assert row.updated_at != original_updated_at
 
 
 async def test_unchanged_recrawl_does_not_move_updated_at(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    """`content_updated_at` must mean "the employer changed it", not "a crawler ran"."""
+    """`updated_at` must mean "the employer changed it", not "a crawler ran"."""
     posting = make_posting(source=source, token="acme")
-    await upsert_postings(NO_SESSION, [posting], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
-    original = fetch(fake_appwrite, source, "acme:1")["content_updated_at"]
+    await upsert_postings(db_session, [posting], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
+    original = (await fetch(db_session, source, "acme:1")).updated_at
 
-    await upsert_postings(NO_SESSION, [posting], seen_at=datetime(2026, 8, 1, tzinfo=UTC))
-    assert fetch(fake_appwrite, source, "acme:1")["content_updated_at"] == original
+    await upsert_postings(db_session, [posting], seen_at=datetime(2026, 8, 1, tzinfo=UTC))
+    assert (await fetch(db_session, source, "acme:1")).updated_at == original
 
 
 async def test_field_cleared_on_the_board_is_cleared_in_the_index(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """A withdrawn salary band must not survive as a stale value.
 
     This is the case a `coalesce(new, old)` upsert gets wrong: coalesce keeps the
     old value whenever the new one is NULL, so the index would keep advertising a
-    salary the employer has taken down. On Appwrite the same mistake would be
-    dropping the null from the update payload instead of sending it.
+    salary the employer has taken down.
     """
     with_salary = make_posting(source=source, token="acme")
     with_salary.salary_min = 150_000
     with_salary.salary_max = 200_000
     with_salary.salary_currency = "USD"
-    await upsert_postings(NO_SESSION, [with_salary], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
-    assert fetch(fake_appwrite, source, "acme:1")["salary_min"] == 150_000
+    await upsert_postings(db_session, [with_salary], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
+    assert (await fetch(db_session, source, "acme:1")).salary_min == 150_000
 
     without_salary = make_posting(
         source=source, token="acme", description="Body changed so the hash changes too."
     )
     await upsert_postings(
-        NO_SESSION, [without_salary], seen_at=datetime(2026, 8, 1, tzinfo=UTC)
+        db_session, [without_salary], seen_at=datetime(2026, 8, 1, tzinfo=UTC)
     )
 
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert row["salary_min"] is None
-    assert row["salary_max"] is None
+    row = await fetch(db_session, source, "acme:1")
+    assert row.salary_min is None
+    assert row.salary_max is None
 
 
 async def test_deactivate_only_touches_boards_this_run_read(
-    fake_appwrite: FakeAppwriteTables, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
+    db_session: AsyncSession, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
 ) -> None:
     run_one = crawl_run
     run_two = other_run
@@ -230,119 +224,156 @@ async def test_deactivate_only_touches_boards_this_run_read(
         make_posting(source=source, token="other", external_id="9", title="Designer"),
     ]
     await upsert_postings(
-        NO_SESSION, postings, run_id=run_one, seen_at=datetime(2026, 7, 1, tzinfo=UTC)
+        db_session, postings, run_id=run_one, seen_at=datetime(2026, 7, 1, tzinfo=UTC)
     )
 
     # Second crawl: acme now lists only posting 1. `other` was not fetched at all.
     await upsert_postings(
-        NO_SESSION,
+        db_session,
         [make_posting(source=source, token="acme", external_id="1")],
         run_id=run_two,
         seen_at=datetime(2026, 8, 1, tzinfo=UTC),
     )
     deactivated = await deactivate_missing(
-        NO_SESSION, source=source, board_token="acme", run_id=run_two
+        db_session, source=source, board_token="acme", run_id=run_two
     )
     assert deactivated == 1
 
-    still_listed = fetch(fake_appwrite, source, "acme:1")
-    dropped = fetch(fake_appwrite, source, "acme:2")
-    untouched_board = fetch(fake_appwrite, source, "other:9")
+    still_listed = await fetch(db_session, source, "acme:1")
+    dropped = await fetch(db_session, source, "acme:2")
+    untouched_board = await fetch(db_session, source, "other:9")
 
-    assert still_listed["active"] is True
-    assert dropped["active"] is False
-    assert dropped["inactive_since"] is not None
+    assert still_listed.active is True
+    assert dropped.active is False
+    assert dropped.inactive_since is not None
     # The board we never fetched must be left alone. Deactivating it would close a
     # company's whole board because of a request that did not happen.
-    assert untouched_board["active"] is True
+    assert untouched_board.active is True
 
 
 async def test_deactivation_never_deletes(
-    fake_appwrite: FakeAppwriteTables, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
+    db_session: AsyncSession, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
 ) -> None:
     await upsert_postings(
-        NO_SESSION,
+        db_session,
         [make_posting(source=source, token="acme", external_id="1")],
         run_id=crawl_run,
         seen_at=datetime(2026, 7, 1, tzinfo=UTC),
     )
     await deactivate_missing(
-        NO_SESSION, source=source, board_token="acme", run_id=other_run
+        db_session, source=source, board_token="acme", run_id=other_run
     )
 
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert row["active"] is False
+    row = await fetch(db_session, source, "acme:1")
+    assert row.active is False
     # The history survives, so a closure can be shown honestly and a later repost
     # can still be recognised as the same posting.
-    assert when(row, "first_seen_at") == datetime(2026, 7, 1, tzinfo=UTC)
-
-
-async def test_a_row_no_crawl_ever_stamped_is_left_alone(
-    fake_appwrite: FakeAppwriteTables, source: str, crawl_run: uuid.UUID
-) -> None:
-    """`last_crawl_run_id!=<run>` does not reach a row where that column is NULL.
-
-    SQL three-valued logic: `col != 'x'` is NULL, not true, when col is NULL, so
-    the row is not returned and not deactivated. Every posting the sweep writes
-    carries a run id (`ingest/worker.py` always passes one, and `to_row` always
-    stamps it), so this is out-of-contract rather than a live path -- but the
-    rows migrated in from Postgres are a real population that could carry a
-    null here, and "the sweep silently never closes them" is the shape that
-    would produce. Pinned so the behaviour is a decision rather than a
-    discovery.
-
-    UNVERIFIED against the live service: this is what MariaDB does with the
-    comparison Appwrite's adapter emits, modelled in `tests/_fake_appwrite.py`,
-    not something measured against the real table.
-    """
-    await upsert_postings(
-        NO_SESSION,
-        [make_posting(source=source, token="acme", external_id="1")],
-        seen_at=datetime(2026, 7, 1, tzinfo=UTC),
-    )
-    assert fetch(fake_appwrite, source, "acme:1")["last_crawl_run_id"] is None
-
-    deactivated = await deactivate_missing(
-        NO_SESSION, source=source, board_token="acme", run_id=crawl_run
-    )
-
-    assert deactivated == 0
-    assert fetch(fake_appwrite, source, "acme:1")["active"] is True
+    assert row.first_seen_at == datetime(2026, 7, 1, tzinfo=UTC)
 
 
 async def test_repost_reactivates_and_counts_without_resetting_history(
-    fake_appwrite: FakeAppwriteTables, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
+    db_session: AsyncSession, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
 ) -> None:
     posting = make_posting(source=source, token="acme")
     first_seen = datetime(2026, 6, 1, tzinfo=UTC)
-    await upsert_postings(NO_SESSION, [posting], run_id=crawl_run, seen_at=first_seen)
+    await upsert_postings(db_session, [posting], run_id=crawl_run, seen_at=first_seen)
     await deactivate_missing(
-        NO_SESSION, source=source, board_token="acme", run_id=other_run
+        db_session, source=source, board_token="acme", run_id=other_run
     )
-    assert fetch(fake_appwrite, source, "acme:1")["active"] is False
+    assert (await fetch(db_session, source, "acme:1")).active is False
 
     reposted_at = datetime(2026, 8, 1, tzinfo=UTC)
-    await upsert_postings(NO_SESSION, [posting], run_id=other_run, seen_at=reposted_at)
+    await upsert_postings(db_session, [posting], run_id=other_run, seen_at=reposted_at)
 
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert row["active"] is True
-    assert row["inactive_since"] is None
-    assert row["repost_count"] == 1
+    row = await fetch(db_session, source, "acme:1")
+    assert row.active is True
+    assert row.inactive_since is None
+    assert row.repost_count == 1
     # The whole point: a reposted role does not get to look brand new.
-    assert when(row, "first_seen_at") == first_seen
-    assert when(row, "last_seen_at") == reposted_at
+    assert row.first_seen_at == first_seen
+    assert row.last_seen_at == reposted_at
+
+
+async def test_the_reactivation_counter_reports_what_the_row_recorded(
+    db_session: AsyncSession, source: str, crawl_run: uuid.UUID, other_run: uuid.UUID
+) -> None:
+    """`UpsertStats.reactivated` and `repost_count` must agree.
+
+    They are computed differently and could drift. `repost_count` is a SQL
+    `case` inside the upsert's SET clause; the counter is read from a
+    `was_inactive` CTE that snapshots which rows were down BEFORE the same
+    statement brought them back, because RETURNING only ever sees the row after
+    the update and PostgreSQL has no `RETURNING OLD` before 18.
+
+    Two postings, one of which was never deactivated, so a counter that simply
+    counted updated rows would say 2.
+    """
+    live = make_posting(source=source, token="acme", external_id="1")
+    dropped = make_posting(source=source, token="other", external_id="2", title="Designer")
+    await upsert_postings(
+        db_session, [live, dropped], run_id=crawl_run, seen_at=datetime(2026, 6, 1, tzinfo=UTC)
+    )
+    await deactivate_missing(
+        db_session, source=source, board_token="other", run_id=other_run
+    )
+
+    stats = await upsert_postings(
+        db_session,
+        [live, dropped],
+        run_id=other_run,
+        seen_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert stats.reactivated == 1
+    assert stats.unchanged == 2, "coming back is not an edit"
+    assert (await fetch(db_session, source, "acme:1")).repost_count == 0
+    assert (await fetch(db_session, source, "other:2")).repost_count == 1
+
+
+async def test_an_insert_is_never_counted_as_a_reactivation(
+    db_session: AsyncSession, source: str
+) -> None:
+    """A row that did not exist cannot have come back.
+
+    The `was_inactive` CTE matches on `(source, source_id)`, so a brand new
+    posting has nothing to match and the counter has to stay at zero. Getting
+    this wrong would make every first crawl of a board look like a mass repost.
+    """
+    stats = await upsert_postings(
+        db_session,
+        [make_posting(source=source, token="acme", external_id="1")],
+        seen_at=datetime(2026, 8, 1, tzinfo=UTC),
+    )
+
+    assert stats.inserted == 1
+    assert stats.reactivated == 0
+
+
+async def test_a_long_external_id_survives_the_write(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The standalone scraper files a full posting URL as `external_id`.
+
+    Appwrite's 255-character column made `to_row` truncate it, which lost the
+    value `ingest/hydrate.py` rebuilds a detail request from. Postgres has no
+    such cap on this column, so the whole thing is stored. `source_id` is still
+    bounded and hashed above `_SOURCE_ID_MAX` (see `providers/base.py`), for
+    the separate reason that it is half of a btree unique index.
+    """
+    long_id = "https://example.test/careers/" + "segment-" * 40
+    assert len(long_id) > 255
+    posting = make_posting(source=source, token="acme", external_id=long_id)
+    await upsert_postings(db_session, [posting], seen_at=datetime(2026, 8, 1, tzinfo=UTC))
+
+    row = await fetch(db_session, source, posting.source_id)
+    assert row.external_id == long_id
+    assert len(row.source_id) <= 255
 
 
 async def test_posted_at_estimated_is_derived_from_basis(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    """The flag can never disagree with the basis it came from.
-
-    It was a generated column in Postgres, which made that free. Appwrite has no
-    generated columns, so `to_row` computes it at write time instead -- the same
-    guarantee, now resting on one line of Python rather than on the database,
-    which is exactly why it is worth a test.
-    """
+    """The flag is a generated column, so it can never disagree with the basis."""
     published = make_posting(
         source=source, token="acme", external_id="1", basis="published"
     )
@@ -352,80 +383,49 @@ async def test_posted_at_estimated_is_derived_from_basis(
     never_dated = make_posting(
         source=source, token="acme", external_id="3", basis="first_crawl", title="Chef"
     )
-    await upsert_postings(NO_SESSION, [published, from_updated, never_dated])
+    await upsert_postings(db_session, [published, from_updated, never_dated])
 
-    assert fetch(fake_appwrite, source, "acme:1")["posted_at_estimated"] is False
-    assert fetch(fake_appwrite, source, "acme:2")["posted_at_estimated"] is True
-    assert fetch(fake_appwrite, source, "acme:3")["posted_at_estimated"] is True
+    assert (await fetch(db_session, source, "acme:1")).posted_at_estimated is False
+    assert (await fetch(db_session, source, "acme:2")).posted_at_estimated is True
+    assert (await fetch(db_session, source, "acme:3")).posted_at_estimated is True
 
 
 async def test_duplicate_ids_in_one_batch_are_skipped_not_fatal(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    """A board listing one posting id twice must not take the whole batch down.
-
-    The fake enforces `uq_source_pair`, the real UNIQUE index on
-    (source, source_id), so a regression here is a 409 rather than a quietly
-    doubled table.
-    """
+    """A board listing one posting id twice must not take the whole batch down."""
     posting = make_posting(source=source, token="acme")
-    stats = await upsert_postings(NO_SESSION, [posting, posting])
+    stats = await upsert_postings(db_session, [posting, posting])
     assert stats.inserted == 1
     assert stats.skipped == 1
-    assert len(fake_appwrite.all_rows()) == 1
 
 
 async def test_marked_duplicate_keeps_its_row(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     a = make_posting(source=source, token="acme", external_id="1")
     b = make_posting(
         source=source, token="acme", external_id="2", location="New York, NY"
     )
-    await upsert_postings(NO_SESSION, [a, b])
-    # `mark_duplicates` keys on `source_posting_id`, the stable non-Appwrite
-    # identity `to_row` mints, not on Appwrite's own `$id`.
-    canonical = uuid.UUID(fetch(fake_appwrite, source, "acme:1")["source_posting_id"])
-    duplicate = uuid.UUID(fetch(fake_appwrite, source, "acme:2")["source_posting_id"])
+    await upsert_postings(db_session, [a, b])
+    canonical = await fetch(db_session, source, "acme:1")
+    duplicate = await fetch(db_session, source, "acme:2")
 
-    marked = await mark_duplicates(NO_SESSION, [(duplicate, canonical, "exact_key", None)])
+    marked = await mark_duplicates(
+        db_session, [(duplicate.id, canonical.id, "exact_key", None)]
+    )
     assert marked == 1
 
-    refreshed = fetch(fake_appwrite, source, "acme:2")
-    assert refreshed["canonical_id"] == str(canonical)
-    assert refreshed["duplicate_reason"] == "exact_key"
+    refreshed = await fetch(db_session, source, "acme:2")
+    assert refreshed.canonical_id == canonical.id
+    assert refreshed.duplicate_reason == "exact_key"
     # Marked, not deleted: the duplicate's own URL still resolves and a wrong
     # merge stays reversible.
-    assert refreshed["source_url"]
-
-
-async def test_a_second_merge_cannot_repoint_an_already_merged_row(
-    fake_appwrite: FakeAppwriteTables, source: str
-) -> None:
-    """The `isNull(canonical_id)` guard, which is why `mark_duplicates` needs
-    `queries` at all -- a plain `attribute=value` filter string cannot express
-    a null check, and `canonical_id=null` becoming `equal` with a null value is
-    rejected by Appwrite outright."""
-    await upsert_postings(
-        NO_SESSION,
-        [
-            make_posting(source=source, token="acme", external_id="1"),
-            make_posting(source=source, token="acme", external_id="2", location="NY"),
-            make_posting(source=source, token="acme", external_id="3", location="LA"),
-        ],
-    )
-    first = uuid.UUID(fetch(fake_appwrite, source, "acme:1")["source_posting_id"])
-    second = uuid.UUID(fetch(fake_appwrite, source, "acme:3")["source_posting_id"])
-    duplicate = uuid.UUID(fetch(fake_appwrite, source, "acme:2")["source_posting_id"])
-
-    assert await mark_duplicates(NO_SESSION, [(duplicate, first, "exact_key", None)]) == 1
-    assert await mark_duplicates(NO_SESSION, [(duplicate, second, "exact_key", None)]) == 0
-
-    assert fetch(fake_appwrite, source, "acme:2")["canonical_id"] == str(first)
+    assert refreshed.source_url
 
 
 async def test_content_hash_ignores_a_trailing_boilerplate_edit(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """Only the first HASH_DESCRIPTION_CHARS of the description feed the hash.
 
@@ -438,48 +438,42 @@ async def test_content_hash_ignores_a_trailing_boilerplate_edit(
     body = "Real role content. " * 400
     assert len(body) > HASH_DESCRIPTION_CHARS
     original = make_posting(source=source, token="acme", description=body + "Footer v1.")
-    await upsert_postings(NO_SESSION, [original], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
+    await upsert_postings(db_session, [original], seen_at=datetime(2026, 7, 1, tzinfo=UTC))
 
     tail_edited = make_posting(
         source=source, token="acme", description=body + "Footer v2, legal text changed."
     )
     stats = await upsert_postings(
-        NO_SESSION, [tail_edited], seen_at=datetime(2026, 8, 1, tzinfo=UTC)
+        db_session, [tail_edited], seen_at=datetime(2026, 8, 1, tzinfo=UTC)
     )
     assert stats.unchanged == 1
     assert stats.updated == 0
 
 
-async def test_upsert_is_scoped_per_source(fake_appwrite: FakeAppwriteTables) -> None:
-    """Two providers can use the same board token without colliding.
-
-    Worth more here than it was on Postgres: the lookup that decides
-    insert-versus-update queries `source_id` alone and only then keys the result
-    by `(source, source_id)`. A version that keyed on `source_id` alone would
-    turn these two postings into one row, and `uq_source_pair` would not stop it.
-    """
+async def test_upsert_is_scoped_per_source(db_session: AsyncSession) -> None:
+    """Two providers can use the same board token without colliding."""
     left = f"test_{uuid.uuid4().hex[:12]}"
     right = f"test_{uuid.uuid4().hex[:12]}"
     await upsert_postings(
-        NO_SESSION,
+        db_session,
         [
             make_posting(source=left, token="acme", external_id="1"),
             make_posting(source=right, token="acme", external_id="1"),
         ],
     )
-    assert fetch(fake_appwrite, left, "acme:1")["source"] == left
-    assert fetch(fake_appwrite, right, "acme:1")["source"] == right
+    assert (await fetch(db_session, left, "acme:1")).source == left
+    assert (await fetch(db_session, right, "acme:1")).source == right
 
 
 async def test_last_seen_moves_forward_across_many_crawls(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     posting = make_posting(source=source, token="acme")
     base = datetime(2026, 8, 1, tzinfo=UTC)
     for hours in (0, 6, 12, 18):
         await upsert_postings(
-            NO_SESSION, [posting], seen_at=base + timedelta(hours=hours)
+            db_session, [posting], seen_at=base + timedelta(hours=hours)
         )
-    row = fetch(fake_appwrite, source, "acme:1")
-    assert when(row, "first_seen_at") == base
-    assert when(row, "last_seen_at") == base + timedelta(hours=18)
+    row = await fetch(db_session, source, "acme:1")
+    assert row.first_seen_at == base
+    assert row.last_seen_at == base + timedelta(hours=18)

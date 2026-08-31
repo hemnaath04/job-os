@@ -12,7 +12,7 @@ recorded values, which keeps the schedule itself covered.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from urllib.parse import urlsplit
 
 import pytest
@@ -21,34 +21,26 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from _fake_appwrite import FakeAppwriteTables  # noqa: E402
 from job_os.services import appwrite_tables, llm_json  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Appwrite
 # ---------------------------------------------------------------------------
-# `requires_appwrite_key` used to live here: a collection-time skipif on
-# `get_settings().appwrite_api_key` that guarded the ingest-upsert and
-# job-index-ranking suites. Its stated reason was that faking the one thing
-# under test defeats the point, the same argument `db_session` makes for
-# wanting a real Postgres. The argument did not survive contact with what it
-# actually produced:
+# Two things used to live here and no longer do, in this order:
 #
-#   * CI sets no Appwrite key, so all 35 of those tests skipped on every run.
-#     The last run before this change reported 1992 passed, 115 skipped.
-#   * Locally, with a key set, they wrote to the PRODUCTION `job_postings`
-#     table and never cleaned up. 123 rows with a `source` beginning `rank_`
-#     were still sitting in the live table, left by earlier runs.
-#   * And 18 of them failed anyway, because the assertions still read Postgres
-#     rows for code that had moved to Appwrite.
+#   * `requires_appwrite_key`, a collection-time skipif that guarded the
+#     ingest-upsert and job-index-ranking suites. It skipped all 35 of them in
+#     CI (no key there) and, locally with a key, ran them against the
+#     PRODUCTION `job_postings` table without cleaning up. 123 rows with a
+#     `source` beginning `rank_` were still sitting in the live table.
+#   * `fake_appwrite`, an in-memory TablesDB that replaced it so those suites
+#     could run anywhere. It went when `job_postings` went back to Postgres:
+#     both suites test what Postgres does, and they use `db_session` now.
 #
-# So the coverage over `upsert_postings`, `deactivate_missing` and
-# `search_index` was dead in both directions, which is how three production
-# bugs shipped through that exact path in one day.
-#
-# `fake_appwrite` below replaces it. See `tests/_fake_appwrite.py` for what the
-# fake models faithfully, what it deliberately does not, and why the seam is
-# `appwrite_tables._request` rather than the five public functions.
+# `no_real_appwrite` below stays, and matters more than either. The
+# application-card sync still writes to a real multi-tenant Appwrite table
+# with an admin key that bypasses row permissions, so a test that quietly
+# starts talking to it has to fail loudly rather than leave rows behind.
 
 #: Hostnames a test is allowed to build an Appwrite URL for. An allow-list
 #: rather than a block-list of the production endpoint: a self-hosted or
@@ -70,9 +62,9 @@ def no_real_appwrite(monkeypatch: pytest.MonkeyPatch) -> None:
     against its own fake httpx client -- that host is allowed and those tests
     are unaffected.
 
-    This is the guard requirement 3 asks for: a future test that quietly starts
-    talking to the live table fails here with a message naming the host, rather
-    than leaving rows behind in production for somebody to find later.
+    A future test that quietly starts talking to the live project fails here
+    with a message naming the host, rather than leaving rows behind in
+    production for somebody to find later.
     """
     real_base_url = appwrite_tables._base_url
 
@@ -82,26 +74,13 @@ def no_real_appwrite(monkeypatch: pytest.MonkeyPatch) -> None:
         allowed = host in _ALLOWED_APPWRITE_HOSTS or host.endswith(_ALLOWED_APPWRITE_SUFFIXES)
         if not allowed:
             raise RuntimeError(
-                f"a test tried to reach a real Appwrite at {host!r}. Tests must use the "
-                "`fake_appwrite` fixture (tests/_fake_appwrite.py). Earlier runs of the "
-                "job_postings suites against the live table left 123 rows behind."
+                f"a test tried to reach a real Appwrite at {host!r}. Mock the call, or "
+                "point `get_settings().appwrite_endpoint` at a test host. Earlier runs "
+                "of the job_postings suites against the live table left 123 rows behind."
             )
         return url, headers
 
     monkeypatch.setattr(appwrite_tables, "_base_url", guarded)
-
-
-@pytest.fixture
-def fake_appwrite(monkeypatch: pytest.MonkeyPatch) -> Iterator[FakeAppwriteTables]:
-    """An in-memory `job_postings` table, under `appwrite_tables._request`.
-
-    Everything above that seam is the real thing: filter parsing, both query
-    transports, batching, and the public functions the code under test calls.
-    Nothing below it runs, and nothing leaves the process.
-    """
-    fake = FakeAppwriteTables()
-    fake.install(monkeypatch)
-    yield fake
 
 
 @pytest.fixture(autouse=True)

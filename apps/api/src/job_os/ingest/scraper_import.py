@@ -8,11 +8,10 @@ BambooHR/Workday/iCIMS nightly on its own schedule and exposes a paginated,
 shared-secret-gated export at GET {SCRAPER_EXPORT_URL}/export/jobs. This
 module is the pull side: no crawling happens here, only normalize + upsert.
 
-`upsert_postings`/`deactivate_missing` now write to Appwrite internally (see
-`services/appwrite_tables.py`) rather than Postgres, but kept the exact same
-signatures - this module's calls to them are unchanged from before that move.
-`CrawlRun` bookkeeping is still Postgres (only `job_postings` itself moved),
-so this still needs a real `AsyncSession` for that part.
+`upsert_postings`/`deactivate_missing` write to Postgres. They spent two weeks
+writing to Appwrite instead and kept the same signatures throughout, so this
+module's calls to them have never changed; the `AsyncSession` it passes them is
+load-bearing again rather than only being there for the `CrawlRun` bookkeeping.
 
 Cursor is `(since, since_id)`, persisted in `scraper_import_cursor` (one row,
 id="scraper_import") between separate runs - a Heroku Scheduler invocation is

@@ -165,15 +165,20 @@ class Settings(BaseSettings):
     r2_bucket: str | None = None
     r2_public_base_url: str | None = None
 
-    # `job_postings` (the crawl-index cache) moved off Neon to the same Appwrite
-    # project the resume workspace already uses, on the GitHub Student Pack's
-    # Education plan (Pro-equivalent limits, no storage-GB cap on documents --
-    # see the plan comment on the resume workspace tables in appwrite_common.py
-    # for why that matters here specifically).
+    # `job_postings` (the crawl index) is a Neon Postgres table. It spent
+    # 2026-08-18 to 2026-08-31 in the Appwrite project the resume workspace
+    # uses, to escape Neon's free-tier storage cap, and came back because
+    # Appwrite bills database reads PER ROW: the crawl alone measured ~1.19M
+    # reads a month against a 1.75M allowance, and running out took resumes and
+    # tailoring down with it. See `db/models/job_posting.py`.
     #
-    # `services/appwrite_tables.py` (what `job_index.search_index` and
-    # `ingest/upsert.py`/`ingest/worker.py` actually call) talks to Appwrite's
-    # REST API directly over `httpx`, authenticated with `appwrite_api_key`.
+    # `appwrite_job_postings_table_id` below is kept, and is now only the
+    # default table id `services/appwrite_tables.py` falls back to when a
+    # caller names none. Every remaining caller (the application-card sync and
+    # its backfill) passes `table_id=` explicitly, so nothing reaches it today.
+    #
+    # `services/appwrite_tables.py` talks to Appwrite's REST API directly over
+    # `httpx`, authenticated with `appwrite_api_key`.
     # A first version of that module shelled out to the `appwrite` CLI's own
     # locally-authenticated session instead, which worked against the real
     # data during development and then failed in production with

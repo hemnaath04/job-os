@@ -1,4 +1,4 @@
-"""Ranking order on the indexed read path, against an in-memory Appwrite.
+"""Ranking order on the indexed read path, against a real Postgres.
 
 `rank = retrieve_score * freshness_weight * mix_weight`, and the multiplication is
 the whole point. With an additive score a perfect title match from eight months
@@ -7,25 +7,26 @@ search because the old one is probably filled. Multiplying means a stale posting
 has to be substantially more relevant to win, not marginally.
 
 Every query here is scoped with `sources=[...]` to a namespace unique per test.
-That mattered when this file ran against the shared production table and left its
-`rank_...` rows behind in it -- 123 of them were still there when this was
-written. It is kept because the scoping is also what makes each test's assertion
-about its own rows and nothing else, which is worth having whatever the store is.
+The index is a shared table by design, so a ranking assertion that did not scope
+would be answered partly by whatever else had been crawled.
 
-This file used to be marked `requires_appwrite_key`, so it skipped in CI and hit
-production locally. It now runs against `fake_appwrite` (see
-`tests/_fake_appwrite.py`): no credentials, no network, no Postgres either --
-`search_index` and `upsert_postings` both open with `del session`.
+Back on a real database after two weeks against an in-memory Appwrite fake.
+Nothing here is a preference: half of what this file asserts is behaviour only
+Postgres has. `ts_rank_cd` over a weighted tsvector is what makes a stale exact
+match score higher than a fresh weaker one (the fake could only answer
+match/no-match, so that test had to assert equality instead of a difference);
+`to_tsvector` on the title alone is what keeps `title_keywords` out of the JD
+body; `ILIKE` is what makes `location` a substring filter. Every test runs
+inside a transaction that is rolled back.
 """
 from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime, timedelta
-from typing import Any
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from _fake_appwrite import FakeAppwriteTables
 from job_os.ingest.providers import RawPosting
 from job_os.ingest.upsert import upsert_postings
 from job_os.services.job_index import (
@@ -37,16 +38,7 @@ from job_os.services.job_index import (
 
 pytestmark = pytest.mark.asyncio
 
-#: See `NO_SESSION` in test_ingest_upsert.py: the session parameter survives on
-#: these functions only so their callers did not need a signature change.
-NO_SESSION: Any = None
-
-#: Millisecond precision on purpose. Appwrite's datetime columns carry three
-#: decimal places, so a `datetime.now(UTC)` with microseconds does not survive a
-#: round trip and `test_both_first_seen_and_last_seen_are_exposed` would be
-#: asserting on precision the column never promised. Truncating here keeps that
-#: test an exact-equality test rather than a tolerance one.
-NOW = datetime.now(UTC).replace(microsecond=datetime.now(UTC).microsecond // 1000 * 1000)
+NOW = datetime.now(UTC)
 
 
 @pytest.fixture
@@ -84,13 +76,13 @@ def posting(
     )
 
 
-async def write(*postings: RawPosting) -> None:
-    await upsert_postings(NO_SESSION, list(postings), seen_at=NOW)
+async def write(session: AsyncSession, *postings: RawPosting) -> None:
+    await upsert_postings(session, list(postings), seen_at=NOW)
 
 
-async def search(source: str, **kwargs: object) -> list:
+async def search(session: AsyncSession, source: str, **kwargs: object) -> list:
     query = IndexQuery(sources=[source], explain=True, **kwargs)  # type: ignore[arg-type]
-    return (await search_index(NO_SESSION, query)).hits
+    return (await search_index(session, query)).hits
 
 
 # ---------------------------------------------------------------------------
@@ -99,12 +91,12 @@ async def search(source: str, **kwargs: object) -> list:
 
 
 async def test_rank_is_the_product_of_its_three_components(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The EXPLAIN field has to reconcile, or it is decoration rather than debug."""
-    await write(posting(source=source, external_id="1", title="Data Engineer"))
+    await write(db_session, posting(source=source, external_id="1", title="Data Engineer"))
 
-    hits = await search(source, title_keywords=["data engineer"])
+    hits = await search(db_session, source, title_keywords=["data engineer"])
 
     assert len(hits) == 1
     explain = hits[0].explain
@@ -115,22 +107,22 @@ async def test_rank_is_the_product_of_its_three_components(
 
 
 async def test_explain_is_absent_unless_asked_for(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    await write(posting(source=source, external_id="1", title="Data Engineer"))
+    await write(db_session, posting(source=source, external_id="1", title="Data Engineer"))
 
-    result = await search_index(NO_SESSION, IndexQuery(sources=[source], explain=False))
+    result = await search_index(db_session, IndexQuery(sources=[source], explain=False))
 
     assert result.hits[0].explain is None
 
 
 async def test_browsing_with_no_keywords_scores_purely_on_freshness_and_mix(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """`retrieve_score` is 1.0 when nothing was searched for, so it drops out."""
-    await write(posting(source=source, external_id="1", title="Anything"))
+    await write(db_session, posting(source=source, external_id="1", title="Anything"))
 
-    hits = await search(source)
+    hits = await search(db_session, source)
 
     explain = hits[0].explain
     assert explain is not None
@@ -144,31 +136,33 @@ async def test_browsing_with_no_keywords_scores_purely_on_freshness_and_mix(
 
 
 async def test_fresh_beats_stale_at_equal_relevance(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     await write(
+        db_session,
         posting(source=source, external_id="old", title="Platform Engineer",
                 company="Old Co", domain="old.test", age_days=120),
         posting(source=source, external_id="new", title="Platform Engineer",
                 company="New Co", domain="new.test", age_days=0),
     )
 
-    hits = await search(source, title_keywords=["platform engineer"])
+    hits = await search(db_session, source, title_keywords=["platform engineer"])
 
     assert [hit.source_id for hit in hits] == ["board:new", "board:old"]
 
 
 async def test_freshness_decays_by_half_every_fortnight(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     await write(
+        db_session,
         posting(source=source, external_id="fresh", title="Engineer",
                 company="A", domain="a.test", age_days=0),
         posting(source=source, external_id="fortnight", title="Engineer",
                 company="B", domain="b.test", age_days=14),
     )
 
-    hits = {hit.source_id: hit.explain for hit in await search(source)}
+    hits = {hit.source_id: hit.explain for hit in await search(db_session, source)}
 
     fresh = hits["board:fresh"]
     fortnight = hits["board:fortnight"]
@@ -177,16 +171,19 @@ async def test_freshness_decays_by_half_every_fortnight(
 
 
 async def test_an_ancient_posting_is_demoted_not_deleted(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """Deciding a posting is gone is the crawl's job via `active`, not the ranker's.
 
     A five-year-old posting that a board still lists is still a real job, so the
     weight floors rather than reaching zero.
     """
-    await write(posting(source=source, external_id="ancient", title="Engineer", age_days=1825))
+    await write(
+        db_session,
+        posting(source=source, external_id="ancient", title="Engineer", age_days=1825),
+    )
 
-    hits = await search(source)
+    hits = await search(db_session, source)
 
     assert len(hits) == 1
     explain = hits[0].explain
@@ -195,30 +192,15 @@ async def test_an_ancient_posting_is_demoted_not_deleted(
 
 
 async def test_a_stale_exact_match_loses_to_a_fresh_weaker_match(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The multiplicative property, stated as the outcome it exists to produce.
 
-    The stale row is the better textual match to a reader: it repeats the whole
-    phrase in its body, where the fresh row's body is about something else. It
-    loses anyway, because freshness multiplies rather than adding a bounded bonus.
-
-    The premise assertion below used to read `stale.retrieve_score >
-    fresh.retrieve_score`, and that stopped being true when the index moved off
-    Postgres -- not silently, and not as a bug. `ts_rank_cd` over a weighted
-    tsvector gave a graded score, so "repeats the phrase in the body" was
-    visible to the ranker. Appwrite's fulltext match is pass/fail, and
-    `retrieve_score` now carries only `_title_weight`'s one distinction: did the
-    searched words land in the TITLE, or only in the body. Both of these titles
-    contain the phrase, so both score TITLE_MATCH_WEIGHT and retrieval has
-    nothing left to say between them. `search_index`'s own docstring lists that
-    loss as an accepted cost of the migration.
-
-    So the premise is asserted as what it now is -- equal, not merely
-    not-greater -- which pins the fact that relevance is carrying none of this
-    result. Freshness decides it alone, and the conclusion is unchanged.
+    The stale row is the better keyword match. It still loses, because freshness
+    multiplies rather than adding a bounded bonus.
     """
     await write(
+        db_session,
         posting(
             source=source,
             external_id="stale-exact",
@@ -239,15 +221,14 @@ async def test_a_stale_exact_match_loses_to_a_fresh_weaker_match(
         ),
     )
 
-    hits = await search(source, title_keywords=["machine learning engineer"])
+    hits = await search(db_session, source, title_keywords=["machine learning engineer"])
 
     stale = next(h for h in hits if h.source_id == "board:stale-exact")
     fresh = next(h for h in hits if h.source_id == "board:fresh-weaker")
     assert stale.explain is not None and fresh.explain is not None
-    # The premise: retrieval cannot separate them, so it is not what decides this.
-    assert stale.explain.retrieve_score == fresh.explain.retrieve_score
-    assert stale.explain.freshness_weight < fresh.explain.freshness_weight
-    # The conclusion: the stale one loses anyway.
+    # The premise: the stale row really is the stronger textual match.
+    assert stale.explain.retrieve_score > fresh.explain.retrieve_score
+    # The conclusion: it loses anyway.
     assert hits[0].source_id == "board:fresh-weaker"
 
 
@@ -257,7 +238,7 @@ async def test_a_stale_exact_match_loses_to_a_fresh_weaker_match(
 
 
 async def test_one_company_cannot_own_the_whole_page(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The nth posting from one employer is progressively discounted.
 
@@ -265,6 +246,7 @@ async def test_one_company_cannot_own_the_whole_page(
     stops being a search.
     """
     await write(
+        db_session,
         *[
             posting(
                 source=source,
@@ -285,7 +267,7 @@ async def test_one_company_cannot_own_the_whole_page(
         ),
     )
 
-    hits = await search(source, title_keywords=["backend engineer"])
+    hits = await search(db_session, source, title_keywords=["backend engineer"])
 
     # The other company is slightly staler, so on freshness alone it would sit
     # last. Diversity lifts it above the spree's later postings.
@@ -294,14 +276,15 @@ async def test_one_company_cannot_own_the_whole_page(
 
 
 async def test_a_companys_first_posting_is_never_penalized(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     await write(
+        db_session,
         posting(source=source, external_id="1", title="Engineer",
                 company="Solo", domain="solo.test"),
     )
 
-    hits = await search(source)
+    hits = await search(db_session, source)
 
     explain = hits[0].explain
     assert explain is not None
@@ -310,9 +293,10 @@ async def test_a_companys_first_posting_is_never_penalized(
 
 
 async def test_the_diversity_discount_compounds_per_position(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     await write(
+        db_session,
         *[
             posting(source=source, external_id=f"n-{i}", title="Engineer",
                     company="Many", domain="many.test")
@@ -320,7 +304,7 @@ async def test_the_diversity_discount_compounds_per_position(
         ],
     )
 
-    hits = await search(source)
+    hits = await search(db_session, source)
     weights = [h.explain.mix_weight for h in hits if h.explain is not None]
 
     assert weights[0] == pytest.approx(1.0)
@@ -334,23 +318,23 @@ async def test_the_diversity_discount_compounds_per_position(
 
 
 async def test_both_first_seen_and_last_seen_are_exposed(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The differentiator. "First seen 3 weeks ago, still listed 1 hour ago" needs
     both, and a UI given only one of them cannot say it."""
     first_crawl = NOW - timedelta(days=21)
     await upsert_postings(
-        NO_SESSION,
+        db_session,
         [posting(source=source, external_id="1", title="Engineer")],
         seen_at=first_crawl,
     )
     await upsert_postings(
-        NO_SESSION,
+        db_session,
         [posting(source=source, external_id="1", title="Engineer")],
         seen_at=NOW,
     )
 
-    hits = await search(source)
+    hits = await search(db_session, source)
 
     hit = hits[0]
     assert hit.first_seen_at == first_crawl
@@ -359,17 +343,18 @@ async def test_both_first_seen_and_last_seen_are_exposed(
 
 
 async def test_a_crawled_date_is_reported_as_estimated(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """`updated` and `first_crawl` are upper bounds, not posting dates, and the
     read path has to say so rather than presenting them as employer-stated."""
     await write(
+        db_session,
         posting(source=source, external_id="real", title="Engineer", basis="published"),
         posting(source=source, external_id="guess", title="Engineer", basis="updated"),
         posting(source=source, external_id="none", title="Engineer", basis="first_crawl"),
     )
 
-    hits = {hit.source_id: hit for hit in await search(source)}
+    hits = {hit.source_id: hit for hit in await search(db_session, source)}
 
     assert hits["board:real"].posted_at_estimated is False
     assert hits["board:guess"].posted_at_estimated is True
@@ -378,32 +363,26 @@ async def test_a_crawled_date_is_reported_as_estimated(
 
 
 async def test_posted_within_days_excludes_estimated_dates(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """Stricter than max_age_days on purpose: this filter promises a real date."""
     await write(
+        db_session,
         posting(source=source, external_id="real", title="Engineer",
                 basis="published", age_days=2),
         posting(source=source, external_id="guess", title="Engineer",
                 basis="updated", age_days=2),
     )
 
-    hits = await search(source, posted_within_days=7)
+    hits = await search(db_session, source, posted_within_days=7)
 
     assert [hit.source_id for hit in hits] == ["board:real"]
 
 
 async def test_max_age_days_judges_a_dateless_posting_by_first_sight(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    """A board that gave no date must not mean "keep forever".
-
-    On Postgres this filtered `COALESCE(posted_at, first_seen_at)`. Appwrite
-    cannot express that COALESCE, so `max_age_days` filters `last_seen_at`
-    instead (see `search_index`'s docstring). For a posting seen exactly once
-    those are the same instant, which is what this fixture arranges, so the
-    assertion still means what its name says.
-    """
+    """A board that gave no date must not mean "keep forever"."""
     stale = RawPosting(
         source=source,
         board_token="board",
@@ -415,10 +394,10 @@ async def test_max_age_days_judges_a_dateless_posting_by_first_sight(
         posted_at=None,
         posted_at_basis="first_crawl",
     )
-    await upsert_postings(NO_SESSION, [stale], seen_at=NOW - timedelta(days=90))
+    await upsert_postings(db_session, [stale], seen_at=NOW - timedelta(days=90))
 
-    within = await search(source, max_age_days=30)
-    without = await search(source)
+    within = await search(db_session, source, max_age_days=30)
+    without = await search(db_session, source)
 
     assert within == []
     assert len(without) == 1
@@ -430,22 +409,18 @@ async def test_max_age_days_judges_a_dateless_posting_by_first_sight(
 
 
 async def test_title_keywords_does_not_match_the_jd_body(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """A title search is a title search, not "these words somewhere in the JD".
 
-    `search_text` also carries company_name, location and the JD body, so a
+    `search_vector` also carries company_name, location and the JD body, so a
     title_keywords query that matched against the whole vector (as opposed to
     the title alone) would surface postings like this: none of "ai", "engineer"
     or "intern" appear anywhere near each other in the title, only scattered
     through the body text.
-
-    Since the move to Appwrite the mechanism is `_quote_phrase` rather than a
-    separate title-only tsvector: the phrase has to appear intact, so the words
-    scattered through this body do not match it. The promise the test makes is
-    the same one; what enforces it is not.
     """
     await write(
+        db_session,
         posting(
             source=source,
             external_id="unrelated-title",
@@ -457,17 +432,18 @@ async def test_title_keywords_does_not_match_the_jd_body(
         ),
     )
 
-    hits = await search(source, title_keywords=["ai engineer intern"])
+    hits = await search(db_session, source, title_keywords=["ai engineer intern"])
 
     assert hits == []
 
 
 async def test_free_text_query_still_matches_the_jd_body(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The other half of the same fix: `query` (technology_slugs, folded in by
     the caller) is meant to search the whole posting, unlike title_keywords."""
     await write(
+        db_session,
         posting(
             source=source,
             external_id="body-match",
@@ -476,24 +452,27 @@ async def test_free_text_query_still_matches_the_jd_body(
         ),
     )
 
-    hits = await search(source, query="rust")
+    hits = await search(db_session, source, query="rust")
 
     assert [hit.source_id for hit in hits] == ["board:body-match"]
 
 
 async def test_title_keywords_and_free_text_are_alternatives_not_a_conjunction(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """Consistent with the rest of this module's "search wider" stance: a posting
     can qualify on a title hit alone, a body hit alone, or both."""
     await write(
+        db_session,
         posting(source=source, external_id="title-only", title="AI Engineer Intern",
-                description="Nothing here about the language we build in."),
+                 description="Nothing about Rust here."),
         posting(source=source, external_id="body-only", title="Backend Engineer",
-                description="We build everything in Rust."),
+                 description="We build everything in Rust."),
     )
 
-    hits = await search(source, title_keywords=["ai engineer intern"], query="rust")
+    hits = await search(
+        db_session, source, title_keywords=["ai engineer intern"], query="rust"
+    )
 
     assert {hit.source_id for hit in hits} == {"board:title-only", "board:body-only"}
 
@@ -504,30 +483,21 @@ async def test_title_keywords_and_free_text_are_alternatives_not_a_conjunction(
 
 
 async def test_inactive_postings_are_hidden_by_default_and_shown_on_request(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """A closure is a fact worth being able to show, not a row that vanishes."""
+    from job_os.db.models.ingest import CrawlRun
     from job_os.ingest.upsert import deactivate_missing
 
-    # Two runs, because that is what deactivation means: this board was read
-    # again and the posting was not in it. The write has to carry the earlier
-    # run's id -- `deactivate_missing` selects on `last_crawl_run_id != <this
-    # run>`, and a NULL there matches nothing (see
-    # `test_a_row_no_crawl_ever_stamped_is_left_alone`). This test used to pass
-    # no run id at all on the write, which is not a crawl the sweep can produce.
-    first_run, second_run = uuid.uuid4(), uuid.uuid4()
-    await upsert_postings(
-        NO_SESSION,
-        [posting(source=source, external_id="closed", title="Engineer")],
-        run_id=first_run,
-        seen_at=NOW,
-    )
-    await deactivate_missing(
-        NO_SESSION, source=source, board_token="board", run_id=second_run
-    )
+    run = CrawlRun(status="running", providers=["test"])
+    db_session.add(run)
+    await db_session.flush()
 
-    default = await search(source)
-    including = await search(source, include_inactive=True)
+    await write(db_session, posting(source=source, external_id="closed", title="Engineer"))
+    await deactivate_missing(db_session, source=source, board_token="board", run_id=run.id)
+
+    default = await search(db_session, source)
+    including = await search(db_session, source, include_inactive=True)
 
     assert default == []
     assert len(including) == 1
@@ -535,47 +505,38 @@ async def test_inactive_postings_are_hidden_by_default_and_shown_on_request(
 
 
 async def test_duplicates_are_hidden_by_default(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
+    from sqlalchemy import select
+
+    from job_os.db.models.job_posting import JobPosting
     from job_os.ingest.upsert import mark_duplicates
 
     await write(
+        db_session,
         posting(source=source, external_id="canonical", title="Engineer"),
         posting(source=source, external_id="dupe", title="Engineer",
                 location="New York, NY"),
     )
-    # `mark_duplicates` keys on `source_posting_id`, the stable identity
-    # `to_row` mints, not on Appwrite's `$id`.
-    by_external = {
-        row["external_id"]: uuid.UUID(row["source_posting_id"])
-        for row in fake_appwrite.all_rows()
-        if row["source"] == source
-    }
+    rows = (
+        await db_session.execute(select(JobPosting).where(JobPosting.source == source))
+    ).scalars()
+    by_external = {row.external_id: row.id for row in rows}
     await mark_duplicates(
-        NO_SESSION, [(by_external["dupe"], by_external["canonical"], "exact_key", None)]
+        db_session, [(by_external["dupe"], by_external["canonical"], "exact_key", None)]
     )
 
-    default = await search(source)
-    including = await search(source, include_duplicates=True)
+    default = await search(db_session, source)
+    including = await search(db_session, source, include_duplicates=True)
 
     assert [hit.source_id for hit in default] == ["board:canonical"]
     assert len(including) == 2
 
 
 async def test_unhydrated_rows_are_not_presented_as_having_a_description(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
-    """A SmartRecruiters listing body is provider metadata, not a JD.
-
-    This is the assertion that caught a real bug rather than a stale test, and
-    it could not fail while the file was skipped. `_attach_snippets` was
-    overwriting `description_available` with "is there any text in the
-    snippet", which for an unhydrated listing is "Engineer\\nAcme\\nBoston" --
-    non-empty, so the flag flipped to True and the read path advertised
-    provider metadata as a job description. `require_description=True` filters
-    on `jd_hydrated` and was always right; only the flag on the way out was
-    wrong, which is the worse half, because it is the one a user sees.
-    """
+    """A SmartRecruiters listing body is provider metadata, not a JD."""
     listing = RawPosting(
         source=source,
         board_token="board",
@@ -588,10 +549,10 @@ async def test_unhydrated_rows_are_not_presented_as_having_a_description(
         posted_at=NOW,
         posted_at_basis="published",
     )
-    await upsert_postings(NO_SESSION, [listing], seen_at=NOW)
+    await upsert_postings(db_session, [listing], seen_at=NOW)
 
-    hits = await search(source)
-    filtered = await search(source, require_description=True)
+    hits = await search(db_session, source)
+    filtered = await search(db_session, source, require_description=True)
 
     assert hits[0].snippet, "the snippet still carries whatever text there was"
     assert hits[0].description_available is False
@@ -599,7 +560,7 @@ async def test_unhydrated_rows_are_not_presented_as_having_a_description(
 
 
 async def test_a_hydrated_row_with_an_empty_body_is_also_honest(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The other direction of the same flag, so the fix is a conjunction rather
     than a swap: `jd_hydrated` true but nothing actually there is still no
@@ -616,18 +577,176 @@ async def test_a_hydrated_row_with_an_empty_body_is_also_honest(
         posted_at=NOW,
         posted_at_basis="published",
     )
-    await upsert_postings(NO_SESSION, [empty], seen_at=NOW)
+    await upsert_postings(db_session, [empty], seen_at=NOW)
 
-    hits = await search(source)
+    hits = await search(db_session, source)
 
     assert hits[0].description_available is False
 
 
+# ---------------------------------------------------------------------------
+# what a multi-word search means
+# ---------------------------------------------------------------------------
+
+
+async def test_a_multi_word_query_requires_every_word_not_any(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The live bug that broke a real search, restated for this store.
+
+    Under Appwrite, an unquoted multi-word search ran MariaDB's fulltext in
+    natural-language mode: satisfied by ANY of the words appearing anywhere in
+    the concatenated body. A search for "software engineer intern" matched most
+    of the table and opened with an Account Executive posting whose JD happened
+    to say "software". `_tsquery` joins a phrase's words with `&`, so every one
+    of them has to be present -- which is stricter than the quoting fix that
+    was applied there, and is what this path always did.
+    """
+    await write(
+        db_session,
+        posting(
+            source=source,
+            external_id="one-word-only",
+            title="Account Executive",
+            company="Sales Co",
+            domain="sales.test",
+            description="You will sell our software to enterprise buyers.",
+        ),
+        posting(
+            source=source,
+            external_id="all-three",
+            title="Growth Lead",
+            company="Other Co",
+            domain="other.test",
+            description="We hire a software engineer intern every summer.",
+        ),
+    )
+
+    hits = await search(db_session, source, query="software engineer intern")
+
+    assert [hit.source_id for hit in hits] == ["board:all-three"]
+
+
+async def test_location_and_company_narrow_rather_than_define_the_match(
+    db_session: AsyncSession, source: str
+) -> None:
+    """`location` and `company` are ANDed filters, not more alternatives.
+
+    Folding them into the same OR group as `title_keywords`/`query` would widen
+    a search instead of narrowing it: a posting in Boston would match a search
+    for engineers in Boston without being an engineering job. They are also
+    substring matches (`ILIKE`), which is why "Boston" finds "Boston, MA".
+    """
+    await write(
+        db_session,
+        posting(
+            source=source,
+            external_id="right-role-right-city",
+            title="Backend Engineer",
+            company="Acme",
+            domain="acme.test",
+            location="Boston, MA",
+        ),
+        posting(
+            source=source,
+            external_id="right-role-wrong-city",
+            title="Backend Engineer",
+            company="Acme",
+            domain="acme.test",
+            location="Austin, TX",
+        ),
+        posting(
+            source=source,
+            external_id="wrong-role-right-city",
+            title="Staff Accountant",
+            company="Acme",
+            domain="acme.test",
+            location="Boston, MA",
+        ),
+    )
+
+    hits = await search(
+        db_session, source, title_keywords=["backend engineer"], location="Boston"
+    )
+
+    assert [hit.source_id for hit in hits] == ["board:right-role-right-city"]
+
+
+# ---------------------------------------------------------------------------
+# what reaches the full-text index, and what must not be shortened with it
+# ---------------------------------------------------------------------------
+
+
+async def test_only_the_first_600_characters_of_a_body_are_searchable(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The storage change, asserted as the behaviour it actually buys and costs.
+
+    `FTS_DESCRIPTION_CHARS` is the slice of `jd_clean` that reaches
+    `search_vector`. Rebuilding that column at both lengths over the same 2,550
+    real crawled postings measured 22,780 bytes a row at 8,000 against 14,800
+    at 600. The cost is exactly this: a word that first appears deep in a body
+    is no longer a way to FIND the posting.
+    """
+    from job_os.db.models.job_posting import FTS_DESCRIPTION_CHARS
+
+    assert FTS_DESCRIPTION_CHARS == 600
+    body = "Filler sentence about the team and the work. " * 40
+    assert len(body) > FTS_DESCRIPTION_CHARS
+    await write(
+        db_session,
+        posting(
+            source=source,
+            external_id="deep",
+            title="Engineer",
+            description=body + " We work primarily in Erlang.",
+        ),
+    )
+
+    early = await search(db_session, source, query="filler")
+    deep = await search(db_session, source, query="erlang")
+
+    assert [hit.source_id for hit in early] == ["board:deep"]
+    assert deep == [], "past the slice, a word cannot be searched for"
+
+
+async def test_the_whole_body_is_still_stored_even_though_it_is_not_all_indexed(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The half of that trade which must NOT follow the other half.
+
+    `jd_clean` is the input to `job_enrich.enrich_job`, which produces the
+    document the fit score reads. Truncating the stored body to match the
+    indexed slice would degrade every future fit score silently, while every
+    already-enriched row went on looking fine. So this asserts the body is
+    whole, right next to the test that asserts the index is not.
+    """
+    from sqlalchemy import select
+
+    from job_os.db.models.job_posting import JobPosting
+
+    body = "Filler sentence about the team and the work. " * 40
+    tail = " We work primarily in Erlang."
+    await write(
+        db_session,
+        posting(source=source, external_id="deep", title="Engineer", description=body + tail),
+    )
+
+    stored = await db_session.scalar(
+        select(JobPosting.jd_clean).where(JobPosting.source == source)
+    )
+
+    assert stored is not None
+    assert stored.endswith(tail)
+    assert len(stored) == len(body + tail)
+
+
 async def test_results_are_ordered_by_descending_rank(
-    fake_appwrite: FakeAppwriteTables, source: str
+    db_session: AsyncSession, source: str
 ) -> None:
     """The contract the UI relies on, asserted directly rather than inferred."""
     await write(
+        db_session,
         *[
             posting(
                 source=source,
@@ -641,7 +760,7 @@ async def test_results_are_ordered_by_descending_rank(
         ],
     )
 
-    hits = await search(source)
+    hits = await search(db_session, source)
     ranks = [hit.rank for hit in hits]
 
     assert ranks == sorted(ranks, reverse=True)

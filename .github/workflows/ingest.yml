@@ -57,10 +57,10 @@ on:
         description: "Postings this run may fetch descriptions for (0 to skip)"
         required: false
         default: "200"
-  # PAUSED 2026-08-31, and this is a billing decision rather than a code one.
+  # PAUSED 2026-08-31, and this was a billing decision rather than a code one.
   #
   # Appwrite bills database reads per ROW, not per API call, and this sweep is
-  # read-heavy in a way that is invisible from the request count: one run reads
+  # read-heavy in a way that is invisible from the request count: one run read
   # every posting it saw, to decide insert versus update, plus a dedupe pool of
   # up to 5,000. Measured on a real run that crawled three boards, that is 8,297
   # reads, and hydration adds 1,600 more.
@@ -68,14 +68,26 @@ on:
   # Four runs a day is roughly 1.19 million reads a month before anybody
   # searches. The Free plan allows 500,000 and the Education plan 1,750,000, so
   # the schedule alone was 2.4x the former and 68% of the latter, on a corpus of
-  # three boards out of 20,922 seeded. The project is currently returning 402
-  # `limit_databases_reads_exceeded` on every read.
+  # three boards out of 20,922 seeded. Every Appwrite read on the project was
+  # answering 402 `limit_databases_reads_exceeded`.
   #
-  # Paused rather than tuned, because the fix is not a smaller number here: a
-  # search index is read-heavy by definition and this one is on a store that
-  # charges per row. Re-enable once `job_postings` lives somewhere that bills
-  # for storage instead. `workflow_dispatch` above still works, so a manual run
-  # is one click away meanwhile.
+  # Paused rather than tuned, because the fix was not a smaller number here: a
+  # search index is read-heavy by definition and that one was on a store that
+  # charges per row. The stated condition for re-enabling was "once
+  # `job_postings` lives somewhere that bills for storage instead".
+  #
+  # THAT CONDITION IS NOW MET. `job_postings` is a Postgres table again
+  # (migration `postings_back_to_pg`), so no amount of reading it costs
+  # anything per row, and the arithmetic above no longer applies to any step in
+  # this workflow.
+  #
+  # Left commented out anyway, because of the rule at the top of this file:
+  # turning a crawler loose on other people's public APIs is a decision for a
+  # person, not a side effect of merging a branch. Uncommenting the three lines
+  # below is the whole of it. Before doing so, read the storage section of
+  # `docs/ingest-index.md`: Postgres bills for what the crawl accumulates
+  # rather than for what search reads, so the resource to watch has moved from
+  # a monthly read quota to the size of the table.
   #
   # schedule:
   #   # Every six hours, offset off the hour because schedulers are busiest
@@ -99,14 +111,16 @@ jobs:
     # run mid-group; the worker commits per group and the next run resumes.
     timeout-minutes: 30
     env:
+      # One credential, because there is one store again. `APPWRITE_API_KEY`
+      # used to be here: `job_postings` had moved to Appwrite and this workflow
+      # was not updated with it, so every scheduled run for four days crawled
+      # nothing and exited 1 on `AppwriteTablesError: APPWRITE_API_KEY is not
+      # configured`. A red scheduled job that nobody is paged for is
+      # indistinguishable from one that was never turned on, which is how that
+      # stayed unnoticed. All three steps below are Postgres-only now, so
+      # handing this job an Appwrite key would grant it access it has no use
+      # for.
       DATABASE_URL: ${{ secrets.INGEST_DATABASE_URL }}
-      # Added because every scheduled run since the migration has failed on
-      # its absence. `job_postings` moved to Appwrite and this workflow was
-      # not updated with it, so the sweep crawled nothing and exited 1 every
-      # six hours: `AppwriteTablesError: APPWRITE_API_KEY is not configured`.
-      # A red scheduled job that nobody is paged for is indistinguishable
-      # from one that was never turned on, which is how it stayed unnoticed.
-      APPWRITE_API_KEY: ${{ secrets.APPWRITE_API_KEY }}
     steps:
       - uses: actions/checkout@v4
 
@@ -177,9 +191,13 @@ jobs:
         # this step could not read a counter afterwards, which is the wrong
         # way round: the crawl is the job, this is the note about it.
         #
-        # `index_stats` degrades per counter now, so a total failure here
-        # means Appwrite was unreachable for all six reads, and the Crawl step
-        # above would have said so first.
+        # The per-counter degradation `index_stats` grew for that incident is
+        # gone with the store that needed it: every counter is one exact
+        # `COUNT(*)` on the same connection now, so a failure here means the
+        # database was unreachable and the Crawl step above would have said so
+        # first. `continue-on-error` stays regardless, because the rule is
+        # about which step owns the run's verdict, not about which store it
+        # reads.
         continue-on-error: true
         working-directory: apps/api
         run: uv run python -m job_os.ingest.cli status
