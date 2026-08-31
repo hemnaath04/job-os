@@ -3,11 +3,12 @@
     pick unhydrated rows, newest first -> one detail request each
                                        -> write back body, date, search text
 
-Four of the eight providers write rows with `jd_hydrated=False` because their
-list endpoint has no description in it at all (Workday, SmartRecruiters,
-BambooHR, iCIMS, Oracle). Each of those exposes a `hydrate()` that turns one
-row into a real body. Nothing ever called them. Measured against the live
-index on 2026-08-30, before this module existed: `descriptions_missing` was
+Five of the eight providers write rows with `jd_hydrated=False` because their
+list endpoint has no description in it at all: Workday, SmartRecruiters,
+BambooHR, iCIMS and Oracle. Four of them already exposed a `hydrate()` that
+turns one row into a real body, and nothing ever called it; SmartRecruiters
+had none at all, so its rows carried a flag nothing could clear. Measured
+against the live index on 2026-08-30, before this module: `descriptions_missing` was
 5,000 of `postings_active` 5,000 -- both numbers are Appwrite's capped `total`
 estimate rather than a true count, so read them as "the whole visible index",
 not as exactly five thousand rows.
