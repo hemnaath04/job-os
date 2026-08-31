@@ -69,12 +69,36 @@ log = structlog.get_logger(__name__)
 #: ceiling of 8 is a steady trickle rather than a burst.
 #:
 #: Runtime is not what bounds this. A live run of 200 through the real fetcher
-#: took 11.0 seconds and moved 4.1 MB, so a scheduler could afford far more.
-#: What 200 bounds is how much of someone else's API one run is entitled to
-#: spend, and that is a judgement rather than a measurement: unverified whether
-#: a larger default would draw a rate limit from any of the five vendors, since
-#: no run so far has been answered with a 429.
-DEFAULT_LIMIT = 200
+#: took 11.0 seconds, so a scheduler could afford far more. What bounds it is
+#: how much of someone else's API one run may spend, and that used to be a
+#: judgement. It is now measured.
+#:
+#: Raised from 200 once the index could be counted honestly. Appwrite's `total`
+#: saturates at 5000, so every ops counter read 5000 and the backlog was
+#: invisible; counted properly it is 168,476 unhydrated of 355,757 active. At
+#: 200 a run, four runs a day, that is over two hundred days and it grows with
+#: every crawl. 200 was not a cautious number, it was one that guaranteed the
+#: pass never finished.
+#:
+#: 400 and not more, because 1,000 was tried against the live boards and the
+#: vendor pushed back. Measured on two consecutive real runs:
+#:
+#:     limit 1000   2,220 requests for 1,000 attempts (2.22 each)   602 failed
+#:     limit  400     464 requests for   400 attempts (1.16 each)    13 failed
+#:
+#: The 1,000 run's log carries 1,222 retry and 429 lines. That is Workday rate
+#: limiting, and it answers the question the previous version of this comment
+#: left open ("unverified whether a larger default would draw a rate limit ...
+#: none has yet"). It does, somewhere between 400 and 1,000, and the failures
+#: are not free: a rate-limited attempt still costs the requests and marks the
+#: row, so an over-large run does less work than a smaller one.
+#:
+#: `_interleave_by_source` rotates across vendors so this number is spread
+#: rather than aimed at one board. It cannot help when the pool is
+#: single-vendor, which it currently is: every candidate in both runs above was
+#: Workday. So the honest reading is that 400 is what ONE vendor tolerates, and
+#: the ceiling rises on its own as the other providers' boards enter the pool.
+DEFAULT_LIMIT = 400
 
 #: Candidate rows read per run, as a multiple of `limit`. Rows are dropped
 #: before any request is made (a source with no `hydrate()`, a row that has
@@ -161,6 +185,14 @@ class HydrateResult:
     skipped_no_hydrate: dict[str, int] = field(default_factory=dict)
     skipped_exhausted: int = 0
     hydrated_by_source: dict[str, int] = field(default_factory=dict)
+    #: Failures attributed the same way successes are.
+    #:
+    #: `failed` alone was a number with nowhere to go. A live run at limit
+    #: 1,000 reported 602 failures, an empty `errors` list, and
+    #: `hydrated_by_source` naming only Workday, so 60% of the run was
+    #: invisible: no vendor, no reason, nothing to act on. At limit 200 the
+    #: pool was homogeneous enough that this never showed.
+    failed_by_source: dict[str, int] = field(default_factory=dict)
     requests_made: int = 0
     bytes_fetched: int = 0
     duration_s: float = 0.0
@@ -181,12 +213,47 @@ class HydrateResult:
             "skipped_no_hydrate": dict(sorted(self.skipped_no_hydrate.items())),
             "skipped_exhausted": self.skipped_exhausted,
             "hydrated_by_source": dict(sorted(self.hydrated_by_source.items())),
+            "failed_by_source": dict(sorted(self.failed_by_source.items())),
             "requests_made": self.requests_made,
             "bytes_fetched": self.bytes_fetched,
             "duration_s": round(self.duration_s, 2),
             "postings_per_second": round(self.postings_per_second, 1),
             "errors": self.errors[:10],
         }
+
+
+def _interleave_by_source(
+    work: list[tuple[dict[str, Any], Any, Any]],
+) -> list[tuple[dict[str, Any], Any, Any]]:
+    """Rotate the run across vendors instead of working one to exhaustion.
+
+    Candidates arrive newest-first, and postings enter the index in board-sized
+    clumps, so that order is close to sorted BY VENDOR: the newest 1,000
+    unhydrated rows measured as 1,000 of 1,000 from a single BambooHR sweep.
+    Every request in a run then goes to one company.
+
+    That was tolerable at a limit of 200 and is the thing that stops the limit
+    being raised, which it has to be: 168,476 rows are unhydrated, and at 200
+    per run four times a day the backlog outlives any plausible job search.
+    Round-robin makes the request count per vendor a fraction of the run rather
+    than all of it, so a bigger run is spread rather than concentrated.
+
+    Order within a vendor is preserved, so freshest-first still holds for each.
+    """
+    by_source: dict[str, list[tuple[dict[str, Any], Any, Any]]] = {}
+    for item in work:
+        by_source.setdefault(str(item[0].get("source") or "unknown"), []).append(item)
+    if len(by_source) < 2:
+        return work
+
+    spread: list[tuple[dict[str, Any], Any, Any]] = []
+    queues = list(by_source.values())
+    while queues:
+        for queue in list(queues):
+            spread.append(queue.pop(0))
+            if not queue:
+                queues.remove(queue)
+    return spread
 
 
 async def hydrate_descriptions(
@@ -230,6 +297,8 @@ async def hydrate_descriptions(
         log.info("ingest.hydrate_done", **result.as_dict())
         return result
 
+    work = _interleave_by_source(work)
+
     owns_fetcher = fetcher is None
     client = fetcher or PoliteFetcher(concurrency=concurrency, per_host_concurrency=concurrency)
     try:
@@ -249,6 +318,7 @@ async def hydrate_descriptions(
         source = str(row.get("source") or "unknown")
         if patch is None:
             result.failed += 1
+            result.failed_by_source[source] = result.failed_by_source.get(source, 0) + 1
             patches.append(_failure_patch(row))
             continue
         result.hydrated += 1
