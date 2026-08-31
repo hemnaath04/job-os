@@ -295,8 +295,12 @@ async def test_the_body_becomes_searchable_and_not_just_stored(
     assert [hit.source_id for hit in after.hits] == [f"{WD_TOKEN}:JR1"]
     row = await only_row(db_session, ["workday"])
     assert "compilers" in row.jd_clean
-    assert "<p>" not in row.jd_clean, "the markup belongs in jd_raw"
-    assert row.jd_raw is not None and "<p>" in row.jd_raw
+    # The markup is stripped and then dropped, not archived. `jd_raw` used to
+    # hold the vendor's own HTML and was read by nothing: 5,581 compressed
+    # bytes a row, the largest column in the table. Providers still build
+    # `jd_clean` out of it in memory, which is the only thing it was ever for.
+    assert "<p>" not in row.jd_clean, "the markup is stripped, not stored"
+    assert not hasattr(row, "jd_raw"), "the column is gone, deliberately"
     assert row.jd_hydrated is True
 
 

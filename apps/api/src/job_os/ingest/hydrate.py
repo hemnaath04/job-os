@@ -455,7 +455,6 @@ def _success_patch(row: _Candidate, posting: RawPosting) -> dict[str, Any]:
         # HTML with their own local helper that does not go through
         # `normalize.html_to_text` and so never applies it.
         "jd_clean": normalize.truncate(posting.jd_clean, normalize.MAX_DESCRIPTION_CHARS),
-        "jd_raw": posting.jd_raw or None,
         "jd_hydrated": True,
         "jd_parsed": posting.extra or {},
     }
