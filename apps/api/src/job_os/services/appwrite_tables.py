@@ -380,6 +380,77 @@ async def count_rows(*, filters: list[str] | None = None) -> int:
     return int(payload.get("total", 0) or 0)
 
 
+#: Where Appwrite stops counting. Measured against the live table on
+#: 2026-08-31: a filter matching fewer rows than this returns a real number
+#: (`source=icims` -> 3042, `source=bamboohr` -> 4644, `active=false` -> 1412),
+#: and every filter matching more returns exactly 5000. Rows themselves keep
+#: coming past `offset=6000`, so the data is all there; only the count stops.
+TOTAL_CAP = 5_000
+
+#: Rows per page of the walk below. Appwrite serves 5000 in one call, measured,
+#: and a page costs the same 0.2s whether it carries 1000 rows or 5000, so the
+#: largest page is the cheapest way through.
+_COUNT_PAGE = 5_000
+
+#: A ceiling on the walk, so a table that grew beyond expectation degrades to a
+#: reported floor rather than an unbounded loop inside a request.
+_MAX_COUNT_PAGES = 200
+
+
+async def count_rows_exact(
+    *, filters: list[str] | None = None, queries: list[dict[str, Any]] | None = None
+) -> tuple[int, bool]:
+    """A true row count, by walking the table rather than asking for a total.
+
+    `count_rows` reads Appwrite's own `total`, which saturates at `TOTAL_CAP`,
+    so every ops counter on a table this size read 5000 and the number stopped
+    meaning anything: it could not tell a growing index from a stalled one,
+    which is the question somebody consults it to answer.
+
+    The cap is on the reported total, not on the data. Rows keep coming past
+    `offset=6000`, so this pages through with a cursor and counts what arrives.
+
+    A cursor walk and not the obvious alternatives:
+
+    * `offset` pagination is O(offset) in MariaDB, so the last pages of a large
+      table cost far more than the first.
+    * Bisecting a date range sounds cheaper (O(log n) requests) and is not.
+      `last_seen_at` is re-stamped on every row a sweep re-crawls, so the whole
+      live index collapses into the seconds of the most recent run and no
+      amount of splitting separates it; a window covering only yesterday still
+      answered 5000. `first_seen_at` spreads properly but its distribution is
+      heavily clustered, and a recursion deep enough to split the dense end did
+      not finish in ten minutes.
+
+    Measured: 0.21s per page, constant, so a hundred thousand rows is about
+    twenty pages and a handful of seconds.
+
+    Returns `(count, exact)`. `exact` is False only if the page ceiling was
+    reached, which makes the count a floor. Saying so is the point: a number
+    that quietly stopped counting is what this exists to remove.
+    """
+    counted = 0
+    cursor: str | None = None
+    for _ in range(_MAX_COUNT_PAGES):
+        page_queries = [*(queries or [])]
+        if cursor:
+            page_queries.append({"method": "cursorAfter", "values": [cursor]})
+        rows = await list_rows(
+            filters=filters,
+            queries=page_queries,
+            # `$id` alone: the walk needs identity to advance the cursor and
+            # nothing else, and asking for more would move the fat columns this
+            # table's timeouts are all about.
+            select=["$id"],
+            limit=_COUNT_PAGE,
+        )
+        counted += len(rows)
+        if len(rows) < _COUNT_PAGE:
+            return counted, True
+        cursor = str(rows[-1].get("$id"))
+    return counted, False
+
+
 async def create_rows(rows: list[dict[str, Any]]) -> None:
     for start in range(0, len(rows), BATCH_SIZE):
         batch = rows[start : start + BATCH_SIZE]
