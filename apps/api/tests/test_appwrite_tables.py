@@ -431,3 +431,71 @@ def test_a_normal_filter_still_carries_its_value() -> None:
         "attribute": "salary_max",
         "values": [40],
     }
+
+
+# ---------------------------------------------------------------------------
+# Appwrite stacks two caps on one `queries[]` entry, and which one binds
+# depends on the data. Both measured against the live table on 2026-08-30 with
+# 36-character ids: 100 -> 200, 101 -> 400 "no longer than 100 items", 200 ->
+# 414 URI Too Long.
+# ---------------------------------------------------------------------------
+
+
+def test_short_ids_are_chunked_by_the_item_cap() -> None:
+    """The half a character-only budget missed.
+
+    `_lookup_by_source_id` bounded chunks by characters alone. At 2-character
+    ids a 3,500-char budget yields over a thousand items in one chunk, more
+    than ten times Appwrite's separate 100-item cap. That is the "400 this
+    budget-based chunking should have prevented but, live, has not" the
+    diagnostics in `upsert.py` were added for.
+    """
+    chunks = appwrite_tables.chunk_values(["ab"] * 500)
+
+    assert all(len(c) <= appwrite_tables.MAX_QUERY_ITEMS for c in chunks)
+    assert sum(len(c) for c in chunks) == 500, "nothing is dropped"
+
+
+def test_long_ids_are_chunked_by_the_character_cap() -> None:
+    """The half it did catch, kept.
+
+    The scraper falls back to a full posting URL when a board gives it no
+    native id, and a handful of those blow past 4096 encoded characters while
+    still being far under 100 items.
+    """
+    chunks = appwrite_tables.chunk_values(["u" * 900] * 8)
+
+    assert all(len(c) < appwrite_tables.MAX_QUERY_ITEMS for c in chunks)
+    for chunk in chunks:
+        assert sum(len(v) + 3 for v in chunk) <= appwrite_tables.MAX_QUERY_CHARS
+
+
+def test_a_full_page_of_uuids_is_split() -> None:
+    """The case that made this urgent.
+
+    `_hydrate_page` sent every id on the page in one `equal`, and a page is up
+    to `MAX_LIMIT` (200). At 36-character ids that is 8,065 encoded characters,
+    which the live table answered with 414 URI Too Long. Not a risk: a
+    certainty, reached the moment anyone asked for more than 100 results.
+    """
+    chunks = appwrite_tables.chunk_values([f"{i:036d}" for i in range(200)])
+
+    assert len(chunks) > 1
+    assert all(len(c) <= appwrite_tables.MAX_QUERY_ITEMS for c in chunks)
+
+
+def test_a_single_oversized_value_is_not_split() -> None:
+    """Splitting one value would change what is being asked for.
+
+    A query that is too long fails loudly. A query that silently asks about
+    half an id returns the wrong rows, which is worse.
+    """
+    huge = "u" * (appwrite_tables.MAX_QUERY_CHARS + 500)
+
+    chunks = appwrite_tables.chunk_values([huge])
+
+    assert chunks == [[huge]]
+
+
+def test_nothing_in_gives_nothing_out() -> None:
+    assert appwrite_tables.chunk_values([]) == []

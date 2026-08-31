@@ -632,15 +632,33 @@ async def _hydrate_page(hits: list[IndexHit]) -> dict[Any, dict[str, Any]]:
     if not hits:
         return {}
     ids = [str(hit.id) for hit in hits]
+    # Chunked, because one `equal` cannot carry a whole page. Appwrite caps a
+    # `queries[]` entry at 100 items AND at 4096 encoded characters, and a page
+    # is up to `MAX_LIMIT` (200) ids. Measured against the live table: 100 ids
+    # returned 200, 101 returned 400, and 200 returned 414 URI Too Long. So at
+    # a full page this was not a risk, it was a certainty, reached as soon as
+    # anyone asked for more than 100 results.
+    rows: list[dict[str, Any]] = []
     try:
-        rows = await appwrite_tables.list_rows(
-            queries=[{"method": "equal", "attribute": "source_posting_id", "values": ids}],
-            select=PAGE_COLUMNS,
-            limit=len(ids),
-        )
+        for chunk in appwrite_tables.chunk_values(ids):
+            rows.extend(
+                await appwrite_tables.list_rows(
+                    queries=[
+                        {
+                            "method": "equal",
+                            "attribute": "source_posting_id",
+                            "values": chunk,
+                        }
+                    ],
+                    select=PAGE_COLUMNS,
+                    limit=len(chunk),
+                )
+            )
     except appwrite_tables.AppwriteTablesError as exc:
+        # Whatever arrived before the failure is still usable: the ranking is
+        # already decided and these rows only carry snippets.
         log.warning("job_index.page_hydrate_failed", error=str(exc)[:300], hits=len(hits))
-        return {}
+        return {r.get("source_posting_id"): r for r in rows}
     return {r.get("source_posting_id"): r for r in rows}
 
 
