@@ -137,7 +137,10 @@ async def _cmd_status(args: argparse.Namespace) -> int:
     from job_os.ingest import liveness
     from job_os.services import job_index
 
-    postings = await job_index.index_stats()
+    # Exact here, unlike the HTTP endpoint: this runs in the scheduled
+    # sweep with no router timeout over it, and a status report whose
+    # numbers all read 5000 is the thing this command exists to avoid.
+    postings = await job_index.index_stats(exact=True)
     async with async_session() as session:
         tokens = await liveness.liveness_summary(session)
         last_run = await session.scalar(

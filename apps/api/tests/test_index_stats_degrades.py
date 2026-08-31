@@ -98,3 +98,80 @@ async def test_a_real_error_is_still_reported_not_swallowed_into_zero(
 
     assert stats["postings_total"] is None
     assert stats["postings_total"] != 0
+
+
+async def test_the_default_stays_cheap_for_the_http_caller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The endpoint must not pay for a table walk.
+
+    `count_rows_exact` pages the whole table and takes about a minute per
+    counter on 359,416 rows. That is fine in the scheduled sweep and impossible
+    in a handler Heroku abandons at thirty seconds, so `exact` defaults off and
+    the payload says which it served.
+    """
+    walked = False
+
+    async def _exact(**_kwargs: Any) -> tuple[int, bool]:
+        nonlocal walked
+        walked = True
+        return 359_416, True
+
+    async def _count(**_kwargs: Any) -> int:
+        return 5000
+
+    async def _list(**_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(appwrite_tables, "count_rows_exact", _exact)
+    monkeypatch.setattr(appwrite_tables, "count_rows", _count)
+    monkeypatch.setattr(appwrite_tables, "list_rows", _list)
+
+    stats = await job_index.index_stats()
+
+    assert walked is False, "the default must not walk the table"
+    assert stats["counts_exact"] is False
+    assert stats["postings_total"] == 5000
+
+
+async def test_asking_for_exact_reports_the_real_number(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """And what it buys: 5000 is a saturated estimate, 359,416 is the count."""
+
+    async def _exact(**_kwargs: Any) -> tuple[int, bool]:
+        return 359_416, True
+
+    async def _list(**_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(appwrite_tables, "count_rows_exact", _exact)
+    monkeypatch.setattr(appwrite_tables, "list_rows", _list)
+
+    stats = await job_index.index_stats(exact=True)
+
+    assert stats["counts_exact"] is True
+    assert stats["postings_total"] == 359_416
+
+
+async def test_a_counter_that_hit_the_page_ceiling_is_not_called_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A floor reported as a count is the bug this whole change is about.
+
+    If the walk runs out of pages the number is a lower bound, and the payload
+    has to stop claiming otherwise even though every other counter was fine.
+    """
+
+    async def _exact(**_kwargs: Any) -> tuple[int, bool]:
+        return 1_000_000, False
+
+    async def _list(**_kwargs: Any) -> list[dict[str, Any]]:
+        return []
+
+    monkeypatch.setattr(appwrite_tables, "count_rows_exact", _exact)
+    monkeypatch.setattr(appwrite_tables, "list_rows", _list)
+
+    stats = await job_index.index_stats(exact=True)
+
+    assert stats["counts_exact"] is False, "a floor must not be reported as exact"

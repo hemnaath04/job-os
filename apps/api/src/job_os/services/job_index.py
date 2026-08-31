@@ -917,7 +917,7 @@ def _apply_mix_and_rank(
     return scored[offset : offset + limit]
 
 
-async def index_stats() -> dict[str, object]:
+async def index_stats(*, exact: bool = False) -> dict[str, object]:
     """Counters for an ops view and for judging whether the index is worth reading.
 
     `job_postings` lives in Appwrite now (see `appwrite_tables.py`), which has
@@ -931,7 +931,19 @@ async def index_stats() -> dict[str, object]:
     Every counter degrades to None on its own rather than taking the report
     down with it. This is a diagnostic: five counters and a null is a useful
     answer, and an exception is not.
+
+    `exact` decides whether the numbers are true or merely cheap, and the
+    default is cheap because of who is asking. Appwrite's own `total`
+    saturates at 5000, so on this table every counter read exactly 5000 and
+    said nothing: the real figure is 359,416. `count_rows_exact` walks the
+    table with a cursor and gets it right, at about a minute per counter, which
+    is fine in the scheduled sweep and impossible in an HTTP handler Heroku
+    abandons at thirty seconds. So the CLI asks for exact and the endpoint does
+    not, and `counts_exact` in the payload says which was served rather than
+    leaving a reader to guess why two surfaces disagree.
     """
+    counts_exact = exact
+
     async def _count(**kwargs: Any) -> int | None:
         """One counter, or None if Appwrite would not answer in time.
 
@@ -941,17 +953,28 @@ async def index_stats() -> dict[str, object]:
         that had crawled 1,958 postings successfully was reported as failed.
         A missing counter is worth far less than the other five together.
         """
+        nonlocal counts_exact
         try:
+            if exact:
+                value, was_exact = await appwrite_tables.count_rows_exact(**kwargs)
+                counts_exact = counts_exact and was_exact
+                return value
             return await appwrite_tables.count_rows(**kwargs)
         except appwrite_tables.AppwriteTablesError as exc:
             log.warning("index_stats.counter_unavailable", filters=kwargs, error=str(exc)[:200])
             return None
 
-    total = await _count()
-    active = await _count(filters=["active=true", "canonical_id=null"])
-    duplicates = await _count(filters=["canonical_id!=null"])
-    estimated = await _count(filters=["active=true", "posted_at_estimated=true"])
-    unhydrated = await _count(filters=["active=true", "jd_hydrated=false"])
+    # Concurrently, because they are five independent reads and an exact one
+    # walks the whole table: sequentially the real report took 204 seconds,
+    # which is longer than the sweep it reports on. Each still degrades on its
+    # own, so one slow counter costs its own value and not the other four.
+    total, active, duplicates, estimated, unhydrated = await asyncio.gather(
+        _count(),
+        _count(filters=["active=true", "canonical_id=null"]),
+        _count(filters=["canonical_id!=null"]),
+        _count(filters=["active=true", "posted_at_estimated=true"]),
+        _count(filters=["active=true", "jd_hydrated=false"]),
+    )
     try:
         newest_rows = await appwrite_tables.list_rows(
             select=["last_seen_at"], sort_desc="last_seen_at", limit=1
@@ -965,6 +988,9 @@ async def index_stats() -> dict[str, object]:
         newest = None
 
     return {
+        # Whether the counters above are true counts or Appwrite's saturating
+        # estimate. Without this a reader cannot tell 5000 rows from 359,416.
+        "counts_exact": counts_exact,
         "postings_total": total,
         "postings_active": active,
         "duplicates_marked": duplicates,
