@@ -499,3 +499,61 @@ def test_a_single_oversized_value_is_not_split() -> None:
 
 def test_nothing_in_gives_nothing_out() -> None:
     assert appwrite_tables.chunk_values([]) == []
+
+
+# ---------------------------------------------------------------------------
+# Appwrite bills reads PER ROW, not per API call. From its docs: "if you fetch
+# a table of 50 rows with a single API call, this counts as 50 read operations,
+# not as a single operation." A full-table walk of this index is 359,416 reads
+# against a 500,000/month Free allowance, and running one took the project
+# offline with 402 limit_databases_reads_exceeded.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_counting_costs_one_row_not_the_whole_table(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The regression that took the database down.
+
+    `count_rows_exact` used to page the table with a cursor. It was correct,
+    it was fast, and at per-row billing it spent roughly ten times the monthly
+    quota over three development runs. Whatever this function does, it must
+    not scale its cost with the size of the table, so this asserts on the wire
+    request rather than on the answer.
+    """
+    seen: list[list[tuple[str, str]]] = []
+
+    async def _capture(_method: str, **kwargs: Any) -> dict[str, Any]:
+        seen.append(kwargs.get("params") or [])
+        return {"total": 359_416, "rows": [{"$id": "1"}]}
+
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(appwrite_tables, "_request", _capture)
+
+    total, exact = await appwrite_tables.count_rows_exact(filters=["active=true"])
+
+    assert len(seen) == 1, "one request, not one per page"
+    limits = [json.loads(v)["values"][0] for _k, v in seen[0] if '"limit"' in v]
+    assert limits == [1], "and it asks the wire for a single row"
+    assert not any("cursorAfter" in v for _k, v in seen[0]), "no paging"
+    assert total == 359_416
+    assert exact is False, "above the cap, so not exact and it must say so"
+
+
+@pytest.mark.asyncio
+async def test_a_count_under_the_cap_is_reported_as_exact(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Below `TOTAL_CAP` Appwrite's own total is a real number, measured:
+    `source=icims` returned 3042 and `active=false` returned 1412."""
+
+    async def _small(_method: str, **_kwargs: Any) -> dict[str, Any]:
+        return {"total": 3042, "rows": [{"$id": "1"}]}
+
+    monkeypatch.setattr(appwrite_tables, "get_settings", lambda: _FakeSettings())
+    monkeypatch.setattr(appwrite_tables, "_request", _small)
+
+    total, exact = await appwrite_tables.count_rows_exact(filters=["source=icims"])
+
+    assert (total, exact) == (3042, True)
