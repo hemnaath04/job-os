@@ -3,7 +3,7 @@
 WHY THIS IS NOT THE EXISTING `jobs` TABLE
 -----------------------------------------
 `jobs` was the obvious candidate. It already carries the right column vocabulary
-(`jd_raw`, `jd_clean`, `jd_parsed`, `jd_embedding`, `source`, `source_id`,
+(`jd_clean`, `jd_parsed`, `jd_embedding`, `source`, `source_id`,
 `posted_at`, `active`, `first_seen_at`, `last_seen_at`) and a unique constraint on
 `(source, source_id)`, and this table deliberately mirrors it so promoting a
 posting into `jobs` stays a field copy. It is still the wrong home, for four
@@ -195,7 +195,12 @@ class JobPosting(UUIDPK, Timestamped, Base):
     salary_interval: Mapped[str | None] = mapped_column(String(16), nullable=True)
 
     # --- body ---------------------------------------------------------------
-    jd_raw: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # `jd_raw` is deliberately absent. The vendor's own markup was written on
+    # every insert and hydrate and read by nothing: measured at 5,581
+    # compressed bytes a row against 2,550 real Greenhouse postings, the
+    # largest column in the table, larger than `jd_clean` itself. Providers
+    # still carry it on `RawPosting` on the way to building `jd_clean`, which
+    # is honest and free; storing it is 5.5 KB a row forever for no reader.
     jd_clean: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
     #: False when the provider's list endpoint carries no body and the extra
     #: per-posting call has not been made. SmartRecruiters is why this exists.
