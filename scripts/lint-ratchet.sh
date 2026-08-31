@@ -31,8 +31,14 @@ set -uo pipefail
 # several other sessions actively editing files here, a check run against the
 # dirty tree reads a different, wrong count depending on the instant it runs,
 # which is what produced the first, incorrect version of this reset.
-RUFF_CEILING=30
-MYPY_CEILING=69
+#
+# Lowered 2026-08-30 from 30/69 by the description-hydration branch. Not a
+# cleanup pass: extracting `search_text_for` out of `upsert.to_row` (so the new
+# hydration pass could not drift from the write path) happened to take one
+# over-long line and two `object`-typed dict lookups with it. The new module
+# and its tests add none of their own.
+RUFF_CEILING=29
+MYPY_CEILING=67
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 

@@ -245,6 +245,51 @@ factual stand-in built from the listing metadata; the read path exposes
 
 ---
 
+## Hydration: the second request per posting
+
+Five providers (SmartRecruiters, Workday, BambooHR, iCIMS, Oracle) have no
+description in their list response at all, so their rows are written with
+`jd_hydrated=false`. Until 2026-08-30 nothing ever filled them in: measured
+against the live index that morning, `descriptions_missing` was 5,000 of
+`postings_active` 5,000, which is Appwrite's capped `total` estimate rather
+than a true count and should be read as "all of it". The index could rank
+those postings on their titles and could not score them on their bodies, and
+the tailor had nothing to read.
+
+`ingest/hydrate.py` is that second pass, run by `cli hydrate`. Three things
+about it are decisions rather than details.
+
+- **It is an N+1, so it is budgeted like one.** One posting is one request.
+  `--limit` defaults to 200, which is `job_index.MAX_LIMIT`, the largest page a
+  single search can ask for, so one run fills at least a page of the freshest
+  end of the index. Measured live: 200 postings in 11.0s, 4.1 MB, 18.1
+  postings/second.
+- **Candidates come out newest-first**, the same `last_seen_at DESC` the read
+  path builds its own candidate pool with, so the pass fills the window a
+  search reaches first rather than a random slice. The honest cost is that
+  `last_seen_at` moves in whole sweeps, so the front of the queue is usually
+  one vendor (measured: the newest 1,000 unhydrated rows were 1,000 of 1,000
+  from a single BambooHR sweep spanning 51 seconds). `--providers` is the lever
+  for that.
+- **A failed hydrate never deactivates the row.** Every provider's `hydrate()`
+  swallows a bad response and returns the posting unchanged, so a 404, a
+  timeout and an exhausted 429 retry all arrive as the same "no body".
+  Deactivating on that would close live postings because a vendor was slow.
+  The list crawl already closes real closures, from a board it genuinely
+  re-read. A failure is counted, recorded on the row as an attempt, and given
+  up on after three.
+
+Hydration writes the body, the raw markup, `jd_hydrated`, `search_text`, and
+`posted_at`/`posted_at_basis` when the detail carries a real date. It
+deliberately does **not** rewrite `content_hash`: that column is the sweep's
+change detector over the *list* payload, and rehashing the fetched body would
+make every later sweep see a phantom edit, overwrite the body with the thin
+stand-in and reset the flag, so the same posting would be paid for forever.
+Verified live by re-crawling a board immediately after hydrating it: the
+upsert reported `unchanged=1` and the row kept its 11,893-character body.
+
+---
+
 ## Dedupe
 
 Two stages. Both constants are JobFunnel's and are pinned by a test so they
@@ -327,6 +372,7 @@ was still being read as current four days later.
 cd apps/api
 uv run python -m job_os.ingest.cli seed                         # idempotent
 uv run python -m job_os.ingest.cli sweep --limit 200            # crawl what is due
+uv run python -m job_os.ingest.cli hydrate --limit 200          # fetch the bodies
 uv run python -m job_os.ingest.cli status                       # counters
 uv run python -m job_os.ingest.cli sample --provider lever --limit 60   # no DB writes
 ```

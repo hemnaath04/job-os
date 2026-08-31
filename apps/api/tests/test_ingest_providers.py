@@ -52,6 +52,7 @@ from job_os.ingest.providers import (
     SmartRecruitersProvider,
     WorkdayProvider,
 )
+from job_os.ingest.providers.smartrecruiters import parse_posting, posting_id
 
 pytestmark = pytest.mark.asyncio
 
@@ -204,6 +205,130 @@ async def test_smartrecruiters_listing_has_no_description() -> None:
     assert posting.workplace_type == "Hybrid"
     # `ref` is an API URL. The public page is built from the company identifier.
     assert posting.source_url == "https://jobs.smartrecruiters.com/Example/744000"
+
+
+SR_DETAIL = {
+    "id": "744000",
+    "name": "Staff Software Engineer",
+    "releasedDate": "2026-08-01T10:00:00.000Z",
+    "jobAd": {
+        "sections": {
+            # Deliberately out of the documented order, which is the point of
+            # `_ordered_sections`: the payload's own key order is not stable,
+            # and a body that reshuffled between crawls would change the
+            # content hash and make every re-crawl look like an employer edit.
+            "qualifications": {"title": "Qualifications", "text": "<ul><li>Rust</li></ul>"},
+            "jobDescription": {
+                "title": "Job Description",
+                "text": "<p>Write <b>compilers</b>.</p>",
+            },
+            "companyDescription": {
+                "title": "Company Description",
+                "text": "<p>We are Example.</p>",
+            },
+        }
+    },
+}
+
+
+async def test_smartrecruiters_hydration_fills_the_body_it_could_not_list() -> None:
+    """Until this existed, this provider's rows could never be filled in.
+
+    It emitted `jd_hydrated=False` on every row and had no `hydrate()`, so the
+    flag named a second pass that had nothing to call. Every SmartRecruiters
+    posting in the index was permanently rankable on its title and unscoreable
+    on its body, and the tailor had nothing to read.
+    """
+    provider = SmartRecruitersProvider()
+    listed = (
+        await provider.fetch_board(
+            FakeFetcher(
+                ok(
+                    {
+                        "offset": 0,
+                        "limit": 100,
+                        "totalFound": 1,
+                        "content": [
+                            {
+                                "id": "744000",
+                                "name": "Staff Software Engineer",
+                                "company": {"identifier": "Example", "name": "Example Inc"},
+                                "releasedDate": "2026-08-01T10:00:00.000Z",
+                            }
+                        ],
+                    }
+                )
+            ),
+            "Example",
+        )
+    ).postings[0]
+    assert listed.jd_hydrated is False
+
+    detail = FakeFetcher(ok(SR_DETAIL))
+    hydrated = await provider.hydrate(detail, "Example", listed)
+
+    assert detail.urls == [
+        "https://api.smartrecruiters.com/v1/companies/Example/postings/744000"
+    ]
+    assert hydrated.jd_hydrated is True
+    # All four sections, flattened, in the documented order rather than the
+    # payload's. Company first, then the job, then the qualifications.
+    assert hydrated.jd_clean.index("We are Example") < hydrated.jd_clean.index("compilers")
+    assert hydrated.jd_clean.index("compilers") < hydrated.jd_clean.index("Rust")
+    assert "<p>" not in hydrated.jd_clean
+    # The employer's own markup is kept, rejoined in the same order. This is
+    # the one vendor that splits it across four fields, so leaving `jd_raw`
+    # empty would throw the only copy of it away.
+    assert "<b>compilers</b>" in hydrated.jd_raw
+    # The list already gave a real `releasedDate`, so there is no date upgrade
+    # to win here, unlike Workday. It must not be downgraded either.
+    assert hydrated.posted_at_basis == "published"
+    assert hydrated.posted_at is not None and hydrated.posted_at.month == 8
+
+
+async def test_smartrecruiters_hydration_survives_a_url_stored_as_an_id() -> None:
+    """The shape the live index actually holds, not a hypothetical.
+
+    `scraper_import._row_to_posting` falls back to the posting URL when the
+    standalone scraper's export has no `ats_job_id`, so real rows carry a whole
+    URL in `external_id`. Interpolated into the detail path unchanged it makes
+    a URL with another URL inside it and SmartRecruiters answers 404: measured
+    at 20 of 20 candidates failing before this guard, each one a request spent
+    to learn nothing, three runs in a row before the attempt ceiling gave up.
+    """
+    assert (
+        posting_id("https://api.smartrecruiters.com/v1/companies/Wise/postings/744000143803679")
+        == "744000143803679"
+    )
+    # A native id has no slash in it, so it must come back untouched.
+    assert posting_id("744000146348479") == "744000146348479"
+
+
+async def test_smartrecruiters_hydration_survives_its_own_odd_failure_shape() -> None:
+    """The failure is a 400, not the 404 a missing posting would suggest.
+
+    Verified live 2026-08-30: asking for a posting id that belongs to another
+    company answers `400 ILLEGAL_ARGUMENT` with a JSON body. Guarding on 404
+    alone and then reading `jobAd` off that body would store an error page's
+    empty sections as a job description and mark the row hydrated, which is
+    worse than leaving it thin: nothing would ever come back for it.
+    """
+    posting = parse_posting(
+        "Example",
+        {
+            "id": "744000",
+            "name": "Staff Software Engineer",
+            "company": {"identifier": "Example", "name": "Example Inc"},
+        },
+    )
+    assert posting is not None
+
+    hydrated = await SmartRecruitersProvider().hydrate(
+        FakeFetcher(status(400, payload={"code": "ILLEGAL_ARGUMENT"})), "Example", posting
+    )
+
+    assert hydrated.jd_hydrated is False
+    assert hydrated.jd_clean == posting.jd_clean
 
 
 async def test_smartrecruiters_pages_by_the_limit_the_server_actually_served() -> None:
