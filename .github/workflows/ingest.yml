@@ -57,10 +57,30 @@ on:
         description: "Postings this run may fetch descriptions for (0 to skip)"
         required: false
         default: "200"
-  schedule:
-    # Every six hours, offset off the hour because schedulers are busiest there.
-    # Matches the LIVE recheck interval in ingest/liveness.py.
-    - cron: "17 */6 * * *"
+  # PAUSED 2026-08-31, and this is a billing decision rather than a code one.
+  #
+  # Appwrite bills database reads per ROW, not per API call, and this sweep is
+  # read-heavy in a way that is invisible from the request count: one run reads
+  # every posting it saw, to decide insert versus update, plus a dedupe pool of
+  # up to 5,000. Measured on a real run that crawled three boards, that is 8,297
+  # reads, and hydration adds 1,600 more.
+  #
+  # Four runs a day is roughly 1.19 million reads a month before anybody
+  # searches. The Free plan allows 500,000 and the Education plan 1,750,000, so
+  # the schedule alone was 2.4x the former and 68% of the latter, on a corpus of
+  # three boards out of 20,922 seeded. The project is currently returning 402
+  # `limit_databases_reads_exceeded` on every read.
+  #
+  # Paused rather than tuned, because the fix is not a smaller number here: a
+  # search index is read-heavy by definition and this one is on a store that
+  # charges per row. Re-enable once `job_postings` lives somewhere that bills
+  # for storage instead. `workflow_dispatch` above still works, so a manual run
+  # is one click away meanwhile.
+  #
+  # schedule:
+  #   # Every six hours, offset off the hour because schedulers are busiest
+  #   # there. Matches the LIVE recheck interval in ingest/liveness.py.
+  #   - cron: "17 */6 * * *"
 
 # A sweep that overlaps itself would double the load on every vendor for no gain,
 # and the second one would find every token already claimed as not-yet-due.
