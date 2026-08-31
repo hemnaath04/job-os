@@ -136,6 +136,13 @@ jobs:
       # be reported as failed by the pass that runs after it. The same reason
       # the status report below carries it.
       - name: Hydrate descriptions
+        # `always()`, not just `continue-on-error`. Hydration fills in rows the
+        # index ALREADY has, so it is useful whether or not this run's crawl
+        # worked, and skipping it on a crawl failure means a bad afternoon at
+        # one vendor also stops descriptions being fetched for everyone else.
+        # Observed exactly that: `dedupe_recent` timed out, the crawl step went
+        # red, and hydration never ran despite having nothing to do with it.
+        if: always()
         continue-on-error: true
         working-directory: apps/api
         run: |
