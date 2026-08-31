@@ -652,6 +652,18 @@ def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> 
     between the two queries) keeps the `description_available` flag the pool
     row's own `jd_hydrated` column already gave it, rather than being restated
     as having no description.
+
+    The flag is a CONJUNCTION of the two facts, not whichever was computed last.
+    This line used to be `= bool(hit.snippet.strip())`, which silently discarded
+    the `jd_hydrated` half: an unhydrated SmartRecruiters listing carries a body
+    like "Engineer\\nAcme\\nBoston", which is provider metadata rather than a job
+    description, and that is not empty -- so the flag flipped to True and the
+    read path advertised a description that does not exist. `require_description`
+    filters on `jd_hydrated` server-side and was never affected, which is how the
+    two halves came to disagree: the filter was right and the flag the UI reads
+    was wrong. The unhydrated case is the one this was written for; a hydrated
+    row whose body turned out empty is the same answer for the other reason, and
+    an `and` gets both.
     """
     for hit in hits:
         row = by_id.get(str(hit.id))
@@ -659,7 +671,7 @@ def _attach_snippets(by_id: dict[Any, dict[str, Any]], hits: list[IndexHit]) -> 
             continue
         jd_clean = row.get("jd_clean") or ""
         hit.snippet = jd_clean[:SNIPPET_CHARS]
-        hit.description_available = bool(hit.snippet.strip())
+        hit.description_available = hit.description_available and bool(hit.snippet.strip())
 
 
 def _load_enrichment(row: dict[str, Any]) -> JobEnrichment | None:
