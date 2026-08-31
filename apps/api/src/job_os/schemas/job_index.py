@@ -187,10 +187,20 @@ class IndexSearchResponse(BaseModel):
 class IndexStatsResponse(BaseModel):
     postings_total: int
     postings_active: int
+    #: Both back after the return to Postgres. They need server-side
+    #: aggregation, which is a `GROUP BY` here and was a full table scan per
+    #: call on Appwrite, so they were dropped rather than served slowly.
+    companies_active: int
+    by_source: dict[str, int]
     duplicates_marked: int
     posted_at_estimated: int
     descriptions_missing: int
     last_crawl_seen_at: datetime | None
+    #: Whether the counters above are true counts. Always True now: every one
+    #: is a `COUNT(*)`. Kept because for two weeks it was not -- Appwrite's
+    #: `total` saturated at 5,000 on a 359,416-row table, and a reader could
+    #: not otherwise tell 5,000 rows from "at least 5,000".
+    counts_exact: bool = True
     tokens: dict[str, dict[str, int]] = Field(
         default_factory=dict, description="Corpus liveness per provider and status."
     )

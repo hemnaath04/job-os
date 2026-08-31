@@ -1,260 +1,281 @@
-"""A title hit outranks a JD-body hit, and the pool query still reads whole rows.
+"""A title hit outranks a JD-body hit, and the pool query still avoids the body.
 
-Unit tests against the ranking functions rather than the Appwrite-backed
-`search_index` in `test_job_index_ranking.py`: the behaviour under test is
-entirely local (which weight a row gets, and which columns the pool asks for),
-so it should be checkable without a live table and an API key.
+The bug these cover came from a live search for "software engineer intern": the
+first page opened with a Platform Security Engineer, a Principal Enterprise
+Technology Architect, a Localization Manager, an EA to the CRO and a Director of
+Litigation. None of those is titled anything like the query. They matched
+because the store at the time (Appwrite) had one fulltext index over a single
+concatenated `search_text` field and answered it match-or-no-match, so a posting
+that merely mentioned the internship programme in its body scored exactly as
+highly as one titled for it: `retrieve_score` was a flat 1.0 for both.
 
-The bug these cover, from a live search for "software engineer intern": the
-first page opened with Glean's Platform Security Engineer, a Principal
-Enterprise Technology Architect, a Localization Manager, an EA to the CRO and a
-Director of Litigation. None of those is titled anything like the query. They
-matched because Appwrite's fulltext index is built over `search_text`, which
-concatenates the title with the first 8000 characters of `jd_clean` -- so a
-posting that merely mentions the internship programme in its body matched
-exactly as strongly as one titled for it, and `retrieve_score` was a flat 1.0
-for both.
+Postgres does not need a Python re-scoring pass to tell those apart, so there is
+not one any more. Two mechanisms do it, and this file pins both:
+
+  * `title_keywords` is matched against `to_tsvector(title)` alone, so a
+    body-only mention is not even a candidate.
+  * `search_vector` is weighted `setweight(..., 'A')` on the title down to `'D'`
+    on the body, and `ts_rank_cd` reads those weights, so within the rows that
+    do match, a title hit scores above a body hit by construction.
+
+Both need a real database to mean anything, which is why this file no longer
+tests a Python helper.
 """
 from __future__ import annotations
 
-import inspect
-import re
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from job_os.services.job_index import (
-    BODY_ONLY_MATCH_WEIGHT,
-    NO_KEYWORDS_WEIGHT,
-    POOL_COLUMNS,
-    TITLE_MATCH_WEIGHT,
-    _apply_mix_and_rank,
-    _row_to_tuple,
-    _title_weight,
-    ranking_constants,
+import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from job_os.ingest.providers import RawPosting
+from job_os.ingest.upsert import upsert_postings
+from job_os.services.job_index import IndexQuery, search_index
+
+pytestmark = pytest.mark.asyncio
+
+NOW = datetime.now(UTC)
+
+#: The body every "distractor" posting carries: it mentions each word of the
+#: query, scattered, exactly as the real Director of Litigation posting did.
+DISTRACTOR_BODY = (
+    "You will partner with the software organisation, report to a senior "
+    "engineer on matters of process, and help run our summer intern cohort."
 )
 
-NOW = datetime(2026, 8, 27, 12, 0, tzinfo=UTC)
+
+@pytest.fixture
+def source() -> str:
+    return f"tw_{uuid.uuid4().hex[:12]}"
 
 
-def row(
+def posting(
     *,
+    source: str,
+    external_id: str,
     title: str,
-    company: str = "Acme",
+    company: str,
+    description: str = "Build and operate the service.",
     age_days: float = 1.0,
-    jd: str = "Build and operate the service.",
-) -> dict[str, object]:
-    """One Appwrite `job_postings` row, with only the columns the pool selects."""
-    posted = NOW - timedelta(days=age_days)
-    return {
-        "source_posting_id": str(uuid.uuid4()),
-        "source": "greenhouse",
-        "source_id": f"acme:{abs(hash(title)) % 10**7}",
-        "source_url": "https://boards.greenhouse.io/acme/jobs/1",
-        "title": title,
-        "company_name": company,
-        "company_domain": f"{company.lower()}.test",
-        "location": "San Francisco, CA",
-        "country_code": "US",
-        "remote": False,
-        "department": None,
-        "employment_type": None,
-        "salary_min": None,
-        "salary_max": None,
-        "salary_currency": None,
-        "jd_hydrated": True,
-        "posted_at": posted.isoformat(),
-        "posted_at_basis": "published",
-        "posted_at_estimated": False,
-        "first_seen_at": posted.isoformat(),
-        "last_seen_at": NOW.isoformat(),
-        "active": True,
-        "inactive_since": None,
-        "repost_count": 0,
-        # Deliberately not read by the pool path, and deliberately present here
-        # so a test row is a realistic row.
-        "jd_clean": jd,
-    }
-
-
-# ---------------------------------------------------------------------------
-# _title_weight
-# ---------------------------------------------------------------------------
-
-
-def test_a_title_hit_and_a_body_only_hit_are_not_the_same_thing():
-    assert _title_weight("Software Engineering Intern", ["software engineer intern"]) == (
-        TITLE_MATCH_WEIGHT
-    )
-    assert _title_weight("Director of Litigation", ["software engineer intern"]) == (
-        BODY_ONLY_MATCH_WEIGHT
-    )
-    assert BODY_ONLY_MATCH_WEIGHT < TITLE_MATCH_WEIGHT
-
-
-def test_the_words_may_be_in_any_order_and_punctuated_however():
-    # The same rule the live sources filter with and the smart-search prompt is
-    # written against: every word of the phrase, anywhere in the title.
-    for title in ["AI/ML Engineer Intern", "Intern, ML Engineer", "ml-engineer (intern)"]:
-        assert _title_weight(title, ["ml engineer intern"]) == TITLE_MATCH_WEIGHT
-
-
-def test_the_phrases_are_alternatives_so_any_one_of_them_is_enough():
-    weight = _title_weight(
-        "Software Engineering Co-op",
-        ["software engineer intern", "software engineering co-op"],
-    )
-    assert weight == TITLE_MATCH_WEIGHT
-
-
-def test_a_missing_word_is_a_miss_not_a_partial_credit():
-    # "ai" is not in this title, so this is a body-only match, exactly as
-    # `no-key-sources.ts` would decide it.
-    assert _title_weight("Machine Learning Engineer Intern", ["ai engineer intern"]) == (
-        BODY_ONLY_MATCH_WEIGHT
+) -> RawPosting:
+    return RawPosting(
+        source=source,
+        board_token="board",
+        external_id=external_id,
+        title=title,
+        company_name=company,
+        company_domain=f"{external_id}.test",
+        source_url=f"https://example.test/{external_id}",
+        jd_clean=description,
+        location="San Francisco, CA",
+        country_code="US",
+        posted_at=NOW - timedelta(days=age_days),
+        posted_at_basis="published",
     )
 
 
-def test_browsing_with_no_keywords_leaves_every_row_alone():
-    assert _title_weight("Anything At All", []) == NO_KEYWORDS_WEIGHT
-    assert _title_weight("Anything At All", ["", "  "]) == NO_KEYWORDS_WEIGHT
-    assert NO_KEYWORDS_WEIGHT == TITLE_MATCH_WEIGHT
+async def search(session: AsyncSession, source: str, **kwargs: object) -> list:
+    query = IndexQuery(sources=[source], explain=True, **kwargs)  # type: ignore[arg-type]
+    return (await search_index(session, query)).hits
 
 
-def test_engineering_and_engineer_are_the_same_word_for_ranking():
-    # Employers write both, and a query cannot spell them both. The web app's
-    # `relevance.ts` stems the same three cases the same way.
-    assert _title_weight("Software Engineering Internship", ["software engineer intern"]) == (
-        TITLE_MATCH_WEIGHT
-    )
-    assert _title_weight("Data Analyst Intern", ["data analysts interns"]) == TITLE_MATCH_WEIGHT
-    # And it does not go so far as to fold unrelated words together.
-    assert _title_weight("Internal Audit Associate", ["intern"]) == BODY_ONLY_MATCH_WEIGHT
-
-
-def test_a_row_with_no_title_is_a_miss_rather_than_a_crash():
-    assert _title_weight(None, ["software engineer intern"]) == BODY_ONLY_MATCH_WEIGHT
-
-
-# ---------------------------------------------------------------------------
-# the effect on rank
-# ---------------------------------------------------------------------------
-
-
-def rank_titles(titles: list[str], keywords: list[str], **kw: float) -> list[str]:
-    rows = [row(title=t, company=t, **kw) for t in titles]  # type: ignore[arg-type]
-    hits = _apply_mix_and_rank(
-        [_row_to_tuple(r, NOW, keywords) for r in rows],
-        limit=len(rows),
-        offset=0,
-        explain=True,
-        matched_keywords=bool(keywords),
-    )
-    return [h.title for h in hits]
-
-
-def test_the_qa_page_puts_the_internship_first():
-    order = rank_titles(
+async def test_the_qa_page_puts_the_internship_first(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The exact page that was wrong, asserted as the page it should be."""
+    await upsert_postings(
+        db_session,
         [
-            "Platform Security Engineer",
-            "Principal Enterprise Technology Architect",
-            "Director of Litigation",
-            "Software Engineering Intern",
+            posting(
+                source=source,
+                external_id="security",
+                title="Platform Security Engineer",
+                company="Glean",
+                description=DISTRACTOR_BODY,
+            ),
+            posting(
+                source=source,
+                external_id="architect",
+                title="Principal Enterprise Technology Architect",
+                company="Bigco",
+                description=DISTRACTOR_BODY,
+            ),
+            posting(
+                source=source,
+                external_id="litigation",
+                title="Director of Litigation",
+                company="Lawfirm",
+                description=DISTRACTOR_BODY,
+            ),
+            posting(
+                source=source,
+                external_id="intern",
+                title="Software Engineer Intern",
+                company="Realco",
+                description="Join the team for the summer.",
+            ),
         ],
-        ["software engineer intern"],
+        seen_at=NOW,
     )
-    assert order[0] == "Software Engineering Intern"
+
+    hits = await search(db_session, source, query="software engineer intern")
+
+    assert hits[0].source_id == "board:intern"
 
 
-def test_a_week_old_title_hit_beats_a_body_hit_posted_today():
-    rows = [
-        row(title="Director of Litigation", company="Old", age_days=0.0),
-        row(title="Software Engineering Intern", company="New", age_days=7.0),
-    ]
-    hits = _apply_mix_and_rank(
-        [_row_to_tuple(r, NOW, ["software engineer intern"]) for r in rows],
-        limit=2,
-        offset=0,
-        explain=False,
-        matched_keywords=True,
-    )
-    assert [h.title for h in hits] == [
-        "Software Engineering Intern",
-        "Director of Litigation",
-    ]
+async def test_a_title_hit_scores_higher_than_a_body_only_hit(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The mechanism behind the ordering above, asserted on its own.
 
-
-def test_a_body_only_hit_is_demoted_not_deleted():
-    order = rank_titles(["Director of Litigation"], ["software engineer intern"])
-    assert order == ["Director of Litigation"]
-
-
-def test_freshness_still_decides_between_two_title_hits():
-    rows = [
-        row(title="Software Engineering Intern", company="Old", age_days=60.0),
-        row(title="Software Engineer Intern", company="New", age_days=0.0),
-    ]
-    hits = _apply_mix_and_rank(
-        [_row_to_tuple(r, NOW, ["software engineer intern"]) for r in rows],
-        limit=2,
-        offset=0,
-        explain=False,
-        matched_keywords=True,
-    )
-    assert [h.company_name for h in hits] == ["New", "Old"]
-
-
-def test_the_explain_field_reports_the_weight_it_actually_used():
-    rows = [row(title="Director of Litigation")]
-    hits = _apply_mix_and_rank(
-        [_row_to_tuple(r, NOW, ["software engineer intern"]) for r in rows],
-        limit=1,
-        offset=0,
-        explain=True,
-        matched_keywords=True,
-    )
-    assert hits[0].explain is not None
-    assert hits[0].explain.retrieve_score == BODY_ONLY_MATCH_WEIGHT
-
-
-def test_the_weights_are_published_so_the_web_app_need_not_copy_them():
-    constants = ranking_constants()
-    assert constants["title_match_weight"] == TITLE_MATCH_WEIGHT
-    assert constants["body_only_match_weight"] == BODY_ONLY_MATCH_WEIGHT
-
-
-# ---------------------------------------------------------------------------
-# POOL_COLUMNS
-# ---------------------------------------------------------------------------
-
-
-def test_the_pool_query_asks_for_every_column_the_row_reader_touches():
-    """The pool stopped selecting `*` so it would stop shipping `jd_clean` for
-    480 rows on every search. The risk that creates is silent: a column added to
-    `_row_to_tuple` and forgotten here reads as None, and the search keeps
-    working while every posting's date quietly becomes the crawl time.
+    Both rows match the same tsquery, so both are candidates. `ts_rank_cd`
+    reads the tsvector's A-versus-D weighting and separates them, which is the
+    graded relevance the Appwrite fulltext match could not express at all.
     """
-    source = inspect.getsource(_row_to_tuple)
-    read = set(re.findall(r'row\.get\("([^"]+)"\)', source))
-    read |= set(re.findall(r'row\["([^"]+)"\]', source))
-    missing = read - set(POOL_COLUMNS)
-    assert not missing, f"_row_to_tuple reads columns the pool does not select: {missing}"
-
-
-def test_the_pool_query_does_not_ask_for_the_expensive_columns():
-    # The whole point: these two are the page's cost, not the pool's.
-    assert "jd_clean" not in POOL_COLUMNS
-    assert "enrichment" not in POOL_COLUMNS
-
-
-def test_a_row_carrying_only_the_pool_columns_still_ranks():
-    lean = {k: v for k, v in row(title="Software Engineering Intern").items() if k in POOL_COLUMNS}
-    hits = _apply_mix_and_rank(
-        [_row_to_tuple(lean, NOW, ["software engineer intern"])],
-        limit=1,
-        offset=0,
-        explain=False,
-        matched_keywords=True,
+    await upsert_postings(
+        db_session,
+        [
+            posting(
+                source=source,
+                external_id="in-title",
+                title="Software Engineer Intern",
+                company="Realco",
+                description="Join the team for the summer.",
+            ),
+            posting(
+                source=source,
+                external_id="in-body",
+                title="Director of Litigation",
+                company="Lawfirm",
+                description=DISTRACTOR_BODY,
+            ),
+        ],
+        seen_at=NOW,
     )
-    assert hits[0].title == "Software Engineering Intern"
-    assert hits[0].posted_at is not None
-    assert hits[0].description_available is True
+
+    hits = {hit.source_id: hit for hit in await search(db_session, source, query="software engineer intern")}
+
+    in_title = hits["board:in-title"].explain
+    in_body = hits["board:in-body"].explain
+    assert in_title is not None and in_body is not None
+    assert in_title.retrieve_score > in_body.retrieve_score
+
+
+async def test_a_body_only_hit_is_demoted_not_dropped(
+    db_session: AsyncSession, source: str
+) -> None:
+    """A free-text search is allowed to reach the body. It has to be, or a
+    search for a technology named only in the requirements finds nothing.
+
+    So the body-only posting still comes back; it just does not come first.
+    `title_keywords` is the caller's way of asking for the stricter thing, and
+    `test_title_keywords_does_not_match_the_jd_body` in
+    `test_job_index_ranking.py` pins that.
+    """
+    await upsert_postings(
+        db_session,
+        [
+            posting(
+                source=source,
+                external_id="litigation",
+                title="Director of Litigation",
+                company="Lawfirm",
+                description=DISTRACTOR_BODY,
+            )
+        ],
+        seen_at=NOW,
+    )
+
+    hits = await search(db_session, source, query="software engineer intern")
+
+    assert [hit.source_id for hit in hits] == ["board:litigation"]
+
+
+async def test_a_week_old_title_hit_beats_a_body_hit_posted_today(
+    db_session: AsyncSession, source: str
+) -> None:
+    """Relevance and freshness multiply, so neither wins on its own.
+
+    A body-only match from this morning must not outrank a real title match
+    from last week, which is the ordering the whole weighting exists to fix.
+    """
+    await upsert_postings(
+        db_session,
+        [
+            posting(
+                source=source,
+                external_id="fresh-body",
+                title="Director of Litigation",
+                company="Lawfirm",
+                description=DISTRACTOR_BODY,
+                age_days=0.0,
+            ),
+            posting(
+                source=source,
+                external_id="week-old-title",
+                title="Software Engineer Intern",
+                company="Realco",
+                description="Join the team for the summer.",
+                age_days=7.0,
+            ),
+        ],
+        seen_at=NOW,
+    )
+
+    hits = await search(db_session, source, query="software engineer intern")
+
+    assert [hit.source_id for hit in hits] == ["board:week-old-title", "board:fresh-body"]
+
+
+async def test_freshness_still_decides_between_two_title_hits(
+    db_session: AsyncSession, source: str
+) -> None:
+    """Two equally-titled postings are separated by date, not by luck."""
+    await upsert_postings(
+        db_session,
+        [
+            posting(
+                source=source,
+                external_id="old",
+                title="Software Engineer Intern",
+                company="Oldco",
+                age_days=60.0,
+            ),
+            posting(
+                source=source,
+                external_id="new",
+                title="Software Engineer Intern",
+                company="Newco",
+                age_days=0.0,
+            ),
+        ],
+        seen_at=NOW,
+    )
+
+    hits = await search(db_session, source, query="software engineer intern")
+
+    assert [hit.source_id for hit in hits] == ["board:new", "board:old"]
+
+
+async def test_the_pool_query_does_not_carry_the_body(
+    db_session: AsyncSession, source: str
+) -> None:
+    """The measurement this module's docstring rests on, kept enforceable.
+
+    Selecting `jd_clean` for the whole candidate pool was 87.4ms against 8.5ms
+    for the narrow columns, because the column is TOASTed and has to be fetched
+    and decompressed per row. A future edit that added it to the pool `select`
+    would be silent, so the source is checked directly: the body may only be
+    named inside the second, page-sized query.
+    """
+    import inspect
+
+    from job_os.services import job_index
+
+    pool = inspect.getsource(job_index.search_index)
+    assert "JobPosting.jd_clean" not in pool, (
+        "the candidate pool must not select jd_clean; _fetch_page is where the "
+        "body is allowed to be read, and only for the page"
+    )
+    assert "JobPosting.jd_clean" in inspect.getsource(job_index._fetch_page)

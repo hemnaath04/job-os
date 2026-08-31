@@ -37,8 +37,17 @@ set -uo pipefail
 # hydration pass could not drift from the write path) happened to take one
 # over-long line and two `object`-typed dict lookups with it. The new module
 # and its tests add none of their own.
-RUFF_CEILING=29
-MYPY_CEILING=67
+#
+# Lowered 2026-08-31 from 29/67 by feat/postings-back-to-postgres, for the same
+# kind of reason: nothing was cleaned up deliberately. Moving `job_postings`
+# back to Postgres deleted `tests/_fake_appwrite.py` and
+# `tests/test_appwrite_job_postings.py`, and Postgres does with typed columns
+# and generated expressions what the Appwrite path had to do with
+# `dict[str, object]` lookups and hand-built filter strings. The five ruff and
+# three mypy findings that went with them were never fixed, they stopped
+# existing.
+RUFF_CEILING=24
+MYPY_CEILING=64
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 

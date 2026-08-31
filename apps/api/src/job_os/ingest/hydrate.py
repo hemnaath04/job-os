@@ -1,20 +1,21 @@
 """The second pass: fetch the body a board's list endpoint did not carry.
 
     pick unhydrated rows, newest first -> one detail request each
-                                       -> write back body, date, search text
+                                       -> write back body and date
 
 Five of the eight providers write rows with `jd_hydrated=False` because their
 list endpoint has no description in it at all: Workday, SmartRecruiters,
 BambooHR, iCIMS and Oracle. Four of them already exposed a `hydrate()` that
 turns one row into a real body, and nothing ever called it; SmartRecruiters
 had none at all, so its rows carried a flag nothing could clear. Measured
-against the live index on 2026-08-30, before this module: `descriptions_missing` was
-5,000 of `postings_active` 5,000 -- both numbers are Appwrite's capped `total`
-estimate rather than a true count, so read them as "the whole visible index",
-not as exactly five thousand rows.
+against the live index on 2026-08-30, before this module: `descriptions_missing`
+was 5,000 of `postings_active` 5,000 -- both numbers were Appwrite's capped
+`total` estimate rather than a true count, so read them as "the whole visible
+index", not as exactly five thousand rows. The same counters are exact
+`COUNT(*)`s again now that the table is back on Postgres.
 
 The cost of that gap is not that a posting looks thin. It is that
-`job_index.search_index` matches on `search_text`, which for an unhydrated row
+`job_index.search_index` matches on `search_vector`, which for an unhydrated row
 is a title, a company, a location and a few taxonomy labels, so the index can
 rank a posting on its title and cannot score it on its body; the tailor, which
 reads the description, has nothing to read at all.
@@ -38,22 +39,31 @@ it decides that from a board it actually re-read. A posting that really closed
 disappears from its board's next list and is deactivated there, with that
 guard behind it. So a failure here is counted, recorded on the row, and
 skipped.
+
+**One thing this pass no longer has to get right.** While `job_postings` lived
+in Appwrite it also had to rewrite `search_text`, a stored copy of the text the
+fulltext index matched on, byte-for-byte the way `ingest/upsert.py` built it --
+a second writer of a derived value, with a comment explaining what would break
+if the two ever drifted. Postgres computes `search_vector` as a STORED
+generated column, so replacing `jd_clean` here updates the index by
+construction and there is nothing left to keep in step.
 """
 from __future__ import annotations
 
 import asyncio
-import json
+import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Protocol, runtime_checkable
 
 import structlog
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from job_os.db.models.job_posting import JobPosting
 from job_os.ingest import normalize
 from job_os.ingest.fetcher import DEFAULT_CONCURRENCY, BoardTiming, PoliteFetcher
 from job_os.ingest.providers import RawPosting, get_provider
-from job_os.ingest.upsert import search_text_for
-from job_os.services import appwrite_tables
 
 log = structlog.get_logger(__name__)
 
@@ -83,10 +93,7 @@ DEFAULT_LIMIT = 200
 POOL_MULTIPLIER = 4
 
 #: Ceiling on that pool regardless of `limit`. Matches `job_index`'s own
-#: `MAX_CANDIDATES`: it is the largest page this codebase asks Appwrite for,
-#: and the same table answers it in well under a second when the select list is
-#: narrow (measured 0.31s for 1,000 rows; the same query with no `select` at
-#: all timed out at 8s per attempt, which is why `_CANDIDATE_COLUMNS` is short).
+#: `MAX_CANDIDATES`: it is the largest page this codebase asks for anywhere.
 MAX_POOL = 2_000
 
 #: How many times one row may fail hydration before the pass stops spending
@@ -98,37 +105,21 @@ MAX_POOL = 2_000
 #: failing for a reason waiting will not fix.
 MAX_ROW_ATTEMPTS = 3
 
-#: Where that counter lives. `job_postings` has no column for it, and adding
-#: one means a console-side schema change that cannot ship with this code, so
-#: it goes in the provider `extra` blob under a namespaced key. Safe there:
-#: nothing reads `job_postings.jd_parsed` (a promoted job gets a fresh LLM
-#: parse -- see `job_index.promote_payload`), and a sweep that sees a genuine
-#: content change rewrites the whole blob from the provider's own `extra`,
-#: which resets the counter. That reset is correct rather than accidental: a
-#: posting the employer just edited deserves a fresh try.
-_ATTEMPTS_KEY = "hydrate_attempts"
-
-#: Columns the pass needs to rebuild a `RawPosting` and address the row again.
+#: Where that counter lives. `job_postings` has no column for it, and it does
+#: not deserve one: it goes in the provider `extra` blob under a namespaced
+#: key. Safe there: nothing reads `job_postings.jd_parsed` for provider data (a
+#: promoted job gets a fresh LLM parse -- see `job_index.promote_payload`), and
+#: a sweep that sees a genuine content change rewrites the whole blob from the
+#: provider's own `extra`, which resets the counter. That reset is correct
+#: rather than accidental: a posting the employer just edited deserves a fresh
+#: try.
 #:
-#: `jd_clean` is deliberately absent. No provider's `hydrate()` reads the old
-#: body -- all five replace it outright -- and `job_index`'s own docstring
-#: measured what selecting it costs: a pool carrying up to 8,000 characters of
-#: `jd_clean` per row is around four megabytes for MariaDB to sort and ship,
-#: and that is the shape that made Appwrite answer with its own 408.
-_CANDIDATE_COLUMNS = [
-    "$id",
-    "source",
-    "board_token",
-    "external_id",
-    "title",
-    "company_name",
-    "company_domain",
-    "location",
-    "source_url",
-    "jd_parsed",
-    "posted_at",
-    "posted_at_basis",
-]
+#: The one other writer of this column is `job_index._attach_match_scores`,
+#: which stores a cached enrichment under its own key via
+#: `job_enrich.store_enrichment`. The two do not collide because both merge
+#: into the existing dict rather than replacing it, and neither uses the
+#: other's key.
+_ATTEMPTS_KEY = "hydrate_attempts"
 
 
 @runtime_checkable
@@ -145,6 +136,30 @@ class SupportsHydrate(Protocol):
     """
 
     async def hydrate(self, fetcher: Any, token: str, posting: RawPosting) -> RawPosting: ...
+
+
+@dataclass(slots=True)
+class _Candidate:
+    """One unhydrated row, with only the columns this pass reads.
+
+    `jd_clean` is deliberately absent. No provider's `hydrate()` reads the old
+    body -- all five replace it outright -- and `job_index`'s own docstring
+    measured what selecting it costs: `jd_clean` is TOASTed, and fetching it
+    for a pool this size was 97% of the equivalent query's cost.
+    """
+
+    id: uuid.UUID
+    source: str
+    board_token: str
+    external_id: str
+    title: str
+    company_name: str
+    company_domain: str | None
+    location: str | None
+    source_url: str
+    jd_parsed: dict[str, Any]
+    posted_at: datetime | None
+    posted_at_basis: str
 
 
 @dataclass(slots=True)
@@ -190,6 +205,7 @@ class HydrateResult:
 
 
 async def hydrate_descriptions(
+    session: AsyncSession,
     *,
     providers: list[str] | None = None,
     limit: int = DEFAULT_LIMIT,
@@ -201,14 +217,16 @@ async def hydrate_descriptions(
     timing = BoardTiming()
     limit = max(1, limit)
 
-    rows = await _candidate_rows(providers, pool_size=min(MAX_POOL, limit * POOL_MULTIPLIER))
+    rows = await _candidate_rows(
+        session, providers, pool_size=min(MAX_POOL, limit * POOL_MULTIPLIER)
+    )
     result.candidates_scanned = len(rows)
 
-    work: list[tuple[dict[str, Any], SupportsHydrate, RawPosting]] = []
+    work: list[tuple[_Candidate, SupportsHydrate, RawPosting]] = []
     for row in rows:
         if len(work) >= limit:
             break
-        provider = _hydrating_provider(str(row.get("source") or ""))
+        provider = _hydrating_provider(row.source)
         if provider is None:
             # Rows a source that cannot hydrate produced. Real, and not
             # hypothetical: `scraper_import` files rows under whatever string
@@ -217,10 +235,10 @@ async def hydrate_descriptions(
             # so the live index holds unhydrated rows under `greenhouse` -- a
             # provider with no `hydrate()` at all. Counted by source and
             # dropped, never re-queued.
-            source = str(row.get("source") or "unknown")
+            source = row.source or "unknown"
             result.skipped_no_hydrate[source] = result.skipped_no_hydrate.get(source, 0) + 1
             continue
-        if _attempts(row) >= MAX_ROW_ATTEMPTS:
+        if _attempts(row.jd_parsed) >= MAX_ROW_ATTEMPTS:
             result.skipped_exhausted += 1
             continue
         work.append((row, provider, _row_to_posting(row)))
@@ -235,42 +253,44 @@ async def hydrate_descriptions(
     try:
         outcomes = await asyncio.gather(
             *(
-                _hydrate_one(client, provider, row, posting)
-                for row, provider, posting in work
+                _hydrate_one(client, provider, posting)
+                for _row, provider, posting in work
             )
         )
     finally:
         if owns_fetcher:
             await client.aclose()
 
-    patches: list[dict[str, Any]] = []
-    for (row, _provider, _posting), patch in zip(work, outcomes, strict=True):
+    patches: list[tuple[uuid.UUID, dict[str, Any]]] = []
+    for (row, _provider, _posting), hydrated in zip(work, outcomes, strict=True):
         result.attempted += 1
-        source = str(row.get("source") or "unknown")
-        if patch is None:
+        if hydrated is None:
             result.failed += 1
-            patches.append(_failure_patch(row))
+            patches.append((row.id, _failure_patch(row)))
             continue
         result.hydrated += 1
-        result.hydrated_by_source[source] = result.hydrated_by_source.get(source, 0) + 1
+        result.hydrated_by_source[row.source] = result.hydrated_by_source.get(row.source, 0) + 1
+        patch = _success_patch(row, hydrated)
         # Only a basis that actually moved counts. Oracle's detail gives a
         # timestamp where its list gave a date, which changes `posted_at` while
         # leaving the basis `published`; that is a sharper number, not a better
         # kind of claim, and counting it here would overstate what this pass
         # bought.
-        if "posted_at_basis" in patch and patch["posted_at_basis"] != (
-            row.get("posted_at_basis") or "first_crawl"
-        ):
+        if "posted_at_basis" in patch and patch["posted_at_basis"] != row.posted_at_basis:
             result.basis_upgraded += 1
-        patches.append(patch)
+        patches.append((row.id, patch))
 
     if patches:
-        # Same mechanism `upsert._write_batch` uses for an existing row: a
-        # payload keyed by `$id` carrying only the columns that change, batched
-        # by `appwrite_tables.upsert_rows`. Columns absent from the payload are
-        # left alone, which is what keeps `first_seen_at` and `content_hash`
-        # intact through a hydration write.
-        await appwrite_tables.upsert_rows(patches)
+        # One UPDATE per row, keyed by primary key, carrying only the columns
+        # that change. Columns absent from the payload are left alone, which is
+        # what keeps `first_seen_at`, `content_hash` and `last_crawl_run_id`
+        # intact through a hydration write. A statement per row is not the cost
+        # here: this pass already made one HTTP request per row to get the body.
+        for posting_id, patch in patches:
+            await session.execute(
+                update(JobPosting).where(JobPosting.id == posting_id).values(**patch)
+            )
+        await session.commit()
         result.rows_written = len(patches)
 
     result.requests_made = client.stats.requests
@@ -281,37 +301,71 @@ async def hydrate_descriptions(
 
 
 async def _candidate_rows(
-    providers: list[str] | None, *, pool_size: int
-) -> list[dict[str, Any]]:
+    session: AsyncSession, providers: list[str] | None, *, pool_size: int
+) -> list[_Candidate]:
     """The rows worth spending a request on, most recently seen first.
 
-    Ordering is the whole design decision here, so: `last_seen_at DESC` is the
-    read path's own ORDER BY (`job_index.search_index` builds its candidate
-    pool with exactly `sort_desc="last_seen_at"`), which makes this pass fill
-    the window a search reads first rather than a random slice nobody will
-    load. It is also the ordering least likely to waste a request: a row seen
-    minutes ago is one a crawl just re-confirmed as still listed, where a row
-    last seen weeks ago may well 404. And the table already carries the
-    composite `active`+`canonical_id`+`last_seen_at DESC` index this shape
-    needs (see `appwrite_tables.py`), so it is answered from an index rather
-    than a sort.
+    Ordering is the whole design decision here, so: `last_seen_at DESC` makes
+    this pass fill the window a search reads first rather than a random slice
+    nobody will load. It is also the ordering least likely to waste a request: a
+    row seen minutes ago is one a crawl just re-confirmed as still listed, where
+    a row last seen weeks ago may well 404.
 
     The honest cost: because `last_seen_at` moves in whole sweeps, the front of
     this queue is usually one vendor. `--providers` is the lever for that.
 
     `canonical_id IS NULL` because a row already marked a duplicate is filtered
     out of every search, so hydrating it buys a body nobody will read.
+
+    No index serves this exact predicate, so it is a scan and a sort. That is a
+    deliberate omission rather than an oversight: see the note in
+    `alembic/versions/20260831_0000_postings_back_to_postgres.py`. This runs in
+    a scheduled pass with nobody waiting on it, and an index is storage in a
+    change whose whole purpose was storage.
     """
-    queries: list[dict[str, Any]] = [{"method": "isNull", "attribute": "canonical_id"}]
-    if providers:
-        queries.append({"method": "equal", "attribute": "source", "values": list(providers)})
-    return await appwrite_tables.list_rows(
-        filters=["active=true", "jd_hydrated=false"],
-        queries=queries,
-        select=_CANDIDATE_COLUMNS,
-        sort_desc="last_seen_at",
-        limit=pool_size,
+    statement = (
+        select(
+            JobPosting.id,
+            JobPosting.source,
+            JobPosting.board_token,
+            JobPosting.external_id,
+            JobPosting.title,
+            JobPosting.company_name,
+            JobPosting.company_domain,
+            JobPosting.location,
+            JobPosting.source_url,
+            JobPosting.jd_parsed,
+            JobPosting.posted_at,
+            JobPosting.posted_at_basis,
+        )
+        .where(
+            JobPosting.active.is_(True),
+            JobPosting.jd_hydrated.is_(False),
+            JobPosting.canonical_id.is_(None),
+        )
+        .order_by(JobPosting.last_seen_at.desc())
+        .limit(pool_size)
     )
+    if providers:
+        statement = statement.where(JobPosting.source.in_(providers))
+    result = await session.execute(statement)
+    return [
+        _Candidate(
+            id=row.id,
+            source=row.source or "",
+            board_token=row.board_token or "",
+            external_id=row.external_id or "",
+            title=row.title or "",
+            company_name=row.company_name or "",
+            company_domain=row.company_domain,
+            location=row.location,
+            source_url=row.source_url or "",
+            jd_parsed=row.jd_parsed or {},
+            posted_at=row.posted_at,
+            posted_at_basis=row.posted_at_basis or "first_crawl",
+        )
+        for row in result.all()
+    ]
 
 
 def _hydrating_provider(source: str) -> SupportsHydrate | None:
@@ -331,10 +385,9 @@ def _hydrating_provider(source: str) -> SupportsHydrate | None:
 async def _hydrate_one(
     fetcher: PoliteFetcher,
     provider: SupportsHydrate,
-    row: dict[str, Any],
     posting: RawPosting,
-) -> dict[str, Any] | None:
-    """One posting's detail request, turned into a write payload or None.
+) -> RawPosting | None:
+    """One posting's detail request, or None if it did not produce a body.
 
     Every failure mode ends as None rather than an exception. `asyncio.gather`
     without `return_exceptions` would abandon the other 199 in-flight requests
@@ -342,8 +395,6 @@ async def _hydrate_one(
     would be thrown away unwritten -- so the catch is here, per posting, rather
     than around the gather.
     """
-    before_posted_at = posting.posted_at
-    before_basis = posting.posted_at_basis
     try:
         hydrated = await provider.hydrate(fetcher, posting.board_token, posting)
     except Exception as exc:  # noqa: BLE001 - one bad row must not end the pass
@@ -361,17 +412,10 @@ async def _hydrate_one(
         )
         return None
 
-    if not hydrated.jd_hydrated:
-        return None
-    return _success_patch(row, hydrated, before_posted_at, before_basis)
+    return hydrated if hydrated.jd_hydrated else None
 
 
-def _success_patch(
-    row: dict[str, Any],
-    posting: RawPosting,
-    before_posted_at: datetime | None,
-    before_basis: str,
-) -> dict[str, Any]:
+def _success_patch(row: _Candidate, posting: RawPosting) -> dict[str, Any]:
     """The columns a hydrated posting is allowed to rewrite.
 
     Short on purpose, and the omissions are the interesting part.
@@ -387,8 +431,8 @@ def _success_patch(
     sweep computes the same hash it stored, calls the row unchanged, and the
     body survives.
 
-    **`content_updated_at` is not here either.** It means "the employer edited
-    this". Learning what a posting always said is not an edit.
+    **`updated_at` is not here either.** It means "the employer edited this".
+    Learning what a posting always said is not an edit.
 
     **`title`, `location`, `company_name`, `external_id`, `source_url`, salary
     and `closes_at` are dropped**, even though several providers improve them
@@ -399,9 +443,12 @@ def _success_patch(
     the row internally inconsistent in a way that only shows up as a phantom
     edit on some later sweep. Worth doing properly later; not worth doing
     halfway inside a pass whose job is descriptions.
+
+    **`search_vector` is not here because it cannot be.** It is a STORED
+    generated column over `jd_clean`, so writing the body below rewrites the
+    index Postgres searches, and no code has the option of forgetting to.
     """
     patch: dict[str, Any] = {
-        "$id": row["$id"],
         # `normalize.MAX_DESCRIPTION_CHARS` is the index's own bound on a body
         # ("so one pathological posting cannot dominate a row"). Applied here
         # because three of the five hydrators (Workday, BambooHR, Oracle) clean
@@ -410,102 +457,58 @@ def _success_patch(
         "jd_clean": normalize.truncate(posting.jd_clean, normalize.MAX_DESCRIPTION_CHARS),
         "jd_raw": posting.jd_raw or None,
         "jd_hydrated": True,
-        "jd_parsed": json.dumps(posting.extra or {}),
+        "jd_parsed": posting.extra or {},
     }
-    patch["search_text"] = search_text_for(
-        title=posting.title,
-        company_name=posting.company_name,
-        location=posting.location,
-        jd_clean=patch["jd_clean"],
-    )
     if posting.posted_at is not None and (
-        posting.posted_at != before_posted_at or posting.posted_at_basis != before_basis
+        posting.posted_at != row.posted_at or posting.posted_at_basis != row.posted_at_basis
     ):
         # The gain worth naming: a Workday row is `first_crawl` off the list
         # (its `postedOn` is prose -- "Posted 30+ Days Ago") and `published`
         # off the detail's `startDate`. Dropping this would keep the index
         # dating those postings to the day it happened to crawl them.
-        patch["posted_at"] = posting.posted_at.isoformat()
+        # `posted_at_estimated` is not written: Postgres generates it from the
+        # basis, so the two can never disagree. The Appwrite version had to set
+        # it by hand, and could have got it wrong.
+        patch["posted_at"] = posting.posted_at
         patch["posted_at_basis"] = posting.posted_at_basis
-        # Appwrite has no generated columns, so the flag Postgres derived from
-        # the basis is derived here too, exactly as `upsert.to_row` does it.
-        patch["posted_at_estimated"] = posting.posted_at_estimated
     return patch
 
 
-def _failure_patch(row: dict[str, Any]) -> dict[str, Any]:
+def _failure_patch(row: _Candidate) -> dict[str, Any]:
     """Record one failed attempt on the row, and nothing else.
 
     Not a no-op: without it the newest-first ordering re-picks the same failing
     rows on every run, and a posting whose detail endpoint is permanently gone
     would absorb the budget forever while the rows behind it never get a turn.
     """
-    extra = _extra(row)
-    extra[_ATTEMPTS_KEY] = _attempts(row) + 1
+    extra = dict(row.jd_parsed)
+    extra[_ATTEMPTS_KEY] = _attempts(row.jd_parsed) + 1
     extra["hydrate_last_attempt"] = datetime.now(UTC).isoformat()
-    return {"$id": row["$id"], "jd_parsed": json.dumps(extra)}
+    return {"jd_parsed": extra}
 
 
-def _extra(row: dict[str, Any]) -> dict[str, Any]:
-    """A row's `jd_parsed` back into the dict a provider put there.
-
-    Anything unparseable becomes an empty dict rather than an exception: this
-    column is provider-shaped JSON written by several code paths (including the
-    standalone scraper's import), and one malformed blob should cost that row
-    its extras, not the run.
-    """
-    try:
-        parsed = json.loads(str(row.get("jd_parsed") or "{}"))
-    except (TypeError, ValueError):
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
-
-
-def _attempts(row: dict[str, Any]) -> int:
-    raw = _extra(row).get(_ATTEMPTS_KEY)
+def _attempts(jd_parsed: dict[str, Any]) -> int:
+    raw = jd_parsed.get(_ATTEMPTS_KEY)
     return raw if isinstance(raw, int) and raw > 0 else 0
 
 
-def _row_to_posting(row: dict[str, Any]) -> RawPosting:
-    """A stored row back into the `RawPosting` a provider's `hydrate()` takes.
-
-    `.get(...) or default` throughout because Appwrite omits an empty-string
-    column from a row payload entirely rather than returning `""` for it, so an
-    absent key means "empty", not "corrupt" (the same trap `worker.dedupe_recent`
-    documents for `jd_clean`).
-    """
+def _row_to_posting(row: _Candidate) -> RawPosting:
+    """A stored row back into the `RawPosting` a provider's `hydrate()` takes."""
     return RawPosting(
-        source=str(row.get("source") or ""),
-        board_token=str(row.get("board_token") or ""),
-        external_id=str(row.get("external_id") or ""),
-        title=str(row.get("title") or ""),
-        company_name=str(row.get("company_name") or ""),
-        company_domain=str(row.get("company_domain") or "") or None,
-        source_url=str(row.get("source_url") or ""),
+        source=row.source,
+        board_token=row.board_token,
+        external_id=row.external_id,
+        title=row.title,
+        company_name=row.company_name,
+        company_domain=row.company_domain,
+        source_url=row.source_url,
         # Never read by any provider's `hydrate()` -- all five replace the body
         # outright -- and not worth the megabytes of selecting it. See
-        # `_CANDIDATE_COLUMNS`.
+        # `_Candidate`.
         jd_clean="",
-        location=str(row.get("location") or "") or None,
-        posted_at=_parse_dt(row.get("posted_at")),
-        posted_at_basis=str(row.get("posted_at_basis") or "first_crawl"),
+        location=row.location,
+        posted_at=row.posted_at,
+        posted_at_basis=row.posted_at_basis,
         jd_hydrated=False,
-        extra=_extra(row),
+        extra=dict(row.jd_parsed),
     )
-
-
-def _parse_dt(value: object) -> datetime | None:
-    """An Appwrite timestamp column back into a `datetime`, or None.
-
-    Same job as `worker._parse_dt` and deliberately not imported from it:
-    `worker` pulls in the whole sweep (liveness, dedupe, the ORM models), and
-    this pass needs none of that to run.
-    """
-    if value is None:
-        return None
-    if isinstance(value, datetime):
-        return value
-    try:
-        return datetime.fromisoformat(str(value).replace("Z", "+00:00"))
-    except ValueError:
-        return None

@@ -47,6 +47,27 @@ or when per-field analyzers and aggregations become the product; `docs/
 ingest-index.md` records the signals to watch for. Adding a second datastore
 before then would buy latency we already have and cost an operational component
 that a solo-maintained project has to keep alive.
+
+THE APPWRITE DETOUR, AND WHY IT ENDED
+-------------------------------------
+Between 2026-08-18 and 2026-08-31 this table did not exist: `job_index.py` and
+`ingest/upsert.py` were rewritten against Appwrite TablesDB (commit 4fcf37d) to
+escape Neon's 512MB free-tier storage cap, and the Postgres table was later
+dropped to reclaim the 467 MB it held. The model file stayed, unused.
+
+That trade was wrong in a way the storage number could not show, because it
+swapped a resource that was merely scarce for one that was metered. **Appwrite
+bills database reads per ROW**, from its own documentation: "if you fetch a
+table of 50 rows with a single API call, this counts as 50 read operations, not
+as a single operation." One search reads a candidate pool of up to 2,000 rows,
+and the 6-hourly crawler alone was measured at ~1.19M reads a month against an
+Education-plan allowance of 1.75M. The project spent the allowance and every
+Appwrite read began returning 402 `limit_databases_reads_exceeded` -- which took
+resumes and tailoring down with it, since they share the quota.
+
+Postgres charges for storage, not for reads. That is the whole of the reason
+this table is back, and `FTS_DESCRIPTION_CHARS` below is what makes the storage
+side of it affordable.
 """
 from __future__ import annotations
 
@@ -78,11 +99,35 @@ from job_os.db.session import Base
 if TYPE_CHECKING:
     from job_os.db.models.company import Company
 
-#: How much of the description feeds the full-text vector. The whole body would
-#: make the GIN index enormous for diminishing recall: past a few thousand
-#: characters a JD is benefits boilerplate and legal text, which matches every
-#: query equally and therefore discriminates between none of them.
-FTS_DESCRIPTION_CHARS = 8_000
+#: How much of the description feeds the full-text vector.
+#:
+#: 600, down from 8,000. This is a storage decision with a measured price and a
+#: named cost, not a tidy-up.
+#:
+#: The price, measured on 2,550 real crawled postings by rebuilding this column
+#: at both lengths over the same rows: 22,780 bytes a row at 8,000 against
+#: 14,800 at 600, a 35% smaller table, with the GIN index over `search_vector`
+#: falling from 3.40 MB to 0.60 MB. `docs/ingest-index.md` carries the full
+#: breakdown, the projection to 359k rows, and the part of that projection
+#: which is a range rather than a figure.
+#:
+#: The cost: deep-body recall, and only that. The vector is weighted title A,
+#: company B, location C, body D (see `SEARCH_VECTOR_SQL`), so the body already
+#: contributes least to `ts_rank_cd`; what is lost is the ability to MATCH a
+#: posting on a word that appears for the first time after its 600th character.
+#: Past a few hundred characters a JD is mostly benefits boilerplate and legal
+#: text, which matches every query equally and therefore discriminates between
+#: none of them. Unverified: no recall measurement was run against the real
+#: corpus before this change, because the corpus was not readable at the time
+#: (see the migration's own note).
+#:
+#: DO NOT "tidy" this by truncating `jd_clean` to match. `jd_clean` is the input
+#: to `job_enrich.enrich_job`, which produces the `enrichment` document the fit
+#: score reads. Truncating the stored body would silently degrade every future
+#: fit score while every already-enriched row went on looking fine, so the
+#: damage would not surface as a failure anywhere. Only this derived slice
+#: shrinks; the body stays whole.
+FTS_DESCRIPTION_CHARS = 600
 
 #: Weighted `tsvector` over the four fields worth searching. The A/B/C/D weights
 #: are what let `ts_rank_cd` put a title hit far above a body hit, so "engineer"

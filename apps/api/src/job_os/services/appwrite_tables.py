@@ -1,5 +1,23 @@
 """Talk to Appwrite's TablesDB over its documented REST API.
 
+**What still lives here.** `application_cards`, and through it the board the
+web app renders (`services/jd_ingest.py::sync_job_into_cards` and
+`scripts/backfill_stuck_cards.py`). Both pass `table_id=` explicitly.
+
+**What does not, any more.** `job_postings`. This module was written for it,
+which is why so much below is about a 359,416-row table: the retry ladder, the
+read budget, the query chunking, `count_rows_exact`'s account of taking the
+project offline. The index went back to Postgres on 2026-08-31 because Appwrite
+bills reads PER ROW and a search reads a pool of up to 2,000 of them.
+
+Several functions therefore have no caller now: `create_rows`, `upsert_rows`,
+`count_rows`, `count_rows_exact`, `chunk_values`. They are kept rather than
+deleted. Each carries a measurement or a failure that was expensive to learn
+(Appwrite's stacked 100-item and 4,096-character query caps; its `total`
+saturating at 5,000; the per-row billing that took resumes and tailoring down
+with it), and deleting the code would delete the record of it while the
+constraints stay true of every other table in this project.
+
 A first version of this module shelled out to the `appwrite` CLI's own
 locally-authenticated session instead of a real key -- there was no
 `APPWRITE_API_KEY` value anywhere in this environment, and minting one

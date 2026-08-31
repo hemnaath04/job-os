@@ -62,6 +62,168 @@ operational component a solo-maintained project has to keep alive.
 
 ---
 
+## The Appwrite detour, and what it cost
+
+Between 2026-08-18 and 2026-08-31 `job_postings` was not a Postgres table.
+`job_index.py` and `ingest/upsert.py` were rewritten against Appwrite TablesDB
+(commit `4fcf37d`) to escape Neon's 512MB free-tier storage cap, and the
+Postgres table was later dropped by hand to reclaim the 467 MB it held.
+
+That trade was wrong in a way the storage number could not show. **Appwrite
+bills database reads per row**, from its own documentation: "if you fetch a
+table of 50 rows with a single API call, this counts as 50 read operations, not
+as a single operation." One search reads a candidate pool of up to 2,000 rows.
+The 6-hourly crawler alone measured **~1.19M reads a month** against an
+Education-plan allowance of **1.75M**. Development runs of a cursor-paged
+counter spent roughly ten times that on their own. The project ran out, every
+Appwrite read began answering `402 limit_databases_reads_exceeded`, and because
+resumes, profile facts and the application board share the same quota, the
+tailor went down with the search.
+
+Postgres charges for storage, not for reads. That is the entire reason the
+table came back. Storage is a resource this workload can bound, and the section
+below is the bounding.
+
+What was genuinely lost on the way out, and is back:
+
+| | Appwrite | Postgres |
+| --- | --- | --- |
+| relevance | fulltext match/no-match, `retrieve_score` flat 1.0 | `ts_rank_cd` over a weighted tsvector, graded |
+| title search | one index over a concatenated `search_text` | `to_tsvector(title)` separately from the whole document |
+| `location`/`company` | whole-word fulltext | `ILIKE` substring, backed by `pg_trgm` |
+| `max_age_days` | filtered `last_seen_at`, the nearest expressible thing | `coalesce(posted_at, first_seen_at)`, the real one |
+| upsert | lookup, decide in Python, write, with a race in the gap | one `ON CONFLICT DO UPDATE` |
+| counters | `total` saturating at 5,000, or a per-row-billed table walk | `COUNT(*)` |
+| derived columns | `search_text` and `posted_at_estimated` maintained by hand in two writers | STORED generated columns |
+
+---
+
+## Storage: what the index actually weighs
+
+`FTS_DESCRIPTION_CHARS` (`db/models/job_posting.py`) is how much of `jd_clean`
+reaches `search_vector`. It was 8,000; it is now **600**, applied by migration
+`postings_back_to_pg`.
+
+### The measurement
+
+Measured on real data, not modelled. A live sweep of three curated Greenhouse
+boards wrote **2,550 real postings** into the rebuilt table; the migration was
+then downgraded and upgraded, which rebuilds `search_vector` and its GIN index
+at 8,000 and back at 600 over **the same rows**, with a `VACUUM ANALYZE` and a
+`pg_total_relation_size` read on each side. Only the slice differs between the
+two columns:
+
+| | slice 8,000 | slice 600 | change |
+| --- | --- | --- | --- |
+| total | 55.4 MB | **36.0 MB** | **-35%** |
+| heap | 2.5 MB | 5.0 MB | tsvector fits inline again |
+| TOAST | 48.5 MB | 29.2 MB | -40% |
+| all indexes | 4.35 MB | 1.78 MB | |
+| GIN on `search_vector` | 3.40 MB | **0.60 MB** | **-82%** |
+| per row | 22,780 B | **14,800 B** | -7,980 B |
+
+Compressed column sizes at the 600 slice, per row: `jd_clean` 4,610 B (from
+7,990 characters), `jd_raw` 5,581 B (from 12,442 characters), `search_vector`
+816 B.
+
+Take the heap and TOAST rows together rather than separately: at 8,000 the
+stored tsvector is large enough to be pushed out of line, so the heap shrinks
+while TOAST grows. The saving is real and it is in the stored vector, which is
+where it was expected.
+
+One trap, recorded because it produced a wrong number first: a GIN index built
+incrementally by 2,550 individual inserts measured **4.42 MB** at the 600 slice,
+seven times the 0.60 MB a fresh build of the same data produces. Compare index
+sizes only after a rebuild or a `REINDEX`, or the answer is about write history
+rather than about the data.
+
+### What it means at 359,000 rows
+
+The per-row figures above are for a **hydrated** row, and 2,550 rows from three
+curated Greenhouse boards is a biased sample: large employers write long
+descriptions, and this sample's `jd_clean` averages 7,990 characters against
+the 5,569 recorded across 19,461 rows earlier in this document. Treat the
+hydrated-row cost as an upper bound. An unhydrated row carries no body at all
+and costs roughly 0.9-1.5 KB, measured on a synthetic body-free load where
+compression is not a factor.
+
+| hydrated share | slice 8,000 | slice 600 |
+| --- | --- | --- |
+| 10% | ~1,240 MB | ~920 MB |
+| 25% | ~2,400 MB | ~1,650 MB |
+| 100% | ~7,800 MB | ~5,300 MB |
+
+**The slice change removes about a third of the table, and 359,000 rows do not
+fit Neon's 500 MB free tier at any slice length.** Those are both true and the
+second one does not make the first one pointless: a third is a third, and it is
+the only part of the cost the search index is responsible for.
+
+Three consequences worth being blunt about:
+
+1. **An earlier projection of ~385 MB does not survive this measurement.** It
+   is close to what a body-free table weighs (a synthetic metadata-only load
+   measured 312 MB at 359,000 rows), which is what such a number describes: it
+   does not count the stored descriptions. The descriptions are real and are
+   not optional, because `jd_clean` is the input to `job_enrich.enrich_job` and
+   therefore to every fit score.
+2. **`job_postings.jd_raw` is written and never read**, and it is the single
+   largest column in the table: 5,581 compressed bytes a row, more than
+   `jd_clean`'s 4,610. It is the vendor's own markup, set by `to_row` and
+   `hydrate._success_patch`, and no read path touches it. `promote_payload`
+   does not copy it, and every `job.jd_raw` elsewhere in this codebase is the
+   `jobs` table's column, not this one. Dropping it would take roughly 38% off
+   the hydrated-row cost. It is a data-model change with its own blast radius,
+   so it is named here rather than folded into a search-slice change.
+3. **The corpus size is a lever too**, and one already pulled: holding BambooHR
+   (see below) keeps 4,992 boards' worth of rows out of the number above.
+
+The hydrated share cannot be measured right now, which is why the table is a
+range rather than a figure. The Appwrite table answers 402, and the Postgres
+table holds only the 2,550 rows this measurement crawled into it.
+
+**What the slice costs.** Deep-body recall, and only that. The tsvector weights
+title `A`, company `B`, location `C` and body `D`, so the body already
+contributes least to `ts_rank_cd`; what changes is that a word appearing for
+the first time after a description's 600th character can no longer be used to
+FIND the posting. Past a few hundred characters a JD is mostly benefits
+boilerplate and legal text, which matches every query equally and discriminates
+between none of them. No recall measurement was run against the real corpus
+before the change, because the corpus was not readable.
+
+**What must not follow it.** `jd_clean` itself stays whole.
+`tests/test_search_slice_migration.py` asserts that neither `ingest/upsert.py`
+nor `ingest/hydrate.py` so much as mentions `FTS_DESCRIPTION_CHARS`, because
+truncating the stored body to match the indexed slice would silently degrade
+every future fit score while every already-enriched row went on looking fine.
+
+---
+
+## Corpus: which providers are crawled
+
+`corpus.DEFAULT_CRAWL_PROVIDERS` is what a sweep crawls when nobody says
+otherwise: greenhouse, lever, ashby, smartrecruiters, workday, icims,
+oracle_cloud.
+
+`corpus.HELD_PROVIDERS` is `{"bamboohr"}`. Held, not deleted:
+`seeds/bamboohr.txt` is still in the package, the provider is still registered,
+rows already crawled from it stay in the index and stay searchable, and
+`cli sweep --providers bamboohr` crawls it today with no code change. Naming a
+provider explicitly always wins over the default.
+
+The reason is a product decision pending evidence, not a judgement about the
+provider. `bamboohr.txt` is the most carefully built seed file in the package
+(4,992 tokens, every one confirmed by fetching it, harvested from Common Crawl
+rather than guessed, at a measured 73% hit rate against guessing's 8.8%). What
+is unproven is whether 4,992 boards of small employers are worth their share of
+an index with a storage budget. To un-hold it, delete the string from
+`HELD_PROVIDERS`. That is the whole reversal, which is why the mechanism is a
+name in a set rather than a deleted file.
+
+`corpus_summary()` reports every provider by name including held ones, plus
+`held_total`, so the hold stays visible rather than looking like a deletion.
+
+---
+
 ## Measured: corpus liveness
 
 The seed corpus is 15,874 tokens (greenhouse 8,333, lever 4,368, ashby 3,164,
@@ -251,8 +413,9 @@ Five providers (SmartRecruiters, Workday, BambooHR, iCIMS, Oracle) have no
 description in their list response at all, so their rows are written with
 `jd_hydrated=false`. Until 2026-08-30 nothing ever filled them in: measured
 against the live index that morning, `descriptions_missing` was 5,000 of
-`postings_active` 5,000, which is Appwrite's capped `total` estimate rather
-than a true count and should be read as "all of it". The index could rank
+`postings_active` 5,000, which was Appwrite's capped `total` estimate rather
+than a true count and should be read as "all of it". (Both counters are exact
+`COUNT(*)`s again now that the table is back on Postgres.) The index could rank
 those postings on their titles and could not score them on their bodies, and
 the tailor had nothing to read.
 
@@ -279,9 +442,15 @@ about it are decisions rather than details.
   re-read. A failure is counted, recorded on the row as an attempt, and given
   up on after three.
 
-Hydration writes the body, the raw markup, `jd_hydrated`, `search_text`, and
-`posted_at`/`posted_at_basis` when the detail carries a real date. It
-deliberately does **not** rewrite `content_hash`: that column is the sweep's
+Hydration writes the body, the raw markup, `jd_hydrated`, and
+`posted_at`/`posted_at_basis` when the detail carries a real date. It no longer
+writes the searchable text: while `job_postings` was in Appwrite this pass had
+to rebuild a stored `search_text` column byte-for-byte the way `to_row` built
+it, a second writer of a derived value carrying a comment about what would
+break if the two drifted. Postgres generates `search_vector` from `jd_clean`,
+so writing the body updates the index by construction and there is nothing left
+to keep in step. It deliberately does **not** rewrite `content_hash`: that
+column is the sweep's
 change detector over the *list* payload, and rehashing the fetched body would
 make every later sweep see a phantom edit, overwrite the body with the thin
 stand-in and reset the flag, so the same posting would be paid for forever.
@@ -385,18 +554,22 @@ is a log aggregator and a run that quietly crawled 3 boards instead of 400
 should be greppable rather than buried in prose. `sweep` exits nonzero when it
 reached no boards.
 
-### What the crawl already commits you to
+### What the crawl commits you to
 
-The workflow is **enabled and running**, so this is no longer a decision to
-make but a description of what is already happening every six hours.
+The schedule is **currently commented out** in `.github/workflows/ingest.yml`.
+It was enabled, then paused on 2026-08-31 because Appwrite's per-row read
+billing made a four-times-daily sweep cost ~1.19M reads a month. That reason is
+gone, since `job_postings` is a Postgres table again, and the file says so; the
+three lines are still commented out because turning a crawler loose is a
+decision for a person rather than a side effect of merging a branch.
 
-It is worth reading anyway, because for its first four days it was also
-**failing** every run: `job_postings` moved to Appwrite and the workflow was
-never given `APPWRITE_API_KEY`, so each run exited 1 without crawling anything.
-A scheduled job that is red and unwatched looks exactly like one that was never
-switched on, which is precisely how this went unnoticed.
+Before it ran at all it also spent four days **failing** every run:
+`job_postings` had moved to Appwrite and the workflow was never given
+`APPWRITE_API_KEY`, so each run exited 1 without crawling anything. A scheduled
+job that is red and unwatched looks exactly like one that was never switched
+on, which is precisely how that went unnoticed.
 
-What you are already agreeing to.
+What enabling it agrees to.
 
 - **You are crawling other people's APIs, unattended, forever.** At the settings
   in that file it is ~400 requests every six hours across four vendors, none of
@@ -468,7 +641,22 @@ same. It is not built here because it belongs with the client work.
 
 ## Schema notes
 
-Three tables, one migration (`ingest_index_20260812`).
+Three tables, two migrations: `ingest_index_20260812` created them, and
+`postings_back_to_pg` (2026-08-31) recreates `job_postings` with a 600-character
+search slice.
+
+The second one has two paths because there are two realities. On production the
+table was dropped by hand, outside Alembic, to reclaim 467 MB during the
+Appwrite period, so `alembic_version` claims a migration that created a table
+that is gone; that path creates it. On CI and any fresh checkout the table is
+there; that path drops and re-adds `search_vector` alone, since PostgreSQL
+before 17 cannot rewrite a generated column's expression in place. The two were
+diffed with `pg_dump -s` and differ only in `search_vector`'s ordinal position,
+which nothing here depends on because every INSERT names its columns.
+
+Its downgrade restores the 8,000-character expression and stops. It does not
+drop the table: deleting several hundred thousand crawled rows to undo a column
+expression is not a reversal.
 
 `job_postings` carries a `jd_embedding` column dimensioned to match
 `jobs.jd_embedding`, so an embedding computed here can be copied on promotion
@@ -514,5 +702,20 @@ even against a database with real data in it.
 | `test_ingest_normalize.py` | dates (Lever milliseconds, the seconds/millis boundary, naive stamps, implausible values), HTML flattening, country inference, hashes and keys |
 | `test_ingest_dedupe.py` | both stages, the two thresholds, the role gate, the measured regressions that must **not** merge, transitivity, comparison count |
 | `test_ingest_providers.py` | per-vendor parsing and the four traps, plus the shared contract that 304 and 5xx are never `usable` |
-| `test_ingest_upsert.py` | `first_seen_at` preservation, `last_seen_at` bumping, deactivation scoped to a run, reposts, cleared fields, batch-level duplicate ids |
-| `test_job_index_ranking.py` | the rank formula and its EXPLAIN reconciliation, freshness decay and floor, the multiplicative property, company diversity, what the default query hides |
+| `test_ingest_upsert.py` | `first_seen_at` preservation, `last_seen_at` bumping, deactivation scoped to a run, reposts and the reactivation counter, cleared fields, batch-level duplicate ids |
+| `test_job_index_ranking.py` | the rank formula and its EXPLAIN reconciliation, freshness decay and floor, the multiplicative property, company diversity, what the default query hides, what the 600-char slice does and does not reach |
+| `test_job_index_title_weight.py` | a title hit outranking a body-only hit, the page that was wrong before it did, and that the candidate pool still does not select `jd_clean` |
+| `test_ingest_hydrate.py` | what a hydration write must not touch, and that a fetched body becomes searchable rather than merely stored |
+| `test_index_stats.py` | each counter against a known set of rows, and that a deactivated posting leaves `postings_active` without leaving `postings_total` |
+| `test_ingest_held_providers.py` | that a held provider is not crawled by default, is still seeded on request, and is still reported by name |
+| `test_search_slice_migration.py` | that the model and the migration index the same slice, and that no write path truncates `jd_clean` to match it |
+
+Three files went when `job_postings` came back to Postgres, and are named here
+so a reader looking for them stops looking: `tests/_fake_appwrite.py` (an
+in-memory TablesDB), `tests/test_appwrite_job_postings.py` (its write and read
+path coverage now lives in `test_ingest_upsert.py` and
+`test_job_index_ranking.py`, with the filter-parsing tests moved to
+`test_appwrite_filter_syntax.py`, which still matters because the application
+board still uses that module), and `tests/test_index_stats_degrades.py`
+(replaced by `test_index_stats.py`; the failure it guarded against was
+Appwrite's, and its own docstring explains what and why).

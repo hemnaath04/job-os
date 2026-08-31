@@ -19,11 +19,18 @@ from datetime import datetime
 from enum import StrEnum
 from typing import Any, Protocol
 
-#: Appwrite's `source_id` column caps at 255 chars. Every provider here gives
-#: a short native job id, except the standalone scraper's `_row_to_posting`,
-#: which falls back to the full posting URL when a board hands it nothing
-#: else -- long enough, combined with `board_token`, to blow past that and
-#: reject the whole batch write it lands in (not just that one row).
+#: Longest `source_id` written verbatim. Every provider here gives a short
+#: native job id, except the standalone scraper's `_row_to_posting`, which
+#: falls back to the full posting URL when a board hands it nothing else.
+#:
+#: 255 was Appwrite's column cap, where a longer value rejected the whole
+#: batch write it landed in rather than just that one row. `job_postings` is
+#: Postgres again and its `source_id` is an unbounded `String`, so nothing
+#: rejects a long one now -- but the cap stays, for a reason that was always
+#: also true: `source_id` is half of the `uq_job_postings_source_pair` unique
+#: index, and a btree index entry cannot exceed roughly 2,700 bytes. Keeping
+#: the bound well under that means a pathological URL cannot make an INSERT
+#: fail at index time.
 _SOURCE_ID_MAX = 255
 
 # How a posting's date was arrived at. The read path exposes this rather than
@@ -101,10 +108,10 @@ class RawPosting:
     def source_id(self) -> str:
         """Stable per-source identity. Matches the web app's `{token}:{id}`.
 
-        Hashed instead when that would exceed Appwrite's 255-char column
-        limit, rather than truncated -- a truncated long URL risks two
-        different postings colliding on a shared prefix; a hash of the
-        original id does not, and stays stable across runs the same way.
+        Hashed instead when that would exceed `_SOURCE_ID_MAX`, rather than
+        truncated -- a truncated long URL risks two different postings
+        colliding on a shared prefix; a hash of the original id does not, and
+        stays stable across runs the same way.
         """
         raw = f"{self.board_token}:{self.external_id}"
         if len(raw) <= _SOURCE_ID_MAX:

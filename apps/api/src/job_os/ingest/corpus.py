@@ -14,6 +14,10 @@ crawl do not depend on a developer's home directory.
     oracle_cloud.txt         12 tokens
     curated.json             97 companies, with real employer names and domains
 
+`bamboohr.txt` is present and is not crawled by default. See `HELD_PROVIDERS`
+below for what that means, why it is a hold rather than a deletion, and the one
+line that reverses it.
+
 `workday.txt`, `icims.txt`, `oracle_cloud.txt` and `bamboohr.txt` are the
 exceptions to the sentence below: every token in all four answered 200 with
 jobs on 2026-08-30. None of them is guessable, and each is unguessable in its
@@ -141,6 +145,43 @@ def _seed_file(name: str) -> Traversable:
     return resources.files("job_os.ingest").joinpath(_SEED_DIR, name)
 
 
+#: Providers a sweep does NOT crawl unless it is asked for them by name.
+#:
+#: This is a product decision pending evidence, not a judgement about the
+#: provider or the quality of its seed file. `bamboohr.txt` is the most
+#: carefully built list in this package: 4,992 tokens, every one confirmed by
+#: fetching it, harvested from Common Crawl rather than guessed (see this
+#: module's docstring for the measured 8.8%-versus-73% comparison). Nothing
+#: about it is suspect.
+#:
+#: What is unproven is whether those boards are worth their share of the index.
+#: They are small employers, they held 37,301 live postings between them, and
+#: none of them has ever been shown to answer a search anybody ran. In an index
+#: that has to fit a 500 MB storage budget (see
+#: `db/models/job_posting.py::FTS_DESCRIPTION_CHARS`), a tenth of the rows for
+#: unmeasured value is a real trade, and holding is the cheaper way to find
+#: out than crawling first and pruning later.
+#:
+#: HELD, NOT DELETED, and the difference is the whole mechanism:
+#:
+#:   * `seeds/bamboohr.txt` stays in the package, unchanged.
+#:   * `providers/bamboohr.py` stays registered in `PROVIDER_NAMES`.
+#:   * `ingest sweep --providers bamboohr` crawls it, today, with no code
+#:     change: naming a provider explicitly always wins over this list.
+#:   * Rows already crawled from it stay in the index and stay searchable.
+#:
+#: To un-hold it, delete the string from this tuple. That is the entire
+#: reversal, and it is the reason the mechanism is a name in a set rather than
+#: a deleted file or a commented-out registry entry.
+HELD_PROVIDERS: frozenset[str] = frozenset({"bamboohr"})
+
+#: What a sweep crawls when nobody says otherwise. Order follows
+#: `PROVIDER_NAMES` so the corpus summary and the sweep agree on it.
+DEFAULT_CRAWL_PROVIDERS: tuple[str, ...] = tuple(
+    p for p in PROVIDER_NAMES if p not in HELD_PROVIDERS
+)
+
+
 @dataclass(frozen=True, slots=True)
 class SeedToken:
     provider: str
@@ -183,8 +224,12 @@ def seed_tokens(providers: list[str] | None = None) -> list[SeedToken]:
 
     Deduplicated on (provider, token): a curated company that also appears in the
     bulk list keeps its name, domain and priority.
+
+    `providers=None` means `DEFAULT_CRAWL_PROVIDERS`, which is every provider
+    except the held ones. Naming a held provider explicitly still returns its
+    tokens: the hold is a default, not a block.
     """
-    wanted = list(providers) if providers else list(PROVIDER_NAMES)
+    wanted = list(providers) if providers else list(DEFAULT_CRAWL_PROVIDERS)
     unknown = [p for p in wanted if p not in PROVIDER_NAMES]
     if unknown:
         raise ValueError(f"unknown providers: {', '.join(unknown)}")
@@ -202,8 +247,16 @@ def seed_tokens(providers: list[str] | None = None) -> list[SeedToken]:
 
 
 def corpus_summary() -> dict[str, int]:
-    """Token counts per provider, for the CLI and the docs to quote."""
+    """Token counts per provider, for the CLI and the docs to quote.
+
+    Every provider is listed, held ones included, because the file is still
+    there and a summary that hid it would make the hold look like a deletion.
+    `total` counts only what a default sweep would actually crawl, and
+    `held_total` is the difference, so the two numbers together say how much is
+    being left on the table rather than leaving a reader to subtract.
+    """
     summary = {provider: len(_bulk_tokens(provider)) for provider in PROVIDER_NAMES}
     summary["curated"] = len(_curated())
     summary["total"] = len(seed_tokens())
+    summary["held_total"] = sum(len(_bulk_tokens(p)) for p in sorted(HELD_PROVIDERS))
     return summary

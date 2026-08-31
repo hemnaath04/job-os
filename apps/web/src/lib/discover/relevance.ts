@@ -15,12 +15,16 @@
  * Every one of those is a real row from a real source. Three things put them at
  * the top and none of them is the fit score:
  *
- *   1. The index matches the searched phrase against `search_text`, which
- *      concatenates the title with 8000 characters of JD body, so a posting
- *      that merely *mentions* software engineering interns matches as strongly
- *      as one titled for them. (The server-side half of this is a title weight
- *      in `job_index.py`; this is the client half, and it covers the live
- *      sources too.)
+ *   1. The index matched the searched phrase against one concatenation of the
+ *      title and 8000 characters of JD body, and answered match-or-no-match,
+ *      so a posting that merely *mentions* software engineering interns
+ *      matched as strongly as one titled for them. The server-side half of
+ *      that is fixed: `job_postings` is back on Postgres, `title_keywords` is
+ *      matched against the title's own tsvector, and `ts_rank_cd` reads the
+ *      A-over-D weighting so a title hit outscores a body hit. This is the
+ *      client half, and it stays, because it covers the LIVE sources too --
+ *      `no-key-sources.ts` fetches boards directly and no server-side ranking
+ *      touches those rows at all.
  *   2. Nothing anywhere read the seniority the user asked for. "Intern" in the
  *      query and "Principal" in the title is a contradiction, not a near miss.
  *   3. Placeholder postings ("Various roles", body: keep an eye on our

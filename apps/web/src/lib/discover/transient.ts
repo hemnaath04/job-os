@@ -97,11 +97,18 @@ const RESTARTING = /\b50[234]\b|restarting|bad gateway|service unavailable|tempo
  * Why the index was not there, in its own words.
  *
  * "The saved index was restarting" was hardcoded, and for the deploy window it
- * was written for that was true. It stopped being true: the index now fails
- * most often because its own query times out (Appwrite answers a slow fulltext
- * search with a 408), and a banner that blames a restart for that sends the
- * reader to look at a deploy log where there is nothing to find. Two causes,
- * two sentences, and each says what actually happened.
+ * was written for that was true. It stopped being true: the index began failing
+ * most often because its own query ran out of time, and a banner that blames a
+ * restart for that sends the reader to look at a deploy log where there is
+ * nothing to find. Two causes, two sentences, and each says what actually
+ * happened.
+ *
+ * The specific timeout that prompted this is gone with its store -- Appwrite
+ * answered a slow fulltext search with a 408, and `job_postings` is back on
+ * Postgres. The distinction is kept because the second sentence is still the
+ * honest one for any timeout, whatever the query is running on, and because
+ * guessing wrong about which of the two happened is the failure this exists to
+ * avoid.
  */
 function indexReason(message: string): string {
   if (RESTARTING.test(message)) {
