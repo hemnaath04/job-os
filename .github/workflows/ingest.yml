@@ -56,7 +56,7 @@ on:
       hydrate_limit:
         description: "Postings this run may fetch descriptions for (0 to skip)"
         required: false
-        default: "200"
+        default: "400"
   schedule:
     # Every six hours, offset off the hour because schedulers are busiest there.
     # Matches the LIVE recheck interval in ingest/liveness.py.
@@ -147,7 +147,7 @@ jobs:
         working-directory: apps/api
         run: |
           uv run python -m job_os.ingest.cli hydrate \
-            --limit "${{ github.event.inputs.hydrate_limit || 200 }}" \
+            --limit "${{ github.event.inputs.hydrate_limit || 400 }}" \
             ${{ github.event.inputs.providers && format('--providers {0}', github.event.inputs.providers) || '' }}
 
       - name: Report index state

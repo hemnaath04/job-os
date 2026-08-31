@@ -416,3 +416,59 @@ async def test_a_run_with_nothing_to_do_makes_no_requests_and_no_writes(
     assert result.rows_written == 0
     assert appwrite["written"] == []
     assert result.as_dict()["hydrated"] == 0
+
+
+def test_a_run_rotates_across_vendors_instead_of_draining_one() -> None:
+    """The concentration that stopped the limit being raised.
+
+    Candidates come out newest-first and postings enter the index in
+    board-sized clumps, so that order is close to sorted by vendor: the newest
+    1,000 unhydrated rows measured as 1,000 of 1,000 from one BambooHR sweep.
+    Every request in a run then goes to a single company, which is tolerable at
+    200 and not at 1,000.
+    """
+    from job_os.ingest.hydrate import _interleave_by_source
+
+    clumped = (
+        [({"source": "bamboohr"}, None, None)] * 6
+        + [({"source": "workday"}, None, None)] * 3
+        + [({"source": "icims"}, None, None)] * 1
+    )
+
+    order = [str(row["source"]) for row, _p, _q in _interleave_by_source(clumped)]
+
+    # No vendor takes the first three slots on its own.
+    assert len(set(order[:3])) == 3
+    assert sorted(order) == sorted(
+        ["bamboohr"] * 6 + ["workday"] * 3 + ["icims"] * 1
+    ), "nothing is dropped or duplicated"
+
+
+def test_freshest_first_still_holds_within_a_vendor() -> None:
+    """Rotation must not cost the ordering it is layered on top of.
+
+    Hydration fills the window a search reads first. Shuffling within a vendor
+    would spend the run on that vendor's oldest rows.
+    """
+    from job_os.ingest.hydrate import _interleave_by_source
+
+    work = [
+        ({"source": "a", "n": 1}, None, None),
+        ({"source": "a", "n": 2}, None, None),
+        ({"source": "b", "n": 1}, None, None),
+        ({"source": "a", "n": 3}, None, None),
+    ]
+
+    order = [(r["source"], r["n"]) for r, _p, _q in _interleave_by_source(work)]
+    a_only = [n for source, n in order if source == "a"]
+
+    assert a_only == [1, 2, 3]
+
+
+def test_a_single_vendor_run_is_left_exactly_as_it_was() -> None:
+    """Nothing to rotate, so nothing should move."""
+    from job_os.ingest.hydrate import _interleave_by_source
+
+    work = [({"source": "workday", "n": i}, None, None) for i in range(5)]
+
+    assert _interleave_by_source(work) == work
