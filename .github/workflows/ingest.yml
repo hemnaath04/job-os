@@ -122,11 +122,31 @@ on:
   # THE JOB, as configured in `heroku addons:open scheduler -a job-os`:
   #   frequency: hourly
   #   command:
-  #     python -m job_os.ingest.cli sweep --limit 150 --concurrency 8
+  #     python -m job_os.ingest.cli sweep --limit 400 --concurrency 8
   #       --providers $INGEST_PROVIDERS;
-  #     python -m job_os.ingest.cli hydrate --limit 100
+  #     python -m job_os.ingest.cli hydrate --limit 300
   #       --providers $INGEST_PROVIDERS;
   #     python -m job_os.ingest.cli prune
+  #
+  #   `--limit 400`, raised from 150, is a coverage target rather than a
+  #   throughput one. THE TARGET IS 100% of the 15,865 boards: greenhouse
+  #   8,333, lever 4,368, ashby 3,164. At 150 an hour that first pass takes
+  #   four days; at 400 it takes about a day and a half, and a run costs
+  #   roughly twelve minutes against a dyno cap of one hour.
+  #
+  #   Full coverage is affordable only because oracle_cloud is gone. All
+  #   15,865 boards at the 30-day horizon project to 76,460 rows and about
+  #   0.43 GB, against 1 GB on an Essential-0 database. The same target with
+  #   oracle in the corpus was 2.76 GB.
+  #
+  #   After the first pass the number stops mattering: `next_check_after`
+  #   keeps most tokens undue, and re-crawling an unchanged board is a 304
+  #   with an empty body. One observed run swept 150 boards in 12 seconds for
+  #   exactly that reason.
+  #
+  #   `hydrate --limit 300` for the same reason from the other end: a row
+  #   without its description is rankable but not scoreable, so coverage of
+  #   boards without coverage of bodies is only half the index.
   #
   #   (as one line). No `sh -c` wrapper and no absolute path: Scheduler hands
   #   the task to a shell in the dyno, so `;` chains and `$INGEST_PROVIDERS`
@@ -136,7 +156,7 @@ on:
   # hourly or daily, and daily is too coarse. Per-board cadence is unaffected:
   # `ats_board_tokens.next_check_after` still governs when a board is due, so
   # a more frequent sweep changes when work is picked up, not how much of it
-  # there is. `--limit 150` holds a run near three minutes, well inside the
+  # there is. `--limit 400` holds a run near twelve minutes, well inside the
   # dyno cap of one scheduling interval.
   #
   # `;` rather than `&&` between the two, for the same reason the step below
