@@ -1,11 +1,16 @@
 # Architecture
 
-Three deploy targets, two databases, and one split that explains most of the
-surprises: **the board you look at reads Appwrite, and half the backend writes
-Postgres.**
+Three deploy targets and one store that owns each fact: **Postgres is the
+record, Appwrite holds files and long-running agent work.**
 
 Everything below was read off the running system rather than the design intent.
 Where the two disagree, this records the running system.
+
+> **Reversed on 2026-09-01.** This file previously documented the opposite rule,
+> "anything the board displays is written to Appwrite", with Postgres as the
+> secondary store. That rule caused real data loss and has been withdrawn. The
+> section "What the old split cost" below keeps the account, because the reasons
+> are the argument for the current shape and are worth not rediscovering.
 
 ## The shape
 
@@ -27,19 +32,19 @@ flowchart TB
     end
 
     subgraph appwrite["Appwrite Cloud - nyc"]
-        cards[("application_cards<br/>resumes, resume_versions<br/>profile_facts, fact_bullets<br/>templates, agent_jobs")]
+        cards[("agent_jobs, templates<br/><i>application_cards and the resume<br/>tables are legacy duplicates,<br/>no longer read</i>")]
         files[("Storage<br/>resume_files")]
         agent["Function<br/><i>job-os-agents</i><br/>runs the tailor"]
     end
 
-    subgraph pg["Neon Postgres"]
-        tables[("jobs, applications, companies<br/>users, saved_searches<br/>cover_letters, interviews<br/>outreach, alerts, job_postings")]
+    subgraph pg["Heroku Postgres - the record"]
+        tables[("applications, jobs, companies, users<br/>application_events, resumes,<br/>resume_versions, profile_facts,<br/>fact_bullets, saved_searches,<br/>job_postings, ats_board_tokens")]
     end
 
     gateway["Manifest gateway<br/><i>app.manifest.build</i>"]
 
-    web -->|"reads the board"| cards
-    web -->|"writes cards"| cards
+    web -->|"reads the board"| proxy
+    web -->|"enqueues agent work"| cards
     web --> proxy --> api
     web --> routes
     web -->|"dispatches"| agent
@@ -53,46 +58,66 @@ flowchart TB
 
     classDef live fill:#1f6f3f,stroke:#0d3,color:#fff
     classDef legacy fill:#7a3b1f,stroke:#c60,color:#fff
-    class cards,files,agent live
-    class tables legacy
+    class tables,files,agent live
+    class cards legacy
 ```
 
 ## The two-store split
 
 This is the thing to internalise before changing anything user-facing.
 
-`NEXT_PUBLIC_PIPELINE_BACKEND` is `appwrite` in production. So
-`api.listApplications()` routes to the Appwrite pipeline, and **the Applications
-board renders Appwrite `application_cards`**. Each card's `snapshot` column is
-free-form JSON holding an entire `Application`, including an embedded `job`.
+**Postgres owns every fact the product queries.** Applications, their status and
+audit log, jobs, companies, resumes, resume versions, profile facts, fact
+bullets, saved searches and the crawl index. `api.listApplications()` routes to
+the FastAPI service, which reads Postgres.
 
-The FastAPI service on Heroku reads and writes **Postgres**. Both stores carry
-tables of the same name: `resumes`, `resume_versions`, `profile_facts`,
-`fact_bullets` exist in each.
+**Appwrite owns bytes and long jobs.** Rendered resume PDFs in Storage, the
+`job-os-agents` function, and the `agent_jobs` rows the browser enqueues and
+polls. Nothing the board displays is read from an Appwrite table.
 
-**Consequence: writing a Postgres row that the board displays is invisible.**
-This cost a whole feature. Paste-to-enrich originally wrote the Postgres `jobs`
-row, the fields filled correctly, and the panel kept reading "Not set", because
-nothing on that screen reads Postgres. The fix was to have the server plan the
-change and the browser write the card.
+The switch is still in the code and still works. `lib/appwrite/config.ts` reads
+`NEXT_PUBLIC_PIPELINE_BACKEND` and `NEXT_PUBLIC_WORKSPACE_BACKEND`; anything
+other than `appwrite` selects the Postgres path, and
+`scripts/backend-switch.sh {legacy|appwrite|status}` flips both and redeploys.
+The redeploy is part of the switch, because `NEXT_PUBLIC_*` is inlined at build
+time. Production runs the Postgres path.
 
-**Rule: anything the board displays is written to Appwrite.** Postgres is
-correct for jobs discovery, the MCP tools, ingest and the scraper, none of which
-the board renders directly.
+`application_cards` and the duplicate `resumes`, `resume_versions`,
+`profile_facts` and `fact_bullets` tables still exist in Appwrite. They are
+historical, not authoritative, and hold status changes made before 2026-09-01
+that have not yet been reconciled back. **Do not write to them and do not add
+new duplicates.**
 
-The two have drifted apart, but only in one direction, and the direction
-matters. Measured on 2026-08-26: 51 cards, 40 active and 11 archived, against 32
-active Postgres applications. Of those 32, twenty-six have an active card, six
-have an archived card, and **none has no card**. Nothing is missing from the
-board.
+## What the old split cost
 
-The gap is the other way: **fourteen active cards have no Postgres row at all**,
-because they were added through the Appwrite path, which is the supported one.
-That is not lost data, but it does have a consequence worth knowing before
-writing a feature: **anything keyed on a Postgres job id will 404 for those
-cards**, for a job the person can see in front of them. That is what forced
-paste-to-enrich into its stateless-plan shape, where the server decides and the
-browser writes.
+Kept because the reasons are the argument for the current shape.
+
+The previous rule was the inverse: the board rendered Appwrite
+`application_cards`, and Postgres was described as "correct for jobs discovery,
+the MCP tools, ingest and the scraper, none of which the board renders
+directly". Two failures came out of it.
+
+**Reads are metered per row.** Appwrite bills database reads by rows returned,
+not by API call, so the crawl index was in the worst possible place: one sweep
+read 8,297 rows before anyone searched. An exact-count query walked the whole
+posting table and spent a month of quota in an afternoon. The quota is shared
+across the organisation, so the applications board, resumes and tailoring all
+went down together, and the billing cycle had 23 days left to run.
+
+**Two stores meant one of them silently stopped being written.**
+`createApplication` wrote Postgres then mirrored to Appwrite, but
+`patchApplication` and `archiveApplication` wrote Appwrite alone. Creates were
+durable and every edit after them was not. Measured when the outage forced the
+board onto Postgres: 39 of 68 applications had never been updated since insert,
+`next_action_at` was null on all 68, and all 9 applications carrying a tailored
+resume still read `wishlist`. About three weeks of pipeline movement existed
+only in the display copy.
+
+Both are fixed. Writes go through one helper that runs the durable write first
+and treats a failed mirror as a display lag rather than a failed edit. The
+deeper fix is the rule at the top of this file: **no table exists in both
+stores**, which makes the divergence unrepresentable rather than merely
+survivable.
 
 An earlier version of this file said six Postgres applications had no card. That
 was wrong: it came from comparing against active cards alone and never checking
