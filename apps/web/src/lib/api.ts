@@ -1,3 +1,4 @@
+import { writeDurablyThenMirror } from "./dual-write";
 import type {
   Application,
   AppStatus,
@@ -1579,8 +1580,11 @@ export const api = {
       return legacyApi.patchApplication(id, body);
     }
 
-    const updated = await appwritePipeline.patchApplication(id, body);
-    return updated;
+    return writeDurablyThenMirror(
+      () => legacyApi.patchApplication(id, body),
+      (application) => appwritePipeline.patchApplication(id, application),
+      `patch ${id}`,
+    );
   },
 
   async createApplication(body: {
@@ -1608,6 +1612,13 @@ export const api = {
       return legacyApi.archiveApplication(id);
     }
 
-    await appwritePipeline.archiveApplication(id);
+    // Same asymmetry as the patch above, and the more damaging half of it: an
+    // archive that reached only Appwrite left the row unarchived in Postgres,
+    // so anything reading the durable store still counted it as live pipeline.
+    await writeDurablyThenMirror(
+      () => legacyApi.archiveApplication(id),
+      () => appwritePipeline.archiveApplication(id),
+      `archive ${id}`,
+    );
   },
 };
