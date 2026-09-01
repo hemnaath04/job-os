@@ -122,10 +122,14 @@ on:
   # THE JOB, as configured in `heroku addons:open scheduler -a job-os`:
   #   frequency: hourly
   #   command:
-  #     sh -c '/app/.venv/bin/python -m job_os.ingest.cli sweep --limit 150
-  #            --concurrency 8 --providers $INGEST_PROVIDERS;
-  #            /app/.venv/bin/python -m job_os.ingest.cli hydrate --limit 100
-  #            --providers $INGEST_PROVIDERS'
+  #     python -m job_os.ingest.cli sweep --limit 150 --concurrency 8
+  #       --providers $INGEST_PROVIDERS;
+  #     python -m job_os.ingest.cli hydrate --limit 100
+  #       --providers $INGEST_PROVIDERS
+  #
+  #   (as one line). No `sh -c` wrapper and no absolute path: Scheduler hands
+  #   the task to a shell in the dyno, so `;` chains and `$INGEST_PROVIDERS`
+  #   expands, and `/app/.venv/bin` is already first on PATH. Verified both.
   #
   # Hourly rather than six-hourly because Scheduler offers only 10-minute,
   # hourly or daily, and daily is too coarse. Per-board cadence is unaffected:
