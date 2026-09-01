@@ -125,7 +125,8 @@ on:
   #     python -m job_os.ingest.cli sweep --limit 150 --concurrency 8
   #       --providers $INGEST_PROVIDERS;
   #     python -m job_os.ingest.cli hydrate --limit 100
-  #       --providers $INGEST_PROVIDERS
+  #       --providers $INGEST_PROVIDERS;
+  #     python -m job_os.ingest.cli prune
   #
   #   (as one line). No `sh -c` wrapper and no absolute path: Scheduler hands
   #   the task to a shell in the dyno, so `;` chains and `$INGEST_PROVIDERS`
@@ -176,10 +177,27 @@ jobs:
       # handing this job an Appwrite key would grant it access it has no use
       # for.
       DATABASE_URL: ${{ secrets.INGEST_DATABASE_URL }}
-      # What a run crawls when nothing tells it otherwise, which is every
-      # scheduled run. Excludes bamboohr, icims and smartrecruiters; see the
-      # header. A dispatch may still name any subset, including those.
-      SCHEDULED_PROVIDERS: "greenhouse lever ashby workday oracle_cloud"
+      # What a run crawls when nothing tells it otherwise. Kept in step with
+      # the `INGEST_PROVIDERS` config var on Heroku, which is what the real
+      # schedule reads now; this default only governs a manual dispatch, and a
+      # dispatch that quietly crawled a provider the schedule dropped would be
+      # a confusing way to refill a table someone had just pruned.
+      #
+      # `oracle_cloud` and `workday` were removed 2026-09-01 on measurement,
+      # not preference. Per provider, rows held against postings matching what
+      # this user actually tracks:
+      #
+      #   oracle_cloud  35,948 rows    27 useful   1,331 rows per useful
+      #   greenhouse    11,810 rows    96 useful     123
+      #   ashby          4,488 rows    29 useful     155
+      #   lever          3,094 rows    69 useful      45
+      #
+      # Oracle was 65% of the index for 27 postings, thirty times less
+      # efficient than Lever, because a handful of very large tenants dominate
+      # it and they are the wrong kind of employer here. `workday` returned 0
+      # rows from all 13 of its tokens. bamboohr, icims and smartrecruiters
+      # remain excluded as before.
+      SCHEDULED_PROVIDERS: "greenhouse lever ashby"
     steps:
       - uses: actions/checkout@v4
 
