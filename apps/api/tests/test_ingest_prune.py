@@ -116,3 +116,42 @@ async def test_the_ceiling_takes_the_oldest_first(db_session: AsyncSession) -> N
         )
     ).scalars().all()
     assert kept == ["p3", "p4"], "the two freshest survived"
+
+async def test_a_delete_is_followed_by_a_vacuum(db_session: AsyncSession) -> None:
+    """The vacuum has to run on its own connection.
+
+    Reusing the session's raises `InFailedSQLTransactionError`, because VACUUM
+    cannot run inside a transaction block and the session is always inside one.
+    That failure does not just skip the vacuum, it poisons the caller's
+    transaction, so the prune that just deleted rows reports an error for its
+    housekeeping.
+    """
+    await _insert(db_session, "old", age_days=90)
+
+    result = await prune_index(db_session, max_age_days=60, max_rows=1_000_000)
+
+    assert result.aged_out == 1
+    assert result.vacuumed is True
+    assert result.errors == []
+
+
+async def test_nothing_deleted_means_no_vacuum(db_session: AsyncSession) -> None:
+    """Steady state is the common case: most hours delete nothing, and a
+    vacuum then is a connection and a table scan spent on no change."""
+    await _insert(db_session, "fresh", age_days=1)
+
+    result = await prune_index(db_session, max_age_days=60, max_rows=1_000_000)
+
+    assert result.rows_before == result.rows_after
+    assert result.vacuumed is False
+
+
+async def test_a_dry_run_never_vacuums(db_session: AsyncSession) -> None:
+    await _insert(db_session, "old", age_days=90)
+
+    result = await prune_index(
+        db_session, max_age_days=60, max_rows=1_000_000, dry_run=True
+    )
+
+    assert result.aged_out == 1
+    assert result.vacuumed is False
