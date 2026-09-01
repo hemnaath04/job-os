@@ -1646,6 +1646,77 @@ async def test_oracle_cloud_hydration_supplies_the_description_not_the_boilerpla
     assert hydrated.posted_at is not None and hydrated.posted_at.hour == 13
 
 
+async def test_oracle_cloud_hydration_reads_the_division_copy_some_boards_only_fill() -> None:
+    """Some employers leave the three usual fields empty and fill a fourth.
+
+    Goldman Sachs (`hdpc`) returns `ExternalDescriptionStr` as the literal
+    string `<br>`, the other two as empty strings, and 650-1,450 characters of
+    real copy in `OrganizationDescriptionStr`. Reading only the first three
+    hydrated every posting on that board to nothing: 100 attempted, 100 failed,
+    0 hydrated on a live run, with no warning logged, because a provider that
+    returns an unhydrated posting is indistinguishable from one that declined.
+
+    `CorporateDescriptionStr` stays excluded even here, where it is the only
+    other populated field, because it is still the repeated block.
+    """
+    provider = OracleCloudProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(orc_page("49062"))), ORC_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "items": [
+                    {
+                        "Id": "49062",
+                        "ExternalDescriptionStr": "<br>",
+                        "ExternalResponsibilitiesStr": "",
+                        "ExternalQualificationsStr": "",
+                        "OrganizationDescriptionStr": (
+                            "<p><u><b>About the division</b></u></p>"
+                            "<p>We run global markets technology.</p>"
+                        ),
+                        "CorporateDescriptionStr": "<p>About the program</p>",
+                    }
+                ]
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, ORC_TOKEN, result.postings[0])
+
+    assert hydrated.jd_hydrated is True
+    assert "We run global markets technology." in hydrated.jd_clean
+    assert "About the program" not in hydrated.jd_clean
+
+
+async def test_oracle_cloud_hydration_still_fails_when_every_field_is_empty() -> None:
+    """The fourth field is a fallback, not a way to call an empty row hydrated.
+
+    A board that fills nothing must still come back unhydrated, so the row is
+    retried and eventually retired rather than stored as a description made of
+    stripped markup.
+    """
+    provider = OracleCloudProvider()
+    result = await provider.fetch_board(FakeFetcher(ok(orc_page("49062"))), ORC_TOKEN)
+
+    detail = FakeFetcher(
+        ok(
+            {
+                "items": [
+                    {
+                        "Id": "49062",
+                        "ExternalDescriptionStr": "<br>",
+                        "ExternalResponsibilitiesStr": "",
+                        "OrganizationDescriptionStr": "  ",
+                    }
+                ]
+            }
+        )
+    )
+    hydrated = await provider.hydrate(detail, ORC_TOKEN, result.postings[0])
+
+    assert hydrated.jd_hydrated is False
+
+
 async def test_oracle_cloud_hydration_keeps_the_posting_when_the_detail_fails() -> None:
     """A 404 on one requisition must not empty a row the list already filled.
 
