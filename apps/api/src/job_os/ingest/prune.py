@@ -54,15 +54,29 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 log = structlog.get_logger(__name__)
 
-#: Postings older than this are gone. Sixty days rather than thirty because a
-#: posting whose `posted_at` is stale is not necessarily delisted -- some
-#: boards backdate, and an internship posted in the autumn is live all winter.
-DEFAULT_MAX_AGE_DAYS = 60
+#: Postings older than this are gone.
+#:
+#: Thirty rather than sixty, and what made that affordable is dropping
+#: oracle_cloud. With three providers the whole corpus at a 30-day horizon
+#: projects to 76,460 rows, about 0.43 GB, so the horizon is no longer trading
+#: coverage against storage the way it was when one vendor supplied 65% of the
+#: table.
+#:
+#: The risk a longer horizon hedged against is real but small: some boards
+#: backdate `posted_at`, so a live posting can look older than it is. Against
+#: that, a stale row in a job search is worse than a missing one, because it
+#: costs an application rather than an impression.
+DEFAULT_MAX_AGE_DAYS = 30
 
-#: The backstop. Sized so the index fits an Essential-0 database (1 GB) with
-#: room for the rest of the schema: at the measured 4,392 bytes a row, 150,000
-#: rows is about 660 MB.
-DEFAULT_MAX_ROWS = 150_000
+#: The backstop, sized against the failure rather than the forecast.
+#:
+#: Full coverage projects to 76,460 rows, so this should never bind. It sits at
+#: 100,000 because bytes per row is not a constant: 4,392 at 35% hydration,
+#: 5,627 an hour later, and a fully hydrated row runs closer to 8,500. At that
+#: upper figure 100,000 rows is about 850 MB, which still fits an Essential-0
+#: database. A ceiling that only holds while the rows stay thin is not a
+#: ceiling.
+DEFAULT_MAX_ROWS = 100_000
 
 # Never delete a posting a user is actually tracking, whatever its age. The
 # join is to `jobs`, which is where an imported posting lands.
