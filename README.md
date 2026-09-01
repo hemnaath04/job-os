@@ -9,8 +9,8 @@ It does three things:
 2. **Tailors resumes.** An agent rewrites a master resume against one specific
    posting, grounded strictly in facts the resume or profile already verifies.
 3. **Finds roles, and scores them against you.** A crawler sweeps Greenhouse,
-   Lever, Ashby and SmartRecruiters on a schedule and stores what it finds, so a
-   search reads an index instead of fetching the internet live. Every result is
+   Lever, Ashby and BambooHR hourly and stores what it finds, so a search reads
+   an index instead of fetching the internet live. Every result is
    scored against your verified profile, so the page leads with what fits rather
    than what is newest.
 
@@ -19,14 +19,21 @@ The tracker is a tracker. The tailoring engine is the part worth reading.
 ## Finding roles
 
 The default search reads a pre-built index (`apps/api/src/job_os/ingest/`,
-`docs/ingest-index.md`) crawled overnight from Greenhouse, Lever, Ashby and
-SmartRecruiters' public board APIs, on a schedule, with per-token liveness
-tracking so a dead board is not re-checked on every sweep. Reading the index is
-one query, typically under 300ms even at tens of thousands of rows; the fan-out
-this replaced could take 8 to 60 seconds and download over 100MB per search.
+`docs/ingest-index.md`) crawled hourly from the public board APIs of Greenhouse,
+Lever, Ashby and BambooHR, roughly 20,900 company boards, with per-token
+liveness tracking so a dead board is not re-checked on every sweep. Reading the
+index is one query, typically under 300ms even at tens of thousands of rows; the
+fan-out this replaced could take 8 to 60 seconds and download over 100MB per
+search.
+
+The index is deliberately not exhaustive. Postings are dropped past a 30 day
+horizon and a hard row ceiling is enforced oldest-first, so it stays a useful
+size rather than an ever-growing one. `oracle_cloud` and `workday` were crawled
+and then removed on measurement: Oracle held 65% of the index to answer 27
+relevant postings, and Workday returned nothing at all from its 13 boards.
 
 **Live sources stay available, as a second, explicit step.** TheirStack, GitHub,
-and any keyed or custom endpoint you add are not in the overnight crawl yet, so
+and any keyed or custom endpoint you add are not in the hourly crawl yet, so
 Job Finder keeps a collapsed "Also search live sources" section that still fans
 out to them on demand for broader, slower coverage. These are read through a
 single shape adapter rather than a parser per provider: it locates the job array
@@ -290,15 +297,16 @@ Implementation notes that are load-bearing:
 ```
 apps/
   web/                    Next.js App Router, TypeScript, Tailwind, shadcn/ui
-  api/                    FastAPI container, Tectonic, async SQLAlchemy, pgvector
+  api/                    FastAPI container, Typst/Tectonic, async SQLAlchemy, pgvector
   functions/job-os-agents Appwrite Python function, the async agent worker
 infra/                    Deployment configuration
 docs/                     Engine, cutover, deploy and setup notes
 ```
 
-Work is split by latency rather than by layer. The three deploy targets below
-are genuinely independent: the web app ships on merge, the agent function ships
-from `main`, and the API container is released by hand.
+One store owns each fact. Postgres is the record; Appwrite keeps only what
+Postgres cannot hold, which is large files and long-running agent work. That
+division is deliberate and was arrived at expensively: see "Why the split looks
+like this" below.
 
 ```mermaid
 flowchart TB
@@ -308,79 +316,120 @@ flowchart TB
 
     Clerk["Clerk<br/>auth, bridged to a<br/>short-lived Appwrite session"]
 
+    subgraph heroku["Heroku"]
+        API["FastAPI container<br/>applications, jobs, search,<br/>discovery, rendering"]
+        SCHED["Scheduler, hourly<br/>sweep - hydrate - prune"]
+    end
+
+    PG[("Heroku Postgres + pgvector<br/>THE RECORD: applications, jobs,<br/>companies, resumes, versions,<br/>facts, the crawl index")]
+
     subgraph appwrite["Appwrite Cloud"]
-        DB[("TablesDB + Storage<br/>cards, resumes, versions,<br/>facts, templates, agent jobs")]
-        FN["Function: job-os-agents<br/>tailor, review, finalize,<br/>parse, extract, discover"]
+        ST[("Storage buckets<br/>rendered resume PDFs")]
+        FN["Function: job-os-agents<br/>tailor, review, finalize"]
+        AJ[("agent job rows<br/>queue for the function")]
     end
 
-    subgraph heroku["Heroku container"]
-        API["FastAPI<br/>jobs, search, discovery"]
-        RENDER["Typst / Tectonic<br/>PDF rendering"]
-    end
-
-    PG[("Neon Postgres + pgvector<br/>job postings, applications,<br/>companies, embeddings")]
     LLM["Manifest gateway<br/>Claude"]
-    EXT["Firecrawl · TheirStack<br/>overnight crawl index"]
+    ATS["ATS boards<br/>Greenhouse - Lever<br/>Ashby - BambooHR"]
 
     UI -.->|"signs in"| Clerk
-    Clerk -.->|"session"| DB
-    UI -->|"direct SDK reads/writes<br/>never waits on a cold start"| DB
-    UI -->|"enqueue job row, then poll"| DB
-    DB -->|"triggers"| FN
-    UI -->|"render, jobs, discovery"| API
-
-    FN -->|"run_tailor"| LLM
-    FN -->|"writes version"| DB
-    API --> RENDER
+    UI -->|"everything the board reads"| API
     API --> PG
-    API --> EXT
+    SCHED -->|"crawls, hydrates, prunes"| PG
+    SCHED --> ATS
+    UI -->|"enqueue, then poll"| AJ
+    AJ -->|"triggers"| FN
+    FN -->|"run_tailor"| LLM
+    FN -->|"writes the PDF"| ST
     API -->|"run_tailor<br/>same graph, no DB handle"| LLM
+    UI -->|"downloads a version"| ST
 
     classDef store fill:#1f2937,stroke:#4b5563,color:#e5e7eb
-    class DB,PG store
+    class PG,ST,AJ store
 ```
 
-The one thing worth reading twice: `run_tailor` hangs off both the function and
-the container, and takes no database handle in either. That is the only reason
-two runtimes can be trusted to produce the same resume.
+**Postgres is the record.** Applications, jobs, companies, the status audit log,
+resumes, resume versions, profile facts, fact bullets, saved searches and the
+crawl index all live in Heroku Postgres with pgvector. Reads cost nothing, so a
+read-heavy search index belongs here and nowhere else.
 
-**Appwrite TablesDB and Storage** hold the interactive workspace: application
-cards, resumes, immutable resume versions, revision messages, verified profile
-facts, fact bullets, templates, and agent job rows. The browser reads and writes
-these directly through the authenticated Appwrite Web SDK, so a board load, a
-drag, or an edit never waits on a Python cold start.
+**Appwrite holds bytes and long jobs.** Rendered resume PDFs live in Storage
+buckets, which are billed as bandwidth rather than as database reads and which
+Heroku has no equivalent for at all. The `job-os-agents` function runs work that
+cannot finish inside Heroku's 30 second router ceiling: tailoring, review,
+finalization. The UI enqueues a job row and polls it rather than holding an HTTP
+request open.
 
-**The FastAPI container** owns the heavy and stateful work: LaTeX rendering,
-job and company records, saved searches, discovery, and vector search over
-Postgres with pgvector. It is also the durable store the Appwrite workspace was
-migrated from.
+**The crawl runs on Heroku Scheduler**, hourly, as one command: sweep the boards
+that are due, hydrate descriptions the list endpoints did not carry, then prune.
+Per-board cadence is governed by `ats_board_tokens.next_check_after`, so the
+sweep frequency changes when work is picked up rather than how much there is.
+GitHub Actions was tried for this and abandoned: its cron ran 51 to 341 minutes
+late, median about four hours, while Scheduler fires on time.
 
-**The Appwrite function** runs expensive agent work asynchronously: profile
-extraction, resume revision, review, finalization, tailoring, job parsing, and
-discovery. The UI creates a queued job row and polls its status rather than
-holding an HTTP request open. The function has no LaTeX engine, so it returns a
-review without a page count and the browser fetches the PDF from the container.
+**The index is capped on purpose.** A crawl with no opposing force grew the
+table about 47 MB an hour. `ingest/prune.py` deletes postings past a 30 day
+horizon and enforces a hard row ceiling, oldest first, and never deletes a
+posting an application points at. Which boards get crawled is the other half:
+`oracle_cloud` was dropped after measurement showed it holding 65% of the index
+to answer 27 relevant postings.
 
-The tailoring agent itself, `run_tailor`, takes no database handle. Both the
-FastAPI path and the Appwrite function drive the exact same draft, score, refine
-graph, which is the only reason two runtimes can be trusted to produce the same
-resume.
+**The tailoring agent takes no database handle.** `run_tailor` hangs off both the
+function and the container and reads no store in either, which is the only
+reason two runtimes can be trusted to produce the same resume.
 
-**Clerk** handles auth, bridged to a short-lived Appwrite session for the direct
-browser reads.
+**Clerk** handles auth, bridged to a short-lived Appwrite session for the
+Storage and agent-queue calls the browser still makes directly.
+
+### Why the split looks like this
+
+Appwrite bills database reads **per row returned**, not per API call. A search
+index is read-heavy by definition, so putting one there is a pricing mismatch
+rather than a tuning problem: a single sweep read 8,297 rows before a user
+searched anything. In August 2026 an exact-count query walked the whole posting
+table and exhausted a month of read quota in an afternoon, taking the
+applications board, resumes and tailoring offline together, because the quota is
+shared across the whole organisation.
+
+Postgres has the opposite shape: storage is billed, reads are free. So the rule
+is now explicit. **Anything queried repeatedly lives in Postgres. Anything large
+and rarely read lives in Appwrite Storage. No table exists in both.**
+
+The web app can still be pointed either way. `lib/appwrite/config.ts` reads
+`NEXT_PUBLIC_PIPELINE_BACKEND` and `NEXT_PUBLIC_WORKSPACE_BACKEND`, where
+anything other than `appwrite` means the Postgres path, and
+`scripts/backend-switch.sh {legacy|appwrite|status}` flips both and redeploys.
+The redeploy is part of the switch, not a follow-up, because `NEXT_PUBLIC_*` is
+inlined at build time.
+
+### Deploying
+
+Three targets, three mechanisms, and only two of them are automatic.
+
+| Target | Mechanism |
+| ------ | --------- |
+| Web (Vercel) | builds from `main` on merge |
+| Agent function (Appwrite) | deploys from `main` |
+| **API (Heroku container)** | **released by hand** |
+
+Merging is not deploying. The API container has to be built, pushed with
+`crane` (a plain `docker push` is rejected by Heroku's registry) and released
+explicitly. After merging anything the API runs, check that `/health` reports
+the `git_sha` you expect before believing it is live.
 
 | Layer         | Choice                                                    |
 | ------------- | --------------------------------------------------------- |
 | Web           | Next.js App Router, TypeScript, Tailwind, shadcn/ui        |
 | API           | FastAPI, LangGraph, async SQLAlchemy, Typst and Tectonic   |
-| Workspace     | Appwrite TablesDB, Storage, Python Functions               |
-| Jobs and vectors | Postgres with pgvector                                  |
+| Record        | Heroku Postgres with pgvector                              |
+| Files and agents | Appwrite Storage and Python Functions                   |
+| Scheduling    | Heroku Scheduler                                           |
 | Auth          | Clerk                                                      |
 | Models        | Claude, routed through a Manifest gateway                  |
-| Discovery     | Overnight-crawled index (Greenhouse, Lever, Ashby, SmartRecruiters), plus live TheirStack, GitHub, board-wide feeds and custom endpoints as a second step |
+| Discovery     | Hourly-crawled index (Greenhouse, Lever, Ashby, BambooHR), plus live TheirStack, GitHub, board-wide feeds and custom endpoints as a second step |
 | Job import    | Firecrawl, with a guarded direct HTTP fallback              |
 | Observability | Sentry across web, API and the agent function               |
-| Hosting       | Vercel for the web app, Heroku for the API, Appwrite Cloud  |
+| Hosting       | Vercel for the web app, Heroku for the API and database, Appwrite Cloud for files and agents |
 
 ## Running it locally
 
