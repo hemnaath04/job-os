@@ -498,21 +498,35 @@ class OracleCloudProvider:
             return posting
         info = as_dict(items[0])
 
-        # Oracle splits the posting across three authored fields, and which
+        # Oracle splits the posting across several authored fields, and which
         # ones are filled in is a per-employer habit: Citizens puts everything
-        # in `ExternalDescriptionStr` and leaves the other two empty strings.
+        # in `ExternalDescriptionStr` and leaves the others empty strings.
         #
-        # `CorporateDescriptionStr` is deliberately excluded. It is the
-        # boilerplate EEO and about-us block, byte-identical on every posting
-        # on a board, and folding it into every `jd_clean` would pad each row
-        # with the same few thousand characters the fit scorer then has to
-        # read past to reach the job.
+        # `OrganizationDescriptionStr` is here because for some employers it is
+        # the only field with anything in it. Goldman Sachs (`hdpc`) returns
+        # `ExternalDescriptionStr` as the literal string `<br>` and the other
+        # two empty, while carrying 650-1,450 characters of real per-division
+        # copy in this one. Without it every posting on that board hydrated to
+        # nothing: measured 100 attempted, 100 failed, 0 hydrated, and because
+        # the queue is ordered `last_seen_at DESC` a single such board at the
+        # front starves every row behind it until `MAX_ROW_ATTEMPTS` retires
+        # it, three wasted requests at a time.
+        #
+        # It goes last because it is context rather than the role. For a board
+        # that fills the first three it is a footnote; for one that fills only
+        # this, it is the description.
+        #
+        # `CorporateDescriptionStr` stays excluded. It is the boilerplate EEO
+        # and about-us block, repeated across a board, and folding it into
+        # every `jd_clean` would pad each row with the same few thousand
+        # characters the fit scorer then has to read past to reach the job.
         raw = "\n\n".join(
             part
             for part in (
                 str(info.get("ExternalDescriptionStr") or ""),
                 str(info.get("ExternalResponsibilitiesStr") or ""),
                 str(info.get("ExternalQualificationsStr") or ""),
+                str(info.get("OrganizationDescriptionStr") or ""),
             )
             if part.strip()
         )
