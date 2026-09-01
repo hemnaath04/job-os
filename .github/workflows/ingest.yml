@@ -1,4 +1,4 @@
-# Continuous ATS ingest. ENABLED 2026-08-31, on a schedule, by the repo owner.
+# Continuous ATS ingest. Manual dispatch only; the schedule runs on Heroku.
 #
 # Turning a crawler loose on other people's public APIs is a decision for a person,
 # not a side effect of merging a branch. That decision has been made; the numbers
@@ -93,10 +93,57 @@ on:
   # so the 500 MB tier is roughly 240,000 rows away. Watch table size, not a
   # read counter. See the storage section of `docs/ingest-index.md`.
   #
-  schedule:
-    # Every six hours, offset off the hour because schedulers are busiest
-    # there. Matches the LIVE recheck interval in ingest/liveness.py.
-    - cron: "17 */6 * * *"
+  # MOVED TO HEROKU SCHEDULER 2026-09-01. Kept here, commented, because
+  # `workflow_dispatch` above is still the way to run a one-off crawl by hand,
+  # and because the reason this moved is worth keeping next to the thing it
+  # moved off.
+  #
+  # GitHub does not guarantee cron timing, and on this repository it was not
+  # close. Measured across the last ten scheduled runs, against the correct
+  # slots of 00:17/06:17/12:17/18:17 UTC:
+  #
+  #     late 101, 324, 173, 267, 341, 311, 160, 267, 51, 247 minutes
+  #
+  # One run in ten started within the hour, and the median was about four
+  # hours. A schedule that says "every six hours" and delivers three to four
+  # ragged runs a day is worse than the same cadence stated honestly, because
+  # freshness claims in the UI are read off the cron expression.
+  #
+  # Heroku Scheduler runs one-off dynos on the existing `job-os` app, which is
+  # already the API's home, already has DATABASE_URL, and already ships the
+  # ingest CLI in its image. Verified there before this change: `sweep` and
+  # `hydrate` both run clean, 30 tokens in 38s.
+  #
+  # Scheduler's own caveat, from its docs: execution is "expected but not
+  # guaranteed" and it can rarely miss a job. That is a weaker promise than it
+  # sounds, but the observed failure here was lateness rather than misses, and
+  # a missed hourly run costs an hour rather than six.
+  #
+  # THE JOB, as configured in `heroku addons:open scheduler -a job-os`:
+  #   frequency: hourly
+  #   command:
+  #     sh -c '/app/.venv/bin/python -m job_os.ingest.cli sweep --limit 150
+  #            --concurrency 8 --providers $INGEST_PROVIDERS;
+  #            /app/.venv/bin/python -m job_os.ingest.cli hydrate --limit 100
+  #            --providers $INGEST_PROVIDERS'
+  #
+  # Hourly rather than six-hourly because Scheduler offers only 10-minute,
+  # hourly or daily, and daily is too coarse. Per-board cadence is unaffected:
+  # `ats_board_tokens.next_check_after` still governs when a board is due, so
+  # a more frequent sweep changes when work is picked up, not how much of it
+  # there is. `--limit 150` holds a run near three minutes, well inside the
+  # dyno cap of one scheduling interval.
+  #
+  # `;` rather than `&&` between the two, for the same reason the step below
+  # carried `if: always()`: hydration fills rows the index already has and is
+  # worth running even when the crawl before it failed.
+  #
+  # The provider pin moved to the `INGEST_PROVIDERS` config var, so it is
+  # readable with `heroku config -a job-os` rather than living only in a
+  # dashboard text box. It still excludes bamboohr, icims and smartrecruiters.
+  #
+  # schedule:
+  #   - cron: "17 */6 * * *"
 
 # A sweep that overlaps itself would double the load on every vendor for no gain,
 # and the second one would find every token already claimed as not-yet-due.
