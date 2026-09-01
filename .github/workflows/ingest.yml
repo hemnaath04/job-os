@@ -139,6 +139,15 @@ on:
   #   0.43 GB, against 1 GB on an Essential-0 database. The same target with
   #   oracle in the corpus was 2.76 GB.
   #
+  #   Adding bamboohr takes the corpus to 20,857 boards. Its contribution is
+  #   projected, not measured: 4,992 boards at the sampled 9.5 postings each
+  #   is about 47,000 postings, and an assumed-but-unverified 60% surviving
+  #   the 30-day horizon puts the index near 105,000 rows. That is ABOVE the
+  #   100,000 ceiling in `prune.py`, deliberately. The ceiling will bind and
+  #   trim oldest-first, which is what it is for, and the right response is to
+  #   re-measure bamboohr's real 30-day yield once it has been crawled rather
+  #   than to raise a limit against a guess.
+  #
   #   After the first pass the number stops mattering: `next_check_after`
   #   keeps most tokens undue, and re-crawling an unchanged board is a 304
   #   with an empty body. One observed run swept 150 boards in 12 seconds for
@@ -203,6 +212,20 @@ jobs:
       # dispatch that quietly crawled a provider the schedule dropped would be
       # a confusing way to refill a table someone had just pruned.
       #
+      # `bamboohr` was added 2026-09-01, after being held pending evidence.
+      # The evidence is a `sample` run, which measures a provider without
+      # writing to the database: 60 of its 4,992 boards returned 567 postings,
+      # every board reachable, 0.2 MB, at 24 boards a second. It is the
+      # cheapest provider in the corpus to crawl by an order of magnitude,
+      # because its boards are small; greenhouse manages about 0.6 a second.
+      #
+      # It was held because 4,992 small-company boards looked like bulk. The
+      # measurement says the opposite: roughly 9.5 postings a board, so about
+      # 47,000 postings across the corpus and well under that after the 30-day
+      # horizon. What is still unmeasured is how many of them are worth
+      # having, since none have been ingested; the per-provider yield table
+      # below is the thing to re-run once they have.
+      #
       # `oracle_cloud` and `workday` were removed 2026-09-01 on measurement,
       # not preference. Per provider, rows held against postings matching what
       # this user actually tracks:
@@ -215,9 +238,10 @@ jobs:
       # Oracle was 65% of the index for 27 postings, thirty times less
       # efficient than Lever, because a handful of very large tenants dominate
       # it and they are the wrong kind of employer here. `workday` returned 0
-      # rows from all 13 of its tokens. bamboohr, icims and smartrecruiters
-      # remain excluded as before.
-      SCHEDULED_PROVIDERS: "greenhouse lever ashby"
+      # rows from all 13 of its tokens. `icims` (31 boards) and
+      # `smartrecruiters` (9) remain excluded, by omission rather than by
+      # argument: between them they are 40 boards.
+      SCHEDULED_PROVIDERS: "greenhouse lever ashby bamboohr"
     steps:
       - uses: actions/checkout@v4
 
