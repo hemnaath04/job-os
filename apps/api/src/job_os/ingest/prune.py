@@ -52,6 +52,8 @@ import structlog
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from job_os.db.session import engine as app_engine
+
 log = structlog.get_logger(__name__)
 
 #: Postings older than this are gone.
@@ -138,6 +140,9 @@ class PruneResult:
     rows_after: int = 0
     bytes_before: int = 0
     bytes_after: int = 0
+    dead_before: int = 0
+    dead_after: int = 0
+    vacuumed: bool = False
     duration_s: float = 0.0
     errors: list[str] = field(default_factory=list)
 
@@ -149,9 +154,22 @@ class PruneResult:
             "rows_before": self.rows_before,
             "rows_after": self.rows_after,
             "deleted": self.rows_before - self.rows_after,
-            "bytes_before": self.bytes_before,
-            "bytes_after": self.bytes_after,
-            "mb_reclaimed": round((self.bytes_before - self.bytes_after) / 1e6, 1),
+            "mb_on_disk": round(self.bytes_after / 1e6, 1),
+            # NOT "space reclaimed". A plain VACUUM returns pages to the table's
+            # own free space map, not to the filesystem, so on a table that is
+            # also being inserted into this is normally about zero, and that is
+            # the system working: the hour's deletes are refilled by the hour's
+            # inserts and the file stops growing. Only VACUUM FULL shrinks the
+            # file, and it takes an exclusive lock, so it is not run here.
+            #
+            # Reported because an earlier version called this `mb_reclaimed`,
+            # read 0.0 every run, and was taken as evidence of unreclaimed
+            # bloat. It was not: dead tuples were 10% and autovacuum had run
+            # ten times. `dead_after` is the field to watch for that.
+            "mb_on_disk_change": round((self.bytes_after - self.bytes_before) / 1e6, 1),
+            "dead_before": self.dead_before,
+            "dead_after": self.dead_after,
+            "vacuumed": self.vacuumed,
             "duration_s": round(self.duration_s, 2),
             "errors": self.errors[:10],
         }
@@ -169,6 +187,51 @@ async def _bytes(session: AsyncSession) -> int:
     )
 
 
+async def _dead_tuples(session: AsyncSession) -> int:
+    """Rows deleted but not yet reusable. This is the real bloat signal."""
+    value = (
+        await session.execute(
+            text(
+                "select coalesce(n_dead_tup, 0) from pg_stat_user_tables "
+                "where relname = 'job_postings'"
+            )
+        )
+    ).scalar()
+    return int(value or 0)
+
+
+async def _vacuum(session: AsyncSession) -> None:
+    """Plain VACUUM ANALYZE, never FULL.
+
+    Two jobs. It returns this pass's deleted rows to the free space map now,
+    rather than whenever autovacuum next decides to look, so the next hour's
+    inserts refill the file instead of extending it. And it refreshes planner
+    statistics immediately after several thousand rows leave, which otherwise
+    leaves the planner estimating against a table shape that no longer exists.
+
+    FULL is deliberately not used. It would shrink the file, but it takes an
+    ACCESS EXCLUSIVE lock and rewrites the whole table, which is not something
+    to do hourly underneath a live search. When the file genuinely needs to
+    shrink, that is a manual operation in a quiet window.
+
+    VACUUM cannot run inside a transaction block, and a session's connection is
+    always inside one. Reusing it raises `InFailedSQLTransactionError` and
+    poisons the caller's transaction, which is worse than not vacuuming at all,
+    so this takes its own AUTOCOMMIT connection from the application engine.
+
+    Deliberately the module engine rather than `session.get_bind()`. A bind can
+    be a Connection rather than an Engine, which is exactly what the test suite
+    does when it wraps each test in a rolled-back transaction, and calling
+    `.connect()` on one raises `AttributeError`. Reaching for the engine
+    directly also means the vacuum never joins the caller's transaction by
+    accident.
+    """
+    del session  # accepted for symmetry with the other helpers here
+    async with app_engine.connect() as connection:
+        await connection.execution_options(isolation_level="AUTOCOMMIT")
+        await connection.exec_driver_sql("vacuum (analyze) job_postings")
+
+
 async def prune_index(
     session: AsyncSession,
     *,
@@ -181,6 +244,7 @@ async def prune_index(
     result = PruneResult()
     result.rows_before = await _count(session)
     result.bytes_before = await _bytes(session)
+    result.dead_before = await _dead_tuples(session)
 
     # How many rows the age rule would take, and how many it spares because a
     # user is tracking them. Reported separately so a surprising number is
@@ -213,7 +277,21 @@ async def prune_index(
             await session.commit()
 
     result.rows_after = await _count(session)
+
+    deleted = result.rows_before - result.rows_after
+    if not dry_run and deleted:
+        await session.commit()
+        try:
+            await _vacuum(session)
+            result.vacuumed = True
+        except Exception as exc:  # noqa: BLE001 - hygiene must not fail the prune
+            # A failed vacuum leaves the deletes in place and autovacuum will
+            # get there on its own schedule. Reporting the prune as failed
+            # because its housekeeping failed would be the wrong way round.
+            result.errors.append(f"vacuum: {type(exc).__name__}: {exc}")
+
     result.bytes_after = await _bytes(session)
+    result.dead_after = await _dead_tuples(session)
     result.duration_s = time.monotonic() - started
     log.info("ingest.prune_done", **result.as_dict())
     return result
