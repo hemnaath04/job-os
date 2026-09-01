@@ -46,6 +46,8 @@ from job_os.ingest.corpus import corpus_summary, seed_tokens
 from job_os.ingest.fetcher import PoliteFetcher
 from job_os.ingest.hydrate import DEFAULT_LIMIT as DEFAULT_HYDRATE_LIMIT
 from job_os.ingest.providers import PROVIDER_NAMES, BoardStatus, get_provider
+from job_os.ingest.prune import DEFAULT_MAX_AGE_DAYS as PRUNE_MAX_AGE_DAYS
+from job_os.ingest.prune import DEFAULT_MAX_ROWS as PRUNE_MAX_ROWS
 from job_os.ingest.worker import (
     DEFAULT_CONCURRENCY,
     DEFAULT_GROUP_SIZE,
@@ -130,6 +132,24 @@ async def _cmd_hydrate(args: argparse.Namespace) -> int:
     # posting a search can reach already has its body. Exiting nonzero on it
     # would page whoever reads the scheduler's logs to tell them the index is
     # finished.
+    return 0
+
+
+async def _cmd_prune(args: argparse.Namespace) -> int:
+    """Delete what the index is not getting value from holding."""
+    from job_os.db.session import async_session
+    from job_os.ingest.prune import prune_index
+
+    async with async_session() as session:
+        result = await prune_index(
+            session,
+            max_age_days=args.max_age_days,
+            max_rows=args.max_rows,
+            dry_run=args.dry_run,
+        )
+    _emit({"command": "prune", "dry_run": args.dry_run, **result.as_dict()})
+    # Deleting nothing is the steady state, not a failure: it means the index
+    # is already inside both limits.
     return 0
 
 
@@ -267,6 +287,29 @@ def build_parser() -> argparse.ArgumentParser:
     )
     hydrate.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)
     hydrate.set_defaults(handler=_cmd_hydrate)
+
+    prune = sub.add_parser(
+        "prune",
+        help="delete aged-out postings and anything above the row ceiling",
+    )
+    prune.add_argument(
+        "--max-age-days",
+        type=int,
+        default=PRUNE_MAX_AGE_DAYS,
+        help="postings older than this are deleted",
+    )
+    prune.add_argument(
+        "--max-rows",
+        type=int,
+        default=PRUNE_MAX_ROWS,
+        help="hard ceiling; the oldest above it go first",
+    )
+    prune.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="report what would go without deleting it",
+    )
+    prune.set_defaults(handler=_cmd_prune)
 
     status = sub.add_parser("status", help="index and corpus counters")
     status.set_defaults(handler=_cmd_status)
