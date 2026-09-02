@@ -189,12 +189,10 @@ async def import_resume_files(
     selected files here, and this endpoint turns each into editable JSON while
     retaining the original PDF bytes when available.
     """
-    from job_os.services.profile_extract import (
-        extract_json_resume_from_docx,
-        extract_json_resume_from_pdf,
+    from job_os.services.resume_ingest import (
+        PENDING_RESUME,
+        schedule_resume_extraction,
     )
-    from job_os.services.profile_import import import_json_resume
-    from job_os.services.resume_engine import validate_json_resume_document
 
     if len(files) > 30:
         raise HTTPException(
@@ -218,6 +216,7 @@ async def import_resume_files(
         )
 
     result = ResumeImportResult()
+    scheduled: list[UUID] = []
     total_bytes = 0
     for upload in files:
         filename = Path(upload.filename or "resume").name
@@ -248,15 +247,8 @@ async def import_resume_files(
             continue
         try:
             lower = filename.lower()
-            if lower.endswith(".pdf"):
-                doc = await extract_json_resume_from_pdf(raw)
-            elif lower.endswith(".docx"):
-                doc = await extract_json_resume_from_docx(raw)
-            elif lower.endswith(".json"):
-                doc = json.loads(raw.decode("utf-8"))
-            else:
+            if not lower.endswith((".pdf", ".docx", ".json")):
                 raise ValueError("Only PDF, DOCX, and JSON Resume files are supported.")
-            validate_json_resume_document(doc)
 
             display_name = _resume_name_from_filename(filename)
             is_master = filename == inferred_master
@@ -280,26 +272,21 @@ async def import_resume_files(
                 session.add(resume)
                 await session.flush()
 
+            # The bytes are kept for every accepted type, not just PDF: the
+            # extraction now runs after the response and has nothing else to
+            # read from.
             version = ResumeVersion(
                 resume_id=resume.id,
-                json_resume=doc,
+                json_resume=PENDING_RESUME,
                 approved_by_user=False,
-                pdf_bytes=raw if lower.endswith(".pdf") else None,
+                pdf_bytes=raw,
                 source_filename=filename,
-                status="imported",
+                status="extracting",
                 revision_note=f"Imported from {source_label}",
             )
             session.add(version)
             await session.flush()
-
-            if is_master:
-                await import_json_resume(
-                    session,
-                    user=user,
-                    doc=doc,
-                    mark_verified=True,
-                    replace_existing=False,
-                )
+            scheduled.append(version.id)
 
             result.items.append(
                 ResumeImportItem(
@@ -308,7 +295,10 @@ async def import_resume_files(
                     version_id=version.id,
                     imported=True,
                     is_master=is_master,
-                    note="Imported as editable JSON Resume.",
+                    note=(
+                        "Uploaded. Reading it now; the editable version "
+                        "appears when that finishes."
+                    ),
                 )
             )
         except (
@@ -321,6 +311,15 @@ async def import_resume_files(
             result.items.append(
                 ResumeImportItem(filename=filename, imported=False, note=str(exc))
             )
+
+    # Committed before scheduling, not left to get_session on the way out. Each
+    # task opens its own session and looks its row up by id, so the row has to
+    # be visible to another connection first; scheduling before committing is a
+    # race that loses quietly, as an extraction that reports the version
+    # missing.
+    await session.commit()
+    for version_id in scheduled:
+        schedule_resume_extraction(version_id)
     return result
 
 
