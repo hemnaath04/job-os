@@ -1293,7 +1293,7 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           if (!isAppwriteWorkspaceEnabled) {
-            return toolError(new Error("Appwrite workspace is not enabled"));
+            return toolText(await callBackend(token(ctx), "POST", "/profile/facts", args));
           }
           const fact = await createProfileFact(resolveAppwriteUserId(clerkUserId(ctx)), args);
           return toolText(fact);
@@ -1320,7 +1320,8 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           if (!isAppwriteWorkspaceEnabled) {
-            return toolError(new Error("Appwrite workspace is not enabled"));
+            await callBackend(token(ctx), "DELETE", `/profile/facts/${args.fact_id}`);
+            return toolText({ archived: true, fact_id: args.fact_id });
           }
           await archiveProfileFact(resolveAppwriteUserId(clerkUserId(ctx)), args.fact_id);
           return toolText({ archived: true, fact_id: args.fact_id });
@@ -1355,10 +1356,10 @@ const handler = createMcpHandler(
       },
       async (args, ctx) => {
         try {
-          if (!isAppwriteWorkspaceEnabled) {
-            return toolError(new Error("Appwrite workspace is not enabled"));
-          }
           const { fact_id, ...patch } = args;
+          if (!isAppwriteWorkspaceEnabled) {
+            return toolText(await callBackend(token(ctx), "PATCH", `/profile/facts/${fact_id}`, patch));
+          }
           const fact = await updateProfileFact(
             resolveAppwriteUserId(clerkUserId(ctx)),
             fact_id,
@@ -1391,7 +1392,31 @@ const handler = createMcpHandler(
       async (args, ctx) => {
         try {
           if (!isAppwriteWorkspaceEnabled) {
-            return toolError(new Error("Appwrite workspace is not enabled"));
+            // The edit guard is the point of this tool, not decoration, so the
+            // Postgres path reconstructs the same context rather than skipping
+            // it. `GET /profile/facts` embeds bullets, so one call finds both
+            // the original text and the fact it belongs to.
+            const facts = (await callBackend(token(ctx), "GET", "/profile/facts")) as {
+              id: string;
+              title?: string;
+              payload?: unknown;
+              bullets?: { id: string; text: string }[];
+            }[];
+            const owner = facts.find((f) => (f.bullets ?? []).some((b) => b.id === args.bullet_id));
+            const original = (owner?.bullets ?? []).find((b) => b.id === args.bullet_id);
+            if (original === undefined) {
+              return toolError(new Error(`No bullet ${args.bullet_id} on this profile`));
+            }
+            const legacyContext = owner ? `${owner.title ?? ""} ${JSON.stringify(owner.payload ?? {})}` : "";
+            const legacyVerdict = checkBulletEdit(original.text, args.text, legacyContext);
+            if (!legacyVerdict.ok) {
+              return toolError(new Error(`Refused: ${legacyVerdict.reason}.`));
+            }
+            return toolText(
+              await callBackend(token(ctx), "PATCH", `/profile/bullets/${args.bullet_id}`, {
+                text: args.text,
+              }),
+            );
           }
           const userId = resolveAppwriteUserId(clerkUserId(ctx));
           const { bullet, fact } = await getFactBulletWithFact(userId, args.bullet_id);
