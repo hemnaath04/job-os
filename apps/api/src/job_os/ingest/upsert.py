@@ -77,6 +77,54 @@ class UpsertStats:
         self.skipped += other.skipped
 
 
+#: Every `job_postings` column that is a bounded `varchar`, with its width.
+#:
+#: These are OUR constraints on THEIR data. A board is free to answer
+#: `employment_type` with a sentence, or `country_code` with "United Kingdom",
+#: and nothing about the crawl gets to object: the row still describes a real
+#: job. Postgres does object, with `StringDataRightTruncationError`.
+#:
+#: That error is what makes this worth clamping rather than tolerating. The
+#: upsert writes a batch inside one transaction, so a single over-long field
+#: from one of 20,857 third-party boards does not lose that posting, it aborts
+#: the transaction; every statement afterwards fails with
+#: `InFailedSQLTransactionError`, and the whole sweep writes nothing. Observed
+#: 2026-09-17: the crawl recorded no run for eleven hours while 19,354 boards
+#: sat due, because one vendor sent one long string.
+#:
+#: Clamping at the boundary is the fix rather than widening the columns,
+#: because there is no width that a third party cannot exceed. A truncated
+#: `employment_type` is a slightly worse row. A rejected batch is no rows.
+_VARCHAR_WIDTHS: dict[str, int] = {
+    "source": 32,
+    "country_code": 2,
+    "workplace_type": 32,
+    "employment_type": 64,
+    "salary_currency": 3,
+    "salary_interval": 16,
+    "posted_at_basis": 16,
+}
+
+
+def _clamp(column: str, value: object) -> object:
+    """Cut a vendor string to the width its column actually has.
+
+    `country_code` is dropped rather than cut: the first two characters of
+    "United Kingdom" are "Un", which is not a country and would be indexed and
+    filtered on as though it were. A wrong value is worse than a missing one
+    for a field whose only use is exact matching. Everything else here is
+    descriptive, so a truncated value still carries most of its meaning.
+    """
+    if not isinstance(value, str):
+        return value
+    width = _VARCHAR_WIDTHS.get(column)
+    if width is None or len(value) <= width:
+        return value
+    if column == "country_code":
+        return None
+    return value[:width]
+
+
 def to_row(
     posting: RawPosting,
     *,
@@ -101,7 +149,7 @@ def to_row(
     domain = company_domain or posting.company_domain
     description = posting.jd_clean
 
-    return {
+    row: dict[str, object] = {
         "source": posting.source,
         "source_id": posting.source_id,
         "board_token": posting.board_token,
@@ -142,6 +190,7 @@ def to_row(
         "last_seen_at": seen_at,
         "last_crawl_run_id": run_id,
     }
+    return {column: _clamp(column, value) for column, value in row.items()}
 
 
 #: Columns a re-crawl is allowed to overwrite. `first_seen_at` is absent by
