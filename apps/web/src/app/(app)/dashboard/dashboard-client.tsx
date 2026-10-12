@@ -681,8 +681,8 @@ function FirstLaunch() {
 function DashboardSkeleton() {
   return (
     <div className="workspace-page max-w-[1560px]" role="status" aria-label="Loading dashboard">
-      <div className="h-9 w-56 animate-pulse rounded-lg bg-[color:var(--color-surface-hover)]" />
-      <div className="mt-3 h-4 w-[24rem] max-w-full animate-pulse rounded bg-[color:var(--color-surface-2)]" />
+      <div className="h-9 w-56 skeleton rounded-lg bg-[color:var(--color-surface-hover)]" />
+      <div className="mt-3 h-4 w-[24rem] max-w-full skeleton rounded bg-[color:var(--color-surface-2)]" />
       <div className="mt-7 grid gap-3.5 sm:grid-cols-2 xl:grid-cols-4">
         {[0, 1, 2, 3].map((item) => (
           <div key={item} className="loading-surface min-h-[150px]" />

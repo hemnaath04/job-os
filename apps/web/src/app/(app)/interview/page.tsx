@@ -6,7 +6,6 @@ import {
   AlertTriangle,
   Bookmark,
   CheckCircle2,
-  Loader2,
   MessageSquareText,
   ShieldCheck,
   Sparkles,
@@ -16,6 +15,7 @@ import { EmptyState } from "@/components/empty-state";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
 import { Select } from "@/components/ui/select";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api } from "@/lib/api";
 import { reportFailure } from "@/lib/errors";
 import type {
@@ -163,7 +163,7 @@ export default function InterviewPrepPage() {
           >
             {generate.isPending ? (
               <>
-                <Loader2 className="size-3.5 animate-spin" /> Generating
+                <TextShimmer>Generating</TextShimmer>
               </>
             ) : (
               <>

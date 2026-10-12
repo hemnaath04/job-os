@@ -56,7 +56,7 @@ export function ChipSkeleton({ label, width = "6.5rem" }: { label: string; width
       <span className="sr-only">{label}</span>
       <span
         aria-hidden="true"
-        className="h-2 w-full animate-pulse rounded-full bg-[color:var(--color-surface-3)]"
+        className="h-2 w-full skeleton rounded-full bg-[color:var(--color-surface-3)]"
       />
     </span>
   );

@@ -732,6 +732,50 @@
   animation: loading-drift 1.8s ease-in-out infinite;
 }
 @keyframes loading-drift { to { background-position: -200% 0; } }
+
+/* A placeholder bar with a light band sweeping across it, after Amicro's
+   fluid-skeleton. The band moves by transform, so it stays on the compositor;
+   a pulse fades the whole block and reads as flicker rather than progress.
+   The bar keeps its own background utility, this only adds the band. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.55), transparent);
+  transform: translateX(-100%);
+  animation: skeleton-sweep 1.6s var(--ease-in-out) infinite;
+}
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
+
+/* Text that is still working, after Amicro's text-shimmer. A band of reduced
+   ink sweeps through the label. It clips the background to the glyphs with
+   -webkit-text-fill-color rather than `color: transparent`, because the
+   gradient is built from currentColor and that would turn it transparent
+   too. Built from currentColor, it works on any surface: jasmine buttons,
+   muted hint text, either theme. */
+.text-shimmer {
+  background-image: linear-gradient(
+    90deg,
+    currentColor 40%,
+    color-mix(in oklab, currentColor 35%, transparent) 50%,
+    currentColor 60%
+  );
+  background-size: 250% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: text-shimmer 2s linear infinite;
+}
+@keyframes text-shimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: 0 0; }
+}
 @keyframes intro-rise { from { opacity: 0; transform: translateY(10px); } }
 @keyframes icon-settle { from { opacity: 0; transform: scale(.86) rotate(-8deg); } }
 @keyframes select-in { from { opacity: 0; transform: translateY(-4px) scale(0.98); } }
@@ -759,6 +803,15 @@
   .loading-surface,
   .page-intro,
   .page-intro-icon { animation: none !important; }
+
+  /* The blanket rule below would freeze these mid-sweep: a dimmed stripe
+     through the label, a band stuck on the bar. Plain text and a plain bar. */
+  .skeleton::after { display: none; }
+  .text-shimmer {
+    background: none;
+    -webkit-text-fill-color: currentColor;
+    animation: none !important;
+  }
 
   *,
   *::before,
@@ -867,4 +920,7 @@
 }
 .dark .shimmer::after {
   background: linear-gradient(110deg, transparent 25%, rgba(255, 255, 255, 0.05) 50%, transparent 75%);
+}
+.dark .skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(236, 231, 205, 0.07), transparent);
 }

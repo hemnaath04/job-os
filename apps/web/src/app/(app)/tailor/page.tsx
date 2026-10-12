@@ -25,6 +25,7 @@ import { toast } from "sonner";
 import { api } from "@/lib/api";
 import { isAtCoverageCeiling, partitionMissing } from "@/lib/ats-coverage";
 import { PdfPreviewPane } from "@/components/pdf-preview-pane";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { reportFailure } from "@/lib/errors";
 import {
   appwriteWorkspace,
@@ -910,7 +911,7 @@ function TailorInner() {
         >
           {running ? (
             <>
-              <Loader2 className="size-4 animate-spin" /> Tailoring…
+              <TextShimmer>Tailoring…</TextShimmer>
             </>
           ) : (
             <>
@@ -1161,12 +1162,10 @@ function TailorProgress({
         {/* The run takes minutes, so the current step is announced rather than
             only redrawn, and the elapsed time next to it is real. */}
         <div role="status" aria-live="polite" className="flex items-center gap-3">
-          <Loader2
-            className="size-4 shrink-0 animate-spin text-[color:var(--color-violet)]"
-            aria-hidden="true"
-          />
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{displayStage}</div>
+            <div className="truncate text-sm font-medium">
+              <TextShimmer>{displayStage}</TextShimmer>
+            </div>
             {hasRealSignal && detail ? (
               <div className="truncate text-xs text-[color:var(--color-text-muted)]">
                 {detail}
@@ -1785,7 +1784,7 @@ function QualityStatus({
   if (reviewing) {
     return (
       <span className="inline-flex items-center gap-1.5 text-xs text-[color:var(--color-text-muted)]">
-        <Loader2 className="size-3.5 animate-spin" /> Reviewing…
+        <TextShimmer>Reviewing…</TextShimmer>
       </span>
     );
   }

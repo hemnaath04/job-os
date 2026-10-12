@@ -23,6 +23,7 @@ import { toast } from "sonner";
 import { CompanyAvatar } from "@/components/company-avatar";
 import { InfoChip, PageIntro } from "@/components/page-intro";
 import { Field } from "@/components/ui/field";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 import { api } from "@/lib/api";
 import {
   buildProfileVocab,
@@ -858,7 +859,7 @@ export default function DiscoverPage() {
           >
             {userSearchPending ? (
               <>
-                <Loader2 className="size-3.5 animate-spin" /> Searching…
+                <TextShimmer>Searching…</TextShimmer>
               </>
             ) : (
               <>
@@ -927,8 +928,7 @@ export default function DiscoverPage() {
       {sortedResults === null && running !== null && (
         <div className="mt-6" role="status" aria-live="polite">
           <div className="flex items-center gap-2 text-sm text-[color:var(--color-text-muted)]">
-            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
-            Searching the job boards. The first search of a visit can take a moment.
+            <TextShimmer>Searching the job boards. The first search of a visit can take a moment.</TextShimmer>
           </div>
           <div
             aria-hidden="true"

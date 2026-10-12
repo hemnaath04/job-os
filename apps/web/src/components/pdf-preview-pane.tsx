@@ -1,7 +1,8 @@
 "use client";
 
 import type { UseQueryResult } from "@tanstack/react-query";
-import { AlertTriangle, ArrowUpRight, Loader2, RefreshCw } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, RefreshCw } from "lucide-react";
+import { TextShimmer } from "@/components/ui/text-shimmer";
 
 /**
  * The one-page PDF, framed like a document instead of embedded raw against
@@ -46,7 +47,7 @@ export function PdfPreviewPane({ query }: { query: UseQueryResult<string, Error>
         <span className="flex items-center gap-1.5 text-xs font-medium text-[color:var(--color-text-dim)]">
           {query.isFetching ? (
             <>
-              <Loader2 className="size-3 animate-spin" /> Updating…
+              <TextShimmer>Updating…</TextShimmer>
             </>
           ) : (
             "Preview"
