@@ -41,7 +41,8 @@ flowchart TB
         tables[("applications, jobs, companies, users<br/>application_events, resumes,<br/>resume_versions, profile_facts,<br/>fact_bullets, saved_searches,<br/>job_postings, ats_board_tokens")]
     end
 
-    gateway["Manifest gateway<br/><i>app.manifest.build</i>"]
+    llm["OpenAI API<br/><i>gpt-6.1-terra, gpt-6-luna</i>"]
+    openrouter["OpenRouter<br/><i>free models</i>"]
 
     web -->|"reads the board"| proxy
     web -->|"enqueues agent work"| cards
@@ -51,8 +52,10 @@ flowchart TB
     api --> tables
     api --> typst
     api --> tectonic
-    api --> gateway
-    agent --> gateway
+    api --> llm
+    api --> openrouter
+    agent --> llm
+    agent --> openrouter
     agent --> cards
     agent --> files
 
@@ -163,19 +166,30 @@ drift from the one that actually renders.
 
 ## Models
 
-Every LLM call goes through the Manifest gateway, selected by an
-`x-manifest-tier` header rather than the model id, except on the fast tier which
-does honour the id.
+Every LLM call goes through `services/llm_client.py`, which calls OpenAI and
+OpenRouter directly over their Chat Completions APIs. There is no gateway and
+no provider SDK. A call names a tier, and the tier decides the model:
 
-| Tier | Used by |
-|---|---|
-| `job-os-fast` | JD parsing, profile extraction, smart search |
-| `job-os-sonnet` | Resume tailoring, review and revision |
+| Tier | Used by | Primary | Then |
+|---|---|---|---|
+| `fast` | JD parsing, profile extraction, smart search | OpenRouter `nvidia/nemotron-3.5-lightning:free` | OpenAI `gpt-6-luna` |
+| `quality` | Building a template from an uploaded resume | OpenAI `gpt-6.1-terra` | free OpenRouter ladder |
+| `tailor` | Tailoring, review and revision, cover letters, interview prep, outreach, job enrichment | OpenAI `gpt-6.1-terra` | free OpenRouter ladder |
 
-`ANTHROPIC_MODEL_EXTRACT` is pinned to `claude-haiku-4-5`. It was unset, which
-fell back to a `manifest/auto` placeholder that this tier answers with a 200 and
-no usable content, so a parse failure looked exactly like a posting that named
-nothing.
+Every model id is a setting (`OPENAI_MODEL_*`, `OPENROUTER_MODEL_FAST`).
+`OPENAI_MODEL_TAILOR=gpt-6.1-sol` is the upgrade where quality matters most.
+
+The client follows the GPT-6 request rules: `max_completion_tokens` rather than
+`max_tokens`, a `reasoning_effort` on every call (unset means `none`, raised to
+`low` on models that have no `none`, with token headroom for the reasoning),
+and never `temperature` or `top_p`. A paid OpenAI call waits out a rate limit
+before failing over; a free OpenRouter model that is busy, empty, or (when JSON
+was asked for) not JSON fails over at once.
+
+This replaced the Manifest gateway in November 2026. Manifest Cloud stopped
+routing free accounts (M204), and its Claude route depended on a Claude
+subscription, which Anthropic's terms do not allow to be routed through a
+third-party gateway.
 
 Interactive parses are bounded by the caller's own budget rather than a fixed
 timeout, because they sit inside Heroku's hard 30 second router ceiling. Long

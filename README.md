@@ -329,7 +329,7 @@ flowchart TB
         AJ[("agent job rows<br/>queue for the function")]
     end
 
-    LLM["Manifest gateway<br/>Claude"]
+    LLM["OpenAI API, direct<br/>plus OpenRouter free models"]
     ATS["ATS boards<br/>Greenhouse - Lever<br/>Ashby - BambooHR"]
 
     UI -.->|"signs in"| Clerk
@@ -425,7 +425,7 @@ the `git_sha` you expect before believing it is live.
 | Files and agents | Appwrite Storage and Python Functions                   |
 | Scheduling    | Heroku Scheduler                                           |
 | Auth          | Clerk                                                      |
-| Models        | Claude, routed through a Manifest gateway                  |
+| Models        | OpenAI (gpt-6.1-terra, gpt-6-luna) called directly, with OpenRouter free models for fast work and as a fallback |
 | Discovery     | Hourly-crawled index (Greenhouse, Lever, Ashby, BambooHR), plus live TheirStack, GitHub, board-wide feeds and custom endpoints as a second step |
 | Job import    | Firecrawl, with a guarded direct HTTP fallback              |
 | Observability | Sentry across web, API and the agent function               |
@@ -447,7 +447,7 @@ pnpm dev                                     # localhost:3000
 ```
 
 Copy `.env.example` to `.env` and fill it in first. `DATABASE_URL`, the `CLERK_*`
-values and `ANTHROPIC_API_KEY` are the minimum; Firecrawl, TheirStack and R2 are
+values and `OPENAI_API_KEY` are the minimum (`OPENROUTER_API_KEY` is optional); Firecrawl, TheirStack and R2 are
 optional and their features degrade rather than crash without them.
 
 PDF rendering needs `tectonic` on `PATH`. The container installs a pinned release

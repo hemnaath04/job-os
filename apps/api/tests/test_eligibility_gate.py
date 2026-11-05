@@ -310,10 +310,7 @@ async def test_the_tailor_stops_before_a_single_model_call(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )

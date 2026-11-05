@@ -19,7 +19,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from _fake_llm import StreamingFakeMessages  # noqa: E402
+from _fake_llm import FakeLLMClient, StreamingFakeMessages  # noqa: E402
 from job_os.services import resume_engine  # noqa: E402
 from job_os.services.resume_engine import (  # noqa: E402
     REVISE_MAX_TOKENS,
@@ -55,7 +55,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, revised: dict[str, Any]) -> list[Any]
             return SimpleNamespace(content=[SimpleNamespace(type="text", text=body)])
 
     monkeypatch.setattr(
-        resume_engine, "_client", lambda: SimpleNamespace(messages=FakeMessages())
+        resume_engine, "_client", lambda: FakeLLMClient(messages=FakeMessages())
     )
 
     async def no_github(*_a: Any, **_k: Any) -> Any:

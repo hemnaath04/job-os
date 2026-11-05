@@ -6,7 +6,6 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import uuid4
 
-import anthropic
 import pytest
 
 os.environ.setdefault(
@@ -14,8 +13,11 @@ os.environ.setdefault(
     "postgresql+asyncpg://job_os:job_os@localhost/job_os",
 )
 
-from _fake_llm import StreamingFakeMessages
-from job_os.services import tailor  # noqa: E402
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
+from job_os.services import (
+    llm_client,  # noqa: E402
+    tailor,  # noqa: E402
+)
 
 
 @pytest.mark.asyncio
@@ -44,7 +46,7 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -55,14 +57,11 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
         return {}
 
     settings = SimpleNamespace(
-        anthropic_api_key="test",
-        anthropic_base_url="https://example.invalid",
-        anthropic_model_tailor="manifest/auto",
-        manifest_tier_sonnet="job-os-sonnet",
+        openai_api_key="test",
             analyst_effort=None,
     )
     monkeypatch.setattr(tailor, "get_settings", lambda: settings)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
 
     # The JD now carries a real requirement, because a posting with none is
     # refused before any model call. This test is about the compose/repair loop,
@@ -101,7 +100,7 @@ async def test_tailor_langgraph_repairs_a_pass_that_left_problems(
     # problem a repair could have fixed.
     assert len(calls) == 2
     assert all("analyst step" not in call["system"] for call in calls)
-    assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
+    assert calls[0]["tier"] == "tailor"
     # temperature=0 on the streaming compose call was reverted: a live run
     # threw `AsyncMessages.stream() got an unexpected keyword argument
     # 'temperature'`, which this suite's own kwargs-accept-anything fakes
@@ -194,19 +193,16 @@ async def test_a_pass_cannot_raise_its_score_by_claiming_more_matches(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     settings = SimpleNamespace(
-        anthropic_api_key="test",
-        anthropic_base_url="https://example.invalid",
-        anthropic_model_tailor="manifest/auto",
-        manifest_tier_sonnet="job-os-sonnet",
+        openai_api_key="test",
             analyst_effort=None,
     )
     monkeypatch.setattr(tailor, "get_settings", lambda: settings)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
 
     _doc, _prov, _gaps, score, report, _note = await tailor.run_tailor(
         facts=[],

@@ -35,10 +35,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-import anthropic
 import structlog
 from pydantic import BaseModel, Field, ValidationError
 
+from job_os.services import llm_client
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, UNPRINTABLE_SKILLS
 from job_os.services.identity import identity_text
 from job_os.services.llm_json import (
@@ -1094,8 +1094,8 @@ async def run_outreach_draft(
     forgets is a fabricated resume claim in an email rather than a test failure.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot draft outreach.")
+    if not llm_client.llm_configured(settings):
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot draft outreach.")
 
     when = now or _utcnow()
     prior_sends = list(prior or [])
@@ -1118,12 +1118,9 @@ async def run_outreach_draft(
             }
         )
 
-    client = client or anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    client = client or llm_client.LLMClient()
 
-    messages: list[anthropic.types.MessageParam] = [
+    messages: list[llm_client.MessageParam] = [
         {
             "role": "user",
             "content": build_user_prompt(
@@ -1270,23 +1267,20 @@ async def _one_pass(
     client: Any,
     *,
     settings: Any,
-    messages: list[anthropic.types.MessageParam],
+    messages: list[llm_client.MessageParam],
     max_tokens: int,
 ) -> str:
     """One model call, returning its text.
 
-    `anthropic_model_tailor` with the sonnet tier, rather than a new setting.
-    The settings module records that job-os-sonnet serves claude-sonnet-5
-    whatever model id it is handed, so the tier header is what actually decides
-    the model and the id is decoration on this route.
+    The tailor tier, rather than a new setting: outreach is writing that has
+    to hold up to the same standard as the resume it accompanies.
     """
     message = await create_message(
         client,
-        model=settings.anthropic_model_tailor,
         max_tokens=max_tokens,
         system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
         messages=messages,
-        extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+        tier="tailor",
     )
     text = response_text(message)
     if not text.strip():

@@ -73,22 +73,46 @@ class Settings(BaseSettings):
     #: would lock them out; the issuer is the part that is stable across them.
     clerk_issuer: str = "https://clerk.jobs.hemnaath.tech"
 
-    anthropic_api_key: str | None = None
-    anthropic_base_url: str | None = None
-    # Claude is the only LLM provider — retrieval, extraction, tailoring, verification.
-    # We don't use embeddings; retrieval uses Claude directly over the (small) profile.
-    anthropic_model_extract: str = "manifest/auto"
-    # Named explicitly rather than "manifest/auto": probed directly against the
-    # live gateway (2026-08-18) with x-manifest-tier: job-os-sonnet set, the id
-    # sent alongside that header is decorative -- the tier alone decides the
-    # model, matching the job-os-sonnet/job-os-quality behavior documented
-    # below. Named anyway so this reads as an intentional choice rather than a
-    # placeholder, and so it stays correct if this step's tier is ever dropped.
-    anthropic_model_tailor: str = "anthropic/claude-sonnet-5-subscription"
-    anthropic_model_verify: str = "manifest/auto"
-    # Thinking effort for the analyst call, unset by default so the gateway's
-    # own default (high) applies, which is exactly what shipped before this
-    # field existed. It is here to be MEASURED, not to be changed: a trace of
+    # ---- Language models -----------------------------------------------------
+    #
+    # OpenAI directly, paid from the account's API credits, plus OpenRouter's
+    # free tier for the fast work. The Manifest gateway these replaced stopped
+    # routing free accounts (M204), and its Claude route relied on a Claude
+    # subscription, which may not be routed through a third-party gateway. See
+    # services/llm_client.py for the tier table and the GPT-6 request rules.
+    #
+    #   fast     OPENROUTER_MODEL_FAST, then OPENAI_MODEL_FAST_FALLBACK
+    #   quality  OPENAI_MODEL_QUALITY, then the free OpenRouter ladder
+    #   tailor   OPENAI_MODEL_TAILOR, then the free OpenRouter ladder
+    #
+    # `quality` is what job-os-quality served (template builds from an
+    # upload); `tailor` is what job-os-sonnet served (tailoring, review, cover
+    # letters, interview prep, outreach, enrichment). Both default to Terra
+    # ($1 in / $5 out per 1M tokens). gpt-6.1-sol ($2 / $10) is the upgrade
+    # where quality matters most; it has no `reasoning_effort: none`, which
+    # llm_client handles by sending `low` with extra token headroom.
+    openai_api_key: str | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    openai_model_quality: str = "gpt-6.1-terra"
+    openai_model_tailor: str = "gpt-6.1-terra"
+    # $0.10 in / $0.50 out per 1M tokens: the paid net under the free fast model.
+    openai_model_fast_fallback: str = "gpt-6-luna"
+
+    # Also the key for the free emergency ladder behind `quality` and `tailor`,
+    # and for jd_parse's free-model racer. Unset, the fast tier goes straight
+    # to OPENAI_MODEL_FAST_FALLBACK.
+    openrouter_api_key: str | None = None
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    # Note: a 2026-08-29 benchmark (llm_client.OPENROUTER_FALLBACK_MODELS)
+    # saw this model return truncated JSON on a full ParsedJD extraction.
+    # A fast-tier reply that asks for JSON and does not parse fails over to
+    # the OpenAI fallback, so a bad answer here costs one Luna call, not a
+    # failed request.
+    openrouter_model_fast: str = "nvidia/nemotron-3.5-lightning:free"
+
+    # Thinking effort for the analyst call, unset by default, which means
+    # `medium` (tailor.ANALYST_DEFAULT_EFFORT), the same as the model's own
+    # default. It is here to be MEASURED, not to be changed: a trace of
     # four real runs put the analyst at 57% of tailoring wall clock (184s of
     # 321s) while carrying half the input of the compose call, so effort rather
     # than context size is the variable worth testing. Setting it to "medium"
@@ -103,54 +127,6 @@ class Settings(BaseSettings):
     # change; this is an EFFORT change, and it is the one that paid off on
     # compose.
     analyst_effort: str | None = None
-    # Manifest custom routing tiers. Fast handles short structured tasks;
-    # quality is reserved for resume extraction; sonnet handles resume
-    # tailoring and the independent review/verify pass.
-    #
-    # The fast tier does not behave like the other two, and moving a step onto
-    # it is not the one-line change it looks like. Probed against the live
-    # gateway: job-os-sonnet serves claude-sonnet-5 and job-os-quality serves
-    # claude-opus-5 whatever model id they are handed, so the id is decoration
-    # there. job-os-fast honours the id instead. A bare "auto" routes to
-    # claude-opus-4-8, so sending a step there to make it cheap, without naming
-    # "claude-haiku-4-5", buys the most expensive model on the gateway.
-    #
-    # "manifest/auto", which is what ANTHROPIC_MODEL_TAILOR is set to, is worse
-    # than that: the fast tier answers 200 OK with stop_reason end_turn and the
-    # string "[Manifest M302] Model \"manifest/auto\" is not available" as the
-    # assistant's reply. Nothing raises. The caller sees a well-formed response
-    # whose text is an error message, JSON parsing fails, and a step written to
-    # fail soft returns empty as though the model had found nothing.
-    manifest_tier_fast: str = "job-os-fast"
-    manifest_tier_quality: str = "job-os-quality"
-    manifest_tier_sonnet: str = "job-os-sonnet"
-
-    # `create_message` (services/llm_json.py) already retries a rate-limited or
-    # overloaded Manifest gateway on its own schedule. This key is for what
-    # that schedule cannot fix: Manifest genuinely out of capacity for minutes
-    # at a stretch, across many requests in a row rather than one blip.
-    # Without a fallback, every one of those requests exhausts the retry
-    # schedule and then raises -- and in the tailoring pipeline specifically,
-    # `tailor.py`'s `compose_and_score` responds to that by shipping whatever
-    # the *earlier, already-succeeded* pass produced rather than losing prior
-    # good work. That is the right call for one transient failure; repeated
-    # across a sustained outage it means every tailored resume in the window
-    # quietly ships from only its first shallow pass while still reporting
-    # success, which is what a user actually sees as "my resumes for different
-    # companies look the same."
-    #
-    # Defaults to None/unset, which keeps this feature completely inert:
-    # `create_message` falls back to exactly today's behaviour (raise once
-    # Manifest's own retries are exhausted) until a real key is configured as
-    # a Heroku config var. Not read anywhere but that one fallback path, and
-    # only after Manifest's retry budget is spent on a 429/529 -- a capacity
-    # failure, never in place of Manifest's own retries and never for an
-    # ordinary 4xx that would just fail the same way on another provider.
-    #
-    # A second fallback (Ramp Router) was drafted alongside this one and
-    # pulled before shipping -- see llm_json.py's fallback-provider comment
-    # for why -- so there is deliberately no `ramp_router_api_key` here yet.
-    openrouter_api_key: str | None = None
 
     firecrawl_api_key: str | None = None
     apify_api_token: str | None = None
@@ -268,23 +244,21 @@ class Settings(BaseSettings):
             )
         return normalized
 
-    @field_validator("anthropic_base_url")
+    @field_validator("openai_base_url", "openrouter_base_url")
     @classmethod
-    def _normalize_anthropic_base_url(cls, value: str | None) -> str | None:
-        """Hand the Anthropic SDK an origin, not a versioned path.
+    def _normalize_llm_base_url(cls, value: str) -> str:
+        """Keep the versioned base and drop anything after it.
 
-        The SDK appends `/v1/messages` itself, so a base URL that already ends
-        in `/v1` produces a request to `/v1/v1/messages` and every call 404s
-        with "Cannot POST /v1/v1/messages". Gateways are routinely documented
-        with the version included (Manifest publishes
-        `https://app.manifest.build/v1`), so accept either form and normalize.
+        llm_client appends `/chat/completions` itself, so a value pasted with
+        the endpoint on it (`.../v1/chat/completions`) or a trailing slash
+        would otherwise produce `.../chat/completions/chat/completions`.
         """
-        if not value:
-            return None
         trimmed = value.strip().rstrip("/")
-        if trimmed.endswith("/v1"):
-            trimmed = trimmed[: -len("/v1")]
-        return trimmed or None
+        if trimmed.endswith("/chat/completions"):
+            trimmed = trimmed[: -len("/chat/completions")].rstrip("/")
+        if not trimmed:
+            raise ValueError("LLM base URL may not be empty")
+        return trimmed
 
     @property
     def is_dev(self) -> bool:

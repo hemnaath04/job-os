@@ -1,7 +1,7 @@
-"""Natural-language → DiscoverySearchRequest via Claude (Manifest gateway).
+"""Natural-language → DiscoverySearchRequest via the fast LLM tier.
 
 The user types a free-form sentence (e.g. "fullstack internship in Boston with
-Python and React, posted in the last 2 weeks"). Claude returns a structured
+Python and React, posted in the last 2 weeks"). The model returns a structured
 DiscoverySearchRequest the FE can hydrate the form with + execute.
 
 The prompt is written against how the filters are actually applied downstream,
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import json
 
-import anthropic
 import structlog
 from pydantic import ValidationError
 
@@ -36,6 +35,7 @@ from job_os.schemas.discovery import (
     DiscoverySearchRequest,
     SmartSearchResponse,
 )
+from job_os.services import llm_client
 from job_os.services.jd_parse import _strip_json_fence
 from job_os.services.llm_json import create_message, response_text
 from job_os.settings import get_settings
@@ -142,8 +142,8 @@ so there.
 
 async def parse_smart_query(query: str) -> SmartSearchResponse:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        log.warning("smart_search.no_anthropic_key")
+    if not llm_client.llm_configured(settings):
+        log.warning("smart_search.no_llm_key")
         # Graceful fallback: return an empty filter with the raw query as a
         # single title keyword so the FE can still run something.
         return SmartSearchResponse(
@@ -151,10 +151,7 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
             explanation="(LLM not configured, so we're using your text as the title keyword.)",
         )
 
-    client = anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    client = llm_client.LLMClient()
 
     user_prompt = (
         f"User sentence:\n<query>\n{query}\n</query>\n\n"
@@ -164,18 +161,17 @@ async def parse_smart_query(query: str) -> SmartSearchResponse:
     try:
         msg = await create_message(
             client,
-            model=settings.anthropic_model_extract,
             max_tokens=1024,
             system=SYSTEM_PROMPT.format(
                 schema=json.dumps(SmartSearchResponse.model_json_schema())
             ),
             messages=[{"role": "user", "content": user_prompt}],
-            extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+            tier="fast",
         )
-    except anthropic.APIError as exc:
+    except llm_client.LLMError as exc:
         # Already retried, and tried the fallback provider, inside
-        # create_message. This is a real outage (Manifest's OAuth expiring
-        # mid-flight is exactly what happened the day this was added), and
+        # create_message. This is a real outage (the old gateway's OAuth
+        # expiring mid-flight is exactly what happened the day this was added), and
         # the search itself does not need parsed filters to run: the raw
         # query still works as a title keyword against the index/DB search
         # the FE runs next, same as the no-key and invalid-JSON fallbacks

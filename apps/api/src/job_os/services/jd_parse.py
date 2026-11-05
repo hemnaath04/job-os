@@ -1,8 +1,7 @@
-"""Structured JD extraction via the configured Anthropic-compatible endpoint.
+"""Structured JD extraction on the fast LLM tier (see services/llm_client.py).
 
-Model is whatever `settings.anthropic_model_extract` points to — defaults to
-`manifest/auto` so the Manifest gateway picks the real model. Returns a
-Pydantic-validated dict; never invents the company name (callers fall back to URL hint).
+Returns a Pydantic-validated dict; never invents the company name (callers
+fall back to URL hint).
 """
 from __future__ import annotations
 
@@ -10,11 +9,11 @@ import asyncio
 import time
 from typing import Any, Literal
 
-import anthropic
 import httpx
 import structlog
 from pydantic import BaseModel, Field, ValidationError
 
+from job_os.services import llm_client
 from job_os.services.llm_json import (
     complete_json_via_openrouter,
     create_message,
@@ -37,7 +36,7 @@ log = structlog.get_logger(__name__)
 # tolerance for a timeout is that caller's call to make, not a change to what
 # every other agent in this codebase considers safe to retry.
 _JD_PARSE_TIMEOUT_ERRORS = (
-    anthropic.APITimeoutError,
+    llm_client.LLMTimeoutError,
     httpx.TimeoutException,
     # asyncio.wait_for raises the builtin TimeoutError on 3.11+, and the bound
     # below is what usually fires rather than the client's own clock.
@@ -234,10 +233,10 @@ async def _parse_via_gateway(
     title_hint: str | None = None,
     deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
-    """The primary path, unchanged: Manifest, with its own retry and deadline."""
+    """The primary path: the fast tier, with its own retry and deadline."""
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        log.warning("jd_parse.no_anthropic_key")
+    if not llm_client.llm_configured(settings):
+        log.warning("jd_parse.no_llm_key")
         return _incomplete(title_hint)
 
     # The SDK's own default timeout is ten minutes, which is fine for a
@@ -246,9 +245,7 @@ async def _parse_via_gateway(
     # taking longer than this even on a slow day.
     budget = deadline_seconds or _JD_PARSE_DEADLINE_SECONDS
     deadline = _monotonic() + budget
-    client = anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
+    client = llm_client.LLMClient(
         # Was a flat 30s, which is longer than any caller waits. Each attempt
         # is bounded by what is actually left below; this is only the ceiling.
         timeout=budget,
@@ -276,7 +273,6 @@ async def _parse_via_gateway(
             msg = await asyncio.wait_for(
                 create_message(
                     client,
-                    model=settings.anthropic_model_extract,
                     max_tokens=_JD_PARSE_MAX_TOKENS,
                     system=SYSTEM_PROMPT,
                     messages=[{"role": "user", "content": user_prompt}],
@@ -284,17 +280,10 @@ async def _parse_via_gateway(
                     # so a fallback that answers in prose is the same as one that
                     # did not answer. Measured: without this, the free models
                     # returned unparseable JSON on nearly every attempt.
-                    fallback_json=True,
-                    # temperature=0 was here for reproducibility (same JD -> same
-                    # required_skills -> same ats_score) but is reverted for now:
-                    # Anthropic's SDK v1.0.0 (2026-08-20) drops temperature/top_p/
-                    # top_k from Messages methods entirely, the Appwrite function
-                    # this runs in resolves anthropic unpinned above 1.0 on its
-                    # next rebuild (requirements.txt: anthropic>=0.40.0, no
-                    # ceiling), and a rebuild already broke the same kwarg on the
-                    # compose call. Re-add once that pin is capped below 1.0 and
-                    # redeployed.
-                    extra_headers={"x-manifest-tier": settings.manifest_tier_fast},
+                    json_object=True,
+                    # No temperature=0: GPT-6 models reject temperature unless
+                    # reasoning is off, and llm_client never sends it.
+                    tier="fast",
                 ),
                 timeout=attempt_seconds,
             )
@@ -305,7 +294,7 @@ async def _parse_via_gateway(
                 continue
             log.warning("jd_parse.gateway_failed", error=str(exc)[:300])
             return _incomplete(title_hint)
-        except anthropic.APIError as exc:
+        except llm_client.LLMError as exc:
             # Already retried, and tried the fallback provider, inside
             # create_message. A job can still be added without structured JD
             # fields -- they just don't get filled in -- so this degrades the

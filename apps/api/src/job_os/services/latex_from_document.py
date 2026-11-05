@@ -25,10 +25,10 @@ import re
 import time
 from dataclasses import dataclass, field
 
-import anthropic
 import structlog
 from pydantic import BaseModel, Field
 
+from job_os.services import llm_client
 from job_os.services.latex_catalog import SAMPLE_RESUME
 from job_os.services.latex_render import (
     TectonicUnavailableError,
@@ -195,16 +195,11 @@ Return one JSON object with keys: name, latex_source, notes.
 """
 
 
-def _client() -> anthropic.AsyncAnthropic:
+def _client() -> llm_client.LLMClient:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise TemplateBuildError("ANTHROPIC_API_KEY is not set.")
-    # auth_token, not api_key: the Manifest gateway wants an Authorization
-    # bearer header rather than x-api-key.
-    return anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    if not llm_client.llm_configured(settings):
+        raise TemplateBuildError("OPENAI_API_KEY is not set.")
+    return llm_client.LLMClient()
 
 
 # Things a stored template has no business doing. Every one of these reads or
@@ -300,10 +295,9 @@ async def build_template_from_upload(
     Raises TemplateBuildError when no attempt compiles, so the caller can keep
     the user's current template and say what happened.
     """
-    settings = get_settings()
     client = _client()
     blocks, instruction = _document_blocks(raw, filename)
-    messages: list[anthropic.types.MessageParam] = [
+    messages: list[llm_client.MessageParam] = [
         {"role": "user", "content": [*blocks, {"type": "text", "text": instruction}]}
     ]
     repairs: list[str] = []
@@ -321,18 +315,17 @@ async def build_template_from_upload(
         # refuses a non-streaming request with a budget that large.
         response = await create_message(
             client,
-            model=settings.anthropic_model_extract,
             max_tokens=MAX_TOKENS,
             system=CONTRACT,
             messages=messages,
-            # Deliberately the quality tier and not the sonnet one tailoring
+            # Deliberately the quality tier and not the tailor one tailoring
             # uses. This call is synchronous: somebody is watching a spinner
             # behind a proxy that gives up at 300 seconds. Measured on the same
             # PDF: quality took about two minutes per attempt, sonnet took four
             # for the first attempt alone and nine and a half for the run, then
             # failed on a truncated reply. A better template nobody receives is
             # worse than a good one that arrives.
-            extra_headers={"x-manifest-tier": settings.manifest_tier_quality},
+            tier="quality",
         )
         reply = response_text(response)
         if not reply.strip():

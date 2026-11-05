@@ -934,7 +934,6 @@ version = "0.0.1"
 source = { editable = "." }
 dependencies = [
     { name = "alembic" },
-    { name = "anthropic" },
     { name = "appwrite" },
     { name = "asyncpg" },
     { name = "beautifulsoup4" },
@@ -987,7 +986,6 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.14" },
-    { name = "anthropic", specifier = ">=0.40.0,<1.0.0" },
     { name = "appwrite", specifier = ">=22.2.0" },
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "beautifulsoup4", specifier = ">=4.12" },

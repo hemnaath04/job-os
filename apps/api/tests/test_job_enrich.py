@@ -12,12 +12,10 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import anthropic
-import httpx
 import pytest
 
 from job_os.schemas.enrichment import ENRICHMENT_SCHEMA_VERSION, JobEnrichment
-from job_os.services import job_enrich
+from job_os.services import job_enrich, llm_client
 from job_os.services.job_enrich import (
     ENRICHMENT_KEY,
     enrich_job,
@@ -149,9 +147,7 @@ def gateway(monkeypatch: pytest.MonkeyPatch) -> _Gateway:
     get_settings.cache_clear()
     settings = get_settings().model_copy(
         update={
-            "anthropic_api_key": "test-key",
-            "anthropic_base_url": "https://gateway.invalid",
-            "anthropic_model_extract": "manifest/auto",
+            "openai_api_key": "test-key",
         }
     )
     monkeypatch.setattr(job_enrich, "get_settings", lambda: settings)
@@ -217,7 +213,7 @@ async def test_the_gateway_is_called_the_way_this_codebase_calls_it(gateway: _Ga
     """
     await enrich_job(JD)
     assert gateway.call_count == 1
-    assert gateway.sent[0]["extra_headers"]["x-manifest-tier"] == "job-os-sonnet"
+    assert gateway.sent[0]["tier"] == "tailor"
     assert gateway.sent[0]["max_tokens"] == job_enrich.MAX_TOKENS
     assert "one raw JSON object" in gateway.prompt()
 
@@ -368,10 +364,8 @@ async def test_a_dead_gateway_does_not_lose_the_job(gateway: _Gateway) -> None:
     rather than an exception that aborts the batch.
     """
     gateway.queue(
-        anthropic.APIStatusError(
-            "gateway down",
-            response=httpx.Response(500, request=httpx.Request("POST", "https://gateway.invalid")),
-            body=None,
+        llm_client.LLMStatusError(
+            "gateway down", status_code=500, provider="openai", model="test"
         )
     )
     result = await enrich_job(JD, title_hint="Senior Backend Engineer")
@@ -390,7 +384,7 @@ async def test_a_missing_key_is_reported_rather_than_guessed(
     """
     from job_os.settings import get_settings
 
-    settings = get_settings().model_copy(update={"anthropic_api_key": None})
+    settings = get_settings().model_copy(update={"openai_api_key": None})
     monkeypatch.setattr(job_enrich, "get_settings", lambda: settings)
 
     result = await enrich_job(JD, title_hint="Backend Engineer")

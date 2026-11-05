@@ -46,8 +46,11 @@ set -uo pipefail
 # `dict[str, object]` lookups and hand-built filter strings. The five ruff and
 # three mypy findings that went with them were never fixed, they stopped
 # existing.
+#
+# Lowered 2026-11-05 from 24/64 to 24/63 by the move off the Manifest gateway:
+# one mypy finding went with the Anthropic SDK call it was about.
 RUFF_CEILING=24
-MYPY_CEILING=64
+MYPY_CEILING=63
 
 cd "$(dirname "$0")/../apps/api" || exit 1
 

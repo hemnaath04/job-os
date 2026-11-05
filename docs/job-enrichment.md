@@ -45,7 +45,7 @@ atomized form.
 | File | Role |
 | --- | --- |
 | `apps/api/src/job_os/schemas/enrichment.py` | The schema. 26 top-level fields, versioned from the first row. |
-| `apps/api/src/job_os/services/job_enrich.py` | The worker. One LLM call per job through the existing Manifest plumbing. |
+| `apps/api/src/job_os/services/job_enrich.py` | The worker. One LLM call per job through the shared `llm_client` plumbing. |
 | `apps/api/src/job_os/services/job_match.py` | The scorer. Four axes, one number, full attribution. |
 | `apps/api/tests/fixtures/enrichment/` | Four real jobs from the two reference payloads, with provenance. |
 
@@ -288,9 +288,10 @@ instead of its own estimate.
 
 ## Cost
 
-One call per job at ingest, on the `job-os-sonnet` tier (Sonnet 5), with a 4096
+One call per job at ingest, on the `tailor` tier (`gpt-6.1-terra` by default;
+it was the `job-os-sonnet` Manifest tier until November 2026), with an 8192
 token ceiling and 18000 characters of posting. Enrichment cost is the tier
-multiplied by the corpus. Matching is free, forever, for every user.
+multiplied by the jobs actually enriched, which `job_index` caps per search. Matching is free, forever, for every user.
 
 `test_one_llm_call_per_job` asserts the count, because the economics of the whole
 design rest on it and a comment would not fail the build.

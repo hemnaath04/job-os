@@ -15,7 +15,7 @@ setup that those docs do not.
 | Web (Next.js) | `apps/web` | `pnpm dev` (from a login shell) | 3000 |
 | PostgreSQL 16 + pgvector | — | see "Start Postgres" below | 5432 |
 
-Appwrite, Redis, Firecrawl, Anthropic, R2 etc. are all optional and degrade
+Appwrite, Redis, Firecrawl, OpenAI, R2 etc. are all optional and degrade
 gracefully; `NEXT_PUBLIC_PIPELINE_BACKEND`/`NEXT_PUBLIC_WORKSPACE_BACKEND` are
 kept at `legacy`, so the app runs entirely off the local API + Postgres.
 

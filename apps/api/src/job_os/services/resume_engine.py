@@ -16,13 +16,13 @@ from datetime import date
 from decimal import Decimal
 from typing import Annotated, Any
 
-import anthropic
 import httpx
 import structlog
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError
 from pypdf import PdfReader
 
 from job_os.schemas.resumes import ResumeReviewIssue, ResumeReviewResult
+from job_os.services import llm_client
 from job_os.services.career_ops_rules import CAREER_OPS_RULES, KNOWN_GITHUB_REPOS
 from job_os.services.latex_catalog import builtin
 from job_os.services.latex_render import (
@@ -337,14 +337,11 @@ def _compact_facts(facts: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return compact
 
 
-def _client() -> anthropic.AsyncAnthropic:
+def _client() -> llm_client.LLMClient:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-    return anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    if not llm_client.llm_configured(settings):
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    return llm_client.LLMClient()
 
 
 def _resume_text(doc: dict[str, Any]) -> str:
@@ -925,7 +922,6 @@ async def review_resume(
             )
         )
 
-    settings = get_settings()
     review_sources, review_evidence = vault_text(verified_facts)
     writing_flags = document_quality_flags(
         doc, verified_sources=review_sources, vault_evidence=review_evidence
@@ -968,16 +964,15 @@ async def review_resume(
         f"{json.dumps(writing_flags, ensure_ascii=False)[:4000]}\n\n"
         f"SCHEMA:\n{json.dumps(ModelReview.model_json_schema())}"
     )
-    messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
+    messages: list[llm_client.MessageParam] = [{"role": "user", "content": prompt}]
 
     async def ask(*, max_tokens: int = REVIEW_MAX_TOKENS) -> tuple[str, Any]:
         response = await create_message(
             _client(),
-            model=settings.anthropic_model_verify,
             max_tokens=max_tokens,
             system=CAREER_OPS_RULES,
             messages=messages,
-            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            tier="tailor",
         )
         return response_text(response), response
 
@@ -1022,7 +1017,7 @@ async def review_resume(
     except (
         ValidationError,
         json.JSONDecodeError,
-        anthropic.APIError,
+        llm_client.LLMError,
         httpx.HTTPError,
         TimeoutError,
         RuntimeError,
@@ -1116,7 +1111,6 @@ async def revise_resume(
     github_context, _checked, missing_repos = await load_github_context(
         doc, requested_text=message
     )
-    settings = get_settings()
     prompt = (
         "The user is editing a resume in chat. Apply the request only when it is "
         "supported by the current resume, verified facts, or current GitHub README "
@@ -1144,16 +1138,15 @@ async def revise_resume(
         f"OUTPUT SCHEMA:\n{json.dumps(RevisionOutput.model_json_schema())}"
     )
     client = _client()
-    messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
+    messages: list[llm_client.MessageParam] = [{"role": "user", "content": prompt}]
 
     async def ask() -> str:
         response = await create_message(
             client,
-            model=settings.anthropic_model_tailor,
             max_tokens=REVISE_MAX_TOKENS,
             system=CAREER_OPS_RULES,
             messages=messages,
-            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            tier="tailor",
         )
         return response_text(response)
 

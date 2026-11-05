@@ -20,7 +20,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from _fake_llm import StreamingFakeMessages
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
 from job_os.services import outreach  # noqa: E402
 from job_os.services.llm_json import JSON_ONLY_RETRY  # noqa: E402
 from job_os.services.outreach import (  # noqa: E402
@@ -121,13 +121,10 @@ def _client(
         outreach,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
         ),
     )
-    return SimpleNamespace(messages=FakeMessages()), calls
+    return FakeLLMClient(messages=FakeMessages()), calls
 
 
 async def _draft(
@@ -191,7 +188,7 @@ async def test_the_request_carries_the_house_rules_and_the_evidence_ids(
     # With no common ground, the ledger says so in as many words rather than
     # being quietly absent.
     assert "EMPTY. Claim nothing." in prompt
-    assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
+    assert calls[0]["tier"] == "tailor"
 
 
 # ---------------------------------------------------------------------------

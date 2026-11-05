@@ -11,7 +11,6 @@ import os
 from types import SimpleNamespace
 from typing import Any
 
-import anthropic
 import pytest
 
 os.environ.setdefault(
@@ -25,14 +24,14 @@ from _cover_letter_fixtures import (
     MASTER_RESUME,
     vault,
 )
-from _fake_llm import StreamingFakeMessages
-from job_os.services import cover_letter  # noqa: E402
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
+from job_os.services import (
+    cover_letter,  # noqa: E402
+    llm_client,  # noqa: E402
+)
 
 SETTINGS = SimpleNamespace(
-    anthropic_api_key="test",
-    anthropic_base_url="https://example.invalid",
-    anthropic_model_tailor="manifest/auto",
-    manifest_tier_sonnet="job-os-sonnet",
+    openai_api_key="test",
 )
 
 
@@ -50,12 +49,12 @@ def _install(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     monkeypatch.setattr(cover_letter, "get_settings", lambda: SETTINGS)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     return calls
 
 
@@ -136,7 +135,7 @@ async def test_a_pass_whose_claims_were_deleted_earns_a_repair(
     result = await _run()
 
     assert len(calls) == 2
-    assert calls[0]["extra_headers"] == {"x-manifest-tier": "job-os-sonnet"}
+    assert calls[0]["tier"] == "tailor"
     repair_turn = calls[1]["messages"][-1]["content"]
     assert "unverified_number(40%)" in repair_turn
     assert "cut failures by 40%" in repair_turn

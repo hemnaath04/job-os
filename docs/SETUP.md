@@ -37,13 +37,14 @@ volume should be < $10/mo until you start tailoring resumes heavily.
    - `CLERK_SECRET_KEY`
 4. From "JWT Templates" → copy the JWKS URL into `CLERK_JWKS_URL`.
 
-## 4. Anthropic + OpenAI
+## 4. OpenAI + OpenRouter
 
-1. https://console.anthropic.com → create API key → `ANTHROPIC_API_KEY`.
-   - If you want to route via your Zavora gateway instead, set
-     `ANTHROPIC_BASE_URL` and reuse the gateway key.
-2. https://platform.openai.com/api-keys → create key → `OPENAI_API_KEY`
-   (used only for embeddings).
+1. https://platform.openai.com/api-keys → create key → `OPENAI_API_KEY`.
+   Every paid model call (tailoring, review, cover letters, template builds,
+   and the fallback for the fast tier) goes here.
+2. https://openrouter.ai/keys → create key → `OPENROUTER_API_KEY`. Optional:
+   it serves the fast tier on a free model and backs the paid tiers with a
+   free emergency ladder. Without it the fast tier uses `gpt-6-luna`.
 
 ## 5. Firecrawl
 
@@ -78,7 +79,7 @@ You already have an API key in your existing MCP setup. Copy it into
 ```bash
 cd ~/Documents/projects/job-app-manager
 cp .env.example .env
-# fill DATABASE_URL, CLERK_*, ANTHROPIC_API_KEY, FIRECRAWL_API_KEY at minimum
+# fill DATABASE_URL, CLERK_*, OPENAI_API_KEY, FIRECRAWL_API_KEY at minimum
 
 # Backend
 cd apps/api
@@ -96,7 +97,7 @@ The first time you open http://localhost:3000/applications:
 - Clerk's middleware will redirect you to sign-in
 - After sign-in you'll see an empty Kanban
 - Click **Add job** and paste any job URL (Greenhouse / Lever / Ashby /
-  company career page) — Firecrawl + Haiku 4.5 will parse it and add a
+  company career page). Firecrawl + the fast LLM tier will parse it and add a
   wishlist card
 
 If you don't set `CLERK_SECRET_KEY`, the API falls back to a single hardcoded

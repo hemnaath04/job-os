@@ -13,7 +13,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from _fake_llm import StreamingFakeMessages
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
 from job_os.schemas.resumes import ResumeReviewIssue
 from job_os.services import resume_engine
 from job_os.services.resume_engine import (
@@ -108,7 +108,7 @@ def _stub_model(
             return SimpleNamespace(content=[SimpleNamespace(type="text", text=body)])
 
     monkeypatch.setattr(
-        resume_engine, "_client", lambda: SimpleNamespace(messages=FakeMessages())
+        resume_engine, "_client", lambda: FakeLLMClient(messages=FakeMessages())
     )
 
     async def fake_render(doc: Any, **_kwargs: Any) -> Any:
