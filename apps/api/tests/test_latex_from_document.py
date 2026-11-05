@@ -28,9 +28,9 @@ os.environ.setdefault(
     "DATABASE_URL",
     "postgresql+asyncpg://job_os:job_os@localhost/job_os",
 )
-os.environ.setdefault("ANTHROPIC_API_KEY", "test-key")
+os.environ.setdefault("OPENAI_API_KEY", "test-key")
 
-from _fake_llm import StreamingFakeMessages  # noqa: E402
+from _fake_llm import FakeLLMClient, StreamingFakeMessages  # noqa: E402
 from job_os.services import latex_from_document as lfd  # noqa: E402
 from job_os.services.latex_render import LatexRenderError, tectonic_binary  # noqa: E402
 
@@ -63,7 +63,7 @@ def fake_gateway(monkeypatch: pytest.MonkeyPatch):
     def install(replies: list[Any]) -> _Replies:
         messages = _Replies(replies)
         monkeypatch.setattr(
-            lfd, "_client", lambda: SimpleNamespace(messages=messages)
+            lfd, "_client", lambda: FakeLLMClient(messages=messages)
         )
         return messages
 

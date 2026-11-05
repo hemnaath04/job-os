@@ -99,7 +99,7 @@ Both are stop-and-investigate.
 
 Set in Heroku, not in this repo (`heroku config -a job-os` to list names):
 `DATABASE_URL`, `CLERK_SECRET_KEY`, `CLERK_PUBLISHABLE_KEY`, `CLERK_JWKS_URL`,
-`ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL`, `SENTRY_DSN`, `FIRECRAWL_API_KEY`,
+`OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `SENTRY_DSN`, `FIRECRAWL_API_KEY`,
 `WEB_ORIGINS`, `APP_ENV`.
 
 `APP_ENV=production` is set, and since 2026-08-04 that is also the code default, so

@@ -7,9 +7,9 @@ user-dependent needs a model at all.
 
 Reuses the gateway plumbing the rest of this codebase already goes through
 (`services/llm_json.py`) rather than opening a second path to the same endpoint.
-That is not tidiness: `create_message` is where the retry schedule for a
-rate-limited or mid-stream-dropped Manifest call lives, and a parallel client
-would silently lack all of it.
+That is not tidiness: `create_message` is where the retry schedule and the
+provider fallback for a rate-limited or dropped call live, and a parallel
+client would silently lack all of it.
 
 Failure policy: a job that cannot be enriched still has to reach the index. A
 posting with unparseable compensation is a posting with no compensation figures
@@ -23,7 +23,6 @@ import json
 from datetime import UTC, datetime
 from typing import Any
 
-import anthropic
 import structlog
 from pydantic import ValidationError
 
@@ -34,6 +33,7 @@ from job_os.schemas.enrichment import (
     JobEnrichment,
     to_yearly,
 )
+from job_os.services import llm_client
 from job_os.services.llm_json import (
     JSON_ONLY_RETRY,
     create_message,
@@ -208,20 +208,14 @@ async def enrich_job(
     and a human can later see was never really enriched.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        log.warning("job_enrich.no_anthropic_key")
+    if not llm_client.llm_configured(settings):
+        log.warning("job_enrich.no_llm_key")
         return _fallback(title_hint, posted_at, gap="no_api_key")
 
     if not jd_text or not jd_text.strip():
         return _fallback(title_hint, posted_at, gap="empty_jd")
 
-    client = anthropic.AsyncAnthropic(
-        # `auth_token`, not `api_key`: the Manifest gateway authenticates on
-        # `Authorization: Bearer`, and `api_key` would send `x-api-key` instead
-        # and be rejected. Same call shape as every other agent in this repo.
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    client = llm_client.LLMClient()
     prompt = _user_prompt(jd_text, title_hint=title_hint, company_hint=company_hint)
     messages: list[dict[str, Any]] = [{"role": "user", "content": prompt}]
 
@@ -230,17 +224,16 @@ async def enrich_job(
         try:
             message = await create_message(
                 client,
-                model=settings.anthropic_model_extract,
                 max_tokens=MAX_TOKENS,
                 system=SYSTEM_PROMPT,
                 messages=messages,
-                # Sonnet 5. Enrichment is one pass over one document with a
-                # fixed schema, which is the shape the mid tier handles well,
-                # and it runs once per job across the whole corpus so the tier
-                # choice is the single biggest lever on ingest cost.
-                extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+                # The tailor tier (what job-os-sonnet served). Enrichment is one
+                # pass over one document with a fixed schema, and it runs once
+                # per job, lazily and capped per search (job_index), so the
+                # tier choice is the single biggest lever on ingest cost.
+                tier="tailor",
             )
-        except anthropic.APIError as exc:
+        except llm_client.LLMError as exc:
             # Already retried on the schedule in `create_message` by this point,
             # so this is a real failure rather than a blip. The row still ships.
             log.warning("job_enrich.gateway_failed", error=str(exc)[:300])
@@ -268,7 +261,7 @@ async def enrich_job(
 
     return _finalize(
         enrichment,
-        model=settings.anthropic_model_extract,
+        model=getattr(message, "model", None) or settings.openai_model_tailor,
         posted_at=posted_at,
         title_hint=title_hint,
         gaps=gaps,

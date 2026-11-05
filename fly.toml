@@ -19,5 +19,5 @@ primary_region = "iad"
 [env]
   APP_ENV = "production"
   LOG_LEVEL = "info"
-# Secrets — DATABASE_URL, ANTHROPIC_*, CLERK_*, FIRECRAWL_API_KEY, etc.
+# Secrets: DATABASE_URL, OPENAI_API_KEY, OPENROUTER_API_KEY, CLERK_*, FIRECRAWL_API_KEY, etc.
 # — set via:  flyctl secrets set NAME=value -a job-os-api

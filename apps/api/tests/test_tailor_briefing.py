@@ -16,12 +16,11 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
-import anthropic
 import pytest
 
-from _fake_llm import StreamingFakeMessages
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
 from job_os.schemas.resumes import GapQuestion, RequirementMatch, TailorAnalysis
-from job_os.services import tailor
+from job_os.services import llm_client, tailor
 from job_os.services.tailor import (
     TailorBullet,
     TailorFact,
@@ -238,7 +237,7 @@ async def test_the_compose_prompt_actually_carries_the_project_ranking(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -246,14 +245,11 @@ async def test_the_compose_prompt_actually_carries_the_project_ranking(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
 
     document, _prov, _gaps, _score, _report, _note = await tailor.run_tailor(
@@ -408,7 +404,7 @@ async def test_one_writing_pass_when_nothing_is_left_to_repair(
                 content=[SimpleNamespace(type="text", text=json.dumps(payload))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -416,14 +412,11 @@ async def test_one_writing_pass_when_nothing_is_left_to_repair(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     # The page is short by design here, and a thin-page flag would be a genuine
     # reason to run a second pass. Only the reachability rule is under test.
     monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
@@ -495,7 +488,7 @@ async def test_an_unchecked_gap_is_not_proof_that_a_pass_would_be_wasted(
                 content=[SimpleNamespace(type="text", text=json.dumps(written))]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -503,14 +496,11 @@ async def test_an_unchecked_gap_is_not_proof_that_a_pass_would_be_wasted(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     monkeypatch.setattr(tailor, "document_quality_flags", lambda _doc, **_kw: {})
 
     _doc, _prov, _gaps, _score, report, _note = await tailor.run_tailor(
@@ -552,15 +542,14 @@ async def test_an_analyst_bullet_id_that_does_not_exist_never_reaches_the_writer
                 ]
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     requirements, _prose, _excluded = _jd_requirements(JD)
     analysis = await tailor._analyse_requirements(
-        FakeAnthropic(),
-        model="manifest/auto",
-        tier="job-os-sonnet",
+        FakeLLM(),
+        tier="tailor",
         jd_parsed=JD,
         jd_clean="",
         facts_payload=[],
@@ -576,16 +565,15 @@ async def test_a_failed_analyst_call_does_not_sink_the_run() -> None:
 
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **_kwargs: Any) -> Any:
-            raise anthropic.APIConnectionError(request=None)  # type: ignore[arg-type]
+            raise llm_client.LLMConnectionError("connection reset")
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     analysis = await tailor._analyse_requirements(
-        FakeAnthropic(),
-        model="manifest/auto",
-        tier="job-os-sonnet",
+        FakeLLM(),
+        tier="tailor",
         jd_parsed=JD,
         jd_clean="",
         facts_payload=[],

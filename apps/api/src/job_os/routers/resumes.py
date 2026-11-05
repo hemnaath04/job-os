@@ -6,7 +6,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
-import anthropic
 import structlog
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from pydantic import ValidationError
@@ -47,6 +46,7 @@ from job_os.schemas.resumes import (
     TailorRequest,
     TailorResponse,
 )
+from job_os.services import llm_client
 
 log = structlog.get_logger(__name__)
 
@@ -306,7 +306,7 @@ async def import_resume_files(
             json.JSONDecodeError,
             RuntimeError,
             ValidationError,
-            anthropic.APIError,
+            llm_client.LLMError,
         ) as exc:
             result.items.append(
                 ResumeImportItem(filename=filename, imported=False, note=str(exc))

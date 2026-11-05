@@ -36,7 +36,6 @@ import json
 from typing import Any
 from uuid import UUID
 
-import anthropic
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -46,6 +45,7 @@ from sqlalchemy import select
 # a test the row lives inside the fixture's outer transaction where no other
 # connection can see it.
 from job_os.db.session import async_session
+from job_os.services import llm_client
 
 log = structlog.get_logger(__name__)
 
@@ -118,7 +118,7 @@ async def complete_resume_extraction(version_id: UUID) -> None:
             json.JSONDecodeError,
             RuntimeError,
             ValidationError,
-            anthropic.APIError,
+            llm_client.LLMError,
         ) as exc:
             # Recorded on the row rather than raised into a task nobody is
             # awaiting. A failed extraction that leaves `status="extracting"`

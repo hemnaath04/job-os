@@ -10,7 +10,7 @@ this thin shim lives at the root and loads the real handler from
 
 The function directory name contains a dash, so it cannot be imported as a
 normal Python module; ``importlib`` loads it by absolute path instead. The
-build still installs everything the real handler imports (anthropic, appwrite,
+build still installs everything the real handler imports (appwrite, httpx,
 langgraph, the ``job_os`` package), so executing it here works unchanged.
 """
 from __future__ import annotations

@@ -116,7 +116,7 @@ jobs:
       #
       # This runs as its own job rather than a step folded into `api`, because the
       # two directories' dependencies are deliberately separate: this one has its own
-      # requirements.txt, its own capped anthropic<1.0.0, and now its own test-only
+      # requirements.txt and now its own test-only
       # pyproject.toml/uv.lock (mirrors requirements.txt, never shipped; main.py still
       # deploys as the single file the README's build command expects). A `uv sync`
       # here resolves and installs only that graph, in its own venv, so it can never

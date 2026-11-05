@@ -1,35 +1,38 @@
-"""Shared test double for the Anthropic client.
+"""Shared test doubles for `llm_client.LLMClient`.
 
-Production streams every request, because `max_tokens` has to hold an
-extended-thinking block as well as the answer and the SDK refuses a non-streaming
-request that large. A fake that only implements `create` would therefore pass while
-production was broken, so the fakes speak the streaming API too and define their
-per-test behaviour in `create`.
+Production calls `client.complete(tier=..., max_tokens=..., messages=...,
+system=..., effort=..., json_object=...)` through `llm_json.create_message`.
+Most fakes here predate that and define their per-test behaviour as an async
+`messages.create(**kwargs)` returning an object with `content` text blocks;
+`FakeLLMClient` keeps that shape working by routing `complete` to it, so the
+recorded kwargs are exactly what production sent.
 """
+
 from __future__ import annotations
 
 from typing import Any
 
 
-class _FakeStreamManager:
-    def __init__(self, create: Any, kwargs: dict[str, Any]) -> None:
-        self._create = create
-        self._kwargs = kwargs
-        self._message: Any = None
-
-    async def __aenter__(self) -> _FakeStreamManager:
-        self._message = await self._create(**self._kwargs)
-        return self
-
-    async def __aexit__(self, *_exc: Any) -> bool:
-        return False
-
-    async def get_final_message(self) -> Any:
-        return self._message
-
-
 class StreamingFakeMessages:
-    """Mix in to give a fake `create` the streaming entry point production uses."""
+    """Base for a fake `messages` object. Subclasses define `create`."""
 
-    def stream(self, **kwargs: Any) -> _FakeStreamManager:
-        return _FakeStreamManager(self.create, kwargs)  # type: ignore[attr-defined]
+    async def create(self, **kwargs: Any) -> Any:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+
+class FakeLLMClient:
+    """Stands in for `llm_client.LLMClient`.
+
+    Either pass `messages=` (an object with an async `create`) or subclass and
+    set `self.messages` in `__init__`. Accepts and ignores the real client's
+    constructor arguments, so it can be patched in for `llm_client.LLMClient`.
+    """
+
+    messages: Any
+
+    def __init__(self, *_args: Any, messages: Any = None, **_kwargs: Any) -> None:
+        if messages is not None:
+            self.messages = messages
+
+    async def complete(self, **kwargs: Any) -> Any:
+        return await self.messages.create(**kwargs)

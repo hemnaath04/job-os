@@ -1,8 +1,8 @@
 """Resume tailoring agent.
 
 Loads the user's master ResumeVersion + a target Job + every verified
-ProfileFact and FactBullet, then asks Claude (via the configured Manifest
-gateway) which facts/bullets to include and how to lightly edit them. Python
+ProfileFact and FactBullet, then asks the tailor LLM tier (services/llm_client.py)
+which facts/bullets to include and how to lightly edit them. Python
 assembles the final JSON Resume deterministically from the agent's decisions
 so the no-hallucination contract is enforced server-side, not in the prompt.
 
@@ -39,7 +39,6 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any, TypedDict
 from uuid import UUID
 
-import anthropic
 import httpx
 import structlog
 from langgraph.graph import END, START, StateGraph
@@ -53,7 +52,7 @@ from job_os.schemas.resumes import (
     TailorAgentOutput,
     TailorAnalysis,
 )
-from job_os.services import ats_profiles, eligibility_gate
+from job_os.services import ats_profiles, eligibility_gate, llm_client
 from job_os.services.availability import (
     AVAILABILITY_GAP_REQUIREMENT,
     AVAILABILITY_GAP_WHY,
@@ -248,6 +247,8 @@ RETRY_MAX_TOKENS = 48000
 # regardless of which model or effort level produced it, and by the repair
 # loop that already re-runs this same call when those checks find something.
 COMPOSE_EFFORT = "medium"
+# The analyst's effort when ANALYST_EFFORT is unset. See _analyse_requirements.
+ANALYST_DEFAULT_EFFORT = "medium"
 NUMBER_RE = re.compile(
     r"(?<!\w)(?:\$?\d[\d,.]*%?|\d+\s?(?:ms|s|sec|min|hours?|days?|x))(?!\w)",
     re.I,
@@ -565,7 +566,7 @@ _ALWAYS_RENDERED_KINDS = frozenset(
 class TailorGraphState(TypedDict):
     """State shared by the compose → score → repair LangGraph."""
 
-    messages: list[anthropic.types.MessageParam]
+    messages: list[llm_client.MessageParam]
     best_agent: TailorAgentOutput | None
     best_score: Decimal
     iteration_scores: list[float]
@@ -579,22 +580,13 @@ class TailorGraphState(TypedDict):
 def _log_prompt_cache(step: str, iteration: int, message: Any) -> None:
     """Report whether this call's prompt was read from cache or paid for again.
 
-    The Manifest gateway caches prompts on its own, without this code asking. It
-    is not documented and nothing here controls it, so it is logged rather than
-    assumed: every call in a measured run reported input_tokens=2 with the rest
-    read or written as cache, and a repair pass read back the whole prefix its
-    first pass had written. If that ever stops, the repair passes quietly start
-    costing ten times what they cost now, and this line is what shows it.
-
-    Marking our own cache_control breakpoints on top of that was tried and
-    reverted. Probed against the live gateway, an unmarked prompt cached exactly
-    as well as a marked one: cold wrote 2475 tokens, the same prompt again read
-    2475, and a grown conversation read back 8486 of its 8504. The one thing
-    marking did add was letting the analyst, the writer and the reviewer share
-    one entry for the rules they all start with, worth about two thousand tokens
-    of write turned into a read, twice a run. That is under a cent and well
-    under a second against a run that takes minutes, and it is not worth
-    splitting the writer's system prompt to get.
+    OpenAI caches a repeated prompt prefix on its own, without this code asking,
+    and reports the read as `cached_tokens` (cached input bills at a tenth of
+    the uncached rate). Nothing here controls it, so it is logged rather than
+    assumed: a repair pass should read back the prefix its first pass sent. If
+    that ever stops, the repair passes quietly cost several times more, and this
+    line is what shows it. `cache_written` is always empty on OpenAI, which
+    reports reads only.
     """
     usage = getattr(message, "usage", None)
     log.info(
@@ -903,8 +895,8 @@ async def run_tailor(
     browser can show what the run is actually doing.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot run the tailoring agent.")
+    if not llm_client.llm_configured(settings):
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot run the tailoring agent.")
 
     def report(step: str, label: str, detail: str | None, pct: float) -> None:
         if on_progress:
@@ -1066,10 +1058,7 @@ async def run_tailor(
         0.14,
     )
 
-    client = anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    client = llm_client.LLMClient()
 
     # Only the requirements Python could not settle reach a model, and the one
     # that reads them returns a short mapping rather than a resume.
@@ -1103,8 +1092,7 @@ async def run_tailor(
             # scored the Haiku pages 90 and 95, its best pair, because a resume
             # that claims less is easier to defend. Job Match is the number that
             # moved, so Job Match is the number that decides this.
-            model=settings.anthropic_model_tailor,
-            tier=settings.manifest_tier_sonnet,
+            tier="tailor",
             jd_parsed=jd_parsed,
             jd_clean=jd_clean,
             facts_payload=facts_payload,
@@ -1195,14 +1183,13 @@ async def run_tailor(
         try:
             msg = await create_message(
                 client,
-                model=settings.anthropic_model_tailor,
                 max_tokens=DRAFT_MAX_TOKENS,
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
                 messages=state["messages"],
-                extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
-                output_config={"effort": COMPOSE_EFFORT},
+                tier="tailor",
+                effort=COMPOSE_EFFORT,
             )
-        except (anthropic.APIError, httpx.HTTPError, TimeoutError) as exc:
+        except (llm_client.LLMError, httpx.HTTPError, TimeoutError) as exc:
             # A refine pass is an improvement on something that already works, so a
             # transient gateway failure on one must never throw away the passes that
             # succeeded. A real run reached 78.3 over three good passes and then lost
@@ -1254,7 +1241,7 @@ async def run_tailor(
             # handing it back "(empty)" as its own turn helps nobody. Ask for the
             # same decisions in less text, with more room to land them.
             empty = not raw.strip()
-            retry_messages: list[anthropic.types.MessageParam] = (
+            retry_messages: list[llm_client.MessageParam] = (
                 [*state["messages"], {"role": "user", "content": EMPTY_REPLY_RETRY}]
                 if empty
                 else [
@@ -1266,12 +1253,11 @@ async def run_tailor(
             retry_started = time.perf_counter()
             retry = await create_message(
                 client,
-                model=settings.anthropic_model_tailor,
                 max_tokens=RETRY_MAX_TOKENS if empty else DRAFT_MAX_TOKENS,
                 system=f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}",
                 messages=retry_messages,
-                extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
-                output_config={"effort": COMPOSE_EFFORT},
+                tier="tailor",
+                effort=COMPOSE_EFFORT,
             )
             log.info(
                 "tailor.call_timing",
@@ -4763,7 +4749,7 @@ def _run_is_done(
 def _analyst_effort_label(effort: str | None) -> str:
     """Which arm produced a run, named so its absence is not a null.
 
-    Unset means the gateway's own default applies, which is a real condition
+    Unset means ANALYST_DEFAULT_EFFORT applies, which is a real condition
     and has to be distinguishable from a run that recorded nothing. `None` in a
     report column reads as "not measured", and the two are not the same claim.
     """
@@ -5370,10 +5356,9 @@ def _analysis_block(
 
 
 async def _analyse_requirements(
-    client: anthropic.AsyncAnthropic,
+    client: llm_client.LLMClient,
     *,
-    model: str,
-    tier: str,
+    tier: llm_client.LLMTier,
     jd_parsed: dict[str, Any],
     jd_clean: str,
     facts_payload: list[dict[str, Any]],
@@ -5402,23 +5387,24 @@ async def _analyse_requirements(
     )
     started = time.perf_counter()
     try:
-        # No COMPOSE_EFFORT here, deliberately: left at the gateway's default.
-        # See the comment on COMPOSE_EFFORT for why this specific step is the
-        # one exception, not an oversight.
+        # No COMPOSE_EFFORT here, deliberately. See the comment on
+        # COMPOSE_EFFORT for why this specific step is the one exception, not
+        # an oversight.
         #
-        # `analyst_effort` is unset in production, so this stays the gateway
-        # default and behaves exactly as it did before the setting existed. It
-        # is here so the effort can be varied for a measured A/B without
-        # shipping the change the measurement exists to justify.
+        # `analyst_effort` is unset in production, so this runs at
+        # ANALYST_DEFAULT_EFFORT, the model's own default effort and the
+        # closest match to the old gateway default (the analyst reasoned on
+        # Claude too). It is a setting so the effort can be varied for a
+        # measured A/B without shipping the change the measurement exists to
+        # justify.
         effort = get_settings().analyst_effort
         msg = await create_message(
             client,
-            model=model,
             max_tokens=ANALYSIS_MAX_TOKENS,
             system=f"{CAREER_OPS_RULES}\n\n{ANALYST_SYSTEM_PROMPT}",
             messages=[{"role": "user", "content": prompt}],
-            extra_headers={"x-manifest-tier": tier},
-            **({"output_config": {"effort": effort}} if effort else {}),
+            tier=tier,
+            effort=effort or ANALYST_DEFAULT_EFFORT,
         )
         _log_prompt_cache("analyst", 1, msg)
         log.info(
@@ -5432,7 +5418,7 @@ async def _analyse_requirements(
             seconds=round(time.perf_counter() - started, 1),
         )
         analysis = parse_model_json(TailorAnalysis, response_text(msg))
-    except (anthropic.APIError, httpx.HTTPError, TimeoutError, ValidationError) as exc:
+    except (llm_client.LLMError, httpx.HTTPError, TimeoutError, ValidationError) as exc:
         # An empty analysis is a planned degradation: `analysis_settled` downstream
         # knows the gaps were never checked. A dropped stream has to land here too,
         # or the one step that is allowed to fail softly takes the run down with it.

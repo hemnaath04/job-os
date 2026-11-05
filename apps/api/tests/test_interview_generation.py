@@ -16,12 +16,11 @@ import json
 from types import SimpleNamespace
 from typing import Any
 
-import anthropic
 import pytest
 
-from _fake_llm import StreamingFakeMessages
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
 from _interview_fixtures import JD_CLEAN, JD_PARSED, vault
-from job_os.services import interview_prep
+from job_os.services import interview_prep, llm_client
 from job_os.services.interview_prep import ResumeBullet, generate_prep
 
 RESUME_BULLETS = [
@@ -113,7 +112,7 @@ REPLY = {
 }
 
 
-def _fake_anthropic(reply: Any, calls: list[dict[str, Any]] | None = None):
+def _fake_llm_client(reply: Any, calls: list[dict[str, Any]] | None = None):
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **kwargs: Any) -> Any:
             if calls is not None:
@@ -121,25 +120,22 @@ def _fake_anthropic(reply: Any, calls: list[dict[str, Any]] | None = None):
             text = reply if isinstance(reply, str) else json.dumps(reply)
             return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
-    return FakeAnthropic
+    return FakeLLM
 
 
 def _settings() -> SimpleNamespace:
     return SimpleNamespace(
-        anthropic_api_key="test",
-        anthropic_base_url="https://example.invalid",
-        anthropic_model_tailor="claude-opus-4-8",
-        manifest_tier_sonnet="job-os-sonnet",
+        openai_api_key="test",
     )
 
 
 async def _run(monkeypatch: pytest.MonkeyPatch, reply: Any, calls=None):
     monkeypatch.setattr(interview_prep, "get_settings", _settings)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", _fake_anthropic(reply, calls))
+    monkeypatch.setattr(llm_client, "LLMClient", _fake_llm_client(reply, calls))
     facts, bullets = vault()
     return await generate_prep(
         jd_parsed=JD_PARSED,
@@ -225,7 +221,7 @@ async def test_the_prompt_hands_over_the_briefing_and_the_gateway_tier(
     await _run(monkeypatch, REPLY, calls)
     assert len(calls) == 1
     call = calls[0]
-    assert call["extra_headers"]["x-manifest-tier"] == "job-os-sonnet"
+    assert call["tier"] == "tailor"
     prompt = call["messages"][0]["content"]
     assert "BACKED BY VERIFIED EVIDENCE" in prompt
     assert "b-js-api" in prompt  # the ids it is allowed to cite
@@ -272,12 +268,12 @@ async def test_a_reply_that_is_not_json_is_asked_once_more(
             )
             return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     monkeypatch.setattr(interview_prep, "get_settings", _settings)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     facts, bullets = vault()
     result = await generate_prep(
         jd_parsed=JD_PARSED,
@@ -307,14 +303,14 @@ async def test_a_dead_model_still_returns_the_half_that_needed_no_model(
 
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **_kwargs: Any) -> Any:
-            raise anthropic.APIConnectionError(request=None)  # type: ignore[arg-type]
+            raise llm_client.LLMConnectionError("connection reset")
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
     monkeypatch.setattr(interview_prep, "get_settings", _settings)
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
     facts, bullets = vault()
     result = await generate_prep(
         jd_parsed=JD_PARSED,

@@ -43,7 +43,6 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
-import anthropic
 import httpx
 import structlog
 from pydantic import ValidationError
@@ -59,6 +58,7 @@ from job_os.schemas.interviews import (
     TopicReadiness,
     VaultFact,
 )
+from job_os.services import llm_client
 from job_os.services.career_ops_rules import CAREER_OPS_RULES
 from job_os.services.llm_json import (
     create_message,
@@ -867,16 +867,11 @@ _CATEGORY_LIMITS = {
 _SCAFFOLDED = frozenset({"behavioral", "resume_probe"})
 
 
-def _client() -> anthropic.AsyncAnthropic:
+def _client() -> llm_client.LLMClient:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set.")
-    # `auth_token`, not `api_key`. The Manifest gateway wants
-    # `Authorization: Bearer`, and `api_key` sends `x-api-key`, which it ignores.
-    return anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
+    if not llm_client.llm_configured(settings):
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    return llm_client.LLMClient()
 
 
 def _build_prompt(
@@ -967,7 +962,6 @@ async def generate_prep(
         provenance_comparable=provenance_comparable,
     )
     index = _evidence_index(facts, bullets_by_fact)
-    settings = get_settings()
     prompt = _build_prompt(
         job_title=job_title,
         company_name=company_name,
@@ -977,12 +971,11 @@ async def generate_prep(
         resume_bullets=resume_bullets,
         briefing=topic_briefing(report),
     )
-    messages: list[anthropic.types.MessageParam] = [{"role": "user", "content": prompt}]
+    messages: list[llm_client.MessageParam] = [{"role": "user", "content": prompt}]
 
     async def ask(*, max_tokens: int = PREP_MAX_TOKENS) -> tuple[str, Any]:
         response = await create_message(
             _client(),
-            model=settings.anthropic_model_tailor,
             max_tokens=max_tokens,
             # The candidate's own boundaries: what they may be positioned as,
             # what they have not done, which statuses are provisional. A prep
@@ -990,7 +983,7 @@ async def generate_prep(
             # resume engine refuses to print, which is worse than useless.
             system=f"{SYSTEM_PROMPT}\n\n{CAREER_OPS_RULES}",
             messages=messages,
-            extra_headers={"x-manifest-tier": settings.manifest_tier_sonnet},
+            tier="tailor",
         )
         return response_text(response), response
 
@@ -1019,7 +1012,7 @@ async def generate_prep(
     except (
         ValidationError,
         json.JSONDecodeError,
-        anthropic.APIError,
+        llm_client.LLMError,
         httpx.HTTPError,
         RuntimeError,
     ) as exc:

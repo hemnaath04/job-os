@@ -13,16 +13,17 @@ import os
 from types import SimpleNamespace
 from typing import Any
 
-import anthropic
-import httpx
 import pytest
 
 os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from _fake_llm import StreamingFakeMessages
-from job_os.services import tailor  # noqa: E402
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
+from job_os.services import (
+    llm_client,  # noqa: E402
+    tailor,  # noqa: E402
+)
 from job_os.services.llm_json import EMPTY_REPLY_RETRY  # noqa: E402
 
 
@@ -39,7 +40,7 @@ def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str,
                 usage=SimpleNamespace(output_tokens=8192 if not body else 200),
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -47,14 +48,11 @@ def _stub(monkeypatch: pytest.MonkeyPatch, replies: list[Any]) -> list[dict[str,
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
 
     # These tests are about the COMPOSE call and its retry, so `calls[0]` has to
     # stay the compose call. The JD now carries a real requirement, because a
@@ -136,12 +134,11 @@ async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
                 1 for call in calls if "analyst step" not in call["system"]
             )
             if writing_passes >= 2:
-                raise anthropic.RateLimitError(
+                raise llm_client.LLMStatusError(
                     "Rate limited by upstream provider",
-                    response=httpx.Response(
-                        429, request=httpx.Request("POST", "https://example.invalid")
-                    ),
-                    body=None,
+                    status_code=429,
+                    provider="openai",
+                    model="test",
                 )
             return SimpleNamespace(
                 content=[SimpleNamespace(type="text", text=good)],
@@ -149,7 +146,7 @@ async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
                 usage=SimpleNamespace(output_tokens=200),
             )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -157,14 +154,11 @@ async def test_a_rate_limit_on_a_later_pass_keeps_the_passes_that_worked(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
 
     document, _prov, _gaps, _score, report, _note = await tailor.run_tailor(
         facts=[],
@@ -186,15 +180,14 @@ async def test_a_rate_limit_on_the_very_first_pass_still_raises(
 
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **_kwargs: Any) -> Any:
-            raise anthropic.RateLimitError(
-                "Rate limited by upstream provider",
-                response=httpx.Response(
-                    429, request=httpx.Request("POST", "https://example.invalid")
-                ),
-                body=None,
-            )
+            raise llm_client.LLMStatusError(
+                    "Rate limited by upstream provider",
+                    status_code=429,
+                    provider="openai",
+                    model="test",
+                )
 
-    class FakeAnthropic:
+    class FakeLLM(FakeLLMClient):
         def __init__(self, **_kwargs: Any) -> None:
             self.messages = FakeMessages()
 
@@ -202,16 +195,13 @@ async def test_a_rate_limit_on_the_very_first_pass_still_raises(
         tailor,
         "get_settings",
         lambda: SimpleNamespace(
-            anthropic_api_key="test",
-            anthropic_base_url="https://example.invalid",
-            anthropic_model_tailor="manifest/auto",
-            manifest_tier_sonnet="job-os-sonnet",
+            openai_api_key="test",
             analyst_effort=None,
         ),
     )
-    monkeypatch.setattr(anthropic, "AsyncAnthropic", FakeAnthropic)
+    monkeypatch.setattr(llm_client, "LLMClient", FakeLLM)
 
-    with pytest.raises(anthropic.RateLimitError):
+    with pytest.raises(llm_client.LLMStatusError):
         await tailor.run_tailor(
             facts=[],
             bullets_by_fact={},

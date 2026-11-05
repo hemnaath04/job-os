@@ -1,11 +1,13 @@
-"""Extract a JSON Resume from an uploaded PDF or DOCX using Claude.
+"""Extract a JSON Resume from an uploaded PDF or DOCX on the fast LLM tier.
 
-For PDFs we use Claude's native document support — the file is sent inline
-as a base64 `document` content block, so layout context is preserved and the
-extractor sees citations, dates, and structure exactly as they appear.
+For PDFs the file is sent inline as a base64 `document` block, which
+llm_client sends to OpenAI as a PDF file part, so layout context is preserved
+and the extractor sees citations, dates, and structure exactly as they appear.
+The free OpenRouter model is text only, so a PDF skips it and goes straight to
+the OpenAI fallback model.
 
-For DOCX we extract text with python-docx first, then hand the text to
-Claude. We never invent fields — empty inputs return empty arrays.
+For DOCX we extract text with python-docx first, then hand the text to the
+model. We never invent fields: empty inputs return empty arrays.
 """
 from __future__ import annotations
 
@@ -14,10 +16,10 @@ import io
 import json
 from typing import Any
 
-import anthropic
 import structlog
 from docx import Document
 
+from job_os.services import llm_client
 from job_os.settings import get_settings
 
 log = structlog.get_logger(__name__)
@@ -65,17 +67,13 @@ def _strip_json_fence(text: str) -> str:
 
 async def extract_json_resume_from_pdf(pdf_bytes: bytes) -> dict[str, Any]:
     s = get_settings()
-    if not s.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot extract from PDF.")
+    if not llm_client.llm_configured(s):
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot extract from PDF.")
 
-    client = anthropic.AsyncAnthropic(
-        auth_token=s.anthropic_api_key,
-        base_url=s.anthropic_base_url or None,
-    )
+    client = llm_client.LLMClient()
 
     b64 = base64.standard_b64encode(pdf_bytes).decode("ascii")
-    msg = await client.messages.create(
-        model=s.anthropic_model_extract,
+    msg = await client.complete(
         max_tokens=8192,
         system=SYSTEM_PROMPT,
         messages=[
@@ -90,7 +88,10 @@ async def extract_json_resume_from_pdf(pdf_bytes: bytes) -> dict[str, Any]:
                 ],
             }
         ],
-        extra_headers={"x-manifest-tier": s.manifest_tier_fast},
+        tier="fast",
+        # Parsed with json.loads below, so a free-model reply in prose fails
+        # over to the OpenAI fallback instead of failing the import.
+        json_object=True,
     )
     text = "".join(b.text for b in msg.content if b.type == "text")
     return json.loads(_strip_json_fence(text))
@@ -117,20 +118,19 @@ async def extract_json_resume_from_docx(docx_bytes: bytes) -> dict[str, Any]:
 
 async def extract_json_resume_from_text(text: str) -> dict[str, Any]:
     s = get_settings()
-    if not s.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot extract from text.")
+    if not llm_client.llm_configured(s):
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot extract from text.")
 
-    client = anthropic.AsyncAnthropic(
-        auth_token=s.anthropic_api_key,
-        base_url=s.anthropic_base_url or None,
-    )
+    client = llm_client.LLMClient()
 
-    msg = await client.messages.create(
-        model=s.anthropic_model_extract,
+    msg = await client.complete(
         max_tokens=8192,
         system=SYSTEM_PROMPT,
         messages=[{"role": "user", "content": USER_PROMPT_TEXT.format(text=text[:50000])}],
-        extra_headers={"x-manifest-tier": s.manifest_tier_fast},
+        tier="fast",
+        # Parsed with json.loads below, so a free-model reply in prose fails
+        # over to the OpenAI fallback instead of failing the import.
+        json_object=True,
     )
     body = "".join(b.text for b in msg.content if b.type == "text")
     return json.loads(_strip_json_fence(body))

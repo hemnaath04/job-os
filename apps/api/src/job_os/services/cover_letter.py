@@ -49,7 +49,6 @@ from datetime import date
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-import anthropic
 import httpx
 import structlog
 from pydantic import ValidationError
@@ -65,6 +64,7 @@ from job_os.schemas.cover_letters import (
     RefusedSentence,
 )
 from job_os.schemas.resumes import GapQuestion
+from job_os.services import llm_client
 from job_os.services.career_ops_rules import CAREER_OPS_RULES
 from job_os.services.llm_json import (
     EMPTY_REPLY_RETRY,
@@ -925,8 +925,8 @@ async def run_cover_letter(
     in the adapter below.
     """
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        raise RuntimeError("ANTHROPIC_API_KEY is not set; cannot run the cover-letter agent.")
+    if not llm_client.llm_configured(settings):
+        raise RuntimeError("OPENAI_API_KEY is not set; cannot run the cover-letter agent.")
 
     def report(step: str, label: str, detail: str | None, pct: float) -> None:
         if on_progress:
@@ -945,11 +945,8 @@ async def run_cover_letter(
     briefing = _briefing(
         jd_parsed=jd_parsed, facts=facts, bullets_by_fact=bullets_by_fact
     )
-    client = anthropic.AsyncAnthropic(
-        auth_token=settings.anthropic_api_key,
-        base_url=settings.anthropic_base_url or None,
-    )
-    messages: list[anthropic.types.MessageParam] = [
+    client = llm_client.LLMClient()
+    messages: list[llm_client.MessageParam] = [
         {
             "role": "user",
             "content": _build_user_prompt(
@@ -976,7 +973,7 @@ async def run_cover_letter(
         )
         try:
             agent, raw = await _compose(client, messages=messages, settings=settings)
-        except (anthropic.APIError, httpx.HTTPError) as exc:
+        except (llm_client.LLMError, httpx.HTTPError) as exc:
             # A repair is an improvement on something that already works, so a
             # transient gateway failure on one must never throw away the pass
             # that succeeded. Same reasoning as `tailor.compose_and_score`.
@@ -1067,19 +1064,17 @@ def _repair_detail(best: CoverLetterResult | None) -> str | None:
 async def _compose(
     client: Any,
     *,
-    messages: list[anthropic.types.MessageParam],
+    messages: list[llm_client.MessageParam],
     settings: Any,
 ) -> tuple[CoverLetterAgentOutput, str]:
     """One writing pass, with the one retry a chatty or truncated reply earns."""
     system = f"{CAREER_OPS_RULES}\n\n{SYSTEM_PROMPT}"
-    tier = {"x-manifest-tier": settings.manifest_tier_sonnet}
     message = await create_message(
         client,
-        model=settings.anthropic_model_tailor,
         max_tokens=DRAFT_MAX_TOKENS,
         system=system,
         messages=messages,
-        extra_headers=tier,
+        tier="tailor",
     )
     raw = response_text(message)
     try:
@@ -1095,7 +1090,7 @@ async def _compose(
         # answer ran past the output ceiling, and telling a model that produced
         # nothing "that was not valid JSON" helps nobody.
         empty = not raw.strip()
-        retry_messages: list[anthropic.types.MessageParam] = (
+        retry_messages: list[llm_client.MessageParam] = (
             [*messages, {"role": "user", "content": EMPTY_REPLY_RETRY}]
             if empty
             else [
@@ -1106,11 +1101,10 @@ async def _compose(
         )
         retry = await create_message(
             client,
-            model=settings.anthropic_model_tailor,
             max_tokens=RETRY_MAX_TOKENS if empty else DRAFT_MAX_TOKENS,
             system=system,
             messages=retry_messages,
-            extra_headers=tier,
+            tier="tailor",
         )
         retry_raw = response_text(retry)
         try:

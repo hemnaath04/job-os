@@ -17,20 +17,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-import anthropic
-import httpx
 import pytest
 
 from job_os.schemas.discovery import DiscoverySearchRequest
-from job_os.services import discovery_smart_search
+from job_os.services import discovery_smart_search, llm_client
 
 
 @dataclass
 class _FakeSettings:
-    anthropic_api_key: str | None = "manifest-key"
-    anthropic_base_url: str | None = None
-    manifest_tier_fast: str = "job-os-haiku"
-    anthropic_model_extract: str = "manifest/auto"
+    openai_api_key: str | None = "sk-test"
 
 
 @pytest.mark.asyncio
@@ -38,7 +33,7 @@ async def test_no_api_key_falls_back_to_the_raw_query(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        discovery_smart_search, "get_settings", lambda: _FakeSettings(anthropic_api_key=None)
+        discovery_smart_search, "get_settings", lambda: _FakeSettings(openai_api_key=None)
     )
     result = await discovery_smart_search.parse_smart_query("python intern boston")
     assert result.filters == DiscoverySearchRequest(title_keywords=["python intern boston"])
@@ -51,9 +46,9 @@ async def test_gateway_failure_falls_back_to_the_raw_query_instead_of_raising(
     monkeypatch.setattr(discovery_smart_search, "get_settings", lambda: _FakeSettings())
 
     async def _raise_gateway_error(*_args: Any, **_kwargs: Any) -> None:
-        request = httpx.Request("POST", "https://gateway.test/v1/messages")
-        response = httpx.Response(401, request=request, json={})
-        raise anthropic.APIStatusError("M102", response=response, body=None)
+        raise llm_client.LLMStatusError(
+            "M102", status_code=401, provider="openai", model="test"
+        )
 
     monkeypatch.setattr(discovery_smart_search, "create_message", _raise_gateway_error)
 

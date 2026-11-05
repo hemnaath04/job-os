@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from pypdf import PdfWriter
 
-from _fake_llm import StreamingFakeMessages
+from _fake_llm import FakeLLMClient, StreamingFakeMessages
 from job_os.schemas.resumes import SelectedBullet
 from job_os.services.resume_engine import (
     _github_repositories,
@@ -181,7 +181,7 @@ def _fake_revision_client(replies: list[str], calls: list[Any]) -> Any:
                 content=[SimpleNamespace(type="text", text=body)]
             )
 
-    return SimpleNamespace(messages=FakeMessages())
+    return FakeLLMClient(messages=FakeMessages())
 
 
 _MINIMAL_RESUME = {

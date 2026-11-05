@@ -12,19 +12,14 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any
 
-import anthropic
-import httpx
 import pytest
 
-from job_os.services import jd_parse
+from job_os.services import jd_parse, llm_client
 
 
 @dataclass
 class _FakeSettings:
-    anthropic_api_key: str | None = "manifest-key"
-    anthropic_base_url: str | None = None
-    manifest_tier_fast: str = "job-os-haiku"
-    anthropic_model_extract: str = "manifest/auto"
+    openai_api_key: str | None = "sk-test"
     # None by default so every test below races nothing and exercises the
     # gateway path on its own, which is what they were all written about. The
     # race has its own tests.
@@ -41,7 +36,7 @@ _GOOD_REPLY = '{"title": "Backend Engineer", "technologies": ["Go"]}'
 
 @pytest.mark.asyncio
 async def test_no_api_key_returns_just_the_title_hint(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings(anthropic_api_key=None))
+    monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings(openai_api_key=None))
     result = await jd_parse.parse_jd("some jd text", title_hint="Backend Engineer")
     assert result == {"parse_incomplete": True, "title": "Backend Engineer"}
 
@@ -53,9 +48,9 @@ async def test_gateway_failure_degrades_instead_of_raising(
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
 
     async def _raise_gateway_error(*_args: Any, **_kwargs: Any) -> None:
-        request = httpx.Request("POST", "https://gateway.test/v1/messages")
-        response = httpx.Response(401, request=request, json={})
-        raise anthropic.APIStatusError("M102", response=response, body=None)
+        raise llm_client.LLMStatusError(
+            "M102", status_code=401, provider="openai", model="test"
+        )
 
     monkeypatch.setattr(jd_parse, "create_message", _raise_gateway_error)
 
@@ -70,9 +65,9 @@ async def test_gateway_failure_with_no_title_hint_returns_empty_dict(
     monkeypatch.setattr(jd_parse, "get_settings", lambda: _FakeSettings())
 
     async def _raise_gateway_error(*_args: Any, **_kwargs: Any) -> None:
-        request = httpx.Request("POST", "https://gateway.test/v1/messages")
-        response = httpx.Response(500, request=request, json={})
-        raise anthropic.APIStatusError("boom", response=response, body=None)
+        raise llm_client.LLMStatusError(
+            "boom", status_code=500, provider="openai", model="test"
+        )
 
     monkeypatch.setattr(jd_parse, "create_message", _raise_gateway_error)
 
@@ -105,8 +100,7 @@ async def test_a_single_timeout_is_retried_once_and_the_retry_succeeds(
         nonlocal calls
         calls += 1
         if calls == 1:
-            request = httpx.Request("POST", "https://gateway.test/v1/messages")
-            raise anthropic.APITimeoutError(request=request)
+            raise llm_client.LLMTimeoutError("timed out")
         return _FakeMessage(_GOOD_REPLY)
 
     monkeypatch.setattr(jd_parse, "create_message", _flaky)
@@ -136,8 +130,7 @@ async def test_two_consecutive_timeouts_still_degrade_honestly(
     async def _always_times_out(*_args: Any, **_kwargs: Any) -> _FakeMessage:
         nonlocal calls
         calls += 1
-        request = httpx.Request("POST", "https://gateway.test/v1/messages")
-        raise anthropic.APITimeoutError(request=request)
+        raise llm_client.LLMTimeoutError("timed out")
 
     monkeypatch.setattr(jd_parse, "create_message", _always_times_out)
 

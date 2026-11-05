@@ -145,7 +145,7 @@ async def test_the_review_grades_the_two_cases_differently(
 ) -> None:
     from types import SimpleNamespace
 
-    from _fake_llm import StreamingFakeMessages
+    from _fake_llm import FakeLLMClient, StreamingFakeMessages
 
     class FakeMessages(StreamingFakeMessages):
         async def create(self, **_kwargs: Any) -> Any:
@@ -153,7 +153,7 @@ async def test_the_review_grades_the_two_cases_differently(
             return SimpleNamespace(content=[SimpleNamespace(type="text", text=body)])
 
     monkeypatch.setattr(
-        resume_engine, "_client", lambda: SimpleNamespace(messages=FakeMessages())
+        resume_engine, "_client", lambda: FakeLLMClient(messages=FakeMessages())
     )
 
     async def unavailable_render(*_a: Any, **_k: Any) -> Any:

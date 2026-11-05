@@ -1,6 +1,6 @@
 """Shared test setup.
 
-The gateway retry in `llm_json.create_message` waits real seconds between
+The provider retry in `llm_client.LLMClient.complete` waits real seconds between
 attempts, which is right in production and wrong in a test suite: the two
 tailor tests that simulate a 429 would each sit through the whole backoff
 schedule, adding minutes to a run and testing nothing but `asyncio.sleep`.
@@ -21,7 +21,7 @@ os.environ.setdefault(
     "DATABASE_URL", "postgresql+asyncpg://job_os:job_os@localhost/job_os"
 )
 
-from job_os.services import appwrite_tables, llm_json  # noqa: E402
+from job_os.services import appwrite_tables, llm_client  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Appwrite
@@ -87,7 +87,7 @@ def no_real_appwrite(monkeypatch: pytest.MonkeyPatch) -> None:
 def gateway_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     """Record the gateway backoff waits instead of serving them.
 
-    Patches `llm_json._sleep`, not `asyncio.sleep`. The module-level indirection
+    Patches `llm_client._sleep`, not `asyncio.sleep`. The module-level indirection
     exists for this: replacing `asyncio.sleep` would reach every coroutine in the
     process, which is far more than "do not really wait forty-five seconds".
     """
@@ -96,7 +96,7 @@ def gateway_waits(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     async def instant_sleep(seconds: float) -> None:
         waits.append(seconds)
 
-    monkeypatch.setattr(llm_json, "_sleep", instant_sleep)
+    monkeypatch.setattr(llm_client, "_sleep", instant_sleep)
     return waits
 
 
